@@ -1,0 +1,20 @@
+[project]
+name = "aiochainscan"
+version = "0.1.0"
+description = "Chainscan API async Python wrapper"
+authors = [
+    { name = "VaitaR", email = "andrey.shivalin@gmail.com" }
+]
+license = { text = "MIT" }
+readme = "README.md"
+requires-python = ">=3.9"
+
+dependencies = [
+    "aiohttp>=3.4",
+    "asyncio-throttle>=1.0.1",
+    "aiohttp-retry>=2.8.3",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
