@@ -27,7 +27,7 @@ class TestCmdListScanners:
                 'networks': ['main', 'goerli', 'sepolia'],
                 'api_key_configured': True,
                 'requires_api_key': True,
-                'api_key_sources': ['ETHERSCAN_KEY', 'ETH_KEY']
+                'api_key_sources': ['ETHERSCAN_KEY', 'ETH_KEY'],
             },
             'bsc': {
                 'name': 'BscScan',
@@ -36,8 +36,8 @@ class TestCmdListScanners:
                 'networks': ['main', 'test'],
                 'api_key_configured': False,
                 'requires_api_key': True,
-                'api_key_sources': ['BSCSCAN_KEY', 'BSC_KEY']
-            }
+                'api_key_sources': ['BSCSCAN_KEY', 'BSC_KEY'],
+            },
         }
 
         args = MagicMock()
@@ -72,7 +72,7 @@ class TestCmdGenerateEnv:
     @patch('builtins.print')
     def test_generate_env_default_output(self, mock_print, mock_config_manager):
         """Test generating .env file with default output path."""
-        mock_config_manager.generate_env_template.return_value = "# Test template content"
+        mock_config_manager.generate_env_template.return_value = '# Test template content'
 
         args = MagicMock()
         args.output = None
@@ -93,7 +93,7 @@ class TestCmdGenerateEnv:
     @patch('builtins.print')
     def test_generate_env_custom_output(self, mock_print, mock_config_manager):
         """Test generating .env file with custom output path."""
-        mock_config_manager.generate_env_template.return_value = "# Custom template"
+        mock_config_manager.generate_env_template.return_value = '# Custom template'
 
         args = MagicMock()
         args.output = '/custom/path/.env.test'
@@ -108,7 +108,7 @@ class TestCmdGenerateEnv:
     @patch('builtins.print')
     def test_generate_env_with_show(self, mock_print, mock_config_manager):
         """Test generating .env file with show option."""
-        template_content = "# Template content\nETHERSCAN_KEY=your_key_here"
+        template_content = '# Template content\nETHERSCAN_KEY=your_key_here'
         mock_config_manager.generate_env_template.return_value = template_content
 
         args = MagicMock()
@@ -136,20 +136,20 @@ class TestCmdCheckConfig:
                 'name': 'Etherscan',
                 'api_key_configured': True,
                 'requires_api_key': True,
-                'api_key_sources': ['ETHERSCAN_KEY']
+                'api_key_sources': ['ETHERSCAN_KEY'],
             },
             'bsc': {
                 'name': 'BscScan',
                 'api_key_configured': False,
                 'requires_api_key': True,
-                'api_key_sources': ['BSCSCAN_KEY']
+                'api_key_sources': ['BSCSCAN_KEY'],
             },
             'flare': {
                 'name': 'Flare Explorer',
                 'api_key_configured': False,
                 'requires_api_key': False,
-                'api_key_sources': []
-            }
+                'api_key_sources': [],
+            },
         }
 
         args = MagicMock()
@@ -211,7 +211,7 @@ class TestCmdAddScanner:
             'currency': 'CUSTOM',
             'supported_networks': ['main', 'test'],
             'requires_api_key': True,
-            'special_config': {}
+            'special_config': {},
         }
         mock_config_manager.register_scanner.assert_called_once_with('custom', expected_data)
 
@@ -224,7 +224,7 @@ class TestCmdAddScanner:
     @patch('sys.exit')
     def test_add_scanner_failure(self, mock_exit, mock_print, mock_config_manager):
         """Test handling scanner addition failure."""
-        mock_config_manager.register_scanner.side_effect = ValueError("Scanner already exists")
+        mock_config_manager.register_scanner.side_effect = ValueError('Scanner already exists')
 
         args = MagicMock()
         args.id = 'existing'
@@ -268,7 +268,7 @@ class TestCmdExportConfig:
     @patch('sys.exit')
     def test_export_config_failure(self, mock_exit, mock_print, mock_config_manager):
         """Test export configuration failure."""
-        mock_config_manager.export_config.side_effect = Exception("Write error")
+        mock_config_manager.export_config.side_effect = Exception('Write error')
 
         args = MagicMock()
         args.output = '/invalid/path/config.json'
@@ -371,7 +371,7 @@ class TestMainFunction:
     @patch('sys.exit')
     def test_main_unexpected_error(self, mock_exit, mock_print, mock_cmd_list):
         """Test main function handling unexpected errors."""
-        mock_cmd_list.side_effect = Exception("Unexpected error")
+        mock_cmd_list.side_effect = Exception('Unexpected error')
 
         main()
 
@@ -379,7 +379,20 @@ class TestMainFunction:
         print_calls = [call[0][0] for call in mock_print.call_args_list]
         assert any('Unexpected error' in call for call in print_calls)
 
-    @patch('sys.argv', ['aiochainscan', 'add-scanner', 'test', '--name', 'Test Scanner', '--domain', 'test.com', '--currency', 'TEST'])
+    @patch(
+        'sys.argv',
+        [
+            'aiochainscan',
+            'add-scanner',
+            'test',
+            '--name',
+            'Test Scanner',
+            '--domain',
+            'test.com',
+            '--currency',
+            'TEST',
+        ],
+    )
     @patch('aiochainscan.cli.cmd_add_scanner')
     def test_main_add_scanner_command(self, mock_cmd_add):
         """Test main function with add-scanner command."""
@@ -408,8 +421,10 @@ class TestCLIArgumentParsing:
         """Test list command argument parsing."""
         from aiochainscan.cli import main
 
-        with patch('sys.argv', ['aiochainscan', 'list']), \
-             patch('aiochainscan.cli.cmd_list_scanners') as mock_cmd:
+        with (
+            patch('sys.argv', ['aiochainscan', 'list']),
+            patch('aiochainscan.cli.cmd_list_scanners') as mock_cmd,
+        ):
             main()
             mock_cmd.assert_called_once()
 
@@ -423,21 +438,32 @@ class TestCLIArgumentParsing:
         ]
 
         for argv in test_cases:
-            with patch('sys.argv', argv), \
-                 patch('aiochainscan.cli.cmd_generate_env') as mock_cmd:
+            with patch('sys.argv', argv), patch('aiochainscan.cli.cmd_generate_env') as mock_cmd:
                 main()
                 mock_cmd.assert_called_once()
 
     def test_add_scanner_args(self):
         """Test add-scanner command argument parsing."""
-        with patch('sys.argv', [
-            'aiochainscan', 'add-scanner', 'test_chain',
-            '--name', 'Test Chain',
-            '--domain', 'testchain.com',
-            '--currency', 'TEST',
-            '--networks', 'main,test',
-            '--no-api-key'
-        ]), patch('aiochainscan.cli.cmd_add_scanner') as mock_cmd:
+        with (
+            patch(
+                'sys.argv',
+                [
+                    'aiochainscan',
+                    'add-scanner',
+                    'test_chain',
+                    '--name',
+                    'Test Chain',
+                    '--domain',
+                    'testchain.com',
+                    '--currency',
+                    'TEST',
+                    '--networks',
+                    'main,test',
+                    '--no-api-key',
+                ],
+            ),
+            patch('aiochainscan.cli.cmd_add_scanner') as mock_cmd,
+        ):
             main()
             mock_cmd.assert_called_once()
             args = mock_cmd.call_args[0][0]
