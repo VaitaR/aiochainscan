@@ -173,3 +173,11 @@ dev_*
 # LLmCode generated files
 .kiro/
 .cursor/
+
+# Example reports and logs
+examples/reports/
+examples/*.log
+examples/*_report.txt
+examples/*_report.html
+examples/*_report.json
+examples/*_results.json
