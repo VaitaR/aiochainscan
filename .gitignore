@@ -169,3 +169,6 @@ htmlcov/
 # Local development files
 local_*
 dev_* 
+
+# LLmCode generated files
+.kiro/
