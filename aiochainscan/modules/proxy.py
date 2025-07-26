@@ -44,7 +44,11 @@ class Proxy(BaseModule):
                     tag=check_tag(tag),
                 )
                 # Convert hex string to int
-                return int(result, 16) if isinstance(result, str) and result.startswith('0x') else int(result)
+                return (
+                    int(result, 16)
+                    if isinstance(result, str) and result.startswith('0x')
+                    else int(result)
+                )
             except Exception:
                 # If both fail, re-raise the original account error
                 result = await self._client.account.balance(address, tag)

@@ -4,6 +4,7 @@ import pytest
 import pytest_asyncio
 
 from aiochainscan import Client
+from aiochainscan.exceptions import FeatureNotSupportedError
 
 
 @pytest_asyncio.fixture
@@ -311,3 +312,59 @@ async def test_account_balance_by_blockno(account):
             },
             headers={},
         )
+
+
+@pytest.mark.asyncio
+async def test_erc20_transfers(account):
+    # Test default parameters
+    with patch('aiochainscan.network.Network.get', new=AsyncMock()) as mock:
+        await account.erc20_transfers('addr')
+        mock.assert_called_once_with(
+            params={
+                'module': 'account',
+                'action': 'tokentx',
+                'address': 'addr',
+                'startblock': 0,
+                'endblock': 99999999,
+                'page': 1,
+                'offset': 100,
+            },
+            headers={},
+        )
+
+    # Test custom parameters
+    with patch('aiochainscan.network.Network.get', new=AsyncMock()) as mock:
+        await account.erc20_transfers('addr', startblock=1000, endblock=2000, page=2, offset=50)
+        mock.assert_called_once_with(
+            params={
+                'module': 'account',
+                'action': 'tokentx',
+                'address': 'addr',
+                'startblock': 1000,
+                'endblock': 2000,
+                'page': 2,
+                'offset': 50,
+            },
+            headers={},
+        )
+
+
+@pytest.mark.asyncio
+async def test_erc20_transfers_feature_not_supported():
+    """Test that FeatureNotSupportedError is raised for unsupported scanners."""
+    # Create a client with an unsupported scanner
+    with patch('aiochainscan.config.config_manager.get_scanner_config') as mock_config:
+        mock_config.return_value.name = 'Unsupported Scanner'
+
+        # Create client with URL builder that has unsupported scanner
+        c = Client('TestApiKey')
+        c._url_builder._api_kind = 'unsupported_scanner'
+
+        try:
+            with pytest.raises(FeatureNotSupportedError) as exc_info:
+                await c.account.erc20_transfers('addr')
+
+            assert 'erc20_transfers' in str(exc_info.value)
+            assert 'Unsupported Scanner' in str(exc_info.value)
+        finally:
+            await c.close()

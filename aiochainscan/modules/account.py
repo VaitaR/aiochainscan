@@ -1,10 +1,12 @@
 from collections.abc import Iterable
 
 from aiochainscan.common import (
+    ChainFeatures,
     check_blocktype,
     check_sort_direction,
     check_tag,
     check_token_standard,
+    require_feature_support,
 )
 from aiochainscan.modules.base import BaseModule
 
@@ -140,4 +142,39 @@ class Account(BaseModule):
         """Get Historical Ether Balance for a Single Address By BlockNo"""
         return await self._get(
             module='account', action='balancehistory', address=address, blockno=blockno
+        )
+
+    async def erc20_transfers(
+        self,
+        address: str,
+        *,
+        startblock: int = 0,
+        endblock: int = 99999999,
+        page: int = 1,
+        offset: int = 100,
+    ) -> list[dict]:
+        """Get a list of ERC-20 Token Transfer Events by Address.
+
+        Args:
+            address: The address to get token transfers for
+            startblock: Starting block number (default: 0)
+            endblock: Ending block number (default: 99999999)
+            page: Page number for pagination (default: 1)
+            offset: Number of results per page (default: 100)
+
+        Returns:
+            List of ERC-20 token transfer events
+
+        Raises:
+            FeatureNotSupportedError: If the scanner doesn't support ERC-20 transfers
+        """
+        require_feature_support(self._client, ChainFeatures.ERC20_TRANSFERS)
+
+        return await self._get(
+            action='tokentx',
+            address=address,
+            startblock=startblock,
+            endblock=endblock,
+            page=page,
+            offset=offset,
         )

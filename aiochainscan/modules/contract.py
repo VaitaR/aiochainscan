@@ -1,5 +1,6 @@
 from collections.abc import Iterable
 
+from aiochainscan.exceptions import SourceNotVerifiedError
 from aiochainscan.modules.base import BaseModule
 
 
@@ -13,13 +14,63 @@ class Contract(BaseModule):
     def _module(self) -> str:
         return 'contract'
 
-    async def contract_abi(self, address: str) -> str:
-        """Get Contract ABI for Verified Contract Source Codes"""
-        return await self._get(action='getabi', address=address)
+    async def contract_abi(self, address: str) -> str | None:
+        """Get Contract ABI for Verified Contract Source Codes
+
+        Args:
+            address: Contract address to get ABI for
+
+        Returns:
+            JSON encoded ABI string
+
+        Raises:
+            SourceNotVerifiedError: If contract source code is not verified
+
+        Examples:
+            >>> abi = await client.contract.contract_abi("0xdAC17F958D2ee523a2206206994597C13D831ec7")
+            >>> print(abi)  # JSON ABI string
+        """
+        result = await self._get(action='getabi', address=address)
+
+        # Check for unverified contract responses
+        if isinstance(result, str) and result.startswith("Contract source code not verified"):
+            raise SourceNotVerifiedError(address)
+
+        return result
 
     async def contract_source_code(self, address: str) -> list[dict]:
-        """Get Contract Source Code for Verified Contract Source Codes"""
-        return await self._get(action='getsourcecode', address=address)
+        """Get Contract Source Code for Verified Contract Source Codes
+
+        Args:
+            address: Contract address to get source code for
+
+        Returns:
+            List of source code information dictionaries
+
+        Raises:
+            SourceNotVerifiedError: If contract source code is not verified
+
+        Examples:
+            >>> source = await client.contract.contract_source_code("0xdAC17F958D2ee523a2206206994597C13D831ec7")
+            >>> print(source[0]['SourceCode'])
+        """
+        result = await self._get(action='getsourcecode', address=address)
+
+        # Check for unverified contract in the result list
+        if (isinstance(result, list) and
+            len(result) > 0 and
+            isinstance(result[0], dict) and
+            result[0].get('ABI') == 'Contract source code not verified'):
+            raise SourceNotVerifiedError(address)
+
+        return result
+
+    async def contract_source(self, address: str) -> list[dict]:
+        """Get Contract Source Code for Verified Contract Source Codes
+
+        Alias for contract_source_code method
+        """
+        return await self.contract_source_code(address)
 
     async def contract_creation(self, addresses: Iterable[str]) -> list[dict]:
         """Get Contract Creator and Creation Tx Hash"""

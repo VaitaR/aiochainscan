@@ -1,3 +1,4 @@
+from datetime import date, timedelta
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
@@ -5,6 +6,7 @@ import pytest_asyncio
 
 from aiochainscan import Client
 from aiochainscan.exceptions import ChainscanClientApiError
+from aiochainscan.modules.extra.utils import _default_date_range
 
 
 @pytest_asyncio.fixture
@@ -12,6 +14,29 @@ async def utils():
     c = Client('TestApiKey')
     yield c.utils
     await c.close()
+
+
+def test_default_date_range():
+    """Test _default_date_range helper function."""
+    # Test with default 30 days
+    start, end = _default_date_range()
+    today = date.today()
+    expected_start = today - timedelta(days=30)
+
+    assert end == today
+    assert start == expected_start
+
+    # Test with custom days
+    start, end = _default_date_range(days=7)
+    expected_start = today - timedelta(days=7)
+
+    assert end == today
+    assert start == expected_start
+
+    # Test with 0 days (should give today, today)
+    start, end = _default_date_range(days=0)
+    assert start == today
+    assert end == today
 
 
 def test_generate_intervals(utils):

@@ -4,6 +4,7 @@ import pytest
 import pytest_asyncio
 
 from aiochainscan import Client
+from aiochainscan.exceptions import FeatureNotSupportedError
 
 
 @pytest_asyncio.fixture
@@ -43,10 +44,10 @@ async def test_account_balance(token):
         mock.assert_called_once_with(
             params={
                 'module': 'account',
-                'action': 'tokenbalance',
+                'action': 'tokenbalancehistory',
                 'address': 'a1',
                 'contractaddress': 'c1',
-                'tag': '0x7b',
+                'blockno': 123,
             },
             headers={},
         )
@@ -208,3 +209,106 @@ async def test_token_inventory(token):
             },
             headers={},
         )
+
+
+@pytest.mark.asyncio
+async def test_token_supply_new_method(token):
+    """Test the new token_supply method with optional block_no parameter."""
+    # Test without block_no (current supply)
+    with patch('aiochainscan.network.Network.get', new=AsyncMock()) as mock:
+        await token.token_supply('c1')
+        mock.assert_called_once_with(
+            params={'module': 'stats', 'action': 'tokensupply', 'contractaddress': 'c1'},
+            headers={},
+        )
+
+    # Test with block_no (historical supply)
+    with patch('aiochainscan.network.Network.get', new=AsyncMock()) as mock:
+        await token.token_supply('c1', 123)
+        mock.assert_called_once_with(
+            params={
+                'module': 'stats',
+                'action': 'tokensupplyhistory',
+                'contractaddress': 'c1',
+                'blockno': 123,
+            },
+            headers={},
+        )
+
+
+@pytest.mark.asyncio
+async def test_token_balance_new_method(token):
+    """Test the new token_balance method with optional block_no parameter."""
+    # Test without block_no (current balance)
+    with patch('aiochainscan.network.Network.get', new=AsyncMock()) as mock:
+        await token.token_balance('c1', 'a1')
+        mock.assert_called_once_with(
+            params={
+                'module': 'account',
+                'action': 'tokenbalance',
+                'address': 'a1',
+                'contractaddress': 'c1',
+                'tag': 'latest',
+            },
+            headers={},
+        )
+
+    # Test with block_no (historical balance)
+    with patch('aiochainscan.network.Network.get', new=AsyncMock()) as mock:
+        await token.token_balance('c1', 'a1', 123)
+        mock.assert_called_once_with(
+            params={
+                'module': 'account',
+                'action': 'tokenbalancehistory',
+                'address': 'a1',
+                'contractaddress': 'c1',
+                'blockno': 123,
+            },
+            headers={},
+        )
+
+
+@pytest.mark.asyncio
+async def test_token_supply_feature_not_supported():
+    """Test that FeatureNotSupportedError is raised for unsupported scanners."""
+    with patch('aiochainscan.config.config_manager.get_scanner_config') as mock_config:
+        mock_config.return_value.name = 'Unsupported Scanner'
+
+        c = Client('TestApiKey')
+        c._url_builder._api_kind = 'unsupported_scanner'
+
+        try:
+            # Should work without block_no
+            with patch('aiochainscan.network.Network.get', new=AsyncMock()):
+                await c.token.token_supply('c1')
+
+            # Should raise with block_no
+            with pytest.raises(FeatureNotSupportedError) as exc_info:
+                await c.token.token_supply('c1', 123)
+
+            assert 'token_supply_by_block' in str(exc_info.value)
+        finally:
+            await c.close()
+
+
+@pytest.mark.asyncio
+async def test_token_balance_feature_not_supported():
+    """Test that FeatureNotSupportedError is raised for unsupported scanners."""
+    with patch('aiochainscan.config.config_manager.get_scanner_config') as mock_config:
+        mock_config.return_value.name = 'Unsupported Scanner'
+
+        c = Client('TestApiKey')
+        c._url_builder._api_kind = 'unsupported_scanner'
+
+        try:
+            # Should work without block_no
+            with patch('aiochainscan.network.Network.get', new=AsyncMock()):
+                await c.token.token_balance('c1', 'a1')
+
+            # Should raise with block_no
+            with pytest.raises(FeatureNotSupportedError) as exc_info:
+                await c.token.token_balance('c1', 'a1', 123)
+
+            assert 'token_balance_by_block' in str(exc_info.value)
+        finally:
+            await c.close()

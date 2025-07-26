@@ -9,6 +9,55 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
+class ScannerCapabilities:
+    """Describes which API actions are supported by each scanner network."""
+
+    # Block module actions
+    block_reward: bool = True
+    block_countdown: bool = True
+    block_number_by_timestamp: bool = True
+    daily_block_stats: bool = True
+
+    # Account module actions
+    account_balance: bool = True
+    account_transactions: bool = True
+    account_internal_txs: bool = True
+    account_erc20_transfers: bool = True
+    account_erc721_transfers: bool = True
+    account_erc1155_transfers: bool = True
+
+    # Contract module actions
+    contract_abi: bool = True
+    contract_source_code: bool = True
+    contract_creation: bool = True
+    contract_verification: bool = False  # Most networks don't support verification
+
+    # Transaction module actions
+    tx_receipt_status: bool = True
+    tx_status_check: bool = True
+
+    # Stats module actions
+    eth_supply: bool = True
+    eth_price: bool = True
+    nodes_size: bool = False  # Not supported by most networks
+
+    # Gas tracker actions
+    gas_estimate: bool = True
+    gas_oracle: bool = True
+
+    # Logs actions
+    event_logs: bool = True
+
+    # Token actions
+    token_supply: bool = True
+    token_balance: bool = True
+    token_info: bool = True
+
+    # Proxy actions
+    proxy_eth_calls: bool = True
+
+
+@dataclass
 class ScannerConfig:
     """Configuration for a blockchain scanner."""
 
@@ -19,6 +68,7 @@ class ScannerConfig:
     requires_api_key: bool = True
     special_config: dict[str, Any] = field(default_factory=dict)
     api_key: str | None = field(default=None, init=False)
+    capabilities: ScannerCapabilities = field(default_factory=ScannerCapabilities)
 
 
 class ConfigurationManager:
