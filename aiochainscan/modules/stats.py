@@ -1,7 +1,13 @@
+from __future__ import annotations
+
+import logging
 from datetime import date
 
 from aiochainscan.common import check_client_type, check_sync_mode, get_daily_stats_params
 from aiochainscan.modules.base import BaseModule
+from aiochainscan.modules.extra.utils import _default_date_range
+
+logger = logging.getLogger(__name__)
 
 
 class Stats(BaseModule):
@@ -26,6 +32,34 @@ class Stats(BaseModule):
         """Get ETHER LastPrice Price"""
         return await self._get(action='ethprice')
 
+    async def chain_size(
+        self,
+        start_date: date,
+        end_date: date,
+        client_type: str,
+        sync_mode: str,
+        sort: str | None = None,
+    ) -> dict | None:
+        """Get Chain Size"""
+        try:
+            result = await self._get(
+                **get_daily_stats_params('chainsize', start_date, end_date, sort),
+                clienttype=check_client_type(client_type),
+                syncmode=check_sync_mode(sync_mode),
+            )
+            # Return None if result is empty array
+            if isinstance(result, list) and len(result) == 0:
+                return None
+            return result
+        except ValueError:
+            # Re-raise validation errors from check functions
+            raise
+        except Exception as e:
+            logger.debug(
+                f'Chain size action not supported for {self._client._url_builder._api_kind}: {e}'
+            )
+            return None
+
     async def eth_nodes_size(
         self,
         start_date: date,
@@ -33,13 +67,82 @@ class Stats(BaseModule):
         client_type: str,
         sync_mode: str,
         sort: str | None = None,
-    ) -> dict:
-        """Get Ethereum Nodes Size"""
-        return await self._get(
-            **get_daily_stats_params('chainsize', start_date, end_date, sort),
-            clienttype=check_client_type(client_type),
-            syncmode=check_sync_mode(sync_mode),
-        )
+    ) -> dict | None:
+        """Get Ethereum Nodes Size
+
+        Deprecated: Use chain_size instead.
+        """
+        return await self.chain_size(start_date, end_date, client_type, sync_mode, sort)
+
+    async def nodes_size(
+        self,
+        start: date | None = None,
+        end: date | None = None,
+        client: str = 'geth',
+        sync: str = 'default',
+    ) -> dict | None:
+        """Get Node Size
+
+        Args:
+            start: Start date (default: today - 30 days)
+            end: End date (default: today)
+            client: Client type (default: 'geth')
+            sync: Sync mode (default: 'default')
+
+        Returns:
+            Node size data or None if no data available
+        """
+        if start is None or end is None:
+            start, end = _default_date_range(days=30)
+
+        try:
+            result = await self._get(
+                action='chainsize',
+                startdate=start.isoformat(),
+                enddate=end.isoformat(),
+                clienttype=check_client_type(client),
+                syncmode=check_sync_mode(sync),
+            )
+            # Return None if result is empty array
+            if isinstance(result, list) and len(result) == 0:
+                return None
+            return result
+        except ValueError:
+            # Re-raise validation errors from check functions
+            raise
+        except Exception as e:
+            logger.debug(
+                f'Nodes size action not supported for {self._client._url_builder._api_kind}: {e}'
+            )
+            return None
+
+    async def daily_block_count(self, start: date, end: date, sort: str = 'asc') -> dict | None:
+        """Get Daily Block Count and Rewards
+
+        Args:
+            start: Start date
+            end: End date
+            sort: Sort direction ('asc' or 'desc', default: 'asc')
+
+        Returns:
+            Daily block count data or None if no data available
+        """
+        try:
+            result = await self._get(
+                action='dailyblkcount',
+                startdate=start.isoformat(),
+                enddate=end.isoformat(),
+                sort=sort,
+            )
+            # Return None if result is empty array
+            if isinstance(result, list) and len(result) == 0:
+                return None
+            return result
+        except Exception as e:
+            logger.debug(
+                f'Daily block count action not supported for {self._client._url_builder._api_kind}: {e}'
+            )
+            return None
 
     async def total_nodes_count(self) -> dict:
         """Get Total Nodes Count"""

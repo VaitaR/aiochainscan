@@ -4,6 +4,7 @@ import pytest
 import pytest_asyncio
 
 from aiochainscan import Client
+from aiochainscan.exceptions import SourceNotVerifiedError
 
 
 @pytest_asyncio.fixture
@@ -15,17 +16,74 @@ async def contract():
 
 @pytest.mark.asyncio
 async def test_contract_abi(contract):
-    with patch('aiochainscan.network.Network.get', new=AsyncMock()) as mock:
-        await contract.contract_abi('0x012345')
+    # Test successful ABI retrieval
+    abi_response = '[{"constant":true,"inputs":[],"name":"name","outputs":[{"name":"","type":"string"}],"payable":false,"stateMutability":"view","type":"function"}]'
+
+    with patch(
+        'aiochainscan.network.Network.get', new=AsyncMock(return_value=abi_response)
+    ) as mock:
+        result = await contract.contract_abi('0x012345')
         mock.assert_called_once_with(
             params={'module': 'contract', 'action': 'getabi', 'address': '0x012345'}, headers={}
         )
+        assert result == abi_response
+
+    # Test unverified contract
+    with patch(
+        'aiochainscan.network.Network.get',
+        new=AsyncMock(return_value='Contract source code not verified'),
+    ):
+        with pytest.raises(SourceNotVerifiedError) as exc_info:
+            await contract.contract_abi('0x012345')
+        assert '0x012345' in str(exc_info.value)
 
 
 @pytest.mark.asyncio
 async def test_contract_source_code(contract):
+    # Test successful source code retrieval
+    source_response = [
+        {
+            'SourceCode': 'pragma solidity ^0.8.0;...',
+            'ABI': '[{"constant":true,"inputs":[],"name":"name","outputs":[{"name":"","type":"string"}],"payable":false,"stateMutability":"view","type":"function"}]',
+            'ContractName': 'MyContract',
+            'CompilerVersion': 'v0.8.19+commit.7dd6d404',
+            'OptimizationUsed': '1',
+        }
+    ]
+
+    with patch(
+        'aiochainscan.network.Network.get', new=AsyncMock(return_value=source_response)
+    ) as mock:
+        result = await contract.contract_source_code('0x012345')
+        mock.assert_called_once_with(
+            params={'module': 'contract', 'action': 'getsourcecode', 'address': '0x012345'},
+            headers={},
+        )
+        assert result == source_response
+
+    # Test unverified contract
+    unverified_response = [
+        {
+            'SourceCode': '',
+            'ABI': 'Contract source code not verified',
+            'ContractName': '',
+            'CompilerVersion': '',
+            'OptimizationUsed': '',
+        }
+    ]
+
+    with patch(
+        'aiochainscan.network.Network.get', new=AsyncMock(return_value=unverified_response)
+    ):
+        with pytest.raises(SourceNotVerifiedError) as exc_info:
+            await contract.contract_source_code('0x012345')
+        assert '0x012345' in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_contract_source(contract):
     with patch('aiochainscan.network.Network.get', new=AsyncMock()) as mock:
-        await contract.contract_source_code('0x012345')
+        await contract.contract_source('0x012345')
         mock.assert_called_once_with(
             params={'module': 'contract', 'action': 'getsourcecode', 'address': '0x012345'},
             headers={},

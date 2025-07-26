@@ -1,4 +1,120 @@
 from datetime import date
+from enum import Enum
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from aiochainscan.client import Client
+
+
+class ChainFeatures(Enum):
+    """Enum for blockchain scanner feature capabilities."""
+
+    # Token features
+    ERC20_TRANSFERS = 'erc20_transfers'
+    TOKEN_SUPPLY_BY_BLOCK = 'token_supply_by_block'
+    TOKEN_BALANCE_BY_BLOCK = 'token_balance_by_block'
+
+    # Account features
+    ACCOUNT_BALANCE_HISTORY = 'account_balance_history'
+
+    # Advanced features
+    CONTRACT_SOURCE = 'contract_source'
+    INTERNAL_TRANSACTIONS = 'internal_transactions'
+
+
+# Scanner feature capabilities mapping
+SCANNER_FEATURES = {
+    'eth': {
+        ChainFeatures.ERC20_TRANSFERS,
+        ChainFeatures.TOKEN_SUPPLY_BY_BLOCK,
+        ChainFeatures.TOKEN_BALANCE_BY_BLOCK,
+        ChainFeatures.ACCOUNT_BALANCE_HISTORY,
+        ChainFeatures.CONTRACT_SOURCE,
+        ChainFeatures.INTERNAL_TRANSACTIONS,
+    },
+    'bsc': {
+        ChainFeatures.ERC20_TRANSFERS,
+        ChainFeatures.TOKEN_SUPPLY_BY_BLOCK,
+        ChainFeatures.TOKEN_BALANCE_BY_BLOCK,
+        ChainFeatures.CONTRACT_SOURCE,
+        ChainFeatures.INTERNAL_TRANSACTIONS,
+    },
+    'polygon': {
+        ChainFeatures.ERC20_TRANSFERS,
+        ChainFeatures.TOKEN_SUPPLY_BY_BLOCK,
+        ChainFeatures.TOKEN_BALANCE_BY_BLOCK,
+        ChainFeatures.CONTRACT_SOURCE,
+        ChainFeatures.INTERNAL_TRANSACTIONS,
+    },
+    'arbitrum': {
+        ChainFeatures.ERC20_TRANSFERS,
+        ChainFeatures.TOKEN_SUPPLY_BY_BLOCK,
+        ChainFeatures.TOKEN_BALANCE_BY_BLOCK,
+        ChainFeatures.CONTRACT_SOURCE,
+        ChainFeatures.INTERNAL_TRANSACTIONS,
+    },
+    'optimism': {
+        ChainFeatures.ERC20_TRANSFERS,
+        ChainFeatures.CONTRACT_SOURCE,
+        ChainFeatures.INTERNAL_TRANSACTIONS,
+    },
+    'fantom': {
+        ChainFeatures.ERC20_TRANSFERS,
+        ChainFeatures.CONTRACT_SOURCE,
+        ChainFeatures.INTERNAL_TRANSACTIONS,
+    },
+    'gnosis': {
+        ChainFeatures.ERC20_TRANSFERS,
+        ChainFeatures.CONTRACT_SOURCE,
+        ChainFeatures.INTERNAL_TRANSACTIONS,
+    },
+    'base': {
+        ChainFeatures.ERC20_TRANSFERS,
+        ChainFeatures.CONTRACT_SOURCE,
+        ChainFeatures.INTERNAL_TRANSACTIONS,
+    },
+    'linea': {
+        ChainFeatures.ERC20_TRANSFERS,
+        ChainFeatures.CONTRACT_SOURCE,
+    },
+    'blast': {
+        ChainFeatures.ERC20_TRANSFERS,
+        ChainFeatures.CONTRACT_SOURCE,
+    },
+    'xlayer': {
+        ChainFeatures.ERC20_TRANSFERS,
+    },
+    'flare': {
+        ChainFeatures.ERC20_TRANSFERS,
+    },
+    'wemix': {
+        ChainFeatures.ERC20_TRANSFERS,
+    },
+    'chiliz': {
+        ChainFeatures.ERC20_TRANSFERS,
+    },
+    'mode': {
+        ChainFeatures.ERC20_TRANSFERS,
+    },
+}
+
+
+def check_feature_support(client: 'Client', feature: ChainFeatures) -> bool:
+    """Check if a feature is supported by the current scanner."""
+    scanner_id = client._url_builder._api_kind
+    scanner_features = SCANNER_FEATURES.get(scanner_id, set())
+    return feature in scanner_features
+
+
+def require_feature_support(client: 'Client', feature: ChainFeatures) -> None:
+    """Raise FeatureNotSupportedError if the feature is not supported by the current scanner."""
+    if not check_feature_support(client, feature):
+        from aiochainscan.config import config_manager
+        from aiochainscan.exceptions import FeatureNotSupportedError
+
+        scanner_id = client._url_builder._api_kind
+        scanner_config = config_manager.get_scanner_config(scanner_id)
+        raise FeatureNotSupportedError(feature.value, scanner_config.name)
 
 
 def check_value(value: str, values: tuple[str, ...]) -> str:
