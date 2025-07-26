@@ -1,6 +1,7 @@
 """
 Simple, fast tests for utils module.
 """
+
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -29,7 +30,7 @@ class TestUtilsBasic:
     @pytest.mark.asyncio
     async def test_is_contract_unverified(self):
         """Test is_contract with unverified contract."""
-        error = ChainscanClientApiError("NOTOK", "Contract source code not verified")
+        error = ChainscanClientApiError('NOTOK', 'Contract source code not verified')
         self.mock_client.contract.contract_abi = AsyncMock(side_effect=error)
 
         result = await self.utils.is_contract('0x123')
@@ -58,7 +59,7 @@ class TestUtilsBasic:
     @pytest.mark.asyncio
     async def test_get_proxy_abi_error(self):
         """Test proxy ABI error handling."""
-        error = ChainscanClientApiError("ERROR", "Contract not found")
+        error = ChainscanClientApiError('ERROR', 'Contract not found')
         self.mock_client.contract.contract_source_code = AsyncMock(side_effect=error)
 
         result = await self.utils.get_proxy_abi('0x123')
@@ -82,6 +83,7 @@ class TestUtilsBasic:
     @pytest.mark.asyncio
     async def test_token_transfers_empty(self):
         """Test token transfers with empty result."""
+
         async def empty_generator(**kwargs):
             return
             yield  # Make it a generator but yield nothing
