@@ -97,7 +97,7 @@ class Utils:
                 if e.message.lower() != 'no transactions found':
                     raise
 
-        return next((i['from'].lower() for i in response), None)
+        return next((i['from'].lower() for i in response), None) if response else None
 
     async def get_proxy_abi(self, address: str) -> str | None:
         abi_directory = 'abi'
@@ -250,19 +250,12 @@ class Utils:
             if first_batch_block > last_batch_block:
                 # if scaner have another sorting method
                 logging.warning(
-                    f'First block is higher than current block for {address} can be problems with sorting',
-                    'first_batch_block:',
-                    first_batch_block,
-                    'last_batch_block:',
-                    last_batch_block,
+                    f'First block is higher than current block for {address} can be problems with sorting, first_batch_block: {first_batch_block}, last_batch_block: {last_batch_block}'
                 )
                 end_batch_block = first_batch_block
             else:
                 logging.warning(
-                    'Normal sorting, first_batch_block:',
-                    first_batch_block,
-                    'last_batch_block:',
-                    last_batch_block,
+                    f'Normal sorting, first_batch_block: {first_batch_block}, last_batch_block: {last_batch_block}'
                 )
                 start_batch_block = last_batch_block
 
