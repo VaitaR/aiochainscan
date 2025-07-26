@@ -349,3 +349,31 @@ This configuration system provides a robust foundation for managing multiple blo
   - Backward compatibility maintained for existing `ETH_KEY` format
   - New `.env` templates use the correct `{SCANNER_NAME}_KEY` format
   - Configuration system automatically prioritizes new format over old format
+
+### 📊 Scanner Testing Results (Complete Analysis):
+
+**✅ Working Scanners (2/12):**
+- `eth` (Etherscan) - ETH mainnet + sepolia ✅
+- `bsc` (BscScan) - BNB mainnet ✅
+
+**🔑 Requiring API Key Setup (9/12):**
+- `arbitrum` → Set `ARBISCAN_KEY`
+- `base` → Set `BASESCAN_KEY`  
+- `blast` → Set `BLASTSCAN_KEY`
+- `fantom` → Set `FTMSCAN_KEY`
+- `gnosis` → Set `GNOSISSCAN_KEY`
+- `linea` → Set `LINEASCAN_KEY`
+- `optimism` → Set `OPTIMISM_ETHERSCAN_KEY`
+- `polygon` → Set `POLYGONSCAN_KEY`
+- `xlayer` → Set `OKLINK_X_LAYER_KEY`
+
+**⚠️ Special Cases (1/12):**
+- `flare` - Limited functionality (no proxy module support), needs specialized handling
+
+**Key Findings:**
+- 92% of scanners require API keys
+- Testnet DNS issues for some scanners (`api-test.etherscan.io`, `api-test.bscscan.com`)
+- Flare Explorer uses limited Etherscan-compatible API (account/stats/block modules only)
+- All tested scanners follow consistent API key naming: `{SCANNER_NAME}_KEY`
+
+Run `python3 test_all_scanners.py` for comprehensive testing of all supported blockchain scanners.
