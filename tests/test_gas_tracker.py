@@ -22,7 +22,10 @@ async def test_gas_estimate(gas_tracker):
     gas_tracker._client._url_builder._network = 'main'
 
     # Test successful call
-    with patch('aiochainscan.network.Network.get', new=AsyncMock(return_value={'status': '1', 'result': '21000'})) as mock:
+    with patch(
+        'aiochainscan.network.Network.get',
+        new=AsyncMock(return_value={'status': '1', 'result': '21000'}),
+    ) as mock:
         result = await gas_tracker.gas_estimate(20000000000)  # 20 Gwei
         mock.assert_called_once_with(
             params={
@@ -36,7 +39,10 @@ async def test_gas_estimate(gas_tracker):
 
     # Test API status error
     with (
-        patch('aiochainscan.network.Network.get', new=AsyncMock(return_value={'status': '0', 'message': 'Error'})),
+        patch(
+            'aiochainscan.network.Network.get',
+            new=AsyncMock(return_value={'status': '0', 'message': 'Error'}),
+        ),
         pytest.raises(FeatureNotSupportedError),
     ):
         await gas_tracker.gas_estimate(20000000000)
@@ -67,14 +73,12 @@ async def test_gas_oracle(gas_tracker):
     # Test successful call
     oracle_response = {
         'status': '1',
-        'result': {
-            'SafeGasPrice': '20',
-            'StandardGasPrice': '25',
-            'FastGasPrice': '30'
-        }
+        'result': {'SafeGasPrice': '20', 'StandardGasPrice': '25', 'FastGasPrice': '30'},
     }
 
-    with patch('aiochainscan.network.Network.get', new=AsyncMock(return_value=oracle_response)) as mock:
+    with patch(
+        'aiochainscan.network.Network.get', new=AsyncMock(return_value=oracle_response)
+    ) as mock:
         result = await gas_tracker.gas_oracle()
         mock.assert_called_once_with(
             params={'module': 'gastracker', 'action': 'gasoracle'}, headers={}
@@ -83,7 +87,10 @@ async def test_gas_oracle(gas_tracker):
 
     # Test API status error
     with (
-        patch('aiochainscan.network.Network.get', new=AsyncMock(return_value={'status': '0', 'message': 'Error'})),
+        patch(
+            'aiochainscan.network.Network.get',
+            new=AsyncMock(return_value={'status': '0', 'message': 'Error'}),
+        ),
         pytest.raises(FeatureNotSupportedError),
     ):
         await gas_tracker.gas_oracle()

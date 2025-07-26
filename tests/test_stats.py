@@ -467,12 +467,14 @@ async def test_daily_block_count(stats):
     # Test with sample data response
     sample_response = [
         {
-            "UTCDate": "2023-11-12",
-            "unixTimeStamp": "1699747200",
-            "blockCount": "7000",
-            "blockRewards_Eth": "21000.5"
+            'UTCDate': '2023-11-12',
+            'unixTimeStamp': '1699747200',
+            'blockCount': '7000',
+            'blockRewards_Eth': '21000.5',
         }
     ]
-    with patch('aiochainscan.network.Network.get', new=AsyncMock(return_value=sample_response)) as mock:
+    with patch(
+        'aiochainscan.network.Network.get', new=AsyncMock(return_value=sample_response)
+    ) as mock:
         result = await stats.daily_block_count(start_date, end_date)
         assert result == sample_response

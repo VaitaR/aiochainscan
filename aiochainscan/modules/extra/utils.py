@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import json
 import os
@@ -34,7 +36,7 @@ def _default_date_range(days: int = 30) -> tuple[date, date]:
 class Utils:
     """Helper methods which use the combination of documented APIs."""
 
-    def __init__(self, client: 'Client'):
+    def __init__(self, client: Client):
         self._client = client
         self.data_model_mapping: dict[str, Callable[..., AsyncIterator[dict]]] = {
             'internal_txs': self._client.account.internal_txs,

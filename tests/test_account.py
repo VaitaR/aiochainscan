@@ -353,7 +353,9 @@ async def test_erc20_transfers(account):
 async def test_erc20_transfers_feature_not_supported():
     """Test that FeatureNotSupportedError is raised for unsupported scanners."""
     # Create a client with an unsupported scanner
-    with patch('aiochainscan.config.config_manager.get_scanner_config') as mock_config:
+    from aiochainscan.config import config_manager
+
+    with patch.object(config_manager, 'get_scanner_config') as mock_config:
         mock_config.return_value.name = 'Unsupported Scanner'
 
         # Create client with URL builder that has unsupported scanner

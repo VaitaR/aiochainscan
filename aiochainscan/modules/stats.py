@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import logging
 from datetime import date
 
@@ -77,7 +79,7 @@ class Stats(BaseModule):
         start: date | None = None,
         end: date | None = None,
         client: str = 'geth',
-        sync: str = 'default'
+        sync: str = 'default',
     ) -> dict | None:
         """Get Node Size
 

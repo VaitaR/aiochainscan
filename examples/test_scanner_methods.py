@@ -12,6 +12,8 @@ Generates detailed reports showing:
 - Error analysis
 """
 
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
@@ -90,32 +92,32 @@ class ScannerMethodTester:
 
         # Fixed historical blocks for reliable testing (well-known blocks that exist on all networks)
         self.fixed_test_blocks = {
-            'eth': 10000,     # January 2024
-            'bsc': 10000,     # January 2024
-            'polygon': 10000, # January 2024
-            'arbitrum': 10000, # January 2024
-            'optimism': 10000, # January 2024
-            'base': 10000,    # January 2024
+            'eth': 10000,  # January 2024
+            'bsc': 10000,  # January 2024
+            'polygon': 10000,  # January 2024
+            'arbitrum': 10000,  # January 2024
+            'optimism': 10000,  # January 2024
+            'base': 10000,  # January 2024
             'fantom': 10000,  # January 2024
             'gnosis': 10000,  # January 2024
-            'linea': 10000,    # Historical block
-            'blast': 10000,    # Historical block
-            'xlayer': 10000,    # Historical block
-            'flare': 10000,    # Historical block
+            'linea': 10000,  # Historical block
+            'blast': 10000,  # Historical block
+            'xlayer': 10000,  # Historical block
+            'flare': 10000,  # Historical block
         }
 
         # Verified contract addresses for ABI/source testing
         self.verified_contracts = {
-                "eth":       "0xdAC17F958D2ee523a2206206994597C13D831ec7",
-                "eth:sepolia":"0xb26b2de65D07ebB5E54C7f6282424d3bE670e1F0",
-                "bsc":       "0xe9e7cEA3dEDca5984780Bafc599Bd69aDd087d56",
-                "polygon":   "0x7cEB23fD6bC0adD59e62ac25578270cFf1b9f619",
-                "arbitrum":  "0xfd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9",
-                "optimism":  "0x0b2c639c533813f4aA9d7837cAF62653d097fF85",
-                "base":      "0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA",
-                "linea":     "0xe5d7C2A44FfDDF6B295a15c148167dAAaF5CF34F",
-                "gnosis":    "0x9C58BAcC331c9aa871AFD802DB6379a98e80CEdB",
-                "blast":     "0x4300000000000000000000000000000000000003",
+            'eth': '0xdAC17F958D2ee523a2206206994597C13D831ec7',
+            'eth:sepolia': '0xb26b2de65D07ebB5E54C7f6282424d3bE670e1F0',
+            'bsc': '0xe9e7cEA3dEDca5984780Bafc599Bd69aDd087d56',
+            'polygon': '0x7cEB23fD6bC0adD59e62ac25578270cFf1b9f619',
+            'arbitrum': '0xfd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9',
+            'optimism': '0x0b2c639c533813f4aA9d7837cAF62653d097fF85',
+            'base': '0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA',
+            'linea': '0xe5d7C2A44FfDDF6B295a15c148167dAAaF5CF34F',
+            'gnosis': '0x9C58BAcC331c9aa871AFD802DB6379a98e80CEdB',
+            'blast': '0x4300000000000000000000000000000000000003',
         }
 
     def get_test_address(self, scanner_id: str) -> str:
@@ -162,8 +164,6 @@ class ScannerMethodTester:
             return await client.block.block_countdown(fixed_block + 1000)
         else:
             return await client.block.block_countdown()  # Use default (current + 1000)
-
-
 
     async def test_all_scanners(self):
         """Test all available scanners."""
@@ -248,7 +248,10 @@ class ScannerMethodTester:
                 'block': [
                     ('block_reward', lambda c: self._test_block_reward(c, scanner_id)),
                     ('block_countdown', lambda c: self._test_block_countdown(c, scanner_id)),
-                    ('daily_block_count', lambda c: c.block.daily_block_count()),  # Always use fixed historical dates
+                    (
+                        'daily_block_count',
+                        lambda c: c.block.daily_block_count(),
+                    ),  # Always use fixed historical dates
                 ],
                 'transaction': [
                     (
@@ -278,7 +281,10 @@ class ScannerMethodTester:
                 ],
                 'contract': [
                     ('contract_abi', lambda c: self._test_contract_abi(c, verified_contract)),
-                    ('contract_source', lambda c: self._test_contract_source(c, verified_contract)),
+                    (
+                        'contract_source',
+                        lambda c: self._test_contract_source(c, verified_contract),
+                    ),
                 ],
             }
 
@@ -653,7 +659,9 @@ async def main():
         print('=' * 80)
         print(f'Total scanners tested: {total_scanners}')
         print(f'Scanners with working methods: {working_scanners}')
-        print(f'Block testing mode: {"Fixed historical blocks" if use_fixed_blocks else "Current blocks"}')
+        print(
+            f'Block testing mode: {"Fixed historical blocks" if use_fixed_blocks else "Current blocks"}'
+        )
         print('Reports generated in examples/')
 
     except Exception as e:

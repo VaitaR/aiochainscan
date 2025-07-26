@@ -1,9 +1,13 @@
+from __future__ import annotations
+
 import json
 import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+# dotenv is optional - manual env file loading is implemented below
 
 logger = logging.getLogger(__name__)
 

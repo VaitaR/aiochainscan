@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from datetime import date
 
 from aiochainscan.common import check_closest_value, get_daily_stats_params
@@ -42,7 +44,9 @@ class Block(BaseModule):
 
         return data
 
-    async def block_countdown(self, block_no: int | None = None, *, offset: int = 1_000) -> dict | None:
+    async def block_countdown(
+        self, block_no: int | None = None, *, offset: int = 1_000
+    ) -> dict | None:
         """Get Estimated Block Countdown Time by BlockNo
 
         Args:
@@ -70,16 +74,15 @@ class Block(BaseModule):
         # Validate block number
         block_diff = block_no - current_block
         if block_diff <= 0:
-            raise ValueError("Past block for countdown")
+            raise ValueError('Past block for countdown')
 
         if block_diff > 2_000_000:
-            raise ValueError("Block number too large (max difference: 2,000,000 blocks)")
+            raise ValueError('Block number too large (max difference: 2,000,000 blocks)')
 
         response = await self._get(action='getblockcountdown', blockno=block_no)
 
         # Handle API errors with specific messages
-        if (isinstance(response, dict) and
-            response.get('status') == '0'):
+        if isinstance(response, dict) and response.get('status') == '0':
             message = response.get('message', '')
             if 'Block number too large' in message:
                 raise ValueError(message)
@@ -145,9 +148,11 @@ class Block(BaseModule):
         )
 
         # Handle "No transactions found" response
-        if (isinstance(response, dict) and
-            response.get('status') == '0' and
-            response.get('message', '').startswith('No transactions found')):
+        if (
+            isinstance(response, dict)
+            and response.get('status') == '0'
+            and response.get('message', '').startswith('No transactions found')
+        ):
             return None
 
         return response

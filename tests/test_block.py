@@ -17,7 +17,10 @@ async def block():
 @pytest.mark.asyncio
 async def test_block_reward(block):
     # Test with specific block number
-    with patch('aiochainscan.network.Network.get', new=AsyncMock(return_value={'status': '1', 'result': {'blockNumber': '123'}})) as mock:
+    with patch(
+        'aiochainscan.network.Network.get',
+        new=AsyncMock(return_value={'status': '1', 'result': {'blockNumber': '123'}}),
+    ) as mock:
         result = await block.block_reward(123)
         mock.assert_called_once_with(
             params={'module': 'block', 'action': 'getblockreward', 'blockno': 123}, headers={}
@@ -26,8 +29,13 @@ async def test_block_reward(block):
 
     # Test with default (current block - 1)
     with (
-        patch('aiochainscan.modules.proxy.Proxy.block_number', new=AsyncMock(return_value='0x64')) as proxy_mock,
-        patch('aiochainscan.network.Network.get', new=AsyncMock(return_value={'status': '1', 'result': {'blockNumber': '99'}})) as mock,
+        patch(
+            'aiochainscan.modules.proxy.Proxy.block_number', new=AsyncMock(return_value='0x64')
+        ) as proxy_mock,
+        patch(
+            'aiochainscan.network.Network.get',
+            new=AsyncMock(return_value={'status': '1', 'result': {'blockNumber': '99'}}),
+        ) as mock,
     ):
         result = await block.block_reward()
         proxy_mock.assert_called_once()
@@ -36,7 +44,10 @@ async def test_block_reward(block):
         )
 
     # Test status='0' response (no reward available)
-    with patch('aiochainscan.network.Network.get', new=AsyncMock(return_value={'status': '0', 'message': 'No reward available'})):
+    with patch(
+        'aiochainscan.network.Network.get',
+        new=AsyncMock(return_value={'status': '0', 'message': 'No reward available'}),
+    ):
         result = await block.block_reward(123)
         assert result is None
 
@@ -45,8 +56,13 @@ async def test_block_reward(block):
 async def test_block_countdown(block):
     # Test with default parameters (current + 1000)
     with (
-        patch('aiochainscan.modules.proxy.Proxy.block_number', new=AsyncMock(return_value='0x64')) as proxy_mock,
-        patch('aiochainscan.network.Network.get', new=AsyncMock(return_value={'status': '1', 'result': {'countdownBlock': '1100'}})) as mock,
+        patch(
+            'aiochainscan.modules.proxy.Proxy.block_number', new=AsyncMock(return_value='0x64')
+        ) as proxy_mock,
+        patch(
+            'aiochainscan.network.Network.get',
+            new=AsyncMock(return_value={'status': '1', 'result': {'countdownBlock': '1100'}}),
+        ) as mock,
     ):
         result = await block.block_countdown()  # Default: current + 1000
         proxy_mock.assert_called_once()
@@ -57,7 +73,10 @@ async def test_block_countdown(block):
     # Test with custom offset
     with (
         patch('aiochainscan.modules.proxy.Proxy.block_number', new=AsyncMock(return_value='0x64')),
-        patch('aiochainscan.network.Network.get', new=AsyncMock(return_value={'status': '1', 'result': {'countdownBlock': '600'}})) as mock,
+        patch(
+            'aiochainscan.network.Network.get',
+            new=AsyncMock(return_value={'status': '1', 'result': {'countdownBlock': '600'}}),
+        ) as mock,
     ):
         result = await block.block_countdown(offset=500)
         mock.assert_called_once_with(
@@ -67,7 +86,10 @@ async def test_block_countdown(block):
     # Test with specific future block
     with (
         patch('aiochainscan.modules.proxy.Proxy.block_number', new=AsyncMock(return_value='0x64')),
-        patch('aiochainscan.network.Network.get', new=AsyncMock(return_value={'status': '1', 'result': {'countdownBlock': '200'}})) as mock,
+        patch(
+            'aiochainscan.network.Network.get',
+            new=AsyncMock(return_value={'status': '1', 'result': {'countdownBlock': '200'}}),
+        ) as mock,
     ):
         result = await block.block_countdown(200)
         mock.assert_called_once_with(
@@ -76,37 +98,51 @@ async def test_block_countdown(block):
 
     # Test with past block (should raise ValueError)
     with (
-        patch('aiochainscan.modules.proxy.Proxy.block_number', new=AsyncMock(return_value='0x64')),  # current block = 100
-        pytest.raises(ValueError, match="Past block for countdown"),
+        patch(
+            'aiochainscan.modules.proxy.Proxy.block_number', new=AsyncMock(return_value='0x64')
+        ),  # current block = 100
+        pytest.raises(ValueError, match='Past block for countdown'),
     ):
         await block.block_countdown(50)  # Past block
 
     # Test with current block (should raise ValueError)
     with (
-        patch('aiochainscan.modules.proxy.Proxy.block_number', new=AsyncMock(return_value='0x64')),  # current block = 100
-        pytest.raises(ValueError, match="Past block for countdown"),
+        patch(
+            'aiochainscan.modules.proxy.Proxy.block_number', new=AsyncMock(return_value='0x64')
+        ),  # current block = 100
+        pytest.raises(ValueError, match='Past block for countdown'),
     ):
         await block.block_countdown(100)  # Current block
 
     # Test with block difference too large
     with (
-        patch('aiochainscan.modules.proxy.Proxy.block_number', new=AsyncMock(return_value='0x64')),  # current block = 100
-        pytest.raises(ValueError, match="Block number too large"),
+        patch(
+            'aiochainscan.modules.proxy.Proxy.block_number', new=AsyncMock(return_value='0x64')
+        ),  # current block = 100
+        pytest.raises(ValueError, match='Block number too large'),
     ):
         await block.block_countdown(2_100_101)  # More than 2M blocks ahead
 
     # Test API error for "Block number too large"
     with (
         patch('aiochainscan.modules.proxy.Proxy.block_number', new=AsyncMock(return_value='0x64')),
-        patch('aiochainscan.network.Network.get', new=AsyncMock(return_value={'status': '0', 'message': 'Error! Block number too large'})),
-        pytest.raises(ValueError, match="Error! Block number too large"),
+        patch(
+            'aiochainscan.network.Network.get',
+            new=AsyncMock(
+                return_value={'status': '0', 'message': 'Error! Block number too large'}
+            ),
+        ),
+        pytest.raises(ValueError, match='Error! Block number too large'),
     ):
         await block.block_countdown(200)
 
     # Test "No transactions found" response
     with (
         patch('aiochainscan.modules.proxy.Proxy.block_number', new=AsyncMock(return_value='0x64')),
-        patch('aiochainscan.network.Network.get', new=AsyncMock(return_value={'status': '0', 'message': 'No transactions found'})),
+        patch(
+            'aiochainscan.network.Network.get',
+            new=AsyncMock(return_value={'status': '0', 'message': 'No transactions found'}),
+        ),
     ):
         result = await block.block_countdown(200)
         assert result is None
@@ -206,13 +242,17 @@ async def test_daily_block_count(block):
                 'UTCDate': '2023-11-12',
                 'unixTimeStamp': '1699747200',
                 'blockCount': '7200',
-                'blockRewards_Eth': '21600'
+                'blockRewards_Eth': '21600',
             }
-        ]
+        ],
     }
 
-    with patch('aiochainscan.network.Network.get', new=AsyncMock(return_value=sample_response)) as mock:
-        result = await block.daily_block_count(start_date=start_date, end_date=end_date, sort='asc')
+    with patch(
+        'aiochainscan.network.Network.get', new=AsyncMock(return_value=sample_response)
+    ) as mock:
+        result = await block.daily_block_count(
+            start_date=start_date, end_date=end_date, sort='asc'
+        )
         mock.assert_called_once_with(
             params={
                 'module': 'stats',
@@ -228,7 +268,9 @@ async def test_daily_block_count(block):
     # Test with default dates (should use today-30d to today)
     with patch('aiochainscan.modules.block.default_range') as date_mock:
         date_mock.return_value = (date(2023, 10, 13), date(2023, 11, 13))
-        with patch('aiochainscan.network.Network.get', new=AsyncMock(return_value=sample_response)) as mock:
+        with patch(
+            'aiochainscan.network.Network.get', new=AsyncMock(return_value=sample_response)
+        ) as mock:
             result = await block.daily_block_count()
             date_mock.assert_called_once_with(days=30)
             mock.assert_called_once_with(
@@ -243,15 +285,22 @@ async def test_daily_block_count(block):
             )
 
     # Test "No transactions found" response
-    with patch('aiochainscan.network.Network.get', new=AsyncMock(return_value={'status': '0', 'message': 'No transactions found'})):
+    with patch(
+        'aiochainscan.network.Network.get',
+        new=AsyncMock(return_value={'status': '0', 'message': 'No transactions found'}),
+    ):
         result = await block.daily_block_count(start_date=start_date, end_date=end_date)
         assert result is None
 
     # Test with partial date parameters (should use defaults for missing ones)
     with patch('aiochainscan.modules.block.default_range') as date_mock:
         date_mock.return_value = (date(2023, 10, 13), date(2023, 11, 13))
-        with patch('aiochainscan.network.Network.get', new=AsyncMock(return_value=sample_response)) as mock:
-            result = await block.daily_block_count(start_date=start_date)  # Only start_date provided
+        with patch(
+            'aiochainscan.network.Network.get', new=AsyncMock(return_value=sample_response)
+        ) as mock:
+            result = await block.daily_block_count(
+                start_date=start_date
+            )  # Only start_date provided
             date_mock.assert_called_once_with(days=30)
             mock.assert_called_once_with(
                 params={

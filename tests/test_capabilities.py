@@ -1,4 +1,3 @@
-
 from aiochainscan.capabilities import (
     FEATURE_SUPPORT,
     get_supported_features,
