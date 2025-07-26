@@ -1,7 +1,8 @@
 import asyncio
 import logging
 from asyncio import AbstractEventLoop
-from typing import Any, AsyncContextManager
+from contextlib import AbstractAsyncContextManager
+from typing import Any
 
 import aiohttp
 from aiohttp import ClientTimeout
@@ -27,7 +28,7 @@ class Network:
         loop: AbstractEventLoop | None = None,
         timeout: float | ClientTimeout | None = 10,
         proxy: str | None = None,
-        throttler: AsyncContextManager | None = None,
+        throttler: AbstractAsyncContextManager | None = None,
         retry_options: RetryOptionsBase | None = None,
         use_cffi: bool = True,
     ) -> None:
@@ -131,9 +132,9 @@ class Network:
                 await response.text()
                 if isinstance(response, aiohttp.ClientResponse)
                 else response.text,
-            )
+            ) from None
         except Exception as e:
-            raise ChainscanClientError(e)
+            raise ChainscanClientError(e) from e
         else:
             self._logger.debug('Response: %r', str(response_json)[0:200])
             self._raise_if_error(response_json)

@@ -61,11 +61,6 @@ target-version = "py310"
 select = ["E", "W", "F", "B", "I", "SIM", "UP", "N", "C4"]
 ignore = [
     "E501",  # Line too long (will be handled by formatter)
-    "B904",  # Within an except clause, raise exceptions with raise ... from err
-    "N806",  # Variable name should be lowercase (for constants in functions)
-    "B018",  # Found useless expression
-    "SIM117", # Use a single with statement with multiple contexts (complex refactor)
-    "UP035", # typing.AsyncContextManager is deprecated (will fix in next release)
 ]
 
 [tool.ruff.format]

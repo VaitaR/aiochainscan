@@ -13,74 +13,74 @@ def check_hex(number: str | int) -> str:
     try:
         int(number, 16)
     except ValueError as e:
-        raise ValueError(f'Invalid hex parameter {number!r}: {e}')
+        raise ValueError(f'Invalid hex parameter {number!r}: {e}') from e
     else:
         return number
 
 
 def check_tag(tag: str | int) -> str:
-    _TAGS = (
+    _tags = (
         'earliest',  # the earliest/genesis block
         'latest',  # the latest mined block
         'pending',  # for the pending state/transactions
     )
 
-    if tag in _TAGS:
+    if tag in _tags:
         return tag
     return check_hex(tag)
 
 
 def check_sort_direction(sort: str) -> str:
-    _SORT_ORDERS = (
+    _sort_orders = (
         'asc',  # ascending order
         'desc',  # descending order
     )
-    return check_value(sort, _SORT_ORDERS)
+    return check_value(sort, _sort_orders)
 
 
 def check_blocktype(blocktype: str) -> str:
-    _BLOCK_TYPES = (
+    _block_types = (
         'blocks',  # full blocks only
         'uncles',  # uncle blocks only
     )
-    return check_value(blocktype, _BLOCK_TYPES)
+    return check_value(blocktype, _block_types)
 
 
 def check_closest_value(closest_value: str) -> str:
-    _CLOSEST_VALUES = (
+    _closest_values = (
         'before',  # ascending order
         'after',  # descending order
     )
 
-    return check_value(closest_value, _CLOSEST_VALUES)
+    return check_value(closest_value, _closest_values)
 
 
 def check_client_type(client_type: str) -> str:
-    _CLIENT_TYPES = (
+    _client_types = (
         'geth',
         'parity',
     )
 
-    return check_value(client_type, _CLIENT_TYPES)
+    return check_value(client_type, _client_types)
 
 
 def check_sync_mode(sync_mode: str) -> str:
-    _SYNC_MODES = (
+    _sync_modes = (
         'default',
         'archive',
     )
 
-    return check_value(sync_mode, _SYNC_MODES)
+    return check_value(sync_mode, _sync_modes)
 
 
 def check_token_standard(token_standard: str) -> str:
-    _TOKEN_STANDARDS = (
+    _token_standards = (
         'erc20',
         'erc721',
         'erc1155',
     )
 
-    return check_value(token_standard, _TOKEN_STANDARDS)
+    return check_value(token_standard, _token_standards)
 
 
 def get_daily_stats_params(action: str, start_date: date, end_date: date, sort: str) -> dict:

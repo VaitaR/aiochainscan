@@ -1,5 +1,5 @@
 from asyncio import AbstractEventLoop
-from typing import AsyncContextManager
+from contextlib import AbstractAsyncContextManager
 
 from aiohttp import ClientTimeout
 from aiohttp_retry import RetryOptionsBase
@@ -27,7 +27,7 @@ class Client:
         loop: AbstractEventLoop = None,
         timeout: ClientTimeout = None,
         proxy: str = None,
-        throttler: AsyncContextManager = None,
+        throttler: AbstractAsyncContextManager = None,
         retry_options: RetryOptionsBase = None,
     ) -> None:
         self._url_builder = UrlBuilder(api_key, api_kind, network)

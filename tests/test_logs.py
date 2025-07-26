@@ -61,49 +61,58 @@ async def test_balance(logs):
             headers={},
         )
 
-    with patch('aiochainscan.network.Network.get', new=AsyncMock()) as mock:
-        with patch('aiochainscan.modules.logs.Logs._check_block', new=Mock()) as block_mock:
-            await logs.get_logs(
-                start_block=1,
-                end_block=2,
-                address='addr',
-                topics=['top1', 'top2'],
-                topic_operators=['and'],
-            )
-            block_mock.assert_has_calls([call(1), call(2)])
-            mock.assert_called_once()
+    with (
+        patch('aiochainscan.network.Network.get', new=AsyncMock()) as mock,
+        patch('aiochainscan.modules.logs.Logs._check_block', new=Mock()) as block_mock,
+    ):
+        await logs.get_logs(
+            start_block=1,
+            end_block=2,
+            address='addr',
+            topics=['top1', 'top2'],
+            topic_operators=['and'],
+        )
+        block_mock.assert_has_calls([call(1), call(2)])
+        mock.assert_called_once()
 
-    with patch('aiochainscan.network.Network.get', new=AsyncMock()) as mock:
-        with patch('aiochainscan.modules.logs.Logs._fill_topics', new=Mock()) as topic_mock:
-            topic_mock.return_value = {}
-            await logs.get_logs(
-                start_block=1,
-                end_block=2,
-                address='addr',
-                topics=[
-                    'topic',
-                ],
-            )
-            topic_mock.assert_called_once_with(
-                [
-                    'topic',
-                ],
-                None,
-            )
-            mock.assert_called_once()
+    with (
+        patch('aiochainscan.network.Network.get', new=AsyncMock()) as mock,
+        patch('aiochainscan.modules.logs.Logs._fill_topics', new=Mock()) as topic_mock,
+    ):
+        topic_mock.return_value = {}
+        await logs.get_logs(
+            start_block=1,
+            end_block=2,
+            address='addr',
+            topics=[
+                'topic',
+            ],
+        )
+        topic_mock.assert_called_once_with(
+            [
+                'topic',
+            ],
+            None,
+        )
+        mock.assert_called_once()
 
-    with patch('aiochainscan.network.Network.get', new=AsyncMock()) as mock:
-        with patch('aiochainscan.modules.logs.Logs._fill_topics', new=Mock()) as topic_mock:
-            topic_mock.return_value = {}
-            await logs.get_logs(
-                start_block=1,
-                end_block=2,
-                address='addr',
-                topics=['top1', 'top2'],
-                topic_operators=['and'],
-            )
-            topic_mock.assert_called_once_with(['top1', 'top2'], ['and'])
-            mock.assert_called_once()
+    with (
+        patch('aiochainscan.network.Network.get', new=AsyncMock()) as mock,
+        patch('aiochainscan.modules.logs.Logs._fill_topics', new=Mock()) as topic_mock,
+    ):
+        topic_mock.return_value = {}
+        await logs.get_logs(
+            start_block=1,
+            end_block=2,
+            address='addr',
+            topics=['top1', 'top2'],
+            topic_operators=['and'],
+        )
+        topic_mock.assert_called_once_with(
+            ['top1', 'top2'],
+            ['and'],
+        )
+        mock.assert_called_once()
 
 
 def test_check_block(logs):

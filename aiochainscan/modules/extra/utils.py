@@ -191,8 +191,6 @@ class Utils:
                     f'Error decoding element {i} element {element} for {address}: {e}'
                 )
 
-        self._logger.info
-
         return elements
 
     async def _get_elements_batch(
