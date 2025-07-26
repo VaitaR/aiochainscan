@@ -16,16 +16,16 @@ class TestScannerConfig:
     def test_scanner_config_creation(self):
         """Test creating a ScannerConfig instance."""
         scanner_config = ScannerConfig(
-            name="Test Scanner",
-            base_domain="test.com",
-            currency="TEST",
+            name='Test Scanner',
+            base_domain='test.com',
+            currency='TEST',
             supported_networks={'main', 'test'},
-            requires_api_key=True
+            requires_api_key=True,
         )
 
-        assert scanner_config.name == "Test Scanner"
-        assert scanner_config.base_domain == "test.com"
-        assert scanner_config.currency == "TEST"
+        assert scanner_config.name == 'Test Scanner'
+        assert scanner_config.base_domain == 'test.com'
+        assert scanner_config.currency == 'TEST'
         assert scanner_config.supported_networks == {'main', 'test'}
         assert scanner_config.requires_api_key is True
         assert scanner_config.special_config == {}
@@ -41,8 +41,18 @@ class TestConfigurationManager:
         scanners = manager.get_supported_scanners()
 
         expected_scanners = [
-            'eth', 'bsc', 'polygon', 'optimism', 'arbitrum', 'fantom',
-            'gnosis', 'flare', 'base', 'linea', 'blast', 'xlayer'
+            'eth',
+            'bsc',
+            'polygon',
+            'optimism',
+            'arbitrum',
+            'fantom',
+            'gnosis',
+            'flare',
+            'base',
+            'linea',
+            'blast',
+            'xlayer',
         ]
 
         for scanner in expected_scanners:
@@ -133,7 +143,7 @@ EMPTY_VALUE=
             'currency': 'TEST',
             'supported_networks': ['main', 'testnet'],
             'requires_api_key': True,
-            'special_config': {'rate_limit': 10}
+            'special_config': {'rate_limit': 10},
         }
 
         manager.register_scanner('testcustom', scanner_data)
@@ -171,12 +181,10 @@ EMPTY_VALUE=
                     'base_domain': 'custom1.com',
                     'currency': 'C1',
                     'supported_networks': ['main'],
-                    'requires_api_key': True
+                    'requires_api_key': True,
                 }
             },
-            'api_keys': {
-                'custom1': 'custom1_api_key'
-            }
+            'api_keys': {'custom1': 'custom1_api_key'},
         }
 
         # Create temporary config file
@@ -309,16 +317,16 @@ class TestClientIntegration:
             patch.dict(os.environ, {'ETHERSCAN_KEY': 'test_api_key'}),
             patch('asyncio.get_running_loop') as mock_loop,
         ):
-                mock_loop.return_value = None
+            mock_loop.return_value = None
 
-                # Reload config to pick up environment variable
-                config_manager._load_api_keys()
+            # Reload config to pick up environment variable
+            config_manager._load_api_keys()
 
-                client = Client.from_config('eth', 'main')
+            client = Client.from_config('eth', 'main')
 
-                assert client._url_builder._API_KEY == 'test_api_key'
-                assert client._url_builder._api_kind == 'eth'
-                assert client._url_builder._network == 'main'
+            assert client._url_builder._API_KEY == 'test_api_key'
+            assert client._url_builder._api_kind == 'eth'
+            assert client._url_builder._network == 'main'
 
     def test_client_from_config_missing_key(self):
         """Test error when creating client with missing API key."""
@@ -353,7 +361,7 @@ class TestAdvancedFeatures:
         suggestions = manager._get_api_key_suggestions('eth')
 
         expected_suggestions = [
-            'ETHERSCAN_KEY',     # Primary format now first
+            'ETHERSCAN_KEY',  # Primary format now first
             'ETH_KEY',
             'ETH_API_KEY',
             'SCANNER_ETH_KEY',
@@ -398,8 +406,8 @@ class TestErrorHandling:
 
         # Create invalid file
         with tempfile.NamedTemporaryFile(mode='w', suffix='.env', delete=False) as f:
-            f.write("invalid content that will cause error")
-            f.write("\x00\x01\x02")  # Binary content
+            f.write('invalid content that will cause error')
+            f.write('\x00\x01\x02')  # Binary content
             env_file = Path(f.name)
 
         try:
@@ -415,7 +423,7 @@ class TestErrorHandling:
 
         # Create invalid JSON file
         with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-            f.write("{ invalid json content")
+            f.write('{ invalid json content')
             config_file = Path(f.name)
 
         try:

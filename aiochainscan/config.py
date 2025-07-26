@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class ScannerConfig:
     """Configuration for a blockchain scanner."""
+
     name: str
     base_domain: str
     currency: str
@@ -53,21 +54,21 @@ class ConfigurationManager:
                 base_domain='etherscan.io',
                 currency='ETH',
                 supported_networks={'main', 'test', 'goerli', 'sepolia'},
-                requires_api_key=True
+                requires_api_key=True,
             ),
             'bsc': ScannerConfig(
                 name='BscScan',
                 base_domain='bscscan.com',
                 currency='BNB',
                 supported_networks={'main', 'test'},
-                requires_api_key=True
+                requires_api_key=True,
             ),
             'polygon': ScannerConfig(
                 name='PolygonScan',
                 base_domain='polygonscan.com',
                 currency='MATIC',
                 supported_networks={'main', 'mumbai', 'test'},
-                requires_api_key=True
+                requires_api_key=True,
             ),
             'optimism': ScannerConfig(
                 name='Optimism Etherscan',
@@ -75,28 +76,28 @@ class ConfigurationManager:
                 currency='ETH',
                 supported_networks={'main', 'goerli', 'test'},
                 requires_api_key=True,
-                special_config={'subdomain_pattern': 'optimistic'}
+                special_config={'subdomain_pattern': 'optimistic'},
             ),
             'arbitrum': ScannerConfig(
                 name='Arbiscan',
                 base_domain='arbiscan.io',
                 currency='ETH',
                 supported_networks={'main', 'nova', 'goerli', 'test'},
-                requires_api_key=True
+                requires_api_key=True,
             ),
             'fantom': ScannerConfig(
                 name='FtmScan',
                 base_domain='ftmscan.com',
                 currency='FTM',
                 supported_networks={'main', 'test'},
-                requires_api_key=True
+                requires_api_key=True,
             ),
             'gnosis': ScannerConfig(
                 name='GnosisScan',
                 base_domain='gnosisscan.io',
                 currency='GNO',
                 supported_networks={'main', 'chiado'},
-                requires_api_key=True
+                requires_api_key=True,
             ),
             'flare': ScannerConfig(
                 name='Flare Explorer',
@@ -104,28 +105,28 @@ class ConfigurationManager:
                 currency='FLR',
                 supported_networks={'main', 'test'},
                 requires_api_key=False,
-                special_config={'subdomain_pattern': 'flare-explorer'}
+                special_config={'subdomain_pattern': 'flare-explorer'},
             ),
             'base': ScannerConfig(
                 name='BaseScan',
                 base_domain='basescan.org',
                 currency='BASE',
                 supported_networks={'main', 'goerli', 'sepolia'},
-                requires_api_key=True
+                requires_api_key=True,
             ),
             'linea': ScannerConfig(
                 name='LineaScan',
                 base_domain='lineascan.build',
                 currency='LINEA',
                 supported_networks={'main', 'test'},
-                requires_api_key=True
+                requires_api_key=True,
             ),
             'blast': ScannerConfig(
                 name='BlastScan',
                 base_domain='blastscan.io',
                 currency='BLAST',
                 supported_networks={'main', 'sepolia'},
-                requires_api_key=True
+                requires_api_key=True,
             ),
             'xlayer': ScannerConfig(
                 name='OKLink X Layer',
@@ -133,7 +134,7 @@ class ConfigurationManager:
                 currency='XL',
                 supported_networks={'main'},
                 requires_api_key=True,
-                special_config={'auth_header': 'OK-ACCESS-KEY'}
+                special_config={'auth_header': 'OK-ACCESS-KEY'},
             ),
         }
 
@@ -150,7 +151,7 @@ class ConfigurationManager:
         for env_file in env_files:
             if env_file.exists():
                 self._load_env_file(env_file)
-                logger.debug(f"Loaded environment from {env_file}")
+                logger.debug(f'Loaded environment from {env_file}')
 
     def _load_env_file(self, env_file: Path) -> None:
         """Load variables from a specific .env file."""
@@ -167,7 +168,7 @@ class ConfigurationManager:
                         if key not in os.environ:
                             os.environ[key] = value
         except Exception as e:
-            logger.warning(f"Failed to load {env_file}: {e}")
+            logger.warning(f'Failed to load {env_file}: {e}')
 
     def _load_config_files(self) -> None:
         """Load scanner configurations from JSON files."""
@@ -180,7 +181,7 @@ class ConfigurationManager:
         for config_file in config_files:
             if config_file.exists():
                 self._load_config_file(config_file)
-                logger.debug(f"Loaded configuration from {config_file}")
+                logger.debug(f'Loaded configuration from {config_file}')
 
     def _load_config_file(self, config_file: Path) -> None:
         """Load configuration from a JSON file."""
@@ -200,7 +201,7 @@ class ConfigurationManager:
                         self._scanners[scanner_id].api_key = api_key
 
         except Exception as e:
-            logger.warning(f"Failed to load config from {config_file}: {e}")
+            logger.warning(f'Failed to load config from {config_file}: {e}')
 
     def _load_api_keys(self) -> None:
         """Load API keys from various sources with priority order."""
@@ -215,15 +216,12 @@ class ConfigurationManager:
         strategies = [
             # 1. Primary: Scanner name-based variables (e.g., ETHERSCAN_KEY)
             lambda: os.getenv(f'{self._scanners[scanner_id].name.upper().replace(" ", "_")}_KEY'),
-
             # 2. Fallback: Scanner ID-based variables (e.g., ETH_KEY) - for backward compatibility
             lambda: os.getenv(f'{scanner_id.upper()}_KEY'),
             lambda: os.getenv(f'{scanner_id.upper()}_API_KEY'),
-
             # 3. Generic patterns
             lambda: os.getenv(f'SCANNER_{scanner_id.upper()}_KEY'),
             lambda: os.getenv(f'API_KEY_{scanner_id.upper()}'),
-
             # 4. Already set in scanner config
             lambda: getattr(self._scanners[scanner_id], 'api_key', None),
         ]
@@ -247,7 +245,7 @@ class ConfigurationManager:
                 currency=config_data['currency'],
                 supported_networks=set(config_data.get('supported_networks', ['main'])),
                 requires_api_key=config_data.get('requires_api_key', True),
-                special_config=config_data.get('special_config', {})
+                special_config=config_data.get('special_config', {}),
             )
 
             self._scanners[scanner_id] = scanner_config
@@ -257,10 +255,10 @@ class ConfigurationManager:
             if api_key:
                 scanner_config.api_key = api_key
 
-            logger.info(f"Registered new scanner: {scanner_id} ({scanner_config.name})")
+            logger.info(f'Registered new scanner: {scanner_id} ({scanner_config.name})')
 
         except KeyError as e:
-            raise ValueError(f"Invalid scanner configuration for {scanner_id}: missing {e}") from e
+            raise ValueError(f'Invalid scanner configuration for {scanner_id}: missing {e}') from e
 
     def get_scanner_config(self, scanner_id: str) -> ScannerConfig:
         """Get configuration for a specific scanner."""
@@ -286,10 +284,10 @@ class ConfigurationManager:
         """Get suggestions for API key environment variable names."""
         scanner_name = self._scanners[scanner_id].name.upper().replace(' ', '_')
         return [
-            f'{scanner_name}_KEY',                    # Primary format: ETHERSCAN_KEY
-            f'{scanner_id.upper()}_KEY',             # Fallback: ETH_KEY
-            f'{scanner_id.upper()}_API_KEY',         # Alternative: ETH_API_KEY
-            f'SCANNER_{scanner_id.upper()}_KEY',     # Generic: SCANNER_ETH_KEY
+            f'{scanner_name}_KEY',  # Primary format: ETHERSCAN_KEY
+            f'{scanner_id.upper()}_KEY',  # Fallback: ETH_KEY
+            f'{scanner_id.upper()}_API_KEY',  # Alternative: ETH_API_KEY
+            f'SCANNER_{scanner_id.upper()}_KEY',  # Generic: SCANNER_ETH_KEY
         ]
 
     def validate_network(self, scanner_id: str, network: str) -> str:
@@ -353,10 +351,10 @@ class ConfigurationManager:
     def generate_env_template(self, output_file: Path | None = None) -> str:
         """Generate .env template with all possible API keys."""
         lines = [
-            "# aiochainscan API Keys Configuration",
-            "# Copy this file to .env and fill in your API keys",
-            "# You only need keys for the scanners you plan to use",
-            "",
+            '# aiochainscan API Keys Configuration',
+            '# Copy this file to .env and fill in your API keys',
+            '# You only need keys for the scanners you plan to use',
+            '',
         ]
 
         for scanner_id, config in self._scanners.items():
@@ -364,31 +362,29 @@ class ConfigurationManager:
                 # Use primary format: scanner name + _KEY (e.g., ETHERSCAN_KEY)
                 scanner_name = config.name.upper().replace(' ', '_')
                 primary_var = f'{scanner_name}_KEY'
-                lines.extend([
-                    f"# {config.name} ({config.base_domain})",
-                    f"# Networks: {', '.join(sorted(config.supported_networks))}",
-                    f"{primary_var}=your_{scanner_id}_api_key_here",
-                    "",
-                ])
+                lines.extend(
+                    [
+                        f'# {config.name} ({config.base_domain})',
+                        f'# Networks: {", ".join(sorted(config.supported_networks))}',
+                        f'{primary_var}=your_{scanner_id}_api_key_here',
+                        '',
+                    ]
+                )
 
-        lines.append("# Optional: Set log level for debugging")
-        lines.append("# AIOCHAINSCAN_LOG_LEVEL=DEBUG")
+        lines.append('# Optional: Set log level for debugging')
+        lines.append('# AIOCHAINSCAN_LOG_LEVEL=DEBUG')
 
         template = '\n'.join(lines)
 
         if output_file:
             output_file.write_text(template)
-            logger.info(f"Generated .env template at {output_file}")
+            logger.info(f'Generated .env template at {output_file}')
 
         return template
 
     def export_config(self, output_file: Path) -> None:
         """Export current configuration to JSON file."""
-        config_data = {
-            'version': '1.0',
-            'scanners': {},
-            'api_keys': {}
-        }
+        config_data = {'version': '1.0', 'scanners': {}, 'api_keys': {}}
 
         for scanner_id, config in self._scanners.items():
             config_data['scanners'][scanner_id] = {
@@ -406,7 +402,7 @@ class ConfigurationManager:
         with open(output_file, 'w') as f:
             json.dump(config_data, f, indent=2)
 
-        logger.info(f"Configuration exported to {output_file}")
+        logger.info(f'Configuration exported to {output_file}')
 
 
 # Global configuration manager instance
