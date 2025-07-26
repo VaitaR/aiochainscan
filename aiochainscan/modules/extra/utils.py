@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 from collections.abc import AsyncIterator, Callable, Iterator
+from datetime import date, timedelta
 from typing import TYPE_CHECKING
 
 from aiochainscan.decode import decode_log_data, decode_transaction_input
@@ -14,6 +15,20 @@ import logging
 
 # Add this line at the beginning of the file to initialize the logger
 logger = logging.getLogger(__name__)
+
+
+def _default_date_range(days: int = 30) -> tuple[date, date]:
+    """Get default date range for API requests.
+
+    Args:
+        days: Number of days to go back from today (default: 30)
+
+    Returns:
+        Tuple of (start_date, end_date) where start_date is today-days and end_date is today
+    """
+    end_date = date.today()
+    start_date = end_date - timedelta(days=days)
+    return start_date, end_date
 
 
 class Utils:

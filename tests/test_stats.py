@@ -88,6 +88,58 @@ async def test_eth_nodes_size(stats):
 
 
 @pytest.mark.asyncio
+async def test_nodes_size(stats):
+    # Test with default parameters (should use today-30d to today)
+    with (
+        patch('aiochainscan.network.Network.get', new=AsyncMock()) as mock,
+        patch('aiochainscan.modules.stats._default_date_range') as date_mock,
+    ):
+        date_mock.return_value = (date(2023, 11, 1), date(2023, 12, 1))
+        await stats.nodes_size()
+        mock.assert_called_once_with(
+            params={
+                'module': 'stats',
+                'action': 'chainsize',
+                'startdate': '2023-11-01',
+                'enddate': '2023-12-01',
+                'clienttype': 'geth',
+                'syncmode': 'default',
+            },
+            headers={},
+        )
+
+    # Test with custom parameters
+    start_date = date(2023, 11, 12)
+    end_date = date(2023, 11, 13)
+
+    with patch('aiochainscan.network.Network.get', new=AsyncMock()) as mock:
+        await stats.nodes_size(start=start_date, end=end_date, client='parity', sync='archive')
+        mock.assert_called_once_with(
+            params={
+                'module': 'stats',
+                'action': 'chainsize',
+                'startdate': '2023-11-12',
+                'enddate': '2023-11-13',
+                'clienttype': 'parity',
+                'syncmode': 'archive',
+            },
+            headers={},
+        )
+
+    # Test return None for empty result
+    with patch('aiochainscan.network.Network.get', new=AsyncMock(return_value=[])) as mock:
+        result = await stats.nodes_size()
+        assert result is None
+
+    # Test with validation errors
+    with pytest.raises(ValueError):
+        await stats.nodes_size(client='invalid')
+
+    with pytest.raises(ValueError):
+        await stats.nodes_size(sync='invalid')
+
+
+@pytest.mark.asyncio
 async def test_total_nodes_count(stats):
     with patch('aiochainscan.network.Network.get', new=AsyncMock()) as mock:
         await stats.total_nodes_count()
@@ -372,3 +424,55 @@ async def test_ether_historical_price(stats):
 
     with pytest.raises(ValueError):
         await stats.ether_historical_price(start_date, end_date, 'wrong')
+
+
+@pytest.mark.asyncio
+async def test_daily_block_count(stats):
+    start_date = date(2023, 11, 12)
+    end_date = date(2023, 11, 13)
+
+    # Test with default sort
+    with patch('aiochainscan.network.Network.get', new=AsyncMock()) as mock:
+        await stats.daily_block_count(start_date, end_date)
+        mock.assert_called_once_with(
+            params={
+                'module': 'stats',
+                'action': 'dailyblkcount',
+                'startdate': '2023-11-12',
+                'enddate': '2023-11-13',
+                'sort': 'asc',
+            },
+            headers={},
+        )
+
+    # Test with custom sort
+    with patch('aiochainscan.network.Network.get', new=AsyncMock()) as mock:
+        await stats.daily_block_count(start_date, end_date, sort='desc')
+        mock.assert_called_once_with(
+            params={
+                'module': 'stats',
+                'action': 'dailyblkcount',
+                'startdate': '2023-11-12',
+                'enddate': '2023-11-13',
+                'sort': 'desc',
+            },
+            headers={},
+        )
+
+    # Test return None for empty result
+    with patch('aiochainscan.network.Network.get', new=AsyncMock(return_value=[])) as mock:
+        result = await stats.daily_block_count(start_date, end_date)
+        assert result is None
+
+    # Test with sample data response
+    sample_response = [
+        {
+            "UTCDate": "2023-11-12",
+            "unixTimeStamp": "1699747200",
+            "blockCount": "7000",
+            "blockRewards_Eth": "21000.5"
+        }
+    ]
+    with patch('aiochainscan.network.Network.get', new=AsyncMock(return_value=sample_response)) as mock:
+        result = await stats.daily_block_count(start_date, end_date)
+        assert result == sample_response
