@@ -15,25 +15,25 @@ from aiochainscan.config import config_manager
 
 def cmd_list_scanners(args):
     """List all available scanners and their status."""
-    print("🔍 Available Blockchain Scanners")
-    print("=" * 50)
+    print('🔍 Available Blockchain Scanners')
+    print('=' * 50)
 
     configs = config_manager.list_all_configurations()
 
     for scanner_id, info in configs.items():
-        status = "✅ READY" if info['api_key_configured'] else "❌ NO API KEY"
-        networks = ", ".join(info['networks'][:3])
+        status = '✅ READY' if info['api_key_configured'] else '❌ NO API KEY'
+        networks = ', '.join(info['networks'][:3])
         if len(info['networks']) > 3:
-            networks += f" (+{len(info['networks']) - 3} more)"
+            networks += f' (+{len(info["networks"]) - 3} more)'
 
-        print(f"\n📋 {scanner_id.upper()}: {info['name']}")
-        print(f"   Domain: {info['domain']}")
-        print(f"   Currency: {info['currency']}")
-        print(f"   Networks: {networks}")
-        print(f"   Status: {status}")
+        print(f'\n📋 {scanner_id.upper()}: {info["name"]}')
+        print(f'   Domain: {info["domain"]}')
+        print(f'   Currency: {info["currency"]}')
+        print(f'   Networks: {networks}')
+        print(f'   Status: {status}')
 
         if not info['api_key_configured'] and info['requires_api_key']:
-            print(f"   💡 Set one of: {', '.join(info['api_key_sources'][:2])}")
+            print(f'   💡 Set one of: {", ".join(info["api_key_sources"][:2])}')
 
 
 def cmd_generate_env(args):
@@ -42,22 +42,22 @@ def cmd_generate_env(args):
 
     template = config_manager.generate_env_template(output_file)
 
-    print(f"✅ Generated .env template at: {output_file}")
-    print("\n📝 Next steps:")
-    print(f"1. Copy {output_file.name} to .env")
-    print("2. Fill in your API keys")
-    print("3. Make sure .env is in your .gitignore")
+    print(f'✅ Generated .env template at: {output_file}')
+    print('\n📝 Next steps:')
+    print(f'1. Copy {output_file.name} to .env')
+    print('2. Fill in your API keys')
+    print('3. Make sure .env is in your .gitignore')
 
     if args.show:
-        print("\n📄 Template content:")
-        print("-" * 40)
+        print('\n📄 Template content:')
+        print('-' * 40)
         print(template)
 
 
 def cmd_check_config(args):
     """Check current configuration status."""
-    print("🔧 Configuration Status Check")
-    print("=" * 50)
+    print('🔧 Configuration Status Check')
+    print('=' * 50)
 
     configs = config_manager.list_all_configurations()
 
@@ -65,7 +65,7 @@ def cmd_check_config(args):
     total_scanners = len(configs)
     configured_scanners = sum(1 for c in configs.values() if c['api_key_configured'])
 
-    print(f"\n📊 Summary: {configured_scanners}/{total_scanners} scanners configured")
+    print(f'\n📊 Summary: {configured_scanners}/{total_scanners} scanners configured')
 
     # Group by status
     ready_scanners = []
@@ -78,15 +78,19 @@ def cmd_check_config(args):
             missing_scanners.append((scanner_id, info))
 
     if ready_scanners:
-        print(f"\n✅ Ready scanners ({len(ready_scanners)}):")
+        print(f'\n✅ Ready scanners ({len(ready_scanners)}):')
         for scanner_id, info in ready_scanners:
-            print(f"   • {scanner_id}: {info['name']}")
+            print(f'   • {scanner_id}: {info["name"]}')
 
     if missing_scanners:
-        print(f"\n❌ Missing API keys ({len(missing_scanners)}):")
+        print(f'\n❌ Missing API keys ({len(missing_scanners)}):')
         for scanner_id, info in missing_scanners:
-            primary_env = info['api_key_sources'][0] if info['api_key_sources'] else f"{scanner_id.upper()}_KEY"
-            print(f"   • {scanner_id}: Set {primary_env}")
+            primary_env = (
+                info['api_key_sources'][0]
+                if info['api_key_sources']
+                else f'{scanner_id.upper()}_KEY'
+            )
+            print(f'   • {scanner_id}: Set {primary_env}')
 
     # Check for .env files
     env_files = [
@@ -98,9 +102,9 @@ def cmd_check_config(args):
     existing_env_files = [f for f in env_files if f.exists()]
 
     if existing_env_files:
-        print("\n📁 Found .env files:")
+        print('\n📁 Found .env files:')
         for env_file in existing_env_files:
-            print(f"   • {env_file}")
+            print(f'   • {env_file}')
     else:
         print("\n💡 No .env files found. Use 'aiochainscan generate-env' to create one.")
 
@@ -113,22 +117,22 @@ def cmd_add_scanner(args):
         'currency': args.currency,
         'supported_networks': args.networks.split(',') if args.networks else ['main'],
         'requires_api_key': not args.no_api_key,
-        'special_config': {}
+        'special_config': {},
     }
 
     try:
         config_manager.register_scanner(args.id, scanner_data)
-        print(f"✅ Successfully added scanner: {args.id}")
-        print(f"   Name: {scanner_data['name']}")
-        print(f"   Domain: {scanner_data['base_domain']}")
-        print(f"   Networks: {', '.join(scanner_data['supported_networks'])}")
+        print(f'✅ Successfully added scanner: {args.id}')
+        print(f'   Name: {scanner_data["name"]}')
+        print(f'   Domain: {scanner_data["base_domain"]}')
+        print(f'   Networks: {", ".join(scanner_data["supported_networks"])}')
 
         if scanner_data['requires_api_key']:
             suggestions = config_manager._get_api_key_suggestions(args.id)
-            print(f"   💡 Set API key with: {suggestions[0]}=your_api_key")
+            print(f'   💡 Set API key with: {suggestions[0]}=your_api_key')
 
     except ValueError as e:
-        print(f"❌ Error adding scanner: {e}")
+        print(f'❌ Error adding scanner: {e}')
         sys.exit(1)
 
 
@@ -138,9 +142,9 @@ def cmd_export_config(args):
 
     try:
         config_manager.export_config(output_file)
-        print(f"✅ Configuration exported to: {output_file}")
+        print(f'✅ Configuration exported to: {output_file}')
     except Exception as e:
-        print(f"❌ Export failed: {e}")
+        print(f'❌ Export failed: {e}')
         sys.exit(1)
 
 
@@ -151,28 +155,28 @@ def cmd_test_scanner(args):
     from aiochainscan import Client
 
     async def test_scanner():
-        print(f"🧪 Testing {args.scanner} scanner...")
+        print(f'🧪 Testing {args.scanner} scanner...')
 
         try:
             client = Client.from_config(args.scanner, args.network)
-            print("✅ Client created successfully")
+            print('✅ Client created successfully')
 
             # Test a simple API call
             try:
                 if hasattr(client.stats, 'eth_price'):
                     price = await client.stats.eth_price()
-                    print(f"✅ API test successful - got response: {type(price)}")
+                    print(f'✅ API test successful - got response: {type(price)}')
                 else:
-                    print("⚠️ No eth_price method available for testing")
+                    print('⚠️ No eth_price method available for testing')
 
             except Exception as e:
-                print(f"⚠️ API test failed: {e}")
+                print(f'⚠️ API test failed: {e}')
 
             await client.close()
-            print(f"✅ Scanner {args.scanner} is working correctly")
+            print(f'✅ Scanner {args.scanner} is working correctly')
 
         except Exception as e:
-            print(f"❌ Scanner test failed: {e}")
+            print(f'❌ Scanner test failed: {e}')
             sys.exit(1)
 
     asyncio.run(test_scanner())
@@ -181,7 +185,7 @@ def cmd_test_scanner(args):
 def main():
     """Main CLI entry point."""
     parser = argparse.ArgumentParser(
-        description="aiochainscan configuration management CLI",
+        description='aiochainscan configuration management CLI',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -191,7 +195,7 @@ Examples:
   %(prog)s generate-env --output .env.dev    # Generate custom .env file
   %(prog)s test eth                          # Test Ethereum scanner
   %(prog)s add-scanner custom_chain --name "Custom Chain" --domain "customscan.io"
-        """
+        """,
     )
 
     subparsers = parser.add_subparsers(dest='command', help='Available commands')
@@ -217,7 +221,9 @@ Examples:
     add_parser.add_argument('--domain', required=True, help='Base domain')
     add_parser.add_argument('--currency', required=True, help='Currency symbol')
     add_parser.add_argument('--networks', help='Comma-separated networks (default: main)')
-    add_parser.add_argument('--no-api-key', action='store_true', help='Scanner does not require API key')
+    add_parser.add_argument(
+        '--no-api-key', action='store_true', help='Scanner does not require API key'
+    )
     add_parser.set_defaults(func=cmd_add_scanner)
 
     # Export configuration command
@@ -242,10 +248,10 @@ Examples:
     try:
         args.func(args)
     except KeyboardInterrupt:
-        print("\n🛑 Operation cancelled")
+        print('\n🛑 Operation cancelled')
         sys.exit(1)
     except Exception as e:
-        print(f"❌ Unexpected error: {e}")
+        print(f'❌ Unexpected error: {e}')
         sys.exit(1)
 
 
