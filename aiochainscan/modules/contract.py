@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from collections.abc import Iterable
 
 from aiochainscan.exceptions import SourceNotVerifiedError
@@ -33,7 +35,7 @@ class Contract(BaseModule):
         result = await self._get(action='getabi', address=address)
 
         # Check for unverified contract responses
-        if isinstance(result, str) and result.startswith("Contract source code not verified"):
+        if isinstance(result, str) and result.startswith('Contract source code not verified'):
             raise SourceNotVerifiedError(address)
 
         return result
@@ -57,10 +59,12 @@ class Contract(BaseModule):
         result = await self._get(action='getsourcecode', address=address)
 
         # Check for unverified contract in the result list
-        if (isinstance(result, list) and
-            len(result) > 0 and
-            isinstance(result[0], dict) and
-            result[0].get('ABI') == 'Contract source code not verified'):
+        if (
+            isinstance(result, list)
+            and len(result) > 0
+            and isinstance(result[0], dict)
+            and result[0].get('ABI') == 'Contract source code not verified'
+        ):
             raise SourceNotVerifiedError(address)
 
         return result

@@ -271,7 +271,9 @@ async def test_token_balance_new_method(token):
 @pytest.mark.asyncio
 async def test_token_supply_feature_not_supported():
     """Test that FeatureNotSupportedError is raised for unsupported scanners."""
-    with patch('aiochainscan.config.config_manager.get_scanner_config') as mock_config:
+    from aiochainscan.config import config_manager
+
+    with patch.object(config_manager, 'get_scanner_config') as mock_config:
         mock_config.return_value.name = 'Unsupported Scanner'
 
         c = Client('TestApiKey')
@@ -294,7 +296,9 @@ async def test_token_supply_feature_not_supported():
 @pytest.mark.asyncio
 async def test_token_balance_feature_not_supported():
     """Test that FeatureNotSupportedError is raised for unsupported scanners."""
-    with patch('aiochainscan.config.config_manager.get_scanner_config') as mock_config:
+    from aiochainscan.config import config_manager
+
+    with patch.object(config_manager, 'get_scanner_config') as mock_config:
         mock_config.return_value.name = 'Unsupported Scanner'
 
         c = Client('TestApiKey')

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import requests
 from Crypto.Hash import keccak
 from eth_abi import decode

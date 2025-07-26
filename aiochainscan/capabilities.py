@@ -4,7 +4,6 @@ Feature capabilities matrix for different blockchain scanners and networks.
 This module defines which features are supported by which scanner/network combinations.
 """
 
-
 # Type aliases for better readability
 ScannerNetwork = tuple[str, str]  # (scanner_id, network)
 FeatureName = str
@@ -15,7 +14,6 @@ FEATURE_SUPPORT: dict[FeatureName, set[ScannerNetwork]] = {
     'gas_estimate': {
         ('eth', 'main'),
     },
-
     # Gas oracle is supported on most networks
     'gas_oracle': {
         ('eth', 'main'),
@@ -70,7 +68,4 @@ def get_supported_features(scanner_id: str, network: str) -> set[FeatureName]:
         Set of feature names supported by the scanner/network
     """
     target = (scanner_id, network)
-    return {
-        feature for feature, combinations in FEATURE_SUPPORT.items()
-        if target in combinations
-    }
+    return {feature for feature, combinations in FEATURE_SUPPORT.items() if target in combinations}

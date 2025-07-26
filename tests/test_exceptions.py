@@ -1,4 +1,3 @@
-
 from aiochainscan.exceptions import (
     ChainscanClientApiError,
     ChainscanClientContentTypeError,
@@ -11,7 +10,7 @@ from aiochainscan.exceptions import (
 
 def test_source_not_verified_exception():
     """Test SourceNotVerifiedError exception."""
-    address = "0x1234567890123456789012345678901234567890"
+    address = '0x1234567890123456789012345678901234567890'
 
     # Test creation
     exc = SourceNotVerifiedError(address)
@@ -19,7 +18,7 @@ def test_source_not_verified_exception():
     # Test properties
     assert exc.address == address
     assert address in str(exc)
-    assert "Contract source code not verified" in str(exc)
+    assert 'Contract source code not verified' in str(exc)
 
     # Test inheritance
     assert isinstance(exc, ChainscanClientError)
@@ -28,8 +27,8 @@ def test_source_not_verified_exception():
 
 def test_feature_not_supported_error():
     """Test FeatureNotSupportedError exception."""
-    feature = "gas_estimate"
-    scanner = "bsc:main"
+    feature = 'gas_estimate'
+    scanner = 'bsc:main'
 
     # Test creation
     exc = FeatureNotSupportedError(feature, scanner)
@@ -47,11 +46,11 @@ def test_feature_not_supported_error():
 def test_all_exceptions_inherit_properly():
     """Test that all custom exceptions inherit from ChainscanClientError."""
     exceptions_to_test = [
-        ChainscanClientApiError("test", "result"),
-        ChainscanClientContentTypeError(500, "error"),
-        ChainscanClientProxyError("123", "message"),
-        FeatureNotSupportedError("feature", "scanner"),
-        SourceNotVerifiedError("0x123"),
+        ChainscanClientApiError('test', 'result'),
+        ChainscanClientContentTypeError(500, 'error'),
+        ChainscanClientProxyError('123', 'message'),
+        FeatureNotSupportedError('feature', 'scanner'),
+        SourceNotVerifiedError('0x123'),
     ]
 
     for exc in exceptions_to_test:
@@ -65,11 +64,11 @@ def test_all_exceptions_inherit_properly():
 def test_exception_messages():
     """Test exception message formatting."""
     # SourceNotVerifiedError
-    exc = SourceNotVerifiedError("0xabc123")
-    expected = "Contract source code not verified for address 0xabc123"
+    exc = SourceNotVerifiedError('0xabc123')
+    expected = 'Contract source code not verified for address 0xabc123'
     assert str(exc) == expected
 
     # FeatureNotSupportedError
-    exc = FeatureNotSupportedError("test_feature", "test_scanner")
+    exc = FeatureNotSupportedError('test_feature', 'test_scanner')
     expected = 'Feature "test_feature" is not supported by test_scanner'
     assert str(exc) == expected
