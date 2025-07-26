@@ -100,8 +100,26 @@ aiochainscan/
 - Ruff for linting (line length 100, single quotes)
 - pytest with asyncio mode auto
 - Coverage reporting enabled
-## Pr
-oject Rename Completed (2025-01-26)
+## CI/CD Codecov Fix (2025-01-26)
+
+Fixed Codecov upload issues in CI/CD:
+- Made Codecov upload conditional on token availability
+- Changed `fail_ci_if_error` from `true` to `false` to prevent CI failures
+- Added condition `secrets.CODECOV_TOKEN != ''` to skip upload when token is missing
+
+This prevents CI failures when CODECOV_TOKEN secret is not configured.
+
+## Python Version Support Updated (2025-01-26)
+
+Removed support for Python 3.9 (EOL October 2025):
+- Updated `requires-python` from `>=3.9` to `>=3.10` in pyproject.toml
+- Removed Python 3.9 from CI/CD matrix testing
+- Updated ruff target-version from py311 to py310
+- Modern union type syntax (|) now fully supported without compatibility concerns
+
+This change aligns with modern Python practices and reduces maintenance burden.
+
+## Project Rename Completed (2025-01-26)
 Successfully renamed project from `aioetherscan` to `aiochainscan`:
 
 ### Changes Made:

@@ -62,11 +62,11 @@ jobs:
         run: uv run pytest --cov=aiochainscan --cov-report=xml --cov-report=term-missing
 
       - name: Upload coverage to Codecov
-        if: matrix.python-version == env.PYTHON_VERSION
+        if: matrix.python-version == env.PYTHON_VERSION && secrets.CODECOV_TOKEN != ''
         uses: codecov/codecov-action@v4
         with:
           file: ./coverage.xml
-          fail_ci_if_error: true
+          fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
 
   build:
