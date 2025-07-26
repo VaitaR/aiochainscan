@@ -79,14 +79,22 @@ def generate_function_abi(signature: str) -> list:
     func_name, params = signature.split('(')
     params = params[:-1]  # Remove the trailing ')'
 
-    # Split parameters into individual items
-    param_list = params.split(',')
-
     # Create a list of dictionaries for each parameter
     inputs = []
-    for param in param_list:
-        param_type, param_name = param.strip().split(' ')
-        inputs.append({'type': param_type, 'name': param_name})
+
+    # Handle empty parameters (functions with no arguments)
+    if params.strip():
+        # Split parameters into individual items
+        param_list = params.split(',')
+
+        for param in param_list:
+            param_stripped = param.strip()
+            if param_stripped:  # Skip empty parameters
+                parts = param_stripped.split(' ')
+                if len(parts) >= 2:
+                    param_type = parts[0]
+                    param_name = ' '.join(parts[1:])  # Handle names with spaces
+                    inputs.append({'type': param_type, 'name': param_name})
 
     # Construct the ABI
     function_abi = [
