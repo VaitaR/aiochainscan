@@ -172,3 +172,4 @@ dev_*
 
 # LLmCode generated files
 .kiro/
+.cursor/
