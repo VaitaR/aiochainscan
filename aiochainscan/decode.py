@@ -1,7 +1,73 @@
-import codecs
-
+import requests
 from Crypto.Hash import keccak
 from eth_abi import decode
+
+FUNCTION_SELECTOR_LENGTH = 10  # '0x' + 4 bytes
+
+
+class SignatureDatabase:
+    """A class for interacting with an online signature database with in-memory caching."""
+
+    def __init__(self):
+        self.cache: dict[str, str] = {}
+        self.api_url = 'https://www.4byte.directory/api/v1/signatures/?hex_signature='
+
+    def get_function_signature(self, selector: str) -> str | None:
+        if selector in self.cache:
+            return self.cache[selector]
+
+        try:
+            response = requests.get(f'{self.api_url}{selector}', timeout=5)
+            if response.status_code == 200:
+                data = response.json()
+                if data.get('results'):
+                    signature = data['results'][0]['text_signature']
+                    self.cache[selector] = signature  # Save to cache
+                    return signature
+        except requests.RequestException:
+            pass  # Ignore network errors, we just can't find the signature
+
+        return None
+
+
+# Create a single global instance
+sig_db = SignatureDatabase()
+
+
+def _preprocess_abi(abi: list) -> tuple[dict, dict]:
+    """Pre-processes an ABI list into lookup maps for functions and events."""
+    function_map = {}
+    event_map = {}
+
+    for item in abi:
+        item_type = item.get('type')
+        if item_type == 'function':
+            name = item.get('name', '')
+            inputs = ','.join([param['type'] for param in item.get('inputs', [])])
+            signature_text = f'{name}({inputs})'
+            # 4-byte selector
+            selector = '0x' + keccak_hash(signature_text)[:8]
+            function_map[selector] = item
+        elif item_type == 'event':
+            name = item.get('name', '')
+            inputs = ','.join([param['type'] for param in item.get('inputs', [])])
+            signature_text = f'{name}({inputs})'
+            # 32-byte topic hash
+            topic_hash = '0x' + keccak_hash(signature_text)
+            event_map[topic_hash] = item
+
+    return function_map, event_map
+
+
+def _convert_bytes_to_hex(data):
+    """Recursively traverses data structures and converts bytes to hex strings."""
+    if isinstance(data, bytes):
+        return '0x' + data.hex()
+    if isinstance(data, dict):
+        return {key: _convert_bytes_to_hex(value) for key, value in data.items()}
+    if isinstance(data, list | tuple):
+        return type(data)([_convert_bytes_to_hex(item) for item in data])
+    return data
 
 
 # Function to generate Keccak hash of the input text
@@ -13,63 +79,41 @@ def keccak_hash(text):
 
 # Function to decode transaction input and return updated transaction with decoded data
 def decode_transaction_input(transaction: dict, abi: list):
-    function_list = [item for item in abi if item['type'] == 'function']
+    function_map, _ = _preprocess_abi(abi)
 
-    # Extract the function selector from the transaction input
-    func_selector = transaction['input'][:10]  # '0x' + first 4 bytes
-    for function in function_list:
-        # Generate function signature hash
-        name = function['name']
-        inputs = ','.join([param['type'] for param in function['inputs']])
-        func_signature_text = f'{name}({inputs})'
-        func_signature_hash = (
-            '0x' + keccak_hash(func_signature_text)[:8]
-        )  # Only need the first 4 bytes
+    if not transaction.get('input') or len(transaction['input']) < FUNCTION_SELECTOR_LENGTH:
+        transaction['decoded_func'] = ''
+        transaction['decoded_data'] = {}
+        return transaction
 
-        # Check if the function selector matches
-        if func_selector == func_signature_hash:
-            # Decode input transaction
-            input_types = [param['type'] for param in function['inputs']]
-            input_transaction = transaction['input'][
-                10:
-            ]  # Exclude the first 4 bytes (function selector)
-            decoded_input = decode(input_types, codecs.decode(input_transaction, 'hex'))
+    func_selector = transaction['input'][:FUNCTION_SELECTOR_LENGTH]
+    function = function_map.get(func_selector)
+
+    if function:
+        # Decode input transaction
+        input_types = [param['type'] for param in function['inputs']]
+        input_data = transaction['input'][FUNCTION_SELECTOR_LENGTH:]
+        try:
+            decoded_input = decode(input_types, bytes.fromhex(input_data))
 
             # Assign the function name directly to transaction
-            transaction['decoded_func'] = name
+            transaction['decoded_func'] = function['name']
 
             # Create a new dictionary for decoded transaction
             decoded_transaction = dict(
                 zip([param['name'] for param in function['inputs']], decoded_input, strict=False)
             )
-
-            # Assign the decoded input transaction to 'decoded_transaction' key in the transaction object
             transaction['decoded_data'] = decoded_transaction
-            break  # Exit the loop if a matching function is found
-
+        except Exception:
+            transaction['decoded_func'] = ''
+            transaction['decoded_data'] = {}
     else:
-        # TODO check on errors and bugs if function_name not empty
         # No matching function found, assign empty values
-        # if transaction['function_name'] and transaction['function_name'] != '':
-        #     func_name = transaction['function_name'].split('(',1)[0]
-
-        transaction['decoded_func'] = ''  # should be str as on table
+        transaction['decoded_func'] = ''
         transaction['decoded_data'] = {}
 
-    # convert bytes data type (ordinary decoded), if it exists, to correctly save in db
-    if isinstance(transaction['decoded_data'], dict):
-        for key, value in transaction['decoded_data'].items():
-            if isinstance(value, bytes):
-                transaction['decoded_data'][key] = value.hex().rstrip('0')
-            elif isinstance(value, list | tuple):
-                # create new list with converted bytes
-                converted_list = []
-                for item in value:
-                    if isinstance(item, bytes):
-                        # convert bytes to hex and remove trailing zeros
-                        converted_list.append(item.hex().rstrip('0'))
-                # replace original list with converted list
-                transaction['decoded_data'][key] = converted_list
+    if transaction.get('decoded_data'):
+        transaction['decoded_data'] = _convert_bytes_to_hex(transaction['decoded_data'])
 
     return transaction
 
@@ -89,12 +133,17 @@ def generate_function_abi(signature: str) -> list:
 
         for param in param_list:
             param_stripped = param.strip()
-            if param_stripped:  # Skip empty parameters
-                parts = param_stripped.split(' ')
-                if len(parts) >= 2:
-                    param_type = parts[0]
-                    param_name = ' '.join(parts[1:])  # Handle names with spaces
-                    inputs.append({'type': param_type, 'name': param_name})
+            if not param_stripped:
+                continue
+
+            # Split only on the first space to handle types like 'string memory'
+            parts = param_stripped.split(' ', 1)
+            if len(parts) == 2:
+                param_type, param_name = parts
+                inputs.append({'type': param_type.strip(), 'name': param_name.strip()})
+            else:
+                # Handle parameters without names, e.g., "transfer(address,uint256)"
+                inputs.append({'type': parts[0].strip(), 'name': f'param_{len(inputs)}'})
 
     # Construct the ABI
     function_abi = [
@@ -121,49 +170,67 @@ def decode_transaction_input_with_function_name(
 
 # Function to decode transaction input and return updated log with decoded data
 def decode_log_data(log: dict, abi: list):
+    _, event_map = _preprocess_abi(abi)
+
+    if not log.get('topics'):
+        # A log without topics cannot be decoded
+        return log
+
     receipt_event_signature_hex = log['topics'][0]
-    event_list = [item for item in abi if item['type'] == 'event']
-    # print('Event list:', event_list)
+    event = event_map.get(receipt_event_signature_hex)
 
-    for event in event_list:
-        # Generate event signature hash
-        name = event['name']
-        inputs = ','.join([param['type'] for param in event['inputs']])
-        event_signature_text = f'{name}({inputs})'
-        event_signature_hex = '0x' + keccak_hash(event_signature_text)
+    if event:
+        decoded_log = {'event': event['name']}
 
-        # Check if the event signature matches the log's signature
-        if event_signature_hex == receipt_event_signature_hex:
-            decoded_log = {'event': event['name']}
+        # Decode indexed topics
+        indexed_params = [input for input in event['inputs'] if input['indexed']]
+        for i, param in enumerate(indexed_params):
+            topic = log['topics'][i + 1]
+            decoded_log[param['name']] = decode([param['type']], bytes.fromhex(topic[2:]))[0]
 
-            # Decode indexed topics
-            indexed_params = [input for input in event['inputs'] if input['indexed']]
-            for i, param in enumerate(indexed_params):
-                topic = log['topics'][i + 1]
-                decoded_log[param['name']] = decode(
-                    [param['type']], codecs.decode(topic[2:], 'hex_codec')
-                )[0]
-
-            # Decode non-indexed data
-            non_indexed_params = [input for input in event['inputs'] if not input['indexed']]
+        # Decode non-indexed data
+        non_indexed_params = [input for input in event['inputs'] if not input['indexed']]
+        if log.get('data', '0x') != '0x':
             non_indexed_types = [param['type'] for param in non_indexed_params]
-            non_indexed_values = decode(
-                non_indexed_types, codecs.decode(log['data'][2:], 'hex_codec')
-            )
+            non_indexed_values = decode(non_indexed_types, bytes.fromhex(log['data'][2:]))
             for i, param in enumerate(non_indexed_params):
                 decoded_log[param['name']] = non_indexed_values[i]
 
-            log['decoded_data'] = decoded_log
+        log['decoded_data'] = decoded_log
+    # If no matching event was found, 'decoded_data' will not be in log
+    # which is the desired behavior.
 
-            # convert bytes data type (ordinary decoded), if it exists, to correctly save in db
-            if isinstance(log['decoded_data'], dict):
-                for key, value in log['decoded_data'].items():
-                    if isinstance(value, bytes):
-                        log['decoded_data'][key] = value.hex()
-            break  # Break the inner loop as we've found the matching event
-
-    # If no matching event was found, assign an empty dictionary
-    # if 'decoded_data' not in log:
-    #     print( f"No matching event found for log: {log}" )
+    if log.get('decoded_data'):
+        log['decoded_data'] = _convert_bytes_to_hex(log['decoded_data'])
 
     return log
+
+
+def decode_input_with_online_lookup(transaction: dict) -> dict:
+    """
+    Attempts to decode transaction input using an online signature database.
+    This function makes a network request and may be slower.
+    Use it when an ABI is not available.
+    """
+    tx_copy = transaction.copy()
+    func_selector = tx_copy.get('input', '')[:FUNCTION_SELECTOR_LENGTH]
+
+    if len(func_selector) < FUNCTION_SELECTOR_LENGTH:
+        tx_copy['decoded_func'] = ''
+        tx_copy['decoded_data'] = {}
+        return tx_copy
+
+    # 1. Find signature via online database
+    signature_text = sig_db.get_function_signature(func_selector)
+
+    if signature_text:
+        # 2. If found, generate a temporary ABI
+        temp_abi = generate_function_abi(signature_text)
+
+        # 3. Use our fast, optimized function for decoding
+        return decode_transaction_input(tx_copy, temp_abi)
+
+    # 4. If nothing is found, return the transaction with empty decoded fields
+    tx_copy['decoded_func'] = ''
+    tx_copy['decoded_data'] = {}
+    return tx_copy
