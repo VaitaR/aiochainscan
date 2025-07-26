@@ -408,10 +408,10 @@ class TestCLIArgumentParsing:
         """Test list command argument parsing."""
         from aiochainscan.cli import main
 
-        with patch('sys.argv', ['aiochainscan', 'list']):
-            with patch('aiochainscan.cli.cmd_list_scanners') as mock_cmd:
-                main()
-                mock_cmd.assert_called_once()
+        with patch('sys.argv', ['aiochainscan', 'list']), \
+             patch('aiochainscan.cli.cmd_list_scanners') as mock_cmd:
+            main()
+            mock_cmd.assert_called_once()
 
     def test_generate_env_args(self):
         """Test generate-env command with various arguments."""
@@ -423,10 +423,10 @@ class TestCLIArgumentParsing:
         ]
 
         for argv in test_cases:
-            with patch('sys.argv', argv):
-                with patch('aiochainscan.cli.cmd_generate_env') as mock_cmd:
-                    main()
-                    mock_cmd.assert_called_once()
+            with patch('sys.argv', argv), \
+                 patch('aiochainscan.cli.cmd_generate_env') as mock_cmd:
+                main()
+                mock_cmd.assert_called_once()
 
     def test_add_scanner_args(self):
         """Test add-scanner command argument parsing."""
@@ -437,14 +437,13 @@ class TestCLIArgumentParsing:
             '--currency', 'TEST',
             '--networks', 'main,test',
             '--no-api-key'
-        ]):
-            with patch('aiochainscan.cli.cmd_add_scanner') as mock_cmd:
-                main()
-                mock_cmd.assert_called_once()
-                args = mock_cmd.call_args[0][0]
-                assert args.id == 'test_chain'
-                assert args.name == 'Test Chain'
-                assert args.domain == 'testchain.com'
-                assert args.currency == 'TEST'
-                assert args.networks == 'main,test'
-                assert args.no_api_key is True
+        ]), patch('aiochainscan.cli.cmd_add_scanner') as mock_cmd:
+            main()
+            mock_cmd.assert_called_once()
+            args = mock_cmd.call_args[0][0]
+            assert args.id == 'test_chain'
+            assert args.name == 'Test Chain'
+            assert args.domain == 'testchain.com'
+            assert args.currency == 'TEST'
+            assert args.networks == 'main,test'
+            assert args.no_api_key is True
