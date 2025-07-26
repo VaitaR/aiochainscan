@@ -73,14 +73,14 @@ class ScannerMethodTester:
             'bsc': '0x8894E0a0c962CB723c1976a4421c95949bE2D4E3',  # Binance hot wallet
             'polygon': '0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619',  # WETH on Polygon
             'arbitrum': '0x912CE59144191C1204E64559FE8253a0e49E6548',  # Arbitrum bridge
-            'base': '0x4200000000000000000000000000000000000006',  # WETH on Base
-            'optimism': '0x4200000000000000000000000000000000000006',  # WETH on Optimism
-            'fantom': '0x21be370D5312f44cB42ce377BC9b8a0cEF1A4C83',  # WFTM
-            'gnosis': '0x6A023CCd1ff6F2045C3309768eAd9E68F978f6e1',  # WETH on Gnosis
-            'linea': '0xe5D7C2a44FfDDf6b295A15c148167daaAf5Cf34f',  # ETH bridge
-            'blast': '0x4300000000000000000000000000000000000003',  # USDB
-            'xlayer': '0x5A77f1443D16ee5761b7fcE5A0C0f2e78987e2Ed',  # Bridge
-            'flare': '0x1D80c49BbBCd1C0911346656B529DF9E5c2F783d',  # WFLR
+            # 'base': '0x4200000000000000000000000000000000000006',  # WETH on Base
+            # 'optimism': '0x4200000000000000000000000000000000000006',  # WETH on Optimism
+            # 'fantom': '0x21be370D5312f44cB42ce377BC9b8a0cEF1A4C83',  # WFTM
+            # 'gnosis': '0x6A023CCd1ff6F2045C3309768eAd9E68F978f6e1',  # WETH on Gnosis
+            # 'linea': '0xe5D7C2a44FfDDf6b295A15c148167daaAf5Cf34f',  # ETH bridge
+            # 'blast': '0x4300000000000000000000000000000000000003',  # USDB
+            # 'xlayer': '0x5A77f1443D16ee5761b7fcE5A0C0f2e78987e2Ed',  # Bridge
+            # 'flare': '0x1D80c49BbBCd1C0911346656B529DF9E5c2F783d',  # WFLR
         }
 
     def get_test_address(self, scanner_id: str) -> str:

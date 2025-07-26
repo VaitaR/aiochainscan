@@ -1,0 +1,2092 @@
+{
+  "test_timestamp": "2025-07-27T00:42:52.283570",
+  "scanners_tested": 12,
+  "results": [
+    {
+      "scanner_id": "arbitrum",
+      "scanner_name": "Arbiscan",
+      "requires_api_key": true,
+      "api_key_configured": true,
+      "networks_tested": [
+        "main"
+      ],
+      "total_methods": 22,
+      "successful_methods": 11,
+      "failed_methods": 11,
+      "success_rate": 50.0,
+      "method_results": {
+        "proxy": [
+          {
+            "method_name": "block_number",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.42611002922058105
+          },
+          {
+            "method_name": "get_balance",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.20360708236694336
+          },
+          {
+            "method_name": "get_block_by_number",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.20340180397033691
+          }
+        ],
+        "account": [
+          {
+            "method_name": "balance",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.31732988357543945
+          },
+          {
+            "method_name": "normal_txs",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.40206122398376465
+          },
+          {
+            "method_name": "internal_txs",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.4060070514678955
+          },
+          {
+            "method_name": "erc20_transfers",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'Account' object has no attribute 'erc20_transfers'",
+            "execution_time": 2.4080276489257812e-05
+          }
+        ],
+        "stats": [
+          {
+            "method_name": "eth_supply",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.5996620655059814
+          },
+          {
+            "method_name": "eth_price",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.20172595977783203
+          },
+          {
+            "method_name": "nodes_size",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'Stats' object has no attribute 'nodes_size'",
+            "execution_time": 1.5974044799804688e-05
+          }
+        ],
+        "block": [
+          {
+            "method_name": "block_reward",
+            "success": false,
+            "error_type": "API Error",
+            "error_message": "[NOTOK] Error!",
+            "execution_time": 0.2002561092376709
+          },
+          {
+            "method_name": "block_countdown",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'Block' object has no attribute 'block_countdown'",
+            "execution_time": 1.71661376953125e-05
+          },
+          {
+            "method_name": "daily_block_count",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "Block.daily_block_count() missing 2 required positional arguments: 'start_date' and 'end_date'",
+            "execution_time": 1.52587890625e-05
+          }
+        ],
+        "transaction": [
+          {
+            "method_name": "tx_receipt_status",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.20250415802001953
+          },
+          {
+            "method_name": "check_tx_status",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.20128202438354492
+          }
+        ],
+        "logs": [
+          {
+            "method_name": "get_logs",
+            "success": false,
+            "error_type": "API Error",
+            "error_message": "[No records found] []",
+            "execution_time": 0.32836413383483887
+          }
+        ],
+        "gas_tracker": [
+          {
+            "method_name": "gas_estimate",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'GasTracker' object has no attribute 'gas_estimate'",
+            "execution_time": 1.1920928955078125e-05
+          },
+          {
+            "method_name": "gas_oracle",
+            "success": false,
+            "error_type": "API Error",
+            "error_message": "[NOTOK] Error! Missing Or invalid Module name (#1)",
+            "execution_time": 0.20139598846435547
+          }
+        ],
+        "token": [
+          {
+            "method_name": "token_supply",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'Token' object has no attribute 'token_supply'",
+            "execution_time": 1.1205673217773438e-05
+          },
+          {
+            "method_name": "token_balance",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'Token' object has no attribute 'token_balance'",
+            "execution_time": 1.0967254638671875e-05
+          }
+        ],
+        "contract": [
+          {
+            "method_name": "contract_abi",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.201859712600708
+          },
+          {
+            "method_name": "contract_source",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'Contract' object has no attribute 'contract_source'",
+            "execution_time": 1.5020370483398438e-05
+          }
+        ]
+      },
+      "errors": []
+    },
+    {
+      "scanner_id": "base",
+      "scanner_name": "BaseScan",
+      "requires_api_key": true,
+      "api_key_configured": true,
+      "networks_tested": [
+        "main"
+      ],
+      "total_methods": 22,
+      "successful_methods": 10,
+      "failed_methods": 12,
+      "success_rate": 45.45454545454545,
+      "method_results": {
+        "proxy": [
+          {
+            "method_name": "block_number",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.5973210334777832
+          },
+          {
+            "method_name": "get_balance",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.31639599800109863
+          },
+          {
+            "method_name": "get_block_by_number",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.9230799674987793
+          }
+        ],
+        "account": [
+          {
+            "method_name": "balance",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.2013859748840332
+          },
+          {
+            "method_name": "normal_txs",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.3271338939666748
+          },
+          {
+            "method_name": "internal_txs",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 2.426752805709839
+          },
+          {
+            "method_name": "erc20_transfers",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'Account' object has no attribute 'erc20_transfers'",
+            "execution_time": 1.0967254638671875e-05
+          }
+        ],
+        "stats": [
+          {
+            "method_name": "eth_supply",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "Failed to perform, curl: (28) Operation timed out after 10001 milliseconds with 0 bytes received. See https://curl.se/libcurl/c/libcurl-errors.html first for more details.",
+            "execution_time": 10.002355098724365
+          },
+          {
+            "method_name": "eth_price",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.20740985870361328
+          },
+          {
+            "method_name": "nodes_size",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'Stats' object has no attribute 'nodes_size'",
+            "execution_time": 1.0967254638671875e-05
+          }
+        ],
+        "block": [
+          {
+            "method_name": "block_reward",
+            "success": false,
+            "error_type": "API Error",
+            "error_message": "[NOTOK] Error!",
+            "execution_time": 0.20165014266967773
+          },
+          {
+            "method_name": "block_countdown",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'Block' object has no attribute 'block_countdown'",
+            "execution_time": 1.1920928955078125e-05
+          },
+          {
+            "method_name": "daily_block_count",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "Block.daily_block_count() missing 2 required positional arguments: 'start_date' and 'end_date'",
+            "execution_time": 3.1948089599609375e-05
+          }
+        ],
+        "transaction": [
+          {
+            "method_name": "tx_receipt_status",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.20958304405212402
+          },
+          {
+            "method_name": "check_tx_status",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.20242881774902344
+          }
+        ],
+        "logs": [
+          {
+            "method_name": "get_logs",
+            "success": false,
+            "error_type": "API Error",
+            "error_message": "[No records found] []",
+            "execution_time": 0.21484708786010742
+          }
+        ],
+        "gas_tracker": [
+          {
+            "method_name": "gas_estimate",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'GasTracker' object has no attribute 'gas_estimate'",
+            "execution_time": 8.296966552734375e-05
+          },
+          {
+            "method_name": "gas_oracle",
+            "success": false,
+            "error_type": "API Error",
+            "error_message": "[NOTOK] Error! Missing Or invalid Module name (#1)",
+            "execution_time": 0.2019360065460205
+          }
+        ],
+        "token": [
+          {
+            "method_name": "token_supply",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'Token' object has no attribute 'token_supply'",
+            "execution_time": 2.8848648071289062e-05
+          },
+          {
+            "method_name": "token_balance",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'Token' object has no attribute 'token_balance'",
+            "execution_time": 1.1205673217773438e-05
+          }
+        ],
+        "contract": [
+          {
+            "method_name": "contract_abi",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.20370101928710938
+          },
+          {
+            "method_name": "contract_source",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'Contract' object has no attribute 'contract_source'",
+            "execution_time": 1.2159347534179688e-05
+          }
+        ]
+      },
+      "errors": []
+    },
+    {
+      "scanner_id": "blast",
+      "scanner_name": "BlastScan",
+      "requires_api_key": true,
+      "api_key_configured": true,
+      "networks_tested": [
+        "main"
+      ],
+      "total_methods": 22,
+      "successful_methods": 10,
+      "failed_methods": 12,
+      "success_rate": 45.45454545454545,
+      "method_results": {
+        "proxy": [
+          {
+            "method_name": "block_number",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.44472408294677734
+          },
+          {
+            "method_name": "get_balance",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.21299004554748535
+          },
+          {
+            "method_name": "get_block_by_number",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.2158210277557373
+          }
+        ],
+        "account": [
+          {
+            "method_name": "balance",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.21091318130493164
+          },
+          {
+            "method_name": "normal_txs",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.2169651985168457
+          },
+          {
+            "method_name": "internal_txs",
+            "success": false,
+            "error_type": "API Error",
+            "error_message": "[No transactions found] []",
+            "execution_time": 0.22564387321472168
+          },
+          {
+            "method_name": "erc20_transfers",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'Account' object has no attribute 'erc20_transfers'",
+            "execution_time": 9.775161743164062e-06
+          }
+        ],
+        "stats": [
+          {
+            "method_name": "eth_supply",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 6.7286598682403564
+          },
+          {
+            "method_name": "eth_price",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.2111051082611084
+          },
+          {
+            "method_name": "nodes_size",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'Stats' object has no attribute 'nodes_size'",
+            "execution_time": 1.621246337890625e-05
+          }
+        ],
+        "block": [
+          {
+            "method_name": "block_reward",
+            "success": false,
+            "error_type": "API Error",
+            "error_message": "[NOTOK] Error!",
+            "execution_time": 0.22676396369934082
+          },
+          {
+            "method_name": "block_countdown",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'Block' object has no attribute 'block_countdown'",
+            "execution_time": 8.106231689453125e-06
+          },
+          {
+            "method_name": "daily_block_count",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "Block.daily_block_count() missing 2 required positional arguments: 'start_date' and 'end_date'",
+            "execution_time": 2.4080276489257812e-05
+          }
+        ],
+        "transaction": [
+          {
+            "method_name": "tx_receipt_status",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.21155214309692383
+          },
+          {
+            "method_name": "check_tx_status",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.2106170654296875
+          }
+        ],
+        "logs": [
+          {
+            "method_name": "get_logs",
+            "success": false,
+            "error_type": "API Error",
+            "error_message": "[No records found] []",
+            "execution_time": 0.21091294288635254
+          }
+        ],
+        "gas_tracker": [
+          {
+            "method_name": "gas_estimate",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'GasTracker' object has no attribute 'gas_estimate'",
+            "execution_time": 2.002716064453125e-05
+          },
+          {
+            "method_name": "gas_oracle",
+            "success": false,
+            "error_type": "API Error",
+            "error_message": "[NOTOK] Error! Missing Or invalid Module name (#1)",
+            "execution_time": 0.20631098747253418
+          }
+        ],
+        "token": [
+          {
+            "method_name": "token_supply",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'Token' object has no attribute 'token_supply'",
+            "execution_time": 2.09808349609375e-05
+          },
+          {
+            "method_name": "token_balance",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'Token' object has no attribute 'token_balance'",
+            "execution_time": 1.0967254638671875e-05
+          }
+        ],
+        "contract": [
+          {
+            "method_name": "contract_abi",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.21136999130249023
+          },
+          {
+            "method_name": "contract_source",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'Contract' object has no attribute 'contract_source'",
+            "execution_time": 1.1205673217773438e-05
+          }
+        ]
+      },
+      "errors": []
+    },
+    {
+      "scanner_id": "bsc",
+      "scanner_name": "BscScan",
+      "requires_api_key": true,
+      "api_key_configured": true,
+      "networks_tested": [
+        "main"
+      ],
+      "total_methods": 22,
+      "successful_methods": 9,
+      "failed_methods": 13,
+      "success_rate": 40.909090909090914,
+      "method_results": {
+        "proxy": [
+          {
+            "method_name": "block_number",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.6267209053039551
+          },
+          {
+            "method_name": "get_balance",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.1598660945892334
+          },
+          {
+            "method_name": "get_block_by_number",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.2811920642852783
+          }
+        ],
+        "account": [
+          {
+            "method_name": "balance",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.16178202629089355
+          },
+          {
+            "method_name": "normal_txs",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 1.9494638442993164
+          },
+          {
+            "method_name": "internal_txs",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.21393394470214844
+          },
+          {
+            "method_name": "erc20_transfers",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'Account' object has no attribute 'erc20_transfers'",
+            "execution_time": 7.867813110351562e-06
+          }
+        ],
+        "stats": [
+          {
+            "method_name": "eth_supply",
+            "success": false,
+            "error_type": "API Error",
+            "error_message": "[NOTOK] Error! Missing Or invalid Action name",
+            "execution_time": 0.16029000282287598
+          },
+          {
+            "method_name": "eth_price",
+            "success": false,
+            "error_type": "API Error",
+            "error_message": "[NOTOK] Error! Missing Or invalid Action name",
+            "execution_time": 0.15942764282226562
+          },
+          {
+            "method_name": "nodes_size",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'Stats' object has no attribute 'nodes_size'",
+            "execution_time": 1.5974044799804688e-05
+          }
+        ],
+        "block": [
+          {
+            "method_name": "block_reward",
+            "success": false,
+            "error_type": "API Error",
+            "error_message": "[NOTOK] Error!",
+            "execution_time": 0.16440510749816895
+          },
+          {
+            "method_name": "block_countdown",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'Block' object has no attribute 'block_countdown'",
+            "execution_time": 9.059906005859375e-06
+          },
+          {
+            "method_name": "daily_block_count",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "Block.daily_block_count() missing 2 required positional arguments: 'start_date' and 'end_date'",
+            "execution_time": 1.2874603271484375e-05
+          }
+        ],
+        "transaction": [
+          {
+            "method_name": "tx_receipt_status",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.1621098518371582
+          },
+          {
+            "method_name": "check_tx_status",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.1658000946044922
+          }
+        ],
+        "logs": [
+          {
+            "method_name": "get_logs",
+            "success": false,
+            "error_type": "API Error",
+            "error_message": "[No records found] []",
+            "execution_time": 0.22341704368591309
+          }
+        ],
+        "gas_tracker": [
+          {
+            "method_name": "gas_estimate",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'GasTracker' object has no attribute 'gas_estimate'",
+            "execution_time": 1.1205673217773438e-05
+          },
+          {
+            "method_name": "gas_oracle",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.21359801292419434
+          }
+        ],
+        "token": [
+          {
+            "method_name": "token_supply",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'Token' object has no attribute 'token_supply'",
+            "execution_time": 9.059906005859375e-06
+          },
+          {
+            "method_name": "token_balance",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'Token' object has no attribute 'token_balance'",
+            "execution_time": 1.0967254638671875e-05
+          }
+        ],
+        "contract": [
+          {
+            "method_name": "contract_abi",
+            "success": false,
+            "error_type": "API Error",
+            "error_message": "[NOTOK] Contract source code not verified",
+            "execution_time": 0.18364286422729492
+          },
+          {
+            "method_name": "contract_source",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'Contract' object has no attribute 'contract_source'",
+            "execution_time": 1.0967254638671875e-05
+          }
+        ]
+      },
+      "errors": []
+    },
+    {
+      "scanner_id": "eth",
+      "scanner_name": "Etherscan",
+      "requires_api_key": true,
+      "api_key_configured": true,
+      "networks_tested": [
+        "main",
+        "sepolia"
+      ],
+      "total_methods": 44,
+      "successful_methods": 21,
+      "failed_methods": 23,
+      "success_rate": 47.72727272727273,
+      "method_results": {
+        "proxy": [
+          {
+            "method_name": "block_number",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.6250648498535156
+          },
+          {
+            "method_name": "get_balance",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.20417380332946777
+          },
+          {
+            "method_name": "get_block_by_number",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.6689131259918213
+          }
+        ],
+        "account": [
+          {
+            "method_name": "balance",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.20283818244934082
+          },
+          {
+            "method_name": "normal_txs",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.207716703414917
+          },
+          {
+            "method_name": "internal_txs",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.20488500595092773
+          },
+          {
+            "method_name": "erc20_transfers",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'Account' object has no attribute 'erc20_transfers'",
+            "execution_time": 1.1920928955078125e-05
+          }
+        ],
+        "stats": [
+          {
+            "method_name": "eth_supply",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.2236788272857666
+          },
+          {
+            "method_name": "eth_price",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.20753693580627441
+          },
+          {
+            "method_name": "nodes_size",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'Stats' object has no attribute 'nodes_size'",
+            "execution_time": 1.1920928955078125e-05
+          }
+        ],
+        "block": [
+          {
+            "method_name": "block_reward",
+            "success": false,
+            "error_type": "API Error",
+            "error_message": "[NOTOK] Error!",
+            "execution_time": 0.20365595817565918
+          },
+          {
+            "method_name": "block_countdown",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'Block' object has no attribute 'block_countdown'",
+            "execution_time": 1.0013580322265625e-05
+          },
+          {
+            "method_name": "daily_block_count",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "Block.daily_block_count() missing 2 required positional arguments: 'start_date' and 'end_date'",
+            "execution_time": 1.4066696166992188e-05
+          }
+        ],
+        "transaction": [
+          {
+            "method_name": "tx_receipt_status",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.20162272453308105
+          },
+          {
+            "method_name": "check_tx_status",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.20238161087036133
+          }
+        ],
+        "logs": [
+          {
+            "method_name": "get_logs",
+            "success": false,
+            "error_type": "API Error",
+            "error_message": "[No records found] []",
+            "execution_time": 0.20590901374816895
+          }
+        ],
+        "gas_tracker": [
+          {
+            "method_name": "gas_estimate",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'GasTracker' object has no attribute 'gas_estimate'",
+            "execution_time": 1.71661376953125e-05
+          },
+          {
+            "method_name": "gas_oracle",
+            "success": false,
+            "error_type": "API Error",
+            "error_message": "[NOTOK] Error! Missing Or invalid Module name (#1)",
+            "execution_time": 0.21061491966247559
+          }
+        ],
+        "token": [
+          {
+            "method_name": "token_supply",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'Token' object has no attribute 'token_supply'",
+            "execution_time": 1.0967254638671875e-05
+          },
+          {
+            "method_name": "token_balance",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'Token' object has no attribute 'token_balance'",
+            "execution_time": 8.821487426757812e-06
+          }
+        ],
+        "contract": [
+          {
+            "method_name": "contract_abi",
+            "success": false,
+            "error_type": "API Error",
+            "error_message": "[NOTOK] Contract source code not verified",
+            "execution_time": 0.21354293823242188
+          },
+          {
+            "method_name": "contract_source",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'Contract' object has no attribute 'contract_source'",
+            "execution_time": 7.867813110351562e-06
+          }
+        ]
+      },
+      "errors": []
+    },
+    {
+      "scanner_id": "fantom",
+      "scanner_name": "FtmScan",
+      "requires_api_key": true,
+      "api_key_configured": true,
+      "networks_tested": [
+        "main"
+      ],
+      "total_methods": 22,
+      "successful_methods": 0,
+      "failed_methods": 22,
+      "success_rate": 0.0,
+      "method_results": {
+        "proxy": [
+          {
+            "method_name": "block_number",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "Failed to perform, curl: (6) Could not resolve host: api.ftmscan.com. See https://curl.se/libcurl/c/libcurl-errors.html first for more details.",
+            "execution_time": 0.0028829574584960938
+          },
+          {
+            "method_name": "get_balance",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "Failed to perform, curl: (6) Could not resolve host: api.ftmscan.com. See https://curl.se/libcurl/c/libcurl-errors.html first for more details.",
+            "execution_time": 0.006407022476196289
+          },
+          {
+            "method_name": "get_block_by_number",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "Failed to perform, curl: (6) Could not resolve host: api.ftmscan.com. See https://curl.se/libcurl/c/libcurl-errors.html first for more details.",
+            "execution_time": 0.002686023712158203
+          }
+        ],
+        "account": [
+          {
+            "method_name": "balance",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "Failed to perform, curl: (6) Could not resolve host: api.ftmscan.com. See https://curl.se/libcurl/c/libcurl-errors.html first for more details.",
+            "execution_time": 0.002518892288208008
+          },
+          {
+            "method_name": "normal_txs",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "Failed to perform, curl: (6) Could not resolve host: api.ftmscan.com. See https://curl.se/libcurl/c/libcurl-errors.html first for more details.",
+            "execution_time": 0.0021576881408691406
+          },
+          {
+            "method_name": "internal_txs",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "Failed to perform, curl: (6) Could not resolve host: api.ftmscan.com. See https://curl.se/libcurl/c/libcurl-errors.html first for more details.",
+            "execution_time": 0.0025606155395507812
+          },
+          {
+            "method_name": "erc20_transfers",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'Account' object has no attribute 'erc20_transfers'",
+            "execution_time": 7.152557373046875e-06
+          }
+        ],
+        "stats": [
+          {
+            "method_name": "eth_supply",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "Failed to perform, curl: (6) Could not resolve host: api.ftmscan.com. See https://curl.se/libcurl/c/libcurl-errors.html first for more details.",
+            "execution_time": 0.002627134323120117
+          },
+          {
+            "method_name": "eth_price",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "Failed to perform, curl: (6) Could not resolve host: api.ftmscan.com. See https://curl.se/libcurl/c/libcurl-errors.html first for more details.",
+            "execution_time": 0.0026879310607910156
+          },
+          {
+            "method_name": "nodes_size",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'Stats' object has no attribute 'nodes_size'",
+            "execution_time": 1.4066696166992188e-05
+          }
+        ],
+        "block": [
+          {
+            "method_name": "block_reward",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "Failed to perform, curl: (6) Could not resolve host: api.ftmscan.com. See https://curl.se/libcurl/c/libcurl-errors.html first for more details.",
+            "execution_time": 0.0027709007263183594
+          },
+          {
+            "method_name": "block_countdown",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'Block' object has no attribute 'block_countdown'",
+            "execution_time": 1.0013580322265625e-05
+          },
+          {
+            "method_name": "daily_block_count",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "Block.daily_block_count() missing 2 required positional arguments: 'start_date' and 'end_date'",
+            "execution_time": 1.5020370483398438e-05
+          }
+        ],
+        "transaction": [
+          {
+            "method_name": "tx_receipt_status",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "Failed to perform, curl: (6) Could not resolve host: api.ftmscan.com. See https://curl.se/libcurl/c/libcurl-errors.html first for more details.",
+            "execution_time": 0.0023763179779052734
+          },
+          {
+            "method_name": "check_tx_status",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "Failed to perform, curl: (6) Could not resolve host: api.ftmscan.com. See https://curl.se/libcurl/c/libcurl-errors.html first for more details.",
+            "execution_time": 0.0046651363372802734
+          }
+        ],
+        "logs": [
+          {
+            "method_name": "get_logs",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "Failed to perform, curl: (6) Could not resolve host: api.ftmscan.com. See https://curl.se/libcurl/c/libcurl-errors.html first for more details.",
+            "execution_time": 0.002162933349609375
+          }
+        ],
+        "gas_tracker": [
+          {
+            "method_name": "gas_estimate",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'GasTracker' object has no attribute 'gas_estimate'",
+            "execution_time": 1.0013580322265625e-05
+          },
+          {
+            "method_name": "gas_oracle",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "Failed to perform, curl: (6) Could not resolve host: api.ftmscan.com. See https://curl.se/libcurl/c/libcurl-errors.html first for more details.",
+            "execution_time": 0.0025229454040527344
+          }
+        ],
+        "token": [
+          {
+            "method_name": "token_supply",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'Token' object has no attribute 'token_supply'",
+            "execution_time": 9.775161743164062e-06
+          },
+          {
+            "method_name": "token_balance",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'Token' object has no attribute 'token_balance'",
+            "execution_time": 1.0967254638671875e-05
+          }
+        ],
+        "contract": [
+          {
+            "method_name": "contract_abi",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "Failed to perform, curl: (6) Could not resolve host: api.ftmscan.com. See https://curl.se/libcurl/c/libcurl-errors.html first for more details.",
+            "execution_time": 0.003020048141479492
+          },
+          {
+            "method_name": "contract_source",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'Contract' object has no attribute 'contract_source'",
+            "execution_time": 2.002716064453125e-05
+          }
+        ]
+      },
+      "errors": []
+    },
+    {
+      "scanner_id": "flare",
+      "scanner_name": "Flare Explorer",
+      "requires_api_key": false,
+      "api_key_configured": false,
+      "networks_tested": [
+        "main"
+      ],
+      "total_methods": 22,
+      "successful_methods": 10,
+      "failed_methods": 12,
+      "success_rate": 45.45454545454545,
+      "method_results": {
+        "proxy": [
+          {
+            "method_name": "block_number",
+            "success": false,
+            "error_type": "API Error",
+            "error_message": "[Unknown module] None",
+            "execution_time": 0.32839083671569824
+          },
+          {
+            "method_name": "get_balance",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.18169379234313965
+          },
+          {
+            "method_name": "get_block_by_number",
+            "success": false,
+            "error_type": "API Error",
+            "error_message": "[Unknown module] None",
+            "execution_time": 0.11362290382385254
+          }
+        ],
+        "account": [
+          {
+            "method_name": "balance",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.18315911293029785
+          },
+          {
+            "method_name": "normal_txs",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.12499570846557617
+          },
+          {
+            "method_name": "internal_txs",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.14718317985534668
+          },
+          {
+            "method_name": "erc20_transfers",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'Account' object has no attribute 'erc20_transfers'",
+            "execution_time": 1.0013580322265625e-05
+          }
+        ],
+        "stats": [
+          {
+            "method_name": "eth_supply",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.10513091087341309
+          },
+          {
+            "method_name": "eth_price",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.11937165260314941
+          },
+          {
+            "method_name": "nodes_size",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'Stats' object has no attribute 'nodes_size'",
+            "execution_time": 1.0013580322265625e-05
+          }
+        ],
+        "block": [
+          {
+            "method_name": "block_reward",
+            "success": false,
+            "error_type": "API Error",
+            "error_message": "[Invalid block number] None",
+            "execution_time": 0.10893988609313965
+          },
+          {
+            "method_name": "block_countdown",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'Block' object has no attribute 'block_countdown'",
+            "execution_time": 1.0013580322265625e-05
+          },
+          {
+            "method_name": "daily_block_count",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "Block.daily_block_count() missing 2 required positional arguments: 'start_date' and 'end_date'",
+            "execution_time": 1.5020370483398438e-05
+          }
+        ],
+        "transaction": [
+          {
+            "method_name": "tx_receipt_status",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.10783815383911133
+          },
+          {
+            "method_name": "check_tx_status",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.11505579948425293
+          }
+        ],
+        "logs": [
+          {
+            "method_name": "get_logs",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.12733006477355957
+          }
+        ],
+        "gas_tracker": [
+          {
+            "method_name": "gas_estimate",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'GasTracker' object has no attribute 'gas_estimate'",
+            "execution_time": 8.821487426757812e-06
+          },
+          {
+            "method_name": "gas_oracle",
+            "success": false,
+            "error_type": "API Error",
+            "error_message": "[Unknown module] None",
+            "execution_time": 0.10953688621520996
+          }
+        ],
+        "token": [
+          {
+            "method_name": "token_supply",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'Token' object has no attribute 'token_supply'",
+            "execution_time": 1.3113021850585938e-05
+          },
+          {
+            "method_name": "token_balance",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'Token' object has no attribute 'token_balance'",
+            "execution_time": 5.9604644775390625e-06
+          }
+        ],
+        "contract": [
+          {
+            "method_name": "contract_abi",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.1168370246887207
+          },
+          {
+            "method_name": "contract_source",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'Contract' object has no attribute 'contract_source'",
+            "execution_time": 8.821487426757812e-06
+          }
+        ]
+      },
+      "errors": []
+    },
+    {
+      "scanner_id": "gnosis",
+      "scanner_name": "GnosisScan",
+      "requires_api_key": true,
+      "api_key_configured": true,
+      "networks_tested": [
+        "main"
+      ],
+      "total_methods": 22,
+      "successful_methods": 12,
+      "failed_methods": 10,
+      "success_rate": 54.54545454545454,
+      "method_results": {
+        "proxy": [
+          {
+            "method_name": "block_number",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.6248750686645508
+          },
+          {
+            "method_name": "get_balance",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.22098302841186523
+          },
+          {
+            "method_name": "get_block_by_number",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.33501720428466797
+          }
+        ],
+        "account": [
+          {
+            "method_name": "balance",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.21083474159240723
+          },
+          {
+            "method_name": "normal_txs",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.30043601989746094
+          },
+          {
+            "method_name": "internal_txs",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.21133995056152344
+          },
+          {
+            "method_name": "erc20_transfers",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'Account' object has no attribute 'erc20_transfers'",
+            "execution_time": 1.0013580322265625e-05
+          }
+        ],
+        "stats": [
+          {
+            "method_name": "eth_supply",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.2145247459411621
+          },
+          {
+            "method_name": "eth_price",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.2202908992767334
+          },
+          {
+            "method_name": "nodes_size",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'Stats' object has no attribute 'nodes_size'",
+            "execution_time": 1.4066696166992188e-05
+          }
+        ],
+        "block": [
+          {
+            "method_name": "block_reward",
+            "success": false,
+            "error_type": "API Error",
+            "error_message": "[NOTOK] Error!",
+            "execution_time": 0.20811080932617188
+          },
+          {
+            "method_name": "block_countdown",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'Block' object has no attribute 'block_countdown'",
+            "execution_time": 1.0013580322265625e-05
+          },
+          {
+            "method_name": "daily_block_count",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "Block.daily_block_count() missing 2 required positional arguments: 'start_date' and 'end_date'",
+            "execution_time": 8.344650268554688e-06
+          }
+        ],
+        "transaction": [
+          {
+            "method_name": "tx_receipt_status",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.21368908882141113
+          },
+          {
+            "method_name": "check_tx_status",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.21170973777770996
+          }
+        ],
+        "logs": [
+          {
+            "method_name": "get_logs",
+            "success": false,
+            "error_type": "API Error",
+            "error_message": "[No records found] []",
+            "execution_time": 0.2712979316711426
+          }
+        ],
+        "gas_tracker": [
+          {
+            "method_name": "gas_estimate",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'GasTracker' object has no attribute 'gas_estimate'",
+            "execution_time": 1.71661376953125e-05
+          },
+          {
+            "method_name": "gas_oracle",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.32859325408935547
+          }
+        ],
+        "token": [
+          {
+            "method_name": "token_supply",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'Token' object has no attribute 'token_supply'",
+            "execution_time": 2.384185791015625e-05
+          },
+          {
+            "method_name": "token_balance",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'Token' object has no attribute 'token_balance'",
+            "execution_time": 1.0013580322265625e-05
+          }
+        ],
+        "contract": [
+          {
+            "method_name": "contract_abi",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.21476197242736816
+          },
+          {
+            "method_name": "contract_source",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'Contract' object has no attribute 'contract_source'",
+            "execution_time": 9.059906005859375e-06
+          }
+        ]
+      },
+      "errors": []
+    },
+    {
+      "scanner_id": "linea",
+      "scanner_name": "LineaScan",
+      "requires_api_key": true,
+      "api_key_configured": true,
+      "networks_tested": [
+        "main"
+      ],
+      "total_methods": 22,
+      "successful_methods": 12,
+      "failed_methods": 10,
+      "success_rate": 54.54545454545454,
+      "method_results": {
+        "proxy": [
+          {
+            "method_name": "block_number",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.5355072021484375
+          },
+          {
+            "method_name": "get_balance",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.20931696891784668
+          },
+          {
+            "method_name": "get_block_by_number",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.32569432258605957
+          }
+        ],
+        "account": [
+          {
+            "method_name": "balance",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.2136697769165039
+          },
+          {
+            "method_name": "normal_txs",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.2556159496307373
+          },
+          {
+            "method_name": "internal_txs",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.26971888542175293
+          },
+          {
+            "method_name": "erc20_transfers",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'Account' object has no attribute 'erc20_transfers'",
+            "execution_time": 1.52587890625e-05
+          }
+        ],
+        "stats": [
+          {
+            "method_name": "eth_supply",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.24371886253356934
+          },
+          {
+            "method_name": "eth_price",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.21312403678894043
+          },
+          {
+            "method_name": "nodes_size",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'Stats' object has no attribute 'nodes_size'",
+            "execution_time": 1.2874603271484375e-05
+          }
+        ],
+        "block": [
+          {
+            "method_name": "block_reward",
+            "success": false,
+            "error_type": "API Error",
+            "error_message": "[NOTOK] Error!",
+            "execution_time": 0.20651793479919434
+          },
+          {
+            "method_name": "block_countdown",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'Block' object has no attribute 'block_countdown'",
+            "execution_time": 8.821487426757812e-06
+          },
+          {
+            "method_name": "daily_block_count",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "Block.daily_block_count() missing 2 required positional arguments: 'start_date' and 'end_date'",
+            "execution_time": 7.152557373046875e-06
+          }
+        ],
+        "transaction": [
+          {
+            "method_name": "tx_receipt_status",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.20351099967956543
+          },
+          {
+            "method_name": "check_tx_status",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.20188188552856445
+          }
+        ],
+        "logs": [
+          {
+            "method_name": "get_logs",
+            "success": false,
+            "error_type": "API Error",
+            "error_message": "[No records found] []",
+            "execution_time": 0.20574307441711426
+          }
+        ],
+        "gas_tracker": [
+          {
+            "method_name": "gas_estimate",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'GasTracker' object has no attribute 'gas_estimate'",
+            "execution_time": 1.1682510375976562e-05
+          },
+          {
+            "method_name": "gas_oracle",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.2803990840911865
+          }
+        ],
+        "token": [
+          {
+            "method_name": "token_supply",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'Token' object has no attribute 'token_supply'",
+            "execution_time": 9.059906005859375e-06
+          },
+          {
+            "method_name": "token_balance",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'Token' object has no attribute 'token_balance'",
+            "execution_time": 2.6226043701171875e-05
+          }
+        ],
+        "contract": [
+          {
+            "method_name": "contract_abi",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.2119731903076172
+          },
+          {
+            "method_name": "contract_source",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'Contract' object has no attribute 'contract_source'",
+            "execution_time": 9.059906005859375e-06
+          }
+        ]
+      },
+      "errors": []
+    },
+    {
+      "scanner_id": "optimism",
+      "scanner_name": "Optimism Etherscan",
+      "requires_api_key": true,
+      "api_key_configured": true,
+      "networks_tested": [
+        "main"
+      ],
+      "total_methods": 22,
+      "successful_methods": 10,
+      "failed_methods": 12,
+      "success_rate": 45.45454545454545,
+      "method_results": {
+        "proxy": [
+          {
+            "method_name": "block_number",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.5559329986572266
+          },
+          {
+            "method_name": "get_balance",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.24910521507263184
+          },
+          {
+            "method_name": "get_block_by_number",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.31945180892944336
+          }
+        ],
+        "account": [
+          {
+            "method_name": "balance",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.22120094299316406
+          },
+          {
+            "method_name": "normal_txs",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.2505762577056885
+          },
+          {
+            "method_name": "internal_txs",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.3876352310180664
+          },
+          {
+            "method_name": "erc20_transfers",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'Account' object has no attribute 'erc20_transfers'",
+            "execution_time": 1.9073486328125e-05
+          }
+        ],
+        "stats": [
+          {
+            "method_name": "eth_supply",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "Failed to perform, curl: (28) Operation timed out after 10001 milliseconds with 0 bytes received. See https://curl.se/libcurl/c/libcurl-errors.html first for more details.",
+            "execution_time": 10.002846240997314
+          },
+          {
+            "method_name": "eth_price",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.25797104835510254
+          },
+          {
+            "method_name": "nodes_size",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'Stats' object has no attribute 'nodes_size'",
+            "execution_time": 5.245208740234375e-06
+          }
+        ],
+        "block": [
+          {
+            "method_name": "block_reward",
+            "success": false,
+            "error_type": "API Error",
+            "error_message": "[NOTOK] Error!",
+            "execution_time": 0.21226906776428223
+          },
+          {
+            "method_name": "block_countdown",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'Block' object has no attribute 'block_countdown'",
+            "execution_time": 1.1920928955078125e-05
+          },
+          {
+            "method_name": "daily_block_count",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "Block.daily_block_count() missing 2 required positional arguments: 'start_date' and 'end_date'",
+            "execution_time": 2.193450927734375e-05
+          }
+        ],
+        "transaction": [
+          {
+            "method_name": "tx_receipt_status",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.22209882736206055
+          },
+          {
+            "method_name": "check_tx_status",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.21086907386779785
+          }
+        ],
+        "logs": [
+          {
+            "method_name": "get_logs",
+            "success": false,
+            "error_type": "API Error",
+            "error_message": "[No records found] []",
+            "execution_time": 0.2168729305267334
+          }
+        ],
+        "gas_tracker": [
+          {
+            "method_name": "gas_estimate",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'GasTracker' object has no attribute 'gas_estimate'",
+            "execution_time": 3.504753112792969e-05
+          },
+          {
+            "method_name": "gas_oracle",
+            "success": false,
+            "error_type": "API Error",
+            "error_message": "[NOTOK] Error! Missing Or invalid Module name (#1)",
+            "execution_time": 0.21062088012695312
+          }
+        ],
+        "token": [
+          {
+            "method_name": "token_supply",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'Token' object has no attribute 'token_supply'",
+            "execution_time": 2.5033950805664062e-05
+          },
+          {
+            "method_name": "token_balance",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'Token' object has no attribute 'token_balance'",
+            "execution_time": 8.821487426757812e-06
+          }
+        ],
+        "contract": [
+          {
+            "method_name": "contract_abi",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.21847224235534668
+          },
+          {
+            "method_name": "contract_source",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'Contract' object has no attribute 'contract_source'",
+            "execution_time": 7.152557373046875e-06
+          }
+        ]
+      },
+      "errors": []
+    },
+    {
+      "scanner_id": "polygon",
+      "scanner_name": "PolygonScan",
+      "requires_api_key": true,
+      "api_key_configured": true,
+      "networks_tested": [
+        "main"
+      ],
+      "total_methods": 22,
+      "successful_methods": 12,
+      "failed_methods": 10,
+      "success_rate": 54.54545454545454,
+      "method_results": {
+        "proxy": [
+          {
+            "method_name": "block_number",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.5149288177490234
+          },
+          {
+            "method_name": "get_balance",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.1589670181274414
+          },
+          {
+            "method_name": "get_block_by_number",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.2718689441680908
+          }
+        ],
+        "account": [
+          {
+            "method_name": "balance",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.169874906539917
+          },
+          {
+            "method_name": "normal_txs",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.22329187393188477
+          },
+          {
+            "method_name": "internal_txs",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.16459298133850098
+          },
+          {
+            "method_name": "erc20_transfers",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'Account' object has no attribute 'erc20_transfers'",
+            "execution_time": 9.059906005859375e-06
+          }
+        ],
+        "stats": [
+          {
+            "method_name": "eth_supply",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.15958690643310547
+          },
+          {
+            "method_name": "eth_price",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.15887784957885742
+          },
+          {
+            "method_name": "nodes_size",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'Stats' object has no attribute 'nodes_size'",
+            "execution_time": 6.198883056640625e-06
+          }
+        ],
+        "block": [
+          {
+            "method_name": "block_reward",
+            "success": false,
+            "error_type": "API Error",
+            "error_message": "[NOTOK] Error!",
+            "execution_time": 0.15755486488342285
+          },
+          {
+            "method_name": "block_countdown",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'Block' object has no attribute 'block_countdown'",
+            "execution_time": 9.059906005859375e-06
+          },
+          {
+            "method_name": "daily_block_count",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "Block.daily_block_count() missing 2 required positional arguments: 'start_date' and 'end_date'",
+            "execution_time": 9.298324584960938e-06
+          }
+        ],
+        "transaction": [
+          {
+            "method_name": "tx_receipt_status",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.17019224166870117
+          },
+          {
+            "method_name": "check_tx_status",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.15733695030212402
+          }
+        ],
+        "logs": [
+          {
+            "method_name": "get_logs",
+            "success": false,
+            "error_type": "API Error",
+            "error_message": "[No records found] []",
+            "execution_time": 0.18464899063110352
+          }
+        ],
+        "gas_tracker": [
+          {
+            "method_name": "gas_estimate",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'GasTracker' object has no attribute 'gas_estimate'",
+            "execution_time": 9.059906005859375e-06
+          },
+          {
+            "method_name": "gas_oracle",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.22325611114501953
+          }
+        ],
+        "token": [
+          {
+            "method_name": "token_supply",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'Token' object has no attribute 'token_supply'",
+            "execution_time": 1.0967254638671875e-05
+          },
+          {
+            "method_name": "token_balance",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'Token' object has no attribute 'token_balance'",
+            "execution_time": 1.0013580322265625e-05
+          }
+        ],
+        "contract": [
+          {
+            "method_name": "contract_abi",
+            "success": true,
+            "error_type": null,
+            "error_message": null,
+            "execution_time": 0.16029715538024902
+          },
+          {
+            "method_name": "contract_source",
+            "success": false,
+            "error_type": "Exception",
+            "error_message": "'Contract' object has no attribute 'contract_source'",
+            "execution_time": 9.059906005859375e-06
+          }
+        ]
+      },
+      "errors": []
+    },
+    {
+      "scanner_id": "xlayer",
+      "scanner_name": "OKLink X Layer",
+      "requires_api_key": true,
+      "api_key_configured": false,
+      "networks_tested": [
+        "main"
+      ],
+      "total_methods": 0,
+      "successful_methods": 0,
+      "failed_methods": 0,
+      "success_rate": 0.0,
+      "method_results": {},
+      "errors": [
+        "main: API key required for OKLink X Layer. Set one of these environment variables: OKLINK_X_LAYER_KEY, XLAYER_KEY, XLAYER_API_KEY, SCANNER_XLAYER_KEY"
+      ]
+    }
+  ]
+}
