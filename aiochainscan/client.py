@@ -4,6 +4,7 @@ from contextlib import AbstractAsyncContextManager
 from aiohttp import ClientTimeout
 from aiohttp_retry import RetryOptionsBase
 
+from aiochainscan.config import config as global_config
 from aiochainscan.modules.account import Account
 from aiochainscan.modules.block import Block
 from aiochainscan.modules.contract import Contract
@@ -52,3 +53,69 @@ class Client:
 
     async def close(self):
         await self._http.close()
+
+    @classmethod
+    def from_config(
+        cls,
+        scanner: str,
+        network: str = 'main',
+        loop: AbstractEventLoop = None,
+        timeout: ClientTimeout = None,
+        proxy: str = None,
+        throttler: AbstractAsyncContextManager = None,
+        retry_options: RetryOptionsBase = None,
+    ) -> 'Client':
+        """
+        Create a Client instance using the configuration system.
+
+        Args:
+            scanner: Scanner name (e.g., 'eth', 'bsc', 'polygon')
+            network: Network name (e.g., 'main', 'test', 'goerli')
+            loop: Event loop instance
+            timeout: Request timeout configuration
+            proxy: Proxy URL
+            throttler: Rate limiting throttler
+            retry_options: Retry configuration
+
+        Returns:
+            Configured Client instance
+
+        Raises:
+            ValueError: If scanner or network is not supported, or API key is missing
+
+        Example:
+            ```python
+            # Create Ethereum mainnet client (requires ETHERSCAN_KEY env var)
+            client = Client.from_config('eth', 'main')
+
+            # Create BSC testnet client (requires BSCSCAN_KEY env var)
+            client = Client.from_config('bsc', 'test')
+            ```
+        """
+        client_config = global_config.create_client_config(scanner, network)
+
+        return cls(
+            api_key=client_config['api_key'],
+            api_kind=client_config['api_kind'],
+            network=client_config['network'],
+            loop=loop,
+            timeout=timeout,
+            proxy=proxy,
+            throttler=throttler,
+            retry_options=retry_options,
+        )
+
+    @classmethod
+    def get_supported_scanners(cls) -> list[str]:
+        """Get list of all supported scanner names."""
+        return global_config.get_supported_scanners()
+
+    @classmethod
+    def get_scanner_networks(cls, scanner: str) -> set[str]:
+        """Get supported networks for a specific scanner."""
+        return global_config.get_scanner_networks(scanner)
+
+    @classmethod
+    def list_configurations(cls) -> dict[str, dict[str, any]]:
+        """Get overview of all scanner configurations and their status."""
+        return global_config.list_all_configurations()

@@ -265,3 +265,87 @@ The remaining failures are all related to test mocking issues, not actual functi
 - License: MIT
 - Python package for blockchain API interactions
 - Enable Issues, Wiki, and Discussions as needed
+
+## Configuration System Implementation (2025-01-26)
+
+### ✅ New Configuration System:
+Implemented comprehensive configuration management for multiple blockchain scanners:
+
+**Key Features:**
+- **Environment Variable Management**: API keys loaded from env vars (ETHERSCAN_KEY, BSCSCAN_KEY, etc.)
+- **Multi-Scanner Support**: Unified configuration for 15+ blockchain scanners
+- **Network Validation**: Each scanner supports specific networks with validation
+- **Secure Key Management**: API keys never committed to git, loaded from environment
+- **Backward Compatibility**: Existing Client constructor still works
+
+### 🏗️ New Components:
+1. **`aiochainscan/config.py`** ✅
+   - `ScannerConfig` dataclass for scanner metadata
+   - `ChainScanConfig` class for centralized configuration
+   - Support for special scanner configurations (XLayer auth headers, etc.)
+
+2. **Enhanced `Client` class** ✅
+   - `Client.from_config(scanner, network)` factory method
+   - `Client.get_supported_scanners()` class method
+   - `Client.get_scanner_networks(scanner)` class method
+   - `Client.list_configurations()` for status overview
+
+3. **Comprehensive Test Suite** ✅
+   - `tests/test_config.py` with 20+ test cases
+   - Environment variable mocking
+   - Error handling validation
+   - Client integration tests
+
+4. **Example Usage** ✅
+   - `examples/setup_config.py` demonstration script
+   - Shows both old and new usage patterns
+   - Includes configuration status checking
+
+### 🔧 Supported Scanners & Networks:
+- **Ethereum**: main, test, goerli, sepolia (ETHERSCAN_KEY)
+- **BSC**: main, test (BSCSCAN_KEY)  
+- **Polygon**: main, mumbai, test (POLYGONSCAN_KEY)
+- **Optimism**: main, goerli, test (OPTIMISM_KEY)
+- **Arbitrum**: main, nova, goerli, test (ARBITRUM_KEY)
+- **Fantom**: main, test (FANTOM_KEY)
+- **Gnosis**: main, chiado (GNOSIS_KEY)
+- **Flare**: main, test (FLARE_KEY - optional)
+- **Base**: main, goerli, sepolia (BASE_KEY)
+- **XLayer**: main (XLAYER_KEY with special header auth)
+- **+6 more scanners** with full network support
+
+### 📝 Usage Examples:
+```python
+# New way - using configuration system
+client = Client.from_config('eth', 'main')  # Uses ETHERSCAN_KEY env var
+client = Client.from_config('bsc', 'test')  # Uses BSCSCAN_KEY env var
+
+# Check available scanners and networks
+print(Client.get_supported_scanners())
+print(Client.get_scanner_networks('eth'))
+print(Client.list_configurations())  # Shows API key status
+
+# Old way still works
+client = Client(api_key='your_key', api_kind='eth', network='main')
+```
+
+### 🛡️ Security Features:
+- API keys never stored in code or config files
+- Environment variable validation with clear error messages
+- Optional API keys for scanners that support free tiers
+- .env files properly excluded from git tracking
+
+### ✅ Testing Status:
+- All existing tests continue to pass
+- New configuration tests added and passing
+- Environment variable isolation in tests
+- Error handling thoroughly tested
+
+This configuration system provides a robust foundation for managing multiple blockchain scanner APIs while maintaining security and ease of use.
+
+### 🔄 Recent Updates:
+- **API Key Format**: Changed primary format from `{ID}_KEY` to `{SCANNER_NAME}_KEY` 
+  - Primary: `ETHERSCAN_KEY` (instead of `ETH_KEY`)
+  - Backward compatibility maintained for existing `ETH_KEY` format
+  - New `.env` templates use the correct `{SCANNER_NAME}_KEY` format
+  - Configuration system automatically prioritizes new format over old format
