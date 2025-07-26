@@ -1,5 +1,0 @@
----
-description: no need create additional .md files to explain update, not need create explanation files, if you create test you create it in test folder in the same testing logic as previous. if create temporary file for just mone task - drop it when finish.
-globs:
-alwaysApply: true
----
