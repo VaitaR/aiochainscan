@@ -38,6 +38,9 @@ dev = [
     "ruff>=0.1.0",
 ]
 
+[project.scripts]
+aiochainscan = "aiochainscan.cli:main"
+
 [project.urls]
 Homepage = "https://github.com/VaitaR/aiochainscan"
 Repository = "https://github.com/VaitaR/aiochainscan"
