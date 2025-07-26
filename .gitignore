@@ -181,3 +181,6 @@ examples/*_report.txt
 examples/*_report.html
 examples/*_report.json
 examples/*_results.json
+examples/*_summary.md
+examples/*_detailed.md
+!examples/README.md

@@ -12,6 +12,60 @@ class Proxy(BaseModule):
     def _module(self) -> str:
         return 'proxy'
 
+    async def balance(self, address: str, tag: str = 'latest') -> int:
+        """Get Ether balance for an address.
+
+        First attempts to use module=account&action=balance endpoint.
+        For ETH-clones, falls back to module=proxy&action=eth_getBalance.
+
+        Args:
+            address: The address to check balance for
+            tag: Block parameter (default: 'latest')
+
+        Returns:
+            Balance in wei as integer
+
+        Example:
+            ```python
+            balance = await client.proxy.balance('0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045')
+            print(f"Balance: {balance} wei")
+            ```
+        """
+        try:
+            # Try account module first (primary endpoint)
+            result = await self._client.account.balance(address, tag)
+            return int(result)
+        except Exception:
+            # Fallback to proxy endpoint for ETH-clones
+            try:
+                result = await self._get(
+                    action='eth_getBalance',
+                    address=address,
+                    tag=check_tag(tag),
+                )
+                # Convert hex string to int
+                return (
+                    int(result, 16)
+                    if isinstance(result, str) and result.startswith('0x')
+                    else int(result)
+                )
+            except Exception:
+                # If both fail, re-raise the original account error
+                result = await self._client.account.balance(address, tag)
+                return int(result)
+
+    async def get_balance(self, address: str, tag: str = 'latest') -> int:
+        """Legacy alias for balance method.
+
+        Args:
+            address: The address to check balance for
+            tag: Block parameter (default: 'latest')
+
+        Returns:
+            Balance in wei as integer
+        """
+        return await self.balance(address, tag)
+
     async def block_number(self) -> str:
         """Returns the number of most recent block."""
         return await self._get(action='eth_blockNumber')

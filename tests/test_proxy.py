@@ -14,6 +14,125 @@ async def proxy():
 
 
 @pytest.mark.asyncio
+async def test_balance(proxy):
+    """Test balance method using account module first."""
+    with patch.object(
+        proxy._client.account, 'balance', new=AsyncMock(return_value='1000000000000000000')
+    ) as account_mock:
+        result = await proxy.balance('0x123')
+        account_mock.assert_called_once_with('0x123', 'latest')
+        assert result == 1000000000000000000
+
+    # Test with custom tag
+    with patch.object(
+        proxy._client.account, 'balance', new=AsyncMock(return_value='2000000000000000000')
+    ) as account_mock:
+        result = await proxy.balance('0x456', 'earliest')
+        account_mock.assert_called_once_with('0x456', 'earliest')
+        assert result == 2000000000000000000
+
+
+@pytest.mark.asyncio
+async def test_balance_fallback_to_proxy(proxy):
+    """Test balance method fallback to proxy endpoint when account fails."""
+    # Mock account.balance to raise exception
+    with (
+        patch.object(
+            proxy._client.account, 'balance', side_effect=Exception('Account API failed')
+        ),
+        patch(
+            'aiochainscan.network.Network.get', new=AsyncMock(return_value='0xde0b6b3a7640000')
+        ) as mock_get,
+    ):
+        result = await proxy.balance('0x123')
+        mock_get.assert_called_once_with(
+            params={
+                'module': 'proxy',
+                'action': 'eth_getBalance',
+                'address': '0x123',
+                'tag': 'latest',
+            },
+            headers={},
+        )
+        assert result == 1000000000000000000  # 0xde0b6b3a7640000 in decimal
+
+
+@pytest.mark.asyncio
+async def test_balance_fallback_with_custom_tag(proxy):
+    """Test balance method fallback with custom tag."""
+    with (
+        patch.object(
+            proxy._client.account, 'balance', side_effect=Exception('Account API failed')
+        ),
+        patch(
+            'aiochainscan.network.Network.get', new=AsyncMock(return_value='0x1bc16d674ec80000')
+        ) as mock_get,
+        patch('aiochainscan.modules.proxy.check_tag', new=Mock(return_value='0x123')) as tag_mock,
+    ):
+        result = await proxy.balance('0x456', 'pending')
+        tag_mock.assert_called_once_with('pending')
+        mock_get.assert_called_once_with(
+            params={
+                'module': 'proxy',
+                'action': 'eth_getBalance',
+                'address': '0x456',
+                'tag': '0x123',
+            },
+            headers={},
+        )
+        assert result == 2000000000000000000  # 0x1bc16d674ec80000 in decimal
+
+
+@pytest.mark.asyncio
+async def test_balance_fallback_non_hex_response(proxy):
+    """Test balance method fallback with non-hex response."""
+    with (
+        patch.object(
+            proxy._client.account, 'balance', side_effect=Exception('Account API failed')
+        ),
+        patch(
+            'aiochainscan.network.Network.get', new=AsyncMock(return_value='1000000000000000000')
+        ) as mock_get,
+    ):
+        result = await proxy.balance('0x123')
+        mock_get.assert_called_once()
+        assert result == 1000000000000000000
+
+
+@pytest.mark.asyncio
+async def test_balance_both_methods_fail(proxy):
+    """Test balance method when both account and proxy endpoints fail."""
+    with (
+        patch.object(
+            proxy._client.account, 'balance', side_effect=Exception('Account API failed')
+        ),
+        patch('aiochainscan.network.Network.get', side_effect=Exception('Proxy API failed')),
+        pytest.raises(Exception, match='Account API failed'),
+    ):
+        # Should re-raise the account error after both fail
+        await proxy.balance('0x123')
+
+
+@pytest.mark.asyncio
+async def test_get_balance(proxy):
+    """Test get_balance legacy alias."""
+    with patch.object(
+        proxy, 'balance', new=AsyncMock(return_value=5000000000000000000)
+    ) as balance_mock:
+        result = await proxy.get_balance('0x789')
+        balance_mock.assert_called_once_with('0x789', 'latest')
+        assert result == 5000000000000000000
+
+    # Test with custom tag
+    with patch.object(
+        proxy, 'balance', new=AsyncMock(return_value=3000000000000000000)
+    ) as balance_mock:
+        result = await proxy.get_balance('0xabc', 'pending')
+        balance_mock.assert_called_once_with('0xabc', 'pending')
+        assert result == 3000000000000000000
+
+
+@pytest.mark.asyncio
 async def test_block_number(proxy):
     with patch('aiochainscan.network.Network.get', new=AsyncMock()) as mock:
         await proxy.block_number()
