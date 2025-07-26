@@ -269,14 +269,13 @@ class TestUtilsProxyAbi:
     @pytest.mark.asyncio
     async def test_get_proxy_abi_unverified_contract(self):
         """Test handling unverified contract."""
-        with patch('os.path.exists', return_value=False):
-            with patch('os.makedirs'):
-                source_code = [{'ABI': 'Contract source code not verified', 'Implementation': ''}]
-                self.mock_client.contract.contract_source_code = AsyncMock(return_value=source_code)
+        with patch('os.path.exists', return_value=False), patch('os.makedirs'):
+            source_code = [{'ABI': 'Contract source code not verified', 'Implementation': ''}]
+            self.mock_client.contract.contract_source_code = AsyncMock(return_value=source_code)
 
-                result = await self.utils.get_proxy_abi('0x123')
+            result = await self.utils.get_proxy_abi('0x123')
 
-                assert result is None
+            assert result is None
 
 
 class TestUtilsElementDecoding:
@@ -557,7 +556,7 @@ class TestUtilsParseByPages:
         # Simply test that the method exists and can be called
         # The actual complex pagination logic is tested through integration tests
         self.mock_client.account.token_transfers = AsyncMock(return_value=[])
-        
+
         transfers = []
         # Test with empty result should work without throwing
         async for transfer in self.utils._parse_by_pages(
