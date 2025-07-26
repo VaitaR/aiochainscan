@@ -20,13 +20,13 @@ def pytest_collection_modifyitems(config, items):
     """Modify test collection to add markers and information."""
     integration_tests = []
     unit_tests = []
-    
+
     for item in items:
         if "test_integration" in str(item.fspath):
             integration_tests.append(item)
         else:
             unit_tests.append(item)
-    
+
     # If only integration tests are being run, show the status
     if integration_tests and not unit_tests:
         try:
@@ -40,4 +40,4 @@ def pytest_collection_modifyitems(config, items):
 def integration_test_setup():
     """Setup for integration tests - show API key status if needed."""
     # This fixture runs automatically for all test sessions
-    pass 
+    pass

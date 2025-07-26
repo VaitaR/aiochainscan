@@ -7,13 +7,13 @@ Tests are automatically skipped if API keys are not available.
 Usage:
     # Run all integration tests (requires API keys)
     pytest tests/test_integration.py -v
-    
+
     # Run integration tests for specific scanner
     pytest tests/test_integration.py -v -k "eth"
-    
+
     # Show which tests would run/skip without executing
     pytest tests/test_integration.py --collect-only
-    
+
     # Run with detailed API key status
     pytest tests/test_integration.py -v -s
 """
@@ -69,7 +69,7 @@ def get_primary_api_key_name(scanner_id: str) -> str:
     try:
         suggestions = config_manager._get_api_key_suggestions(scanner_id)
         return suggestions[0]  # First suggestion is the primary format
-    except:
+    except Exception:
         return f"{scanner_id.upper()}_KEY"
 
 
@@ -79,16 +79,13 @@ def requires_api_key(scanner_id: str):
         api_key = get_api_key_for_scanner(scanner_id)
         scanner_name = get_scanner_name(scanner_id)
         primary_key_name = get_primary_api_key_name(scanner_id)
-        
-        if not api_key:
-            reason = (
-                f"🔑 API key required for {scanner_name} integration test.\n"
-                f"   Set environment variable: {primary_key_name}=your_api_key\n"
-                f"   Or run: export {primary_key_name}=\"your_api_key\""
-            )
-        else:
-            reason = None
-            
+
+        reason = (
+            f"🔑 API key required for {scanner_name} integration test.\n"
+            f"   Set environment variable: {primary_key_name}=your_api_key\n"
+            f"   Or run: export {primary_key_name}=\"your_api_key\""
+        )
+
         return pytest.mark.skipif(
             not api_key,
             reason=reason
@@ -113,16 +110,16 @@ def print_api_key_status():
     print("\n" + "="*60)
     print("🔧 Integration Tests - API Key Status")
     print("="*60)
-    
+
     configured_count = 0
     total_count = 0
-    
-    for scanner_id in TEST_CONFIGS.keys():
+
+    for scanner_id in TEST_CONFIGS:
         total_count += 1
         api_key = get_api_key_for_scanner(scanner_id)
         scanner_name = get_scanner_name(scanner_id)
         primary_key_name = get_primary_api_key_name(scanner_id)
-        
+
         if api_key:
             configured_count += 1
             status = "✅ CONFIGURED"
@@ -130,23 +127,23 @@ def print_api_key_status():
         else:
             status = "❌ MISSING"
             key_display = f"Set {primary_key_name}"
-            
+
         print(f"  {scanner_id:10} | {scanner_name:20} | {status:15} | {key_display}")
-    
+
     print("-" * 60)
     print(f"📊 Summary: {configured_count}/{total_count} scanners configured")
-    
+
     if configured_count == 0:
         print("\n⚠️  No API keys configured - all integration tests will be skipped")
         print("💡 To enable integration tests, set API keys:")
-        for scanner_id in TEST_CONFIGS.keys():
+        for scanner_id in TEST_CONFIGS:
             primary_key_name = get_primary_api_key_name(scanner_id)
             print(f"   export {primary_key_name}=\"your_api_key\"")
     elif configured_count < total_count:
         print(f"\n💡 {total_count - configured_count} scanners need API keys for full integration testing")
     else:
         print("\n🎉 All scanners configured - full integration testing enabled!")
-    
+
     print("=" * 60)
 
 
@@ -165,20 +162,20 @@ class TestBasicAPIFunctionality:
                 f"🔑 API key required for {scanner_name}.\n"
                 f"   Set: {primary_key_name}=your_api_key"
             )
-        
+
         print(f"\n🧪 Testing {get_scanner_name(scanner_id)} ({scanner_id})...")
-        
+
         # Get test configuration
         networks, expected_currency = TEST_CONFIGS[scanner_id]
         test_network = networks[0]  # Use first available network
-        
+
         client = Client.from_config(scanner_id, test_network)
-        
+
         try:
             # Test 1: Verify client configuration
             assert client.currency == expected_currency
             print(f"✅ Currency: {client.currency}")
-            
+
             # Test 2: Get latest block number (works for all scanners)
             block_number = await client.proxy.block_number()
             assert block_number is not None
@@ -186,10 +183,10 @@ class TestBasicAPIFunctionality:
             block_num = int(block_number, 16)
             assert block_num > 0
             print(f"✅ Latest Block: {block_num:,}")
-            
+
             # Small delay to respect rate limits
             await asyncio.sleep(1.0)
-            
+
             # Test 3: Get account balance for test address
             if scanner_id in TEST_ADDRESSES:
                 test_address = TEST_ADDRESSES[scanner_id]
@@ -206,9 +203,9 @@ class TestBasicAPIFunctionality:
                     else:
                         print(f"⚠️ Balance check failed: {e}")
                         # Don't fail the test for balance issues
-            
+
             print(f"🎉 {get_scanner_name(scanner_id)} integration test passed!")
-            
+
         except Exception as e:
             print(f"❌ {get_scanner_name(scanner_id)} test failed: {e}")
             raise
@@ -216,7 +213,7 @@ class TestBasicAPIFunctionality:
             await client.close()
 
     @requires_api_key('eth')
-    @pytest.mark.asyncio 
+    @pytest.mark.asyncio
     async def test_ethereum_specific_calls(self):
         """Test basic Ethereum API calls with real API key."""
         client = Client.from_config('eth', 'main')
@@ -471,23 +468,34 @@ class TestConfigurationReload:
     @pytest.mark.asyncio
     async def test_api_key_detection(self):
         """Test API key detection from environment."""
-        # Test that our real keys are detected
-        real_keys = {
-            'ETH_KEY': os.getenv('ETHERSCAN_KEY'),
-            'BSC_KEY': os.getenv('BSCSCAN_KEY'),
-        }
+        # Test that our real keys are detected (only if they exist)
+        eth_key = os.getenv('ETHERSCAN_KEY')
+        bsc_key = os.getenv('BSCSCAN_KEY')
 
-        with patch.dict(os.environ, real_keys):
+        # Only test if we have actual API keys available
+        if not eth_key and not bsc_key:
+            pytest.skip("No real API keys available for configuration reload testing")
+
+        # Build test environment with only non-None values
+        test_env = {}
+        if eth_key:
+            test_env['ETH_KEY'] = eth_key
+        if bsc_key:
+            test_env['BSC_KEY'] = bsc_key
+
+        with patch.dict(os.environ, test_env, clear=True):
             # Reload configuration to pick up the patched environment
             config_manager._load_api_keys()
 
-            # Test ETH
-            eth_key = config_manager.get_api_key('eth')
-            assert eth_key == real_keys['ETH_KEY']
+            # Test ETH if available
+            if eth_key:
+                detected_eth_key = config_manager.get_api_key('eth')
+                assert detected_eth_key == eth_key
 
-            # Test BSC
-            bsc_key = config_manager.get_api_key('bsc')
-            assert bsc_key == real_keys['BSC_KEY']
+            # Test BSC if available
+            if bsc_key:
+                detected_bsc_key = config_manager.get_api_key('bsc')
+                assert detected_bsc_key == bsc_key
 
             print("✅ API key detection working correctly")
 
