@@ -81,9 +81,6 @@ SCANNER_FEATURES = {
         ChainFeatures.ERC20_TRANSFERS,
         ChainFeatures.CONTRACT_SOURCE,
     },
-    'xlayer': {
-        ChainFeatures.ERC20_TRANSFERS,
-    },
     'flare': {
         ChainFeatures.ERC20_TRANSFERS,
     },

@@ -19,7 +19,11 @@ class UrlBuilder:
         'linea': ('lineascan.build', 'LINEA'),
         'blast': ('blastscan.io', 'BLAST'),
         'base': ('basescan.org', 'BASE'),
-        'xlayer': ('oklink.com/api/v5/explorer/xlayer', 'XL'),
+        'routscan_mode': ('api.routescan.io/v2/network/mainnet/evm/34443', 'ETH'),
+        'blockscout_sepolia': ('eth-sepolia.blockscout.com', 'ETH'),
+        'blockscout_gnosis': ('gnosis.blockscout.com', 'xDAI'),
+        'blockscout_polygon': ('polygon.blockscout.com', 'MATIC'),
+        'moralis': ('deep-index.moralis.io', 'Multi-chain'),
     }
 
     BASE_URL: str = None
@@ -77,8 +81,11 @@ class UrlBuilder:
             prefix = 'flare-explorer'
         elif self._api_kind == 'chiliz':
             prefix = 'scan'
-        elif self._api_kind == 'xlayer':
-            prefix = None
+
+        elif self._api_kind == 'routscan_mode':
+            prefix = 'etherscan'
+        elif self._api_kind.startswith('blockscout_'):
+            prefix = None  # BlockScout uses direct /api path
 
         return self._build_url(prefix, 'api')
 
@@ -104,12 +111,8 @@ class UrlBuilder:
         if not headers:
             headers = {}
         # for scanners that don't require API key or have free tier without
-        if self._API_KEY != '' and self._api_kind != 'xlayer':  # not for oklink
+        if self._API_KEY != '':
             params['apikey'] = self._API_KEY
-
-        if self._api_kind == 'xlayer':
-            headers['OK-ACCESS-KEY'] = self._API_KEY
-            headers['Content-Type'] = 'application/json'
 
         return params, headers
 
