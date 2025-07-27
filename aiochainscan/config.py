@@ -182,14 +182,31 @@ class ConfigurationManager:
                 supported_networks={'main', 'sepolia'},
                 requires_api_key=True,
             ),
-            'xlayer': ScannerConfig(
-                name='OKLink X Layer',
-                base_domain='oklink.com/api/v5/explorer/xlayer',
-                currency='XL',
-                supported_networks={'main'},
-                requires_api_key=True,
-                special_config={'auth_header': 'OK-ACCESS-KEY'},
+            'blockscout_sepolia': ScannerConfig(
+                name='BlockScout Sepolia',
+                base_domain='eth-sepolia.blockscout.com',
+                currency='ETH',
+                supported_networks={'sepolia'},
+                requires_api_key=False,
+                special_config={'public_api': True},
             ),
+            'blockscout_gnosis': ScannerConfig(
+                name='BlockScout Gnosis',
+                base_domain='gnosis.blockscout.com',
+                currency='xDAI',
+                supported_networks={'gnosis'},
+                requires_api_key=False,
+                special_config={'public_api': True},
+            ),
+            'blockscout_polygon': ScannerConfig(
+                name='BlockScout Polygon',
+                base_domain='polygon.blockscout.com',
+                currency='MATIC',
+                supported_networks={'polygon'},
+                requires_api_key=False,
+                special_config={'public_api': True},
+            ),
+
         }
 
         self._scanners.update(builtin_scanners)

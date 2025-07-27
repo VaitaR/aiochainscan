@@ -2,7 +2,50 @@
 
 This directory contains example scripts demonstrating the usage of the aiochainscan library.
 
-## Scripts
+## 🆕 **NEW: Unified Architecture Examples**
+
+### `simple_balance_comparison.py` ⭐
+
+**QUICK START** - Compare legacy vs unified client architecture:
+
+```bash
+python examples/simple_balance_comparison.py
+```
+
+- **Purpose**: Demonstrates the new unified `ChainscanClient` vs legacy `Client`
+- **Shows**: How same balance can be retrieved using different approaches
+- **Output**: Side-by-side comparison proving backward compatibility
+- **Key benefit**: Type-safe `Method` enum vs string-based calls
+
+### `balance_comparison.py`
+
+**ADVANCED** - Multi-scanner balance comparison:
+
+```bash
+python examples/balance_comparison.py
+```
+
+- **Purpose**: Compare balance retrieval across different scanner implementations
+- **Features**: Etherscan, OKLink support with automatic parameter mapping
+- **Shows**: How unified interface works across different APIs
+
+### `unified_client_demo.py`
+
+**COMPREHENSIVE** - Complete unified architecture demonstration:
+
+```bash
+python examples/unified_client_demo.py
+```
+
+- **Purpose**: Full showcase of the new scanner architecture
+- **Features**:
+  - Available scanner implementations and capabilities
+  - Method support comparison matrix
+  - Error handling demonstration
+  - Scanner registry system
+- **Output**: Interactive demo of all unified architecture features
+
+## Traditional Examples
 
 ### `quick_scanner_check.py` 
 
@@ -50,43 +93,123 @@ Comprehensive test script that validates the decode functionality using **real E
 uv sync --extra dev
 ```
 
-2. **Set up Etherscan API key:**
+2. **Set up API keys:**
 
-Create a `.env` file in the project root with your Etherscan API key:
+Create a `.env` file in the project root:
 ```bash
 # .env
 ETHERSCAN_KEY=your_etherscan_api_key_here
+OKLINK_KEY=your_oklink_api_key_here  # Optional for OKLink examples
+BSCSCAN_KEY=your_bscscan_api_key_here  # Optional for BSC
+POLYGONSCAN_KEY=your_polygonscan_api_key_here  # Optional for Polygon
 ```
 
-Get a free API key at: https://etherscan.io/apis
+Get API keys at:
+- **Etherscan**: https://etherscan.io/apis
+- **OKLink**: https://www.oklink.com/account/my-api
+- **BSCScan**: https://bscscan.com/apis
+- **PolygonScan**: https://polygonscan.com/apis
 
-## Usage
+## Quick Start Guide
 
-### Quick Scanner Check (Fast)
+### 1. **Try the New Architecture** (Recommended)
+```bash
+# Set your Etherscan API key
+export ETHERSCAN_KEY="your_key_here"
+
+# Compare legacy vs unified approach
+python examples/simple_balance_comparison.py
+```
+
+**Output:**
+```
+🔍 Getting balance for: 0x4838B106FCe9647Bdf1E7877BF73cE8B0BAD5f97
+
+1️⃣ Legacy Client (traditional way):
+   15010879002106550271 wei
+   15.010879 ETH
+
+2️⃣ ChainscanClient (new unified way):
+   15010879002106550271 wei
+   15.010879 ETH
+
+✅ Both methods return identical results!
+```
+
+### 2. **Explore Scanner Capabilities**
+```bash
+# See all available scanners and methods
+python examples/unified_client_demo.py
+```
+
+### 3. **Test Traditional Features**
+```bash
+# Quick connectivity test
+python examples/quick_scanner_check.py
+
+# Full method testing
+python examples/test_scanner_methods.py
+```
+
+## Architecture Comparison
+
+### 🔄 **Legacy Approach** (Per-Module)
+```python
+from aiochainscan import Client
+
+client = Client.from_config('eth', 'main')
+balance = await client.account.balance(address)
+txs = await client.account.normal_txs(address)
+await client.close()
+```
+
+### 🆕 **Unified Approach** (Cross-Scanner)
+```python
+from aiochainscan.core.client import ChainscanClient
+from aiochainscan.core.method import Method
+
+# Works with any scanner implementation
+client = ChainscanClient.from_config('etherscan', 'v1', 'eth', 'main')
+balance = await client.call(Method.ACCOUNT_BALANCE, address=address)
+txs = await client.call(Method.ACCOUNT_TRANSACTIONS, address=address)
+
+# Same code works with different scanners!
+oklink_client = ChainscanClient.from_config('oklink_eth', 'v1', 'oklink_eth', 'main')
+balance = await oklink_client.call(Method.ACCOUNT_BALANCE, address=address)
+```
+
+### 🎯 **Key Benefits of Unified Architecture**
+
+1. **Type Safety**: `Method.ACCOUNT_BALANCE` vs `"balance"`
+2. **Cross-Scanner**: Same code works with different APIs
+3. **Auto-Mapping**: Parameter names automatically converted
+4. **Unified Parsing**: Response formats automatically normalized
+5. **Easy Extension**: Add new scanners with ~30 lines of code
+
+## Usage Examples
+
+### 🆕 **Unified Client Examples**
+```bash
+# Quick comparison of legacy vs unified
+python examples/simple_balance_comparison.py
+
+# Advanced multi-scanner comparison  
+python examples/balance_comparison.py
+
+# Complete architecture demonstration
+python examples/unified_client_demo.py
+```
+
+### Traditional Examples
 ```bash
 # Quick connectivity test for all scanners
 python examples/quick_scanner_check.py
 
-# Or with uv:
-uv run python examples/quick_scanner_check.py
-```
-
-### Full Scanner Methods Test (Comprehensive)
-```bash
 # Test all available methods for all scanners
 python examples/test_scanner_methods.py
 
-# Or with uv:
-uv run python examples/test_scanner_methods.py
-```
-
-### Test Decode Functionality
-```bash
 # Test decode functionality with real Ethereum data
 python examples/test_decode_functionality.py
-
-# Or with uv:
-uv run python examples/test_decode_functionality.py
 ```
 
 ## Outputs
