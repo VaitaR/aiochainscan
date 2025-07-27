@@ -23,6 +23,7 @@ class UrlBuilder:
         'blockscout_sepolia': ('eth-sepolia.blockscout.com', 'ETH'),
         'blockscout_gnosis': ('gnosis.blockscout.com', 'xDAI'),
         'blockscout_polygon': ('polygon.blockscout.com', 'MATIC'),
+        'moralis': ('deep-index.moralis.io', 'Multi-chain'),
     }
 
     BASE_URL: str = None

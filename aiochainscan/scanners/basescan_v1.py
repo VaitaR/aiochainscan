@@ -23,9 +23,9 @@ class BaseScanV1(EtherscanV1):
     - sepolia: Base Sepolia testnet
     """
 
-    name = "basescan"
-    version = "v1"
-    supported_networks = {"main", "goerli", "sepolia"}
+    name = 'basescan'
+    version = 'v1'
+    supported_networks = {'main', 'goerli', 'sepolia'}
 
     # All SPECS are inherited from EtherscanV1 - no need to redefine!
     # Auth settings are also inherited:

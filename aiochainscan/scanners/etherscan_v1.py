@@ -17,184 +17,160 @@ class EtherscanV1(Scanner):
     blockchain explorers (Etherscan, BscScan, PolygonScan, etc.).
     """
 
-    name = "etherscan"
-    version = "v1"
-    supported_networks = {"main", "test", "goerli", "sepolia"}
-    auth_mode = "query"
-    auth_field = "apikey"
+    name = 'etherscan'
+    version = 'v1'
+    supported_networks = {'main', 'test', 'goerli', 'sepolia'}
+    auth_mode = 'query'
+    auth_field = 'apikey'
 
     SPECS = {
         Method.ACCOUNT_BALANCE: EndpointSpec(
-            http_method="GET",
-            path="/api",
-            query={"module": "account", "action": "balance", "tag": "latest"},
-            param_map={"address": "address"},
+            http_method='GET',
+            path='/api',
+            query={'module': 'account', 'action': 'balance', 'tag': 'latest'},
+            param_map={'address': 'address'},
             parser=PARSERS['etherscan'],
         ),
-
         Method.ACCOUNT_TRANSACTIONS: EndpointSpec(
-            http_method="GET",
-            path="/api",
-            query={"module": "account", "action": "txlist"},
+            http_method='GET',
+            path='/api',
+            query={'module': 'account', 'action': 'txlist'},
             param_map={
-                "address": "address",
-                "start_block": "startblock",
-                "end_block": "endblock",
-                "page": "page",
-                "offset": "offset",
-                "sort": "sort"
+                'address': 'address',
+                'start_block': 'startblock',
+                'end_block': 'endblock',
+                'page': 'page',
+                'offset': 'offset',
+                'sort': 'sort',
             },
             parser=PARSERS['etherscan'],
         ),
-
         Method.ACCOUNT_INTERNAL_TXS: EndpointSpec(
-            http_method="GET",
-            path="/api",
-            query={"module": "account", "action": "txlistinternal"},
+            http_method='GET',
+            path='/api',
+            query={'module': 'account', 'action': 'txlistinternal'},
             param_map={
-                "address": "address",
-                "start_block": "startblock",
-                "end_block": "endblock",
-                "page": "page",
-                "offset": "offset",
-                "sort": "sort"
+                'address': 'address',
+                'start_block': 'startblock',
+                'end_block': 'endblock',
+                'page': 'page',
+                'offset': 'offset',
+                'sort': 'sort',
             },
             parser=PARSERS['etherscan'],
         ),
-
         Method.ACCOUNT_ERC20_TRANSFERS: EndpointSpec(
-            http_method="GET",
-            path="/api",
-            query={"module": "account", "action": "tokentx"},
+            http_method='GET',
+            path='/api',
+            query={'module': 'account', 'action': 'tokentx'},
             param_map={
-                "address": "address",
-                "contract_address": "contractaddress",
-                "start_block": "startblock",
-                "end_block": "endblock",
-                "page": "page",
-                "offset": "offset",
-                "sort": "sort"
+                'address': 'address',
+                'contract_address': 'contractaddress',
+                'start_block': 'startblock',
+                'end_block': 'endblock',
+                'page': 'page',
+                'offset': 'offset',
+                'sort': 'sort',
             },
             parser=PARSERS['etherscan'],
         ),
-
         Method.TX_BY_HASH: EndpointSpec(
-            http_method="GET",
-            path="/api",
-            query={"module": "proxy", "action": "eth_getTransactionByHash"},
-            param_map={"txhash": "txhash"},
+            http_method='GET',
+            path='/api',
+            query={'module': 'proxy', 'action': 'eth_getTransactionByHash'},
+            param_map={'txhash': 'txhash'},
             parser=PARSERS['etherscan'],
         ),
-
         Method.TX_RECEIPT_STATUS: EndpointSpec(
-            http_method="GET",
-            path="/api",
-            query={"module": "transaction", "action": "gettxreceiptstatus"},
-            param_map={"txhash": "txhash"},
+            http_method='GET',
+            path='/api',
+            query={'module': 'transaction', 'action': 'gettxreceiptstatus'},
+            param_map={'txhash': 'txhash'},
             parser=PARSERS['etherscan'],
         ),
-
         Method.BLOCK_BY_NUMBER: EndpointSpec(
-            http_method="GET",
-            path="/api",
-            query={"module": "proxy", "action": "eth_getBlockByNumber", "boolean": "true"},
-            param_map={"block_number": "tag"},
+            http_method='GET',
+            path='/api',
+            query={'module': 'proxy', 'action': 'eth_getBlockByNumber', 'boolean': 'true'},
+            param_map={'block_number': 'tag'},
             parser=PARSERS['etherscan'],
         ),
-
         Method.BLOCK_REWARD: EndpointSpec(
-            http_method="GET",
-            path="/api",
-            query={"module": "block", "action": "getblockreward"},
-            param_map={"block_number": "blockno"},
+            http_method='GET',
+            path='/api',
+            query={'module': 'block', 'action': 'getblockreward'},
+            param_map={'block_number': 'blockno'},
             parser=PARSERS['etherscan'],
         ),
-
         Method.CONTRACT_ABI: EndpointSpec(
-            http_method="GET",
-            path="/api",
-            query={"module": "contract", "action": "getabi"},
-            param_map={"address": "address"},
+            http_method='GET',
+            path='/api',
+            query={'module': 'contract', 'action': 'getabi'},
+            param_map={'address': 'address'},
             parser=PARSERS['etherscan'],
         ),
-
         Method.CONTRACT_SOURCE: EndpointSpec(
-            http_method="GET",
-            path="/api",
-            query={"module": "contract", "action": "getsourcecode"},
-            param_map={"address": "address"},
+            http_method='GET',
+            path='/api',
+            query={'module': 'contract', 'action': 'getsourcecode'},
+            param_map={'address': 'address'},
             parser=PARSERS['etherscan'],
         ),
-
         Method.TOKEN_BALANCE: EndpointSpec(
-            http_method="GET",
-            path="/api",
-            query={"module": "account", "action": "tokenbalance"},
-            param_map={
-                "contract_address": "contractaddress",
-                "address": "address",
-                "tag": "tag"
-            },
+            http_method='GET',
+            path='/api',
+            query={'module': 'account', 'action': 'tokenbalance'},
+            param_map={'contract_address': 'contractaddress', 'address': 'address', 'tag': 'tag'},
             parser=PARSERS['etherscan'],
         ),
-
         Method.TOKEN_SUPPLY: EndpointSpec(
-            http_method="GET",
-            path="/api",
-            query={"module": "stats", "action": "tokensupply"},
-            param_map={"contract_address": "contractaddress"},
+            http_method='GET',
+            path='/api',
+            query={'module': 'stats', 'action': 'tokensupply'},
+            param_map={'contract_address': 'contractaddress'},
             parser=PARSERS['etherscan'],
         ),
-
         Method.GAS_ORACLE: EndpointSpec(
-            http_method="GET",
-            path="/api",
-            query={"module": "gastracker", "action": "gasoracle"},
+            http_method='GET',
+            path='/api',
+            query={'module': 'gastracker', 'action': 'gasoracle'},
             param_map={},
             parser=PARSERS['etherscan'],
         ),
-
         Method.EVENT_LOGS: EndpointSpec(
-            http_method="GET",
-            path="/api",
-            query={"module": "logs", "action": "getLogs"},
+            http_method='GET',
+            path='/api',
+            query={'module': 'logs', 'action': 'getLogs'},
             param_map={
-                "address": "address",
-                "from_block": "fromBlock",
-                "to_block": "toBlock",
-                "topic0": "topic0",
-                "topic1": "topic1",
-                "topic2": "topic2",
-                "topic3": "topic3"
+                'address': 'address',
+                'from_block': 'fromBlock',
+                'to_block': 'toBlock',
+                'topic0': 'topic0',
+                'topic1': 'topic1',
+                'topic2': 'topic2',
+                'topic3': 'topic3',
             },
             parser=PARSERS['etherscan'],
         ),
-
         Method.ETH_SUPPLY: EndpointSpec(
-            http_method="GET",
-            path="/api",
-            query={"module": "stats", "action": "ethsupply"},
+            http_method='GET',
+            path='/api',
+            query={'module': 'stats', 'action': 'ethsupply'},
             param_map={},
             parser=PARSERS['etherscan'],
         ),
-
         Method.ETH_PRICE: EndpointSpec(
-            http_method="GET",
-            path="/api",
-            query={"module": "stats", "action": "ethprice"},
+            http_method='GET',
+            path='/api',
+            query={'module': 'stats', 'action': 'ethprice'},
             param_map={},
             parser=PARSERS['etherscan'],
         ),
-
         Method.PROXY_ETH_CALL: EndpointSpec(
-            http_method="GET",
-            path="/api",
-            query={"module": "proxy", "action": "eth_call"},
-            param_map={
-                "to": "to",
-                "data": "data",
-                "tag": "tag"
-            },
+            http_method='GET',
+            path='/api',
+            query={'module': 'proxy', 'action': 'eth_call'},
+            param_map={'to': 'to', 'data': 'data', 'tag': 'tag'},
             parser=PARSERS['etherscan'],
         ),
     }

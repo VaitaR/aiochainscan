@@ -220,6 +220,7 @@ class ChainscanClient:
             Dictionary mapping (name, version) to scanner classes
         """
         from ..scanners import list_scanners
+
         return list_scanners()
 
     @classmethod
@@ -234,7 +235,7 @@ class ChainscanClient:
 
         result = {}
         for (name, version), scanner_class in list_scanners().items():
-            key = f"{name}_{version}"
+            key = f'{name}_{version}'
             result[key] = {
                 'name': scanner_class.name,
                 'version': scanner_class.version,
@@ -250,8 +251,8 @@ class ChainscanClient:
     def __str__(self) -> str:
         """String representation of the client."""
         return (
-            f"ChainscanClient({self.scanner_name} {self.scanner_version}, "
-            f"{self.api_kind} {self.network})"
+            f'ChainscanClient({self.scanner_name} {self.scanner_version}, '
+            f'{self.api_kind} {self.network})'
         )
 
     def __repr__(self) -> str:
