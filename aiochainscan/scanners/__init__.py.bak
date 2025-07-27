@@ -1,0 +1,93 @@
+"""
+Scanner implementations for different blockchain explorers.
+
+This module provides a unified interface for different blockchain scanner APIs
+through the Scanner base class and registry system.
+"""
+
+from typing import Dict, Tuple, Type
+from .base import Scanner
+
+# Global scanner registry: (name, version) -> Scanner class
+SCANNER_REGISTRY: Dict[Tuple[str, str], Type[Scanner]] = {}
+
+
+def register_scanner(scanner_class: Type[Scanner]) -> Type[Scanner]:
+    """
+    Decorator to register a scanner implementation.
+    
+    Args:
+        scanner_class: Scanner class to register
+        
+    Returns:
+        The same scanner class (for use as decorator)
+        
+    Example:
+        @register_scanner
+        class EtherscanV1(Scanner):
+            name = "etherscan"
+            version = "v1"
+            ...
+    """
+    key = (scanner_class.name, scanner_class.version)
+    if key in SCANNER_REGISTRY:
+        raise ValueError(
+            f"Scanner {scanner_class.name} v{scanner_class.version} already registered"
+        )
+    
+    SCANNER_REGISTRY[key] = scanner_class
+    return scanner_class
+
+
+def get_scanner_class(name: str, version: str) -> Type[Scanner]:
+    """
+    Get scanner class by name and version.
+    
+    Args:
+        name: Scanner name (e.g., 'etherscan', 'oklink')
+        version: Scanner version (e.g., 'v1', 'v2')
+        
+    Returns:
+        Scanner class
+        
+    Raises:
+        ValueError: If scanner not found
+    """
+    key = (name, version)
+    if key not in SCANNER_REGISTRY:
+        available = [f"{n} v{v}" for n, v in SCANNER_REGISTRY.keys()]
+        raise ValueError(
+            f"Unknown scanner {name} v{version}. Available: {', '.join(available)}"
+        )
+    
+    return SCANNER_REGISTRY[key]
+
+
+def list_scanners() -> Dict[Tuple[str, str], Type[Scanner]]:
+    """
+    Get all registered scanners.
+    
+    Returns:
+        Dictionary mapping (name, version) to scanner classes
+    """
+    return SCANNER_REGISTRY.copy()
+
+
+# Import scanner implementations to trigger registration
+from .etherscan_v1 import EtherscanV1
+from .etherscan_v2 import EtherscanV2
+from .oklink_v1 import OklinkV1
+# from .oklink_eth_v1 import OklinkEthV1
+from .routscan_v1 import RoutScanV1
+from .basescan_v1 import BaseScanV1
+__all__ = [
+    'Scanner', 
+    'register_scanner', 
+    'get_scanner_class', 
+    'list_scanners',
+    'EtherscanV1',
+    'EtherscanV2',
+    'OklinkV1',
+    'OklinkEthV1',
+    'RoutScanV1',
+    'BaseScanV1',] 

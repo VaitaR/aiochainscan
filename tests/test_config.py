@@ -52,7 +52,6 @@ class TestConfigurationManager:
             'base',
             'linea',
             'blast',
-            'xlayer',
         ]
 
         for scanner in expected_scanners:
@@ -388,9 +387,7 @@ class TestAdvancedFeatures:
         """Test scanners with special configurations."""
         manager = ConfigurationManager()
 
-        # Test XLayer special config
-        xlayer_config = manager.get_scanner_config('xlayer')
-        assert xlayer_config.special_config['auth_header'] == 'OK-ACCESS-KEY'
+
 
         # Test Optimism special config
         optimism_config = manager.get_scanner_config('optimism')

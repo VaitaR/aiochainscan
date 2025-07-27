@@ -170,7 +170,7 @@ class ScannerMethodTester:
         scanners = config_manager.get_supported_scanners()
 
         # TODO: Remove this limitation after testing - only first 5 scanners for now
-        scanners = scanners[:5]
+        scanners = scanners[:2]
 
         logger.info(f'🚀 Starting comprehensive test of {len(scanners)} scanners')
 

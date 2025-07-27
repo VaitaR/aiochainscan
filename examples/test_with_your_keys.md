@@ -18,7 +18,7 @@ export FTMSCAN_KEY="ваш_fantom_api_ключ"
 export GNOSISSCAN_KEY="ваш_gnosis_api_ключ"
 export LINEASCAN_KEY="ваш_linea_api_ключ"
 export OPTIMISM_ETHERSCAN_KEY="ваш_optimism_api_ключ"
-export OKLINK_X_LAYER_KEY="ваш_xlayer_api_ключ"
+export OKLINK_KEY="ваш_xlayer_api_ключ"
 ```
 
 ## 2. Или создайте файл .env в корне проекта
@@ -35,7 +35,7 @@ FTMSCAN_KEY=ваш_fantom_api_ключ
 GNOSISSCAN_KEY=ваш_gnosis_api_ключ
 LINEASCAN_KEY=ваш_linea_api_ключ
 OPTIMISM_ETHERSCAN_KEY=ваш_optimism_api_ключ
-OKLINK_X_LAYER_KEY=ваш_xlayer_api_ключ
+OKLINK_KEY=ваш_oklink_api_ключ
 ```
 
 ## 3. Запустите полное тестирование
