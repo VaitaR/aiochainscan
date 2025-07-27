@@ -30,10 +30,10 @@ class Scanner(ABC):
     supported_networks: set[str]
     """Networks supported by this scanner (e.g., {'main', 'test'})"""
 
-    auth_mode: Literal["query", "header"] = "query"
+    auth_mode: Literal['query', 'header'] = 'query'
     """How to authenticate - 'query' for URL params, 'header' for HTTP headers"""
 
-    auth_field: str = "apikey"
+    auth_field: str = 'apikey'
     """Field name for authentication (e.g., 'apikey', 'OK-ACCESS-KEY')"""
 
     SPECS: dict[Method, EndpointSpec]
@@ -55,7 +55,7 @@ class Scanner(ABC):
             available = ', '.join(sorted(self.supported_networks))
             raise ValueError(
                 f"Network '{network}' not supported by {self.name} v{self.version}. "
-                f"Available: {available}"
+                f'Available: {available}'
             )
 
         self.api_key = api_key
@@ -80,8 +80,8 @@ class Scanner(ABC):
         if method not in self.SPECS:
             available = [str(m) for m in self.SPECS]
             raise ValueError(
-                f"Method {method} not supported by {self.name} v{self.version}. "
-                f"Available: {', '.join(available)}"
+                f'Method {method} not supported by {self.name} v{self.version}. '
+                f'Available: {", ".join(available)}'
             )
 
         spec = self.SPECS[method]
@@ -92,15 +92,13 @@ class Scanner(ABC):
         network = Network(self.url_builder)
 
         try:
-            if spec.http_method == "GET":
+            if spec.http_method == 'GET':
                 raw_response = await network.get(
-                    params=request_data.get('params'),
-                    headers=request_data.get('headers')
+                    params=request_data.get('params'), headers=request_data.get('headers')
                 )
             else:  # POST
                 raw_response = await network.post(
-                    data=request_data.get('data'),
-                    headers=request_data.get('headers')
+                    data=request_data.get('data'), headers=request_data.get('headers')
                 )
 
             return spec.parse_response(raw_response)
@@ -125,7 +123,7 @@ class Scanner(ABC):
         # Set up authentication
         headers = {}
         if spec.requires_api_key and self.api_key:
-            if self.auth_mode == "query":
+            if self.auth_mode == 'query':
                 mapped_params[self.auth_field] = self.api_key
             else:  # header
                 headers[self.auth_field] = self.api_key
@@ -133,7 +131,7 @@ class Scanner(ABC):
         # Build request data
         request_data = {'headers': headers}
 
-        if spec.http_method == "GET":
+        if spec.http_method == 'GET':
             request_data['params'] = mapped_params
         else:  # POST
             request_data['data'] = mapped_params
@@ -164,7 +162,7 @@ class Scanner(ABC):
     def __str__(self) -> str:
         """String representation of the scanner."""
         networks = ', '.join(sorted(self.supported_networks))
-        return f"{self.name} v{self.version} (networks: {networks})"
+        return f'{self.name} v{self.version} (networks: {networks})'
 
     def __repr__(self) -> str:
         """Detailed string representation."""

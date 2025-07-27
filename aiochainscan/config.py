@@ -206,7 +206,35 @@ class ConfigurationManager:
                 requires_api_key=False,
                 special_config={'public_api': True},
             ),
-
+            'moralis': ScannerConfig(
+                name='Moralis Web3 Data API',
+                base_domain='deep-index.moralis.io',
+                currency='Multi-chain',
+                supported_networks={
+                    'eth',
+                    'bsc',
+                    'polygon',
+                    'arbitrum',
+                    'base',
+                    'optimism',
+                    'avalanche',
+                },
+                requires_api_key=True,
+                special_config={
+                    'api_version': 'v2.2',
+                    'auth_mode': 'header',
+                    'auth_field': 'X-API-Key',
+                    'chain_mappings': {
+                        'eth': '0x1',
+                        'bsc': '0x38',
+                        'polygon': '0x89',
+                        'arbitrum': '0xa4b1',
+                        'base': '0x2105',
+                        'optimism': '0xa',
+                        'avalanche': '0xa86a',
+                    },
+                },
+            ),
         }
 
         self._scanners.update(builtin_scanners)

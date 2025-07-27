@@ -34,35 +34,35 @@ class BlockScoutV1(EtherscanV1):
     - Real-time blockchain data
     """
 
-    name = "blockscout"
-    version = "v1"
+    name = 'blockscout'
+    version = 'v1'
 
     # BlockScout supports many networks through different instances
     supported_networks = {
-        "sepolia",           # Ethereum Sepolia testnet
-        "gnosis",           # Gnosis Chain
-        "polygon",          # Polygon mainnet
-        "optimism",         # Optimism mainnet
-        "arbitrum",         # Arbitrum One
-        "base",             # Base mainnet
-        "scroll",           # Scroll mainnet
-        "linea",            # Linea mainnet
+        'sepolia',  # Ethereum Sepolia testnet
+        'gnosis',  # Gnosis Chain
+        'polygon',  # Polygon mainnet
+        'optimism',  # Optimism mainnet
+        'arbitrum',  # Arbitrum One
+        'base',  # Base mainnet
+        'scroll',  # Scroll mainnet
+        'linea',  # Linea mainnet
     }
 
     # BlockScout typically doesn't require API keys
-    auth_mode = "query"
-    auth_field = "apikey"
+    auth_mode = 'query'
+    auth_field = 'apikey'
 
     # Network to BlockScout instance mapping
     NETWORK_INSTANCES = {
-        "sepolia": "eth-sepolia.blockscout.com",
-        "gnosis": "gnosis.blockscout.com",
-        "polygon": "polygon.blockscout.com",
-        "optimism": "optimism.blockscout.com",
-        "arbitrum": "arbitrum.blockscout.com",
-        "base": "base.blockscout.com",
-        "scroll": "scroll.blockscout.com",
-        "linea": "linea.blockscout.com",
+        'sepolia': 'eth-sepolia.blockscout.com',
+        'gnosis': 'gnosis.blockscout.com',
+        'polygon': 'polygon.blockscout.com',
+        'optimism': 'optimism.blockscout.com',
+        'arbitrum': 'arbitrum.blockscout.com',
+        'base': 'base.blockscout.com',
+        'scroll': 'scroll.blockscout.com',
+        'linea': 'linea.blockscout.com',
     }
 
     def __init__(self, api_key: str, network: str, url_builder):
@@ -81,8 +81,7 @@ class BlockScoutV1(EtherscanV1):
         if not self.instance_domain:
             available = ', '.join(sorted(self.NETWORK_INSTANCES.keys()))
             raise ValueError(
-                f"Network '{network}' not mapped to BlockScout instance. "
-                f"Available: {available}"
+                f"Network '{network}' not mapped to BlockScout instance. Available: {available}"
             )
 
     def _build_request(self, spec: EndpointSpec, **params):
@@ -98,9 +97,9 @@ class BlockScoutV1(EtherscanV1):
         # BlockScout often works without API keys
         if not self.api_key:
             # Remove empty apikey parameter
-            if spec.http_method == "GET" and 'params' in request_data:
+            if spec.http_method == 'GET' and 'params' in request_data:
                 request_data['params'].pop('apikey', None)
-            elif spec.http_method == "POST" and 'data' in request_data:
+            elif spec.http_method == 'POST' and 'data' in request_data:
                 request_data['data'].pop('apikey', None)
 
         return request_data
@@ -115,15 +114,15 @@ class BlockScoutV1(EtherscanV1):
         if method not in self.SPECS:
             available = [str(m) for m in self.SPECS]
             raise ValueError(
-                f"Method {method} not supported by {self.name} v{self.version}. "
-                f"Available: {', '.join(available)}"
+                f'Method {method} not supported by {self.name} v{self.version}. '
+                f'Available: {", ".join(available)}'
             )
 
         spec = self.SPECS[method]
         request_data = self._build_request(spec, **params)
 
         # Build the complete BlockScout URL
-        base_url = f"https://{self.instance_domain}"
+        base_url = f'https://{self.instance_domain}'
         full_url = base_url + spec.path
 
         # Use aiohttp directly for BlockScout requests
@@ -131,18 +130,18 @@ class BlockScoutV1(EtherscanV1):
 
         try:
             async with aiohttp.ClientSession() as session:
-                if spec.http_method == "GET":
+                if spec.http_method == 'GET':
                     async with session.get(
                         full_url,
                         params=request_data.get('params'),
-                        headers=request_data.get('headers', {})
+                        headers=request_data.get('headers', {}),
                     ) as response:
                         raw_response = await response.json()
                 else:  # POST
                     async with session.post(
                         full_url,
                         json=request_data.get('data'),
-                        headers=request_data.get('headers', {})
+                        headers=request_data.get('headers', {}),
                     ) as response:
                         raw_response = await response.json()
 
@@ -150,20 +149,18 @@ class BlockScoutV1(EtherscanV1):
 
         except Exception as e:
             # Enhanced error reporting for BlockScout
-            raise Exception(
-                f"BlockScout API error for {self.instance_domain}: {e}"
-            ) from e
+            raise Exception(f'BlockScout API error for {self.instance_domain}: {e}') from e
 
     def __str__(self) -> str:
         """String representation including instance info."""
-        return f"BlockScout v{self.version} ({self.instance_domain})"
+        return f'BlockScout v{self.version} ({self.instance_domain})'
 
     def __repr__(self) -> str:
         """Detailed string representation."""
         return (
             f"BlockScoutV1(network='{self.network}', "
             f"instance='{self.instance_domain}', "
-            f"methods={len(self.SPECS)})"
+            f'methods={len(self.SPECS)})'
         )
 
     # All SPECS are inherited from EtherscanV1

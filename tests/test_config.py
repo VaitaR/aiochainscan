@@ -387,8 +387,6 @@ class TestAdvancedFeatures:
         """Test scanners with special configurations."""
         manager = ConfigurationManager()
 
-
-
         # Test Optimism special config
         optimism_config = manager.get_scanner_config('optimism')
         assert optimism_config.special_config['subdomain_pattern'] == 'optimistic'

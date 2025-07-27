@@ -31,7 +31,7 @@ def register_scanner(scanner_class: type[Scanner]) -> type[Scanner]:
     key = (scanner_class.name, scanner_class.version)
     if key in SCANNER_REGISTRY:
         raise ValueError(
-            f"Scanner {scanner_class.name} v{scanner_class.version} already registered"
+            f'Scanner {scanner_class.name} v{scanner_class.version} already registered'
         )
 
     SCANNER_REGISTRY[key] = scanner_class
@@ -55,10 +55,7 @@ def get_scanner_class(name: str, version: str) -> type[Scanner]:
     key = (name, version)
     if key not in SCANNER_REGISTRY:
         available = list(SCANNER_REGISTRY.keys())
-        raise ValueError(
-            f"Scanner '{name}' v{version} not found. "
-            f"Available: {available}"
-        )
+        raise ValueError(f"Scanner '{name}' v{version} not found. Available: {available}")
     return SCANNER_REGISTRY[key]
 
 
@@ -78,6 +75,7 @@ from .basescan_v1 import BaseScanV1  # noqa: E402
 from .blockscout_v1 import BlockScoutV1  # noqa: E402
 from .etherscan_v1 import EtherscanV1  # noqa: E402
 from .etherscan_v2 import EtherscanV2  # noqa: E402
+from .moralis_v1 import MoralisV1  # noqa: E402
 from .routscan_v1 import RoutScanV1  # noqa: E402
 
 __all__ = [
@@ -90,4 +88,5 @@ __all__ = [
     'RoutScanV1',
     'BaseScanV1',
     'BlockScoutV1',
+    'MoralisV1',
 ]

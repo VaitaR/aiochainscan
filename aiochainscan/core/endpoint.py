@@ -16,7 +16,7 @@ class EndpointSpec:
     with different HTTP methods, paths, parameters, and response formats.
     """
 
-    http_method: Literal["GET", "POST"]
+    http_method: Literal['GET', 'POST']
     """HTTP method to use for the request."""
 
     path: str
@@ -89,9 +89,48 @@ def oklink_parser(response: dict) -> Any:
     return response
 
 
+def moralis_balance_parser(response: dict) -> int:
+    """Moralis balance response parser."""
+    # Moralis возвращает: {"balance": "123456789000000000000"} или в другом формате
+    if 'balance' in response:
+        return int(response['balance'])
+    # Если структура отличается, попробуем извлечь из других полей
+    elif isinstance(response, dict) and 'result' in response:
+        return int(response['result'])
+    # Если это строка
+    elif isinstance(response, str):
+        return int(response)
+    # Fallback
+    return 0
+
+
+def moralis_transactions_parser(response: dict) -> dict:
+    """Moralis transactions response parser."""
+    # Moralis returns: {"page": 1, "page_size": 100, "result": [...]}
+    return response.get('result', response)
+
+
+def moralis_token_balances_parser(response: dict) -> list:
+    """Moralis token balances response parser."""
+    # Moralis returns array directly or in result field
+    if isinstance(response, list):
+        return response
+    return response.get('result', response)
+
+
+def moralis_transaction_parser(response: dict) -> dict:
+    """Moralis single transaction response parser."""
+    # Moralis returns transaction object directly
+    return response
+
+
 # Pre-defined parsers for common use cases
 PARSERS = {
     'etherscan': etherscan_parser,
     'oklink': oklink_parser,
+    'moralis_balance': moralis_balance_parser,
+    'moralis_transactions': moralis_transactions_parser,
+    'moralis_token_balances': moralis_token_balances_parser,
+    'moralis_transaction': moralis_transaction_parser,
     'raw': lambda x: x,  # No parsing
 }
