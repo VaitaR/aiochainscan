@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import heapq
 import json
+import logging
 import os
 from collections.abc import AsyncIterator, Callable, Iterator
 from datetime import date, timedelta
@@ -12,11 +14,6 @@ from aiochainscan.exceptions import ChainscanClientApiError
 
 if TYPE_CHECKING:
     from aiochainscan import Client
-
-import logging
-
-# Add this line at the beginning of the file to initialize the logger
-logger = logging.getLogger(__name__)
 
 
 def _default_date_range(days: int = 30) -> tuple[date, date]:
@@ -38,11 +35,11 @@ class Utils:
 
     def __init__(self, client: Client):
         self._client = client
-        self.data_model_mapping: dict[str, Callable[..., AsyncIterator[dict]]] = {
+        self.data_model_mapping: dict[str, Callable] = {
             'internal_txs': self._client.account.internal_txs,
             'normal_txs': self._client.account.normal_txs,
             'get_logs': self._client.logs.get_logs,
-            'tokentx': self._client.account.token_transfers,
+            'token_transfers': self._client.account.token_transfers,
         }
         self._logger = logging.getLogger(__name__)
 
@@ -267,7 +264,8 @@ class Utils:
             if first_batch_block > last_batch_block:
                 # if scaner have another sorting method
                 logging.warning(
-                    f'First block is higher than current block for {address} can be problems with sorting, first_batch_block: {first_batch_block}, last_batch_block: {last_batch_block}'
+                    f'First block is higher than current block for {address} can be problems with sorting, '
+                    f'first_batch_block: {first_batch_block}, last_batch_block: {last_batch_block}'
                 )
                 end_batch_block = first_batch_block
             else:
@@ -309,7 +307,10 @@ class Utils:
 
         # get function by data_type from mapping
         function = self.data_model_mapping[data_type]
-        if decode_type == 'auto' and function.__name__ not in ['internal_txs', 'token_transfers']:
+        if decode_type == 'auto' and function.__name__ not in [
+            'internal_txs',
+            'token_transfers',
+        ]:
             tasks = [
                 self._get_elements_batch(
                     function, address, start_block, end_block, offset, **kwargs
@@ -327,6 +328,237 @@ class Utils:
             )
 
         return elements
+
+    async def fetch_all_elements_optimized(
+        self,
+        address: str,
+        data_type: str,
+        start_block: int = 0,
+        end_block: int | None = None,
+        decode_type: str = 'auto',
+        max_concurrent: int = 3,
+        max_offset: int = 10000,
+        *args,
+        **kwargs,
+    ) -> list[dict]:
+        """Optimized fetching using priority queue and dynamic range splitting.
+
+        Args:
+            address: Target address
+            data_type: Type of data ('normal_txs', 'internal_txs', 'token_transfers')
+            start_block: Starting block number
+            end_block: Ending block number (None for current)
+            decode_type: Decoding type ('auto', 'manual', etc.)
+            max_concurrent: Maximum concurrent requests (respects rate limits)
+            max_offset: Maximum number of items per request
+
+        Returns:
+            List of all fetched elements
+        """
+        if end_block is None:
+            end_block = int(await self._client.proxy.block_number(), 16)
+
+        # Check if data_type is supported
+        if data_type not in self.data_model_mapping:
+            raise ValueError(f'Unsupported data type: {data_type}')
+
+        # Get function by data_type from mapping
+        function = self.data_model_mapping[data_type]
+
+        # Priority queue for block ranges (negative size for max-heap behavior)
+        # Format: (-range_size, range_id, start_block, end_block)
+        range_queue = []
+        range_counter = 0
+
+        # Initialize with three ranges: left edge, center, right edge
+        total_range = end_block - start_block
+        if total_range <= 0:
+            return []
+
+        # Calculate initial ranges
+        left_end = start_block + min(total_range // 4, 50000)
+        right_start = max(end_block - total_range // 4, left_end + 1)
+        center_start = (left_end + right_start) // 2
+
+        # Add initial ranges to queue
+        heapq.heappush(
+            range_queue,
+            (-(left_end - start_block), range_counter, start_block, left_end),
+        )
+        range_counter += 1
+
+        if center_start < right_start:
+            heapq.heappush(
+                range_queue,
+                (
+                    -(right_start - center_start),
+                    range_counter,
+                    center_start,
+                    right_start,
+                ),
+            )
+            range_counter += 1
+
+        if right_start < end_block:
+            heapq.heappush(
+                range_queue,
+                (-(end_block - right_start), range_counter, right_start, end_block),
+            )
+            range_counter += 1
+
+        # Results storage
+        all_elements = []
+        completed_ranges = set()
+        semaphore = asyncio.Semaphore(max_concurrent)
+
+        async def worker(range_info):
+            """Worker function to process a single block range."""
+            _, range_id, block_start, block_end = range_info
+
+            async with semaphore:
+                try:
+                    self._logger.debug(
+                        f'Fetching {data_type} for {address}, blocks {block_start}-{block_end} '
+                        f'(range {block_end - block_start + 1})'
+                    )
+
+                    elements = await function(
+                        address=address,
+                        start_block=block_start,
+                        end_block=block_end,
+                        page=1,
+                        offset=max_offset,
+                        **kwargs,
+                    )
+
+                    if not elements:
+                        elements = []
+
+                    return range_id, block_start, block_end, elements
+
+                except Exception as e:
+                    self._logger.warning(
+                        f'Error fetching {data_type} for range {block_start}-{block_end}: {e}'
+                    )
+                    return range_id, block_start, block_end, []
+
+        # Process ranges until queue is empty
+        while range_queue:
+            # Get batch of ranges to process
+            current_batch = []
+            batch_size = min(max_concurrent, len(range_queue))
+
+            for _ in range(batch_size):
+                if range_queue:
+                    range_info = heapq.heappop(range_queue)
+                    current_batch.append(range_info)
+
+            if not current_batch:
+                break
+
+            # Process batch concurrently
+            tasks = [worker(range_info) for range_info in current_batch]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            # Process results
+            for result in results:
+                if isinstance(result, Exception):
+                    self._logger.error(f'Worker error: {result}')
+                    continue
+
+                range_id, block_start, block_end, elements = result
+
+                # Check if we got maximum results (need to split range)
+                if len(elements) >= max_offset and block_end > block_start:
+                    # Split range in half
+                    mid_block = (block_start + block_end) // 2
+
+                    # Add both halves back to queue
+                    heapq.heappush(
+                        range_queue,
+                        (
+                            -(mid_block - block_start),
+                            range_counter,
+                            block_start,
+                            mid_block,
+                        ),
+                    )
+                    range_counter += 1
+
+                    heapq.heappush(
+                        range_queue,
+                        (
+                            -(block_end - mid_block),
+                            range_counter,
+                            mid_block + 1,
+                            block_end,
+                        ),
+                    )
+                    range_counter += 1
+
+                    self._logger.debug(
+                        f'Split range {block_start}-{block_end} into {block_start}-{mid_block} '
+                        f'and {mid_block + 1}-{block_end} (got {len(elements)} elements)'
+                    )
+                else:
+                    # Range is complete, add to results
+                    all_elements.extend(elements)
+                    completed_ranges.add(range_id)
+                    self._logger.debug(
+                        f'Completed range {block_start}-{block_end}: {len(elements)} elements'
+                    )
+
+        self._logger.info(f'Fetched {len(all_elements)} {data_type} elements for {address}')
+
+        # Sort by block number and remove duplicates
+        if all_elements:
+            # Sort by block number, then by transaction index if available
+            def sort_key(element):
+                block_num = element.get('blockNumber', '0')
+                if isinstance(block_num, str) and block_num.startswith('0x'):
+                    block_num = int(block_num, 16)
+                else:
+                    block_num = int(block_num)
+
+                tx_index = element.get('transactionIndex', '0')
+                if isinstance(tx_index, str) and tx_index.startswith('0x'):
+                    tx_index = int(tx_index, 16)
+                else:
+                    tx_index = int(tx_index) if tx_index else 0
+
+                return (block_num, tx_index)
+
+            all_elements.sort(key=sort_key)
+
+            # Remove duplicates based on transaction hash
+            seen_hashes = set()
+            unique_elements = []
+            for element in all_elements:
+                tx_hash = element.get('hash')
+                if tx_hash and tx_hash not in seen_hashes:
+                    seen_hashes.add(tx_hash)
+                    unique_elements.append(element)
+                elif not tx_hash:  # Keep elements without hash (like logs)
+                    unique_elements.append(element)
+
+            all_elements = unique_elements
+            self._logger.info(f'After deduplication: {len(all_elements)} unique elements')
+
+        # Apply decoding if requested
+        if (
+            decode_type == 'auto'
+            and data_type not in ['internal_txs', 'token_transfers']
+            and len(all_elements) > 0
+        ):
+            try:
+                abi = await self.get_proxy_abi(address)
+                all_elements = await self._decode_elements(
+                    all_elements, abi, address, function, decode_type
+                )
+            except Exception as e:
+                self._logger.warning(f'Error during decoding: {e}')
+
+        return all_elements
 
     async def _parse_by_pages(
         self,
