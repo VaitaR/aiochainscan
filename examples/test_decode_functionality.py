@@ -130,7 +130,9 @@ class DecodeTestRunner:
         logger.info(f'Total logs collected: {len(logs)}')
         return logs[:50]  # Limit for testing
 
-    async def fetch_sample_transactions(self, pages: int = 3, use_optimized: bool = True) -> list[dict[str, Any]]:
+    async def fetch_sample_transactions(
+        self, pages: int = 3, use_optimized: bool = True
+    ) -> list[dict[str, Any]]:
         """Fetch real transactions from UNI token contract.
         
         Args:
@@ -141,7 +143,9 @@ class DecodeTestRunner:
         
         if use_optimized:
             try:
-                logger.info(f'Fetching transactions using optimized method for UNI token: {contract_address}')
+                logger.info(
+                    f'Fetching transactions using optimized method for UNI token: {contract_address}'
+                )
                 
                 # Import the Utils class for optimized fetching
                 from aiochainscan.modules.extra.utils import Utils
@@ -149,7 +153,7 @@ class DecodeTestRunner:
                 
                 # Get current block for reasonable range (last ~1000 blocks for testing)
                 current_block = int(await self.client.proxy.block_number(), 16)
-                start_block = max(0, current_block - 1000)  # Last 1000 blocks for testing
+                start_block = max(0, current_block - 1000)  # Last 1000 blocks
                 
                 # Use optimized method
                 all_transactions = await utils.fetch_all_elements_optimized(
@@ -168,7 +172,9 @@ class DecodeTestRunner:
                     if tx.get('input') and tx['input'] != '0x'
                 ]
                 
-                logger.info(f'Optimized fetch: {len(all_transactions)} total, {len(transactions)} with input data')
+                logger.info(
+                    f'Optimized fetch: {len(all_transactions)} total, {len(transactions)} with input data'
+                )
                 
             except Exception as e:
                 logger.error(f'Error with optimized fetch, falling back to legacy method: {e}')
@@ -187,7 +193,9 @@ class DecodeTestRunner:
         contract_address = '0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984'  # UNI token
 
         try:
-            logger.info(f'Fetching transactions using legacy method for UNI token: {contract_address}')
+            logger.info(
+                f'Fetching transactions using legacy method for UNI token: {contract_address}'
+            )
 
             for page in range(1, pages + 1):
                 try:
@@ -205,7 +213,8 @@ class DecodeTestRunner:
                         ]
                         transactions.extend(tx_with_input)
                         logger.info(
-                            f'Page {page}: Found {len(page_txs)} total transactions, {len(tx_with_input)} with input data'
+                            f'Page {page}: Found {len(page_txs)} total transactions, '
+                            f'{len(tx_with_input)} with input data'
                         )
 
                         # If we got fewer transactions than requested, we're at the end
@@ -221,7 +230,9 @@ class DecodeTestRunner:
 
                 except Exception as e:
                     logger.error(f'Error fetching transactions page {page}: {e}')
-                    self.results['errors'].append(f'Transaction fetch error page {page}: {str(e)}')
+                    self.results['errors'].append(
+                        f'Transaction fetch error page {page}: {str(e)}'
+                    )
                     break
 
         except Exception as e:

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import heapq
 import json
+import logging
 import os
 from collections.abc import AsyncIterator, Callable, Iterator
 from datetime import date, timedelta
@@ -12,12 +14,6 @@ from aiochainscan.exceptions import ChainscanClientApiError
 
 if TYPE_CHECKING:
     from aiochainscan import Client
-
-import logging
-import heapq
-
-# Add this line at the beginning of the file to initialize the logger
-logger = logging.getLogger(__name__)
 
 
 def _default_date_range(days: int = 30) -> tuple[date, date]:
@@ -341,12 +337,11 @@ class Utils:
         *args,
         **kwargs,
     ) -> list[dict]:
-        """
-        Optimized fetching of all elements using priority queue and dynamic range splitting.
+        """Optimized fetching using priority queue and dynamic range splitting.
         
         Args:
             address: Target address
-            data_type: Type of data to fetch ('normal_txs', 'internal_txs', 'token_transfers')
+            data_type: Type of data ('normal_txs', 'internal_txs', 'token_transfers')
             start_block: Starting block number
             end_block: Ending block number (None for current)
             decode_type: Decoding type ('auto', 'manual', etc.)
@@ -382,15 +377,22 @@ class Utils:
         center_start = (left_end + right_start) // 2
         
         # Add initial ranges to queue
-        heapq.heappush(range_queue, (-(left_end - start_block), range_counter, start_block, left_end))
+        heapq.heappush(
+            range_queue, (-(left_end - start_block), range_counter, start_block, left_end)
+        )
         range_counter += 1
         
         if center_start < right_start:
-            heapq.heappush(range_queue, (-(right_start - center_start), range_counter, center_start, right_start))
+            heapq.heappush(
+                range_queue, 
+                (-(right_start - center_start), range_counter, center_start, right_start)
+            )
             range_counter += 1
             
         if right_start < end_block:
-            heapq.heappush(range_queue, (-(end_block - right_start), range_counter, right_start, end_block))
+            heapq.heappush(
+                range_queue, (-(end_block - right_start), range_counter, right_start, end_block)
+            )
             range_counter += 1
 
         # Results storage
