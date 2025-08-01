@@ -7,7 +7,7 @@ import heapq
 
 def test_priority_queue_logic():
     """Test priority queue behavior for range splitting."""
-    print("Testing priority queue logic...")
+    print('Testing priority queue logic...')
 
     # Simulate priority queue operations
     range_queue = []
@@ -20,9 +20,7 @@ def test_priority_queue_logic():
     center_start = (left_end + right_start) // 2
 
     # Add ranges to queue
-    heapq.heappush(
-        range_queue, (-(left_end - start_block), range_counter, start_block, left_end)
-    )
+    heapq.heappush(range_queue, (-(left_end - start_block), range_counter, start_block, left_end))
     range_counter += 1
 
     if center_start < right_start:
@@ -39,11 +37,11 @@ def test_priority_queue_logic():
         )
         range_counter += 1
 
-    print(f"Initial ranges in queue: {len(range_queue)}")
+    print(f'Initial ranges in queue: {len(range_queue)}')
 
     # Test that largest range comes first
     largest_range = heapq.heappop(range_queue)
-    print(f"Largest range: {largest_range}")
+    print(f'Largest range: {largest_range}')
 
     # Test range splitting
     _, range_id, block_start, block_end = largest_range
@@ -59,34 +57,34 @@ def test_priority_queue_logic():
     )
     range_counter += 1
 
-    print(f"After split, ranges in queue: {len(range_queue)}")
-    assert len(range_queue) >= 2, "Should have at least 2 ranges after split"
-    print("✅ Priority queue logic test passed!")
+    print(f'After split, ranges in queue: {len(range_queue)}')
+    assert len(range_queue) >= 2, 'Should have at least 2 ranges after split'
+    print('✅ Priority queue logic test passed!')
 
 
 def test_deduplication_logic():
     """Test deduplication and sorting logic."""
-    print("Testing deduplication and sorting...")
+    print('Testing deduplication and sorting...')
 
     # Simulate transactions with duplicates
     transactions = [
-        {"hash": "tx3", "blockNumber": "102", "transactionIndex": "0"},
-        {"hash": "tx1", "blockNumber": "100", "transactionIndex": "1"},
-        {"hash": "tx2", "blockNumber": "100", "transactionIndex": "0"},
-        {"hash": "tx1", "blockNumber": "100", "transactionIndex": "1"},  # Duplicate
-        {"hash": "tx4", "blockNumber": "101", "transactionIndex": "0"},
+        {'hash': 'tx3', 'blockNumber': '102', 'transactionIndex': '0'},
+        {'hash': 'tx1', 'blockNumber': '100', 'transactionIndex': '1'},
+        {'hash': 'tx2', 'blockNumber': '100', 'transactionIndex': '0'},
+        {'hash': 'tx1', 'blockNumber': '100', 'transactionIndex': '1'},  # Duplicate
+        {'hash': 'tx4', 'blockNumber': '101', 'transactionIndex': '0'},
     ]
 
     # Sort by block number, then by transaction index
     def sort_key(element):
-        block_num = element.get("blockNumber", "0")
-        if isinstance(block_num, str) and block_num.startswith("0x"):
+        block_num = element.get('blockNumber', '0')
+        if isinstance(block_num, str) and block_num.startswith('0x'):
             block_num = int(block_num, 16)
         else:
             block_num = int(block_num)
 
-        tx_index = element.get("transactionIndex", "0")
-        if isinstance(tx_index, str) and tx_index.startswith("0x"):
+        tx_index = element.get('transactionIndex', '0')
+        if isinstance(tx_index, str) and tx_index.startswith('0x'):
             tx_index = int(tx_index, 16)
         else:
             tx_index = int(tx_index) if tx_index else 0
@@ -99,30 +97,30 @@ def test_deduplication_logic():
     seen_hashes = set()
     unique_transactions = []
     for tx in transactions:
-        tx_hash = tx.get("hash")
+        tx_hash = tx.get('hash')
         if tx_hash and tx_hash not in seen_hashes:
             seen_hashes.add(tx_hash)
             unique_transactions.append(tx)
 
-    print(f"Original: {len(transactions)}, Unique: {len(unique_transactions)}")
-    assert len(unique_transactions) == 4, "Should have 4 unique transactions"
+    print(f'Original: {len(transactions)}, Unique: {len(unique_transactions)}')
+    assert len(unique_transactions) == 4, 'Should have 4 unique transactions'
 
     # Check sorting order
     expected_order = [
-        "tx2",
-        "tx1",
-        "tx4",
-        "tx3",
+        'tx2',
+        'tx1',
+        'tx4',
+        'tx3',
     ]  # Block 100(idx 0,1), 101(idx 0), 102(idx 0)
-    actual_order = [tx["hash"] for tx in unique_transactions]
-    assert actual_order == expected_order, f"Wrong order: {actual_order}"
+    actual_order = [tx['hash'] for tx in unique_transactions]
+    assert actual_order == expected_order, f'Wrong order: {actual_order}'
 
-    print("✅ Deduplication and sorting test passed!")
+    print('✅ Deduplication and sorting test passed!')
 
 
 async def test_concurrent_processing_mock():
     """Test concurrent processing with mocked functions."""
-    print("Testing concurrent processing simulation...")
+    print('Testing concurrent processing simulation...')
 
     # Mock semaphore and async function
     semaphore = asyncio.Semaphore(3)  # Allow 3 concurrent
@@ -139,7 +137,7 @@ async def test_concurrent_processing_mock():
                 block_start,
                 block_end,
                 [
-                    {"hash": f"tx{range_id}_{i}", "blockNumber": str(block_start + i)}
+                    {'hash': f'tx{range_id}_{i}', 'blockNumber': str(block_start + i)}
                     for i in range(min(2, block_end - block_start + 1))
                 ],
             )
@@ -157,50 +155,50 @@ async def test_concurrent_processing_mock():
     results = await asyncio.gather(*tasks)
     end_time = asyncio.get_event_loop().time()
 
-    print(f"Processed {len(results)} ranges in {end_time - start_time:.3f}s")
-    assert len(results) == 3, "Should process all ranges"
+    print(f'Processed {len(results)} ranges in {end_time - start_time:.3f}s')
+    assert len(results) == 3, 'Should process all ranges'
 
     # Check results structure
     for result in results:
         range_id, block_start, block_end, elements = result
-        assert isinstance(elements, list), "Should return list of elements"
-        assert len(elements) <= 2, "Should not exceed mock limit"
+        assert isinstance(elements, list), 'Should return list of elements'
+        assert len(elements) <= 2, 'Should not exceed mock limit'
 
-    print("✅ Concurrent processing test passed!")
+    print('✅ Concurrent processing test passed!')
 
 
 def test_hex_number_handling():
     """Test handling of hex vs decimal block numbers."""
-    print("Testing hex number handling...")
+    print('Testing hex number handling...')
 
     transactions = [
         {
-            "hash": "tx1",
-            "blockNumber": "0x64",
-            "transactionIndex": "0x0",
+            'hash': 'tx1',
+            'blockNumber': '0x64',
+            'transactionIndex': '0x0',
         },  # Block 100, index 0
         {
-            "hash": "tx2",
-            "blockNumber": "101",
-            "transactionIndex": "1",
+            'hash': 'tx2',
+            'blockNumber': '101',
+            'transactionIndex': '1',
         },  # Block 101, index 1
         {
-            "hash": "tx3",
-            "blockNumber": "0x65",
-            "transactionIndex": "0x1",
+            'hash': 'tx3',
+            'blockNumber': '0x65',
+            'transactionIndex': '0x1',
         },  # Block 101, index 1
     ]
 
     # Sort with hex support
     def sort_key(element):
-        block_num = element.get("blockNumber", "0")
-        if isinstance(block_num, str) and block_num.startswith("0x"):
+        block_num = element.get('blockNumber', '0')
+        if isinstance(block_num, str) and block_num.startswith('0x'):
             block_num = int(block_num, 16)
         else:
             block_num = int(block_num)
 
-        tx_index = element.get("transactionIndex", "0")
-        if isinstance(tx_index, str) and tx_index.startswith("0x"):
+        tx_index = element.get('transactionIndex', '0')
+        if isinstance(tx_index, str) and tx_index.startswith('0x'):
             tx_index = int(tx_index, 16)
         else:
             tx_index = int(tx_index) if tx_index else 0
@@ -212,13 +210,13 @@ def test_hex_number_handling():
     # tx1: block 100, index 0 (should be first)
     # tx2: block 101, index 1
     # tx3: block 101, index 1 (same as tx2)
-    assert sorted_txs[0]["hash"] == "tx1", "tx1 should be first (lowest block)"
-    print("✅ Hex number handling test passed!")
+    assert sorted_txs[0]['hash'] == 'tx1', 'tx1 should be first (lowest block)'
+    print('✅ Hex number handling test passed!')
 
 
 def run_all_tests():
     """Run all tests."""
-    print("🧪 Running optimized transaction fetching tests...\n")
+    print('🧪 Running optimized transaction fetching tests...\n')
 
     try:
         test_priority_queue_logic()
@@ -234,19 +232,17 @@ def run_all_tests():
         test_hex_number_handling()
         print()
 
-        print(
-            "🎉 All tests passed! Optimized transaction fetching logic is working correctly."
-        )
+        print('🎉 All tests passed! Optimized transaction fetching logic is working correctly.')
         return True
 
     except Exception as e:
-        print(f"❌ Test failed: {e}")
+        print(f'❌ Test failed: {e}')
         import traceback
 
         traceback.print_exc()
         return False
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     success = run_all_tests()
     exit(0 if success else 1)
