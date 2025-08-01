@@ -120,7 +120,9 @@ class DecodeTestRunner:
 
                 except Exception as e:
                     logger.error(f"Error fetching logs page {page}: {e}")
-                    self.results["errors"].append(f"Log fetch error page {page}: {str(e)}")
+                    self.results["errors"].append(
+                        f"Log fetch error page {page}: {str(e)}"
+                    )
                     break
 
         except Exception as e:
@@ -130,7 +132,9 @@ class DecodeTestRunner:
         logger.info(f"Total logs collected: {len(logs)}")
         return logs[:50]  # Limit for testing
 
-    async def fetch_sample_transactions(self, pages: int = 3, use_optimized: bool = True) -> list[dict[str, Any]]:
+    async def fetch_sample_transactions(
+        self, pages: int = 3, use_optimized: bool = True
+    ) -> list[dict[str, Any]]:
         """Fetch real transactions from UNI token contract.
 
         Args:
@@ -141,7 +145,9 @@ class DecodeTestRunner:
 
         if use_optimized:
             try:
-                logger.info(f"Fetching transactions using optimized method for UNI token: {contract_address}")
+                logger.info(
+                    f"Fetching transactions using optimized method for UNI token: {contract_address}"
+                )
 
                 # Import the Utils class for optimized fetching
                 from aiochainscan.modules.extra.utils import Utils
@@ -164,12 +170,20 @@ class DecodeTestRunner:
                 )
 
                 # Filter transactions with input data (function calls)
-                transactions = [tx for tx in all_transactions if tx.get("input") and tx["input"] != "0x"]
+                transactions = [
+                    tx
+                    for tx in all_transactions
+                    if tx.get("input") and tx["input"] != "0x"
+                ]
 
-                logger.info(f"Optimized fetch: {len(all_transactions)} total, {len(transactions)} with input data")
+                logger.info(
+                    f"Optimized fetch: {len(all_transactions)} total, {len(transactions)} with input data"
+                )
 
             except Exception as e:
-                logger.error(f"Error with optimized fetch, falling back to legacy method: {e}")
+                logger.error(
+                    f"Error with optimized fetch, falling back to legacy method: {e}"
+                )
                 self.results["errors"].append(f"Optimized fetch error: {str(e)}")
                 # Fall back to legacy method
                 return await self._fetch_sample_transactions_legacy(pages)
@@ -179,13 +193,17 @@ class DecodeTestRunner:
 
         return transactions[:50]  # Limit for testing
 
-    async def _fetch_sample_transactions_legacy(self, pages: int = 3) -> list[dict[str, Any]]:
+    async def _fetch_sample_transactions_legacy(
+        self, pages: int = 3
+    ) -> list[dict[str, Any]]:
         """Legacy method for fetching transactions (kept for fallback)."""
         transactions = []
         contract_address = "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"  # UNI token
 
         try:
-            logger.info(f"Fetching transactions using legacy method for UNI token: {contract_address}")
+            logger.info(
+                f"Fetching transactions using legacy method for UNI token: {contract_address}"
+            )
 
             for page in range(1, pages + 1):
                 try:
@@ -198,7 +216,11 @@ class DecodeTestRunner:
 
                     if page_txs and isinstance(page_txs, list):
                         # Filter transactions with input data (function calls)
-                        tx_with_input = [tx for tx in page_txs if tx.get("input") and tx["input"] != "0x"]
+                        tx_with_input = [
+                            tx
+                            for tx in page_txs
+                            if tx.get("input") and tx["input"] != "0x"
+                        ]
                         transactions.extend(tx_with_input)
                         logger.info(
                             f"Page {page}: Found {len(page_txs)} total transactions, "
@@ -218,7 +240,9 @@ class DecodeTestRunner:
 
                 except Exception as e:
                     logger.error(f"Error fetching transactions page {page}: {e}")
-                    self.results["errors"].append(f"Transaction fetch error page {page}: {str(e)}")
+                    self.results["errors"].append(
+                        f"Transaction fetch error page {page}: {str(e)}"
+                    )
                     break
 
         except Exception as e:
@@ -232,14 +256,18 @@ class DecodeTestRunner:
         """Fetch the real ABI for the contract."""
         try:
             logger.info(f"Fetching ABI for contract: {contract_address}")
-            abi_response = await self.client.contract.contract_abi(address=contract_address)
+            abi_response = await self.client.contract.contract_abi(
+                address=contract_address
+            )
 
             if abi_response and abi_response != "Contract source code not verified":
                 abi = json.loads(abi_response)
                 logger.info(f"✅ Successfully fetched ABI with {len(abi)} items")
                 return abi
             else:
-                logger.warning("❌ Contract source code not verified - no ABI available")
+                logger.warning(
+                    "❌ Contract source code not verified - no ABI available"
+                )
                 return None
 
         except Exception as e:
@@ -247,7 +275,9 @@ class DecodeTestRunner:
             self.results["errors"].append(f"ABI fetch error: {str(e)}")
             return None
 
-    def test_log_decoding(self, logs: list[dict[str, Any]], real_abi: list[dict] | None = None) -> None:
+    def test_log_decoding(
+        self, logs: list[dict[str, Any]], real_abi: list[dict] | None = None
+    ) -> None:
         """Test log decoding with real and fallback ABIs."""
         logger.info("Testing log decoding...")
 
@@ -288,7 +318,9 @@ class DecodeTestRunner:
 
                 if test_result["success"]:
                     self.results["decode_stats"]["log_decodes"]["success"] += 1
-                    logger.info(f'✅ Log {i}: Decoded as {test_result["decoded_event"]}')
+                    logger.info(
+                        f'✅ Log {i}: Decoded as {test_result["decoded_event"]}'
+                    )
                 else:
                     self.results["decode_stats"]["log_decodes"]["failed"] += 1
                     logger.info(f"❌ Log {i}: Could not decode")
@@ -298,7 +330,9 @@ class DecodeTestRunner:
                 self.results["errors"].append(f"Log decode error {i}: {str(e)}")
                 logger.error(f"Error decoding log {i}: {e}")
 
-    def test_transaction_decoding(self, transactions: list[dict[str, Any]], real_abi: list[dict] | None = None) -> None:
+    def test_transaction_decoding(
+        self, transactions: list[dict[str, Any]], real_abi: list[dict] | None = None
+    ) -> None:
         """Test transaction input decoding with both real ABI and online methods."""
         logger.info("Testing transaction decoding...")
 
@@ -375,7 +409,9 @@ class DecodeTestRunner:
                 else:
                     self.results["decode_stats"]["online_decodes"]["failed"] += 1
 
-                logger.info(f'TX {i}: ABI={"✅" if abi_success else "❌"} Online={"✅" if online_success else "❌"}')
+                logger.info(
+                    f'TX {i}: ABI={"✅" if abi_success else "❌"} Online={"✅" if online_success else "❌"}'
+                )
 
             except Exception as e:
                 self.results["decode_stats"]["abi_decodes"]["failed"] += 1
@@ -391,9 +427,21 @@ class DecodeTestRunner:
         total_logs = len(self.results["logs_tested"])
         total_txs = len(self.results["transactions_tested"])
 
-        log_success_rate = self.results["decode_stats"]["log_decodes"]["success"] / max(total_logs, 1) * 100
-        abi_success_rate = self.results["decode_stats"]["abi_decodes"]["success"] / max(total_txs, 1) * 100
-        online_success_rate = self.results["decode_stats"]["online_decodes"]["success"] / max(total_txs, 1) * 100
+        log_success_rate = (
+            self.results["decode_stats"]["log_decodes"]["success"]
+            / max(total_logs, 1)
+            * 100
+        )
+        abi_success_rate = (
+            self.results["decode_stats"]["abi_decodes"]["success"]
+            / max(total_txs, 1)
+            * 100
+        )
+        online_success_rate = (
+            self.results["decode_stats"]["online_decodes"]["success"]
+            / max(total_txs, 1)
+            * 100
+        )
 
         # Prepare shorter variables for f-strings
         log_success = self.results["decode_stats"]["log_decodes"]["success"]
@@ -453,7 +501,9 @@ This test validates the aiochainscan library's ability to fetch and decode real 
                 report += f"- {error}\n"
 
         # Determine test result
-        test_passed = log_success_rate > 0 or abi_success_rate > 0 or online_success_rate > 0
+        test_passed = (
+            log_success_rate > 0 or abi_success_rate > 0 or online_success_rate > 0
+        )
         test_result = "✅ PASSED" if test_passed else "❌ FAILED"
 
         report += f"""
@@ -479,7 +529,9 @@ The aiochainscan library {test_result} real-world functionality tests.
 
 async def main():
     """Main test execution."""
-    logger.info("Starting aiochainscan decode functionality test with real Ethereum data")
+    logger.info(
+        "Starting aiochainscan decode functionality test with real Ethereum data"
+    )
 
     runner = DecodeTestRunner()
     contract_address = "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"  # UNI token
