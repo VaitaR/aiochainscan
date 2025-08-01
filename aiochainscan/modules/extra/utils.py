@@ -475,13 +475,16 @@ class Utils:
             self._logger.info(f"After deduplication: {len(all_elements)} unique elements")
 
         # Apply decoding if requested
-        if decode_type == "auto" and data_type not in ["internal_txs", "token_transfers"]:
-            if len(all_elements) > 0:
-                try:
-                    abi = await self.get_proxy_abi(address)
-                    all_elements = await self._decode_elements(all_elements, abi, address, function, decode_type)
-                except Exception as e:
-                    self._logger.warning(f"Error during decoding: {e}")
+        if (
+            decode_type == "auto"
+            and data_type not in ["internal_txs", "token_transfers"]
+            and len(all_elements) > 0
+        ):
+            try:
+                abi = await self.get_proxy_abi(address)
+                all_elements = await self._decode_elements(all_elements, abi, address, function, decode_type)
+            except Exception as e:
+                self._logger.warning(f"Error during decoding: {e}")
 
         return all_elements
 
