@@ -36,10 +36,10 @@ class Utils:
     def __init__(self, client: Client):
         self._client = client
         self.data_model_mapping: dict[str, Callable] = {
-            "internal_txs": self._client.account.internal_txs,
-            "normal_txs": self._client.account.normal_txs,
-            "get_logs": self._client.logs.get_logs,
-            "token_transfers": self._client.account.token_transfers,
+            'internal_txs': self._client.account.internal_txs,
+            'normal_txs': self._client.account.normal_txs,
+            'get_logs': self._client.logs.get_logs,
+            'token_transfers': self._client.account.token_transfers,
         }
         self._logger = logging.getLogger(__name__)
 
@@ -55,9 +55,7 @@ class Utils:
         if end_block is None:
             end_block = int(await self._client.proxy.block_number(), 16)
 
-        for sblock, eblock in self._generate_intervals(
-            start_block, end_block, block_limit
-        ):
+        for sblock, eblock in self._generate_intervals(start_block, end_block, block_limit):
             async for transfer in self._parse_by_pages(
                 address=address,
                 contract_address=contract_address,
@@ -77,9 +75,7 @@ class Utils:
         start_block: int = 0,
         end_block: int = None,
     ) -> list[dict]:
-        kwargs = {
-            k: v for k, v in locals().items() if k != "self" and not k.startswith("_")
-        }
+        kwargs = {k: v for k, v in locals().items() if k != 'self' and not k.startswith('_')}
         return [t async for t in self.token_transfers_generator(**kwargs)]
 
     async def is_contract(self, address: str) -> bool:
@@ -87,8 +83,8 @@ class Utils:
             response = await self._client.contract.contract_abi(address=address)
         except ChainscanClientApiError as e:
             if (
-                e.message.upper() == "NOTOK"
-                and e.result.lower() == "contract source code not verified"
+                e.message.upper() == 'NOTOK'
+                and e.result.lower() == 'contract source code not verified'
             ):
                 return False
             raise
@@ -101,7 +97,7 @@ class Utils:
                 address=contract_address, start_block=1, page=1, offset=1
             )  # try to find first internal transaction
         except ChainscanClientApiError as e:
-            if e.message.lower() != "no transactions found":
+            if e.message.lower() != 'no transactions found':
                 raise
             else:
                 response = None
@@ -112,15 +108,15 @@ class Utils:
                     address=contract_address, start_block=1, page=1, offset=1
                 )  # try to find first normal transaction
             except ChainscanClientApiError as e:
-                if e.message.lower() != "no transactions found":
+                if e.message.lower() != 'no transactions found':
                     raise
 
-        return next((i["from"].lower() for i in response), None) if response else None
+        return next((i['from'].lower() for i in response), None) if response else None
 
     async def get_proxy_abi(self, address: str) -> str | None:
-        abi_directory = "abi"
+        abi_directory = 'abi'
         abi_chain = self._client._url_builder._api_kind
-        abi_file_path = f"{abi_directory}/{abi_chain}_{address}.json"
+        abi_file_path = f'{abi_directory}/{abi_chain}_{address}.json'
 
         # Ensure the ABI directory exists
         if not os.path.exists(abi_directory):
@@ -130,30 +126,28 @@ class Utils:
         if os.path.exists(abi_file_path):
             with open(abi_file_path) as file:
                 abi = file.read()
-                self._logger.info(f"Retrieved ABI from local storage for {address}")
+                self._logger.info(f'Retrieved ABI from local storage for {address}')
                 return json.loads(abi)
 
         # Fetch ABI from the API if not found locally
         try:
-            source_code = await self._client.contract.contract_source_code(
-                address=address
-            )
+            source_code = await self._client.contract.contract_source_code(address=address)
         except ChainscanClientApiError as e:
-            self._logger.warning(f"Error fetching source code for {address}: {str(e)}")
+            self._logger.warning(f'Error fetching source code for {address}: {str(e)}')
             return None
 
         contract_address = next(
-            (r["Implementation"] for r in source_code if r["Implementation"]), None
+            (r['Implementation'] for r in source_code if r['Implementation']), None
         )
         if contract_address is not None:
-            self._logger.info(f"Found proxy contract {contract_address} for {address}")
+            self._logger.info(f'Found proxy contract {contract_address} for {address}')
             # check proxy locally
-            proxy_abi_file_path = f"{abi_directory}/{abi_chain}_{contract_address}.json"
+            proxy_abi_file_path = f'{abi_directory}/{abi_chain}_{contract_address}.json'
             if os.path.exists(proxy_abi_file_path):
                 with open(proxy_abi_file_path) as file:
                     abi = file.read()
                     self._logger.info(
-                        f"Retrieved proxy({contract_address}) ABI from local storage for {address}"
+                        f'Retrieved proxy({contract_address}) ABI from local storage for {address}'
                     )
                     return json.loads(abi)
 
@@ -161,53 +155,45 @@ class Utils:
 
             if abi:
                 # Save the ABI to a file
-                with open(proxy_abi_file_path, "w") as file:
+                with open(proxy_abi_file_path, 'w') as file:
                     json.dump(abi, file, indent=4)
                     self._logger.info(
-                        f"Saved proxy({contract_address}) ABI to local storage for {address}"
+                        f'Saved proxy({contract_address}) ABI to local storage for {address}'
                     )
             return abi
 
         abi_status = next(
-            (
-                r["ABI"]
-                for r in source_code
-                if r["ABI"] != "Contract source code not verified"
-            ),
+            (r['ABI'] for r in source_code if r['ABI'] != 'Contract source code not verified'),
             None,
         )
         if abi_status is None:
-            self._logger.info(f"No ABI found for {address}")
+            self._logger.info(f'No ABI found for {address}')
             return None
 
         abi = await self._client.contract.contract_abi(address=address)
         if abi:
             # Save the ABI to a file
-            with open(abi_file_path, "w") as file:
+            with open(abi_file_path, 'w') as file:
                 json.dump(abi, file, indent=4)
-                self._logger.info(f"Saved ABI to local storage for {address}")
+                self._logger.info(f'Saved ABI to local storage for {address}')
         else:
-            self._logger.warning(f"No proxy contract found for {address}")
+            self._logger.warning(f'No proxy contract found for {address}')
 
         return abi
 
     async def _decode_elements(self, elements, abi, address, function, decode_type):
         if (
             abi is None
-            or function.__name__ in ["internal_txs", "token_transfers"]
-            or decode_type != "auto"
+            or function.__name__ in ['internal_txs', 'token_transfers']
+            or decode_type != 'auto'
         ):
-            self._logger.info(
-                f"ABI is not available or decode not needed for {address}"
-            )
+            self._logger.info(f'ABI is not available or decode not needed for {address}')
             return elements  # Early exit if ABI is not necessary or available
 
-        self._logger.info(f"Decoding {len(elements)} elements for {address}...")
+        self._logger.info(f'Decoding {len(elements)} elements for {address}...')
         abi = json.loads(abi)
         abi_decode_func = (
-            decode_log_data
-            if function.__name__ == "get_logs"
-            else decode_transaction_input
+            decode_log_data if function.__name__ == 'get_logs' else decode_transaction_input
         )
 
         for i, element in enumerate(elements):
@@ -216,7 +202,7 @@ class Utils:
             except Exception as e:
                 elements[i] = element
                 self._logger.warning(
-                    f"Error decoding element {i} element {element} for {address}: {e}"
+                    f'Error decoding element {i} element {element} for {address}: {e}'
                 )
 
         return elements
@@ -226,7 +212,7 @@ class Utils:
     ):
         # for scanners like routscan, with limit 25 transactions per request
         if offset is None:
-            offset = 1_000 if function.__name__ == "get_logs" else 10_000
+            offset = 1_000 if function.__name__ == 'get_logs' else 10_000
 
         elements = []
         start_batch_block = start_block
@@ -234,9 +220,7 @@ class Utils:
 
         # fetch elements from the current block
         while True:
-            print(
-                f"Fetching {offset} elements for {address} from block {start_batch_block}"
-            )
+            print(f'Fetching {offset} elements for {address} from block {start_batch_block}')
             try:
                 txs = await function(
                     address=address,
@@ -249,7 +233,7 @@ class Utils:
             except (
                 Exception
             ) as e:  # Ловим более общее исключение, поскольку точный тип может варьироваться
-                print(f"Error fetching transactions for {address}: {e}")
+                print(f'Error fetching transactions for {address}: {e}')
                 break
 
             elements.extend(txs)
@@ -257,38 +241,36 @@ class Utils:
             if len(txs) < offset:
                 break
 
-            if function.__name__ == "get_logs":
-                first_batch_block = int(txs[0]["blockNumber"], 16)
-                last_batch_block = int(txs[-1]["blockNumber"], 16)
+            if function.__name__ == 'get_logs':
+                first_batch_block = int(txs[0]['blockNumber'], 16)
+                last_batch_block = int(txs[-1]['blockNumber'], 16)
 
             else:
-                first_batch_block = int(txs[0]["blockNumber"])
-                last_batch_block = int(txs[-1]["blockNumber"])
+                first_batch_block = int(txs[0]['blockNumber'])
+                last_batch_block = int(txs[-1]['blockNumber'])
 
             if start_block > last_batch_block:
                 logging.warning(
-                    f"End block is lower than start block for {address}, out of range of request"
+                    f'End block is lower than start block for {address}, out of range of request'
                 )
                 break
 
             if last_batch_block == first_batch_block:
                 # if first and last blocks are equal, offset is low and we can lose some txs
-                logging.warning(
-                    f"First and last blocks are equal, offset is low for {address}"
-                )
+                logging.warning(f'First and last blocks are equal, offset is low for {address}')
                 break
 
             # TODO check for sorting method and from part of all
             if first_batch_block > last_batch_block:
                 # if scaner have another sorting method
                 logging.warning(
-                    f"First block is higher than current block for {address} can be problems with sorting, "
-                    f"first_batch_block: {first_batch_block}, last_batch_block: {last_batch_block}"
+                    f'First block is higher than current block for {address} can be problems with sorting, '
+                    f'first_batch_block: {first_batch_block}, last_batch_block: {last_batch_block}'
                 )
                 end_batch_block = first_batch_block
             else:
                 logging.warning(
-                    f"Normal sorting, first_batch_block: {first_batch_block}, last_batch_block: {last_batch_block}"
+                    f'Normal sorting, first_batch_block: {first_batch_block}, last_batch_block: {last_batch_block}'
                 )
                 start_batch_block = last_batch_block
 
@@ -296,12 +278,10 @@ class Utils:
             elements = [
                 element
                 for element in elements
-                if element["blockNumber"] != elements[-1]["blockNumber"]
+                if element['blockNumber'] != elements[-1]['blockNumber']
             ]
 
-        print(
-            f"Fetched {len(elements)} elements in total for {address}, {function.__name__}."
-        )
+        print(f'Fetched {len(elements)} elements in total for {address}, {function.__name__}.')
         return elements
 
     # TODO for scanners like routscan with low txs fer request limit need to ckeck page pagination method
@@ -313,7 +293,7 @@ class Utils:
         data_type: str,
         start_block: int = 0,
         end_block: int | None = None,
-        decode_type: str = "auto",
+        decode_type: str = 'auto',
         offset: int = None,
         *args,
         **kwargs,
@@ -323,13 +303,13 @@ class Utils:
 
         # check if data_type is supported
         if data_type not in self.data_model_mapping:
-            raise ValueError(f"Unsupported data type: {data_type}")
+            raise ValueError(f'Unsupported data type: {data_type}')
 
         # get function by data_type from mapping
         function = self.data_model_mapping[data_type]
-        if decode_type == "auto" and function.__name__ not in [
-            "internal_txs",
-            "token_transfers",
+        if decode_type == 'auto' and function.__name__ not in [
+            'internal_txs',
+            'token_transfers',
         ]:
             tasks = [
                 self._get_elements_batch(
@@ -355,7 +335,7 @@ class Utils:
         data_type: str,
         start_block: int = 0,
         end_block: int | None = None,
-        decode_type: str = "auto",
+        decode_type: str = 'auto',
         max_concurrent: int = 3,
         max_offset: int = 10000,
         *args,
@@ -380,7 +360,7 @@ class Utils:
 
         # Check if data_type is supported
         if data_type not in self.data_model_mapping:
-            raise ValueError(f"Unsupported data type: {data_type}")
+            raise ValueError(f'Unsupported data type: {data_type}')
 
         # Get function by data_type from mapping
         function = self.data_model_mapping[data_type]
@@ -438,8 +418,8 @@ class Utils:
             async with semaphore:
                 try:
                     self._logger.debug(
-                        f"Fetching {data_type} for {address}, blocks {block_start}-{block_end} "
-                        f"(range {block_end - block_start + 1})"
+                        f'Fetching {data_type} for {address}, blocks {block_start}-{block_end} '
+                        f'(range {block_end - block_start + 1})'
                     )
 
                     elements = await function(
@@ -458,7 +438,7 @@ class Utils:
 
                 except Exception as e:
                     self._logger.warning(
-                        f"Error fetching {data_type} for range {block_start}-{block_end}: {e}"
+                        f'Error fetching {data_type} for range {block_start}-{block_end}: {e}'
                     )
                     return range_id, block_start, block_end, []
 
@@ -483,7 +463,7 @@ class Utils:
             # Process results
             for result in results:
                 if isinstance(result, Exception):
-                    self._logger.error(f"Worker error: {result}")
+                    self._logger.error(f'Worker error: {result}')
                     continue
 
                 range_id, block_start, block_end, elements = result
@@ -517,33 +497,31 @@ class Utils:
                     range_counter += 1
 
                     self._logger.debug(
-                        f"Split range {block_start}-{block_end} into {block_start}-{mid_block} "
-                        f"and {mid_block + 1}-{block_end} (got {len(elements)} elements)"
+                        f'Split range {block_start}-{block_end} into {block_start}-{mid_block} '
+                        f'and {mid_block + 1}-{block_end} (got {len(elements)} elements)'
                     )
                 else:
                     # Range is complete, add to results
                     all_elements.extend(elements)
                     completed_ranges.add(range_id)
                     self._logger.debug(
-                        f"Completed range {block_start}-{block_end}: {len(elements)} elements"
+                        f'Completed range {block_start}-{block_end}: {len(elements)} elements'
                     )
 
-        self._logger.info(
-            f"Fetched {len(all_elements)} {data_type} elements for {address}"
-        )
+        self._logger.info(f'Fetched {len(all_elements)} {data_type} elements for {address}')
 
         # Sort by block number and remove duplicates
         if all_elements:
             # Sort by block number, then by transaction index if available
             def sort_key(element):
-                block_num = element.get("blockNumber", "0")
-                if isinstance(block_num, str) and block_num.startswith("0x"):
+                block_num = element.get('blockNumber', '0')
+                if isinstance(block_num, str) and block_num.startswith('0x'):
                     block_num = int(block_num, 16)
                 else:
                     block_num = int(block_num)
 
-                tx_index = element.get("transactionIndex", "0")
-                if isinstance(tx_index, str) and tx_index.startswith("0x"):
+                tx_index = element.get('transactionIndex', '0')
+                if isinstance(tx_index, str) and tx_index.startswith('0x'):
                     tx_index = int(tx_index, 16)
                 else:
                     tx_index = int(tx_index) if tx_index else 0
@@ -556,7 +534,7 @@ class Utils:
             seen_hashes = set()
             unique_elements = []
             for element in all_elements:
-                tx_hash = element.get("hash")
+                tx_hash = element.get('hash')
                 if tx_hash and tx_hash not in seen_hashes:
                     seen_hashes.add(tx_hash)
                     unique_elements.append(element)
@@ -564,14 +542,12 @@ class Utils:
                     unique_elements.append(element)
 
             all_elements = unique_elements
-            self._logger.info(
-                f"After deduplication: {len(all_elements)} unique elements"
-            )
+            self._logger.info(f'After deduplication: {len(all_elements)} unique elements')
 
         # Apply decoding if requested
         if (
-            decode_type == "auto"
-            and data_type not in ["internal_txs", "token_transfers"]
+            decode_type == 'auto'
+            and data_type not in ['internal_txs', 'token_transfers']
             and len(all_elements) > 0
         ):
             try:
@@ -580,7 +556,7 @@ class Utils:
                     all_elements, abi, address, function, decode_type
                 )
             except Exception as e:
-                self._logger.warning(f"Error during decoding: {e}")
+                self._logger.warning(f'Error during decoding: {e}')
 
         return all_elements
 
@@ -605,7 +581,7 @@ class Utils:
                     offset=offset,
                 )
             except ChainscanClientApiError as e:
-                if e.message == "No transactions found":
+                if e.message == 'No transactions found':
                     break
                 raise
             else:

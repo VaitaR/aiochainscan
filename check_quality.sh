@@ -28,6 +28,14 @@ else
     ((errors++))
 fi
 
+echo -e "\n${YELLOW}2b. Checking ruff formatting...${NC}"
+if ~/.local/bin/ruff format --check .; then
+    echo -e "${GREEN}✅ Ruff formatting check passed${NC}"
+else
+    echo -e "${RED}❌ Ruff formatting issues found${NC}"
+    ((errors++))
+fi
+
 echo -e "\n${YELLOW}3. Running flake8...${NC}"
 if python3 -m flake8 aiochainscan/modules/extra/utils.py examples/test_decode_functionality.py tests/test_utils_optimized.py test_simple_optimized.py --max-line-length=120 --extend-ignore=E203,W503; then
     echo -e "${GREEN}✅ Flake8 checks passed${NC}"
@@ -36,13 +44,7 @@ else
     ((errors++))
 fi
 
-echo -e "\n${YELLOW}4. Checking code formatting (black)...${NC}"
-if python3 -m black --check --diff aiochainscan/modules/extra/utils.py examples/test_decode_functionality.py tests/test_utils_optimized.py test_simple_optimized.py; then
-    echo -e "${GREEN}✅ Black formatting check passed${NC}"
-else
-    echo -e "${RED}❌ Black formatting issues found${NC}"
-    ((errors++))
-fi
+# Skipping black check since we're using ruff format
 
 echo -e "\n${YELLOW}5. Checking import sorting (isort)...${NC}"
 if python3 -m isort --profile black --check-only --diff aiochainscan/modules/extra/utils.py examples/test_decode_functionality.py tests/test_utils_optimized.py test_simple_optimized.py; then
