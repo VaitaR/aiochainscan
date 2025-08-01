@@ -35,11 +35,11 @@ class Utils:
 
     def __init__(self, client: Client):
         self._client = client
-        self.data_model_mapping: dict[str, Callable[..., AsyncIterator[dict]]] = {
+        self.data_model_mapping: dict[str, Callable] = {
             'internal_txs': self._client.account.internal_txs,
             'normal_txs': self._client.account.normal_txs,
             'get_logs': self._client.logs.get_logs,
-            'tokentx': self._client.account.token_transfers,
+            'token_transfers': self._client.account.token_transfers,
         }
         self._logger = logging.getLogger(__name__)
 
@@ -524,7 +524,7 @@ class Utils:
             self._logger.info(f"After deduplication: {len(all_elements)} unique elements")
 
         # Apply decoding if requested
-        if decode_type == 'auto' and function.__name__ not in ['internal_txs', 'token_transfers']:
+        if decode_type == 'auto' and data_type not in ['internal_txs', 'token_transfers']:
             if len(all_elements) > 0:
                 try:
                     abi = await self.get_proxy_abi(address)

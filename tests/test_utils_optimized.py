@@ -27,6 +27,8 @@ class TestOptimizedTransactionFetching:
             'internal_txs': AsyncMock(),
             'token_transfers': AsyncMock(),
         }
+        utils.get_proxy_abi = AsyncMock(return_value=None)
+        utils._decode_elements = AsyncMock(side_effect=lambda x, *args: x)
         return utils
     
     @pytest.mark.asyncio
