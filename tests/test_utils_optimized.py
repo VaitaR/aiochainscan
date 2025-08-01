@@ -43,7 +43,12 @@ class TestOptimizedTransactionFetching:
         ]
 
         result = await utils.fetch_all_elements_optimized(
-            address="0x123", data_type="normal_txs", start_block=100, end_block=200, max_concurrent=1, max_offset=10
+            address="0x123",
+            data_type="normal_txs",
+            start_block=100,
+            end_block=200,
+            max_concurrent=1,
+            max_offset=10,
         )
 
         assert len(result) == 2
@@ -68,16 +73,32 @@ class TestOptimizedTransactionFetching:
             if call_count == 1:
                 # Return max results to trigger split
                 return [
-                    {"hash": f"tx{i}", "blockNumber": str(100 + i), "transactionIndex": str(i)} for i in range(10)
+                    {
+                        "hash": f"tx{i}",
+                        "blockNumber": str(100 + i),
+                        "transactionIndex": str(i),
+                    }
+                    for i in range(10)
                 ]  # max_offset=10
             else:
                 # Return fewer results for subsequent calls
-                return [{"hash": f"tx{call_count}0", "blockNumber": str(100 + call_count), "transactionIndex": "0"}]
+                return [
+                    {
+                        "hash": f"tx{call_count}0",
+                        "blockNumber": str(100 + call_count),
+                        "transactionIndex": "0",
+                    }
+                ]
 
         mock_function.side_effect = side_effect
 
         result = await utils.fetch_all_elements_optimized(
-            address="0x123", data_type="normal_txs", start_block=100, end_block=200, max_concurrent=1, max_offset=10
+            address="0x123",
+            data_type="normal_txs",
+            start_block=100,
+            end_block=200,
+            max_concurrent=1,
+            max_offset=10,
         )
 
         # Should have called the function multiple times due to range splitting
@@ -99,7 +120,12 @@ class TestOptimizedTransactionFetching:
         ]
 
         result = await utils.fetch_all_elements_optimized(
-            address="0x123", data_type="normal_txs", start_block=100, end_block=200, max_concurrent=1, max_offset=10
+            address="0x123",
+            data_type="normal_txs",
+            start_block=100,
+            end_block=200,
+            max_concurrent=1,
+            max_offset=10,
         )
 
         # Should have only 2 unique transactions
@@ -123,11 +149,21 @@ class TestOptimizedTransactionFetching:
         ]
 
         result = await utils.fetch_all_elements_optimized(
-            address="0x123", data_type="normal_txs", start_block=100, end_block=200, max_concurrent=1, max_offset=10
+            address="0x123",
+            data_type="normal_txs",
+            start_block=100,
+            end_block=200,
+            max_concurrent=1,
+            max_offset=10,
         )
 
         # Should be sorted by block number, then by transaction index
-        expected_order = ["tx2", "tx1", "tx4", "tx3"]  # Block 100(idx 0,1), 101(idx 0), 102(idx 0)
+        expected_order = [
+            "tx2",
+            "tx1",
+            "tx4",
+            "tx3",
+        ]  # Block 100(idx 0,1), 101(idx 0), 102(idx 0)
         actual_order = [tx["hash"] for tx in result]
         assert actual_order == expected_order
 
@@ -155,7 +191,12 @@ class TestOptimizedTransactionFetching:
         mock_function.side_effect = Exception("API Error")
 
         result = await utils.fetch_all_elements_optimized(
-            address="0x123", data_type="normal_txs", start_block=100, end_block=200, max_concurrent=1, max_offset=10
+            address="0x123",
+            data_type="normal_txs",
+            start_block=100,
+            end_block=200,
+            max_concurrent=1,
+            max_offset=10,
         )
 
         # Should return empty list on error
@@ -209,12 +250,25 @@ class TestOptimizedTransactionFetching:
 
         # Return transactions with hex block numbers
         mock_function.return_value = [
-            {"hash": "tx1", "blockNumber": "0x64", "transactionIndex": "0x0"},  # Block 100, index 0
-            {"hash": "tx2", "blockNumber": "0x65", "transactionIndex": "0x1"},  # Block 101, index 1
+            {
+                "hash": "tx1",
+                "blockNumber": "0x64",
+                "transactionIndex": "0x0",
+            },  # Block 100, index 0
+            {
+                "hash": "tx2",
+                "blockNumber": "0x65",
+                "transactionIndex": "0x1",
+            },  # Block 101, index 1
         ]
 
         result = await utils.fetch_all_elements_optimized(
-            address="0x123", data_type="normal_txs", start_block=100, end_block=200, max_concurrent=1, max_offset=10
+            address="0x123",
+            data_type="normal_txs",
+            start_block=100,
+            end_block=200,
+            max_concurrent=1,
+            max_offset=10,
         )
 
         # Should handle hex numbers correctly and sort properly
