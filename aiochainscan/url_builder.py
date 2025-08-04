@@ -20,6 +20,7 @@ class UrlBuilder:
         'blast': ('blastscan.io', 'BLAST'),
         'base': ('basescan.org', 'BASE'),
         'routscan_mode': ('api.routescan.io/v2/network/mainnet/evm/34443', 'ETH'),
+        'blockscout_eth': ('eth.blockscout.com', 'ETH'),
         'blockscout_sepolia': ('eth-sepolia.blockscout.com', 'ETH'),
         'blockscout_gnosis': ('gnosis.blockscout.com', 'xDAI'),
         'blockscout_polygon': ('polygon.blockscout.com', 'MATIC'),

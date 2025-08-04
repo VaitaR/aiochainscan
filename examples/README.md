@@ -246,4 +246,33 @@ If you have API keys for multiple scanners, see `test_with_your_keys.md` for det
 - Analyzing results and troubleshooting issues
 - Understanding scanner-specific limitations
 
-The comprehensive test will show you exactly which methods work on which scanners with your specific API key configuration. 
+The comprehensive test will show you exactly which methods work on which scanners with your specific API key configuration.
+
+## 🆕 RoutScan Demo
+
+### `routscan_demo.py` ⭐
+
+**MODE NETWORK** - Complete RoutScan API demonstration:
+
+```bash
+python examples/routscan_demo.py
+```
+
+- **Purpose**: Demonstrates RoutScan API for Mode Network (Layer 2)
+- **Features**:
+  - Account balance checking on Mode network
+  - Transaction history and internal transactions
+  - ERC-20 token transfers
+  - Contract ABI retrieval
+  - Block information
+  - Scanner comparison with other networks
+- **Network**: Mode (Chain ID: 34443)
+- **API Key**: Optional (works without, but recommended for higher limits)
+- **Set API Key**: `export ROUTSCAN_API_KEY='your_key_here'`
+
+**Key Features:**
+- ✅ Works without API key (public access)
+- ✅ Layer 2 low-cost transactions
+- ✅ Standard Etherscan-compatible endpoints
+- ✅ Real-time transaction tracking
+- ✅ 7 supported methods (same as other scanners) 
