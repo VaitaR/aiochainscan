@@ -182,6 +182,14 @@ class ConfigurationManager:
                 supported_networks={'main', 'sepolia'},
                 requires_api_key=True,
             ),
+            'blockscout_eth': ScannerConfig(
+                name='BlockScout Ethereum',
+                base_domain='eth.blockscout.com',
+                currency='ETH',
+                supported_networks={'eth'},
+                requires_api_key=False,
+                special_config={'public_api': True},
+            ),
             'blockscout_sepolia': ScannerConfig(
                 name='BlockScout Sepolia',
                 base_domain='eth-sepolia.blockscout.com',
