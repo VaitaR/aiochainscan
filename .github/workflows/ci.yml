@@ -37,6 +37,10 @@ jobs:
         run: |
           uv pip install mypy
           uv run mypy --strict aiochainscan
+      - name: Import Linter
+        run: |
+          uv pip install import-linter
+          uv run lint-imports --config .importlinter | cat
 
   test:
     name: Test
