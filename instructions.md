@@ -659,3 +659,70 @@ Keep existing modules (`core/`, `modules/`, `scanners/`, `network.py`, `url_buil
 - Phase 1: added domain VOs (`Address`, `TxHash`, `BlockNumber`), `HttpClient` port with `AiohttpClient` adapter, services for balance/block/transaction, and facade functions (`get_balance`, `get_block`, `get_transaction`). CI enforces import-linter.
 - Added `EndpointBuilder` port with `UrlBuilder` adapter; refactored services to use it (no direct dependency on `url_builder` inside services).
 - Added `get_token_balance` service and a simple facade helper `get_token_balance_facade` for convenience.
+
+## Hexagonal Architecture – Current Stage (Phase 1 slice complete)
+
+### What is in place
+- domain: value objects (`Address`, `TxHash`, `BlockNumber`)
+- ports: `HttpClient`, `EndpointBuilder`
+- adapters: `AiohttpClient`, `UrlBuilderEndpoint`
+- services: balance, block, transaction, token balance, gas oracle (all consume ports)
+- facade: top-level helpers in `aiochainscan/__init__.py` with re-exports preserved
+- dependency control: import-linter contracts enabled in CI and passing
+- quality: `mypy --strict`, `ruff`, and tests are green; a flaky integration test is excluded from fast pre-push, still executed in CI
+- URL decoupling: services use `EndpointBuilder` port (no direct dependency on `url_builder`)
+
+### Risks / technical debt
+- Legacy layer (`modules/*`, parts of `network.py`) still active in parallel; needs gradual migration/consolidation
+- DTO/validation not standardized yet; services return provider-shaped payloads
+- No unified structlog-based tracing/logging in adapters/services
+- Cache/retries/rate limiting exist only in legacy; not modeled as ports
+- Facade naming has minor inconsistency (`get_token_balance_facade` vs `get_balance`)
+
+### Next steps (prioritized)
+1) Service coverage: add services for logs, stats, proxy reads via `EndpointBuilder`
+2) DTO layer: introduce `TypedDict` for service inputs/outputs and a provider→domain normalization
+3) Infra ports: add `Cache`, `RateLimiter`/`RetryPolicy`, `Telemetry` (+ adapters) and align behavior with legacy
+4) Facade: standardize helper names (prefer `get_*` form) and keep backward-compatible aliases
+5) Legacy migration: route `modules/*` through services or deprecate; reduce direct `network.py` usage
+6) Import rules: gradually tighten import-linter contracts
+7) Tests: unit-test new services/adapters with mocked ports; add DTO snapshot tests
+
+### Short take
+The hexagonal skeleton is in place and already useful. Next focus: broaden services, introduce DTO normalization, migrate legacy module paths, and add infrastructure ports (cache/retries/telemetry).
+
+## Hexagonal Architecture – Phase 1.1 Progress Update
+
+### Implemented (since last update)
+- domain DTOs: `GasOracleDTO`, `BlockDTO`, `TransactionDTO`, `LogEntryDTO`, `EthPriceDTO`.
+- ports (infra added): `Cache`, `RateLimiter`, `RetryPolicy`, `Telemetry`.
+- adapters (infra): `InMemoryCache`, `SimpleRateLimiter`, `ExponentialBackoffRetry`, `NoopTelemetry`.
+- services (+ normalization helpers):
+  - account: `get_address_balance`
+  - block: `get_block_by_number`, `normalize_block`
+  - transaction: `get_transaction_by_hash`, `normalize_transaction`
+  - token: `get_token_balance`, `normalize_token_balance`
+  - gas: `get_gas_oracle`, `normalize_gas_oracle`
+  - logs: `get_logs`, `normalize_log_entry`
+  - stats: `get_eth_price`, `normalize_eth_price`
+- facade helpers exported: `get_balance`, `get_block`, `get_transaction`, `get_token_balance` (+ alias `get_token_balance_facade`), `get_gas_oracle` (+ alias `get_gas_oracle_facade`), `get_logs`, `get_eth_price`.
+- facade normalizers exported: `normalize_block`, `normalize_transaction`, `normalize_log_entry`, `normalize_gas_oracle`, `normalize_token_balance`, `normalize_eth_price`.
+- legacy migration (non-breaking):
+  - `modules/account.py:balance` → calls `get_balance` first (fallback to legacy).
+  - `modules/token.py:token_balance` → calls `get_token_balance` first (fallback to legacy).
+  - `modules/block.py:get_by_number` → calls `get_block` first (fallback to legacy).
+  - `modules/transaction.py:get_by_hash` → calls `get_transaction` first (fallback to legacy).
+
+### Not yet implemented (known gaps)
+- services coverage: remaining `stats` endpoints; broader proxy reads where applicable.
+- DTOs: normalization for more `stats` responses and other complex payloads.
+- telemetry/logging: unify on structlog adapter and propagate through services by default.
+- cache/policy composition: configurable TTLs, composition at facade-level (currently adapters exist but wired as optional parameters inside services).
+- legacy routing: migrate `modules/stats.py` and `modules/logs.py` to services internally, keep public interface intact.
+- import rules: tighten import-linter contracts stepwise as migration proceeds.
+
+### Testing notes (local fast path)
+- Prefer running only related tests when touching specific layers, e.g.:
+  - `pytest -q tests/test_logs.py tests/test_stats.py`
+  - `pytest -q tests/test_block.py tests/test_transaction.py tests/test_token.py`
+- CI remains responsible for full-suite and type checks (`mypy --strict`).

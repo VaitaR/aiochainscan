@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from time import monotonic
 from typing import Any
 
-from aiochainscan.domain.dto import BlockDTO
+from aiochainscan.domain.dto import LogEntryDTO
 from aiochainscan.ports.cache import Cache
 from aiochainscan.ports.endpoint_builder import EndpointBuilder
 from aiochainscan.ports.http_client import HttpClient
@@ -12,58 +12,61 @@ from aiochainscan.ports.rate_limiter import RateLimiter, RetryPolicy
 from aiochainscan.ports.telemetry import Telemetry
 
 
-def _to_tag(value: int | str) -> str:
-    if isinstance(value, int):
-        return hex(value)
-    s = value.strip().lower()
-    if s == 'latest' or s.startswith('0x'):
-        return s
-    if s.isdigit():
-        return hex(int(s))
-    # Fallback: pass-through (provider may error)
-    return s
-
-
-async def get_block_by_number(
+async def get_logs(
     *,
-    tag: int | str,
-    full: bool,
+    start_block: int | str,
+    end_block: int | str,
+    address: str,
     api_kind: str,
     network: str,
     api_key: str,
     http: HttpClient,
     _endpoint_builder: EndpointBuilder,
+    topics: list[str] | None = None,
+    topic_operators: list[str] | None = None,
+    page: int | str | None = None,
+    offset: int | str | None = None,
     extra_params: Mapping[str, Any] | None = None,
     _cache: Cache | None = None,
     _rate_limiter: RateLimiter | None = None,
     _retry: RetryPolicy | None = None,
     _telemetry: Telemetry | None = None,
-) -> dict[str, Any]:
-    """Fetch block by number via proxy.eth_getBlockByNumber."""
-
+) -> list[dict[str, Any]]:
     endpoint = _endpoint_builder.open(api_key=api_key, api_kind=api_kind, network=network)
     url: str = endpoint.api_url
-    cache_key = f'block:{api_kind}:{network}:{_to_tag(tag)}:{full}'
 
     params: dict[str, Any] = {
-        'module': 'proxy',
-        'action': 'eth_getBlockByNumber',
-        'boolean': str(full).lower(),
-        'tag': _to_tag(tag),
+        'module': 'logs',
+        'action': 'getLogs',
+        'fromBlock': start_block,
+        'toBlock': end_block,
+        'address': address,
+        'page': page,
+        'offset': offset,
     }
+
+    if topics:
+        # topics[0..3]
+        for idx, topic in enumerate(topics[:4]):
+            params[f'topic{idx}'] = topic
+    if topic_operators:
+        for idx, op in enumerate(topic_operators[:3]):
+            params[f'topic{idx}_{idx + 1}_opr'] = op
+
     if extra_params:
         params.update({k: v for k, v in extra_params.items() if v is not None})
 
     signed_params, headers = endpoint.filter_and_sign(params, headers=None)
 
+    cache_key = f'logs:{api_kind}:{network}:{address}:{start_block}:{end_block}:{topics}:{topic_operators}:{page}:{offset}'
     if _cache is not None:
         cached = await _cache.get(cache_key)
-        if isinstance(cached, dict):
+        if isinstance(cached, list):
             return cached
 
     async def _do_request() -> Any:
         if _rate_limiter is not None:
-            await _rate_limiter.acquire(key=f'{api_kind}:{network}:block')
+            await _rate_limiter.acquire(key=f'{api_kind}:{network}:logs')
         start = monotonic()
         try:
             return await http.get(url, params=signed_params, headers=headers)
@@ -71,7 +74,7 @@ async def get_block_by_number(
             if _telemetry is not None:
                 duration_ms = int((monotonic() - start) * 1000)
                 await _telemetry.record_event(
-                    'block.get_by_number.duration',
+                    'logs.get_logs.duration',
                     {'api_kind': api_kind, 'network': network, 'duration_ms': duration_ms},
                 )
 
@@ -83,43 +86,31 @@ async def get_block_by_number(
     except Exception as exc:  # noqa: BLE001
         if _telemetry is not None:
             await _telemetry.record_error(
-                'get_block_by_number.error',
+                'get_logs.error',
                 exc,
-                {
-                    'api_kind': api_kind,
-                    'network': network,
-                },
+                {'api_kind': api_kind, 'network': network},
             )
         raise
 
-    out: dict[str, Any]
+    out: list[dict[str, Any]] = []
     if isinstance(response, dict):
-        result = response.get('result', response)
-        if isinstance(result, dict):
-            out = result
-        else:
-            out = dict(response) if isinstance(response, Mapping) else {'result': response}
-    else:
-        out = dict(response) if isinstance(response, Mapping) else {'result': response}
+        result = response.get('result')
+        if isinstance(result, list):
+            out = [entry for entry in result if isinstance(entry, dict)]
 
     if _telemetry is not None:
         await _telemetry.record_event(
-            'get_block_by_number.ok',
-            {
-                'api_kind': api_kind,
-                'network': network,
-            },
+            'get_logs.ok',
+            {'api_kind': api_kind, 'network': network, 'items': len(out)},
         )
 
-    if _cache is not None:
-        await _cache.set(cache_key, out, ttl_seconds=5)
+    if _cache is not None and out:
+        await _cache.set(cache_key, out, ttl_seconds=15)
 
     return out
 
 
-def normalize_block(raw: dict[str, Any]) -> BlockDTO:
-    """Normalize provider-shaped block into BlockDTO."""
-
+def normalize_log_entry(raw: dict[str, Any]) -> LogEntryDTO:
     def hex_to_int(h: str | None) -> int | None:
         if not h:
             return None
@@ -128,16 +119,11 @@ def normalize_block(raw: dict[str, Any]) -> BlockDTO:
         except Exception:
             return None
 
-    txs = raw.get('transactions')
-    tx_count: int | None = len(txs) if isinstance(txs, list) else None
-
+    topics = raw.get('topics') if isinstance(raw.get('topics'), list) else []
     return {
-        'block_number': hex_to_int(raw.get('number') or raw.get('blockNumber')),
-        'hash': raw.get('hash'),
-        'parent_hash': raw.get('parentHash'),
-        'miner': raw.get('miner') or raw.get('author'),
-        'timestamp': hex_to_int(raw.get('timestamp')),
-        'gas_limit': hex_to_int(raw.get('gasLimit')),
-        'gas_used': hex_to_int(raw.get('gasUsed')),
-        'tx_count': tx_count,
+        'address': raw.get('address', ''),
+        'block_number': hex_to_int(raw.get('blockNumber')),
+        'tx_hash': raw.get('transactionHash'),
+        'data': raw.get('data'),
+        'topics': [str(t) for t in topics],
     }
