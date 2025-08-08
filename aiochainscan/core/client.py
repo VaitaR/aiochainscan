@@ -47,7 +47,7 @@ class ChainscanClient:
         loop: AbstractEventLoop | None = None,
         timeout: ClientTimeout | None = None,
         proxy: str | None = None,
-        throttler: AbstractAsyncContextManager | None = None,
+        throttler: AbstractAsyncContextManager[Any] | None = None,
         retry_options: RetryOptionsBase | None = None,
     ):
         """
@@ -95,7 +95,7 @@ class ChainscanClient:
         loop: AbstractEventLoop | None = None,
         timeout: ClientTimeout | None = None,
         proxy: str | None = None,
-        throttler: AbstractAsyncContextManager | None = None,
+        throttler: AbstractAsyncContextManager[Any] | None = None,
         retry_options: RetryOptionsBase | None = None,
     ) -> 'ChainscanClient':
         """
@@ -140,7 +140,7 @@ class ChainscanClient:
             retry_options=retry_options,
         )
 
-    async def call(self, method: Method, **params) -> Any:
+    async def call(self, method: Method, **params: Any) -> Any:
         """
         Execute a logical method call on the scanner.
 
@@ -205,7 +205,7 @@ class ChainscanClient:
         """Get the currency symbol for the current network."""
         return self._url_builder.currency
 
-    async def close(self):
+    async def close(self) -> None:
         """Close any open connections (for compatibility)."""
         # For now, this is a no-op since we create Network instances per request
         # In future, we might cache Network instances and need to close them

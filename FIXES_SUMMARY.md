@@ -9,7 +9,7 @@
 - **Исправление**: Отсортированы импорты по алфавиту, убраны дублированные
 - **Файлы**: `aiochainscan/modules/extra/utils.py`
 
-#### ✅ Длинные строки (> 120 символов)  
+#### ✅ Длинные строки (> 120 символов)
 - **Проблема**: Множественные строки превышали лимит символов
 - **Исправление**: Разбиты на несколько строк с правильным отступом
 - **Файлы**: `aiochainscan/modules/extra/utils.py`, `examples/test_decode_functionality.py`
@@ -51,7 +51,7 @@ heapq.heappush(
 # Было:
 if decode_type == 'auto' and function.__name__ not in ['internal_txs', 'token_transfers']:
 
-# Стало:  
+# Стало:
 if decode_type == 'auto' and data_type not in ['internal_txs', 'token_transfers']:
 ```
 

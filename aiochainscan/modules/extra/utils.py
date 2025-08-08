@@ -5,9 +5,9 @@ import heapq
 import json
 import logging
 import os
-from collections.abc import AsyncIterator, Callable, Iterator
+from collections.abc import AsyncIterator, Callable, Coroutine, Iterator
 from datetime import date, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
 from aiochainscan.decode import decode_log_data, decode_transaction_input
 from aiochainscan.exceptions import ChainscanClientApiError
@@ -35,7 +35,9 @@ class Utils:
 
     def __init__(self, client: Client):
         self._client = client
-        self.data_model_mapping: dict[str, Callable] = {
+        self.data_model_mapping: dict[
+            str, Callable[..., Coroutine[Any, Any, list[dict[str, Any]]]]
+        ] = {
             'internal_txs': self._client.account.internal_txs,
             'normal_txs': self._client.account.normal_txs,
             'get_logs': self._client.logs.get_logs,
@@ -45,13 +47,13 @@ class Utils:
 
     async def token_transfers_generator(
         self,
-        address: str = None,
-        contract_address: str = None,
+        address: str | None = None,
+        contract_address: str | None = None,
         block_limit: int = 50,
         offset: int = 3,
         start_block: int = 0,
-        end_block: int = None,
-    ) -> AsyncIterator[dict]:
+        end_block: int | None = None,
+    ) -> AsyncIterator[dict[str, Any]]:
         if end_block is None:
             end_block = int(await self._client.proxy.block_number(), 16)
 
@@ -67,14 +69,14 @@ class Utils:
 
     async def token_transfers(
         self,
-        address: str = None,
-        contract_address: str = None,
+        address: str | None = None,
+        contract_address: str | None = None,
         be_polite: bool = True,
         block_limit: int = 50,
         offset: int = 3,
         start_block: int = 0,
-        end_block: int = None,
-    ) -> list[dict]:
+        end_block: int | None = None,
+    ) -> list[dict[str, Any]]:
         kwargs = {k: v for k, v in locals().items() if k != 'self' and not k.startswith('_')}
         return [t async for t in self.token_transfers_generator(**kwargs)]
 
@@ -82,9 +84,12 @@ class Utils:
         try:
             response = await self._client.contract.contract_abi(address=address)
         except ChainscanClientApiError as e:
+            msg = (e.message or '').upper()
+            res = e.result or ''
             if (
-                e.message.upper() == 'NOTOK'
-                and e.result.lower() == 'contract source code not verified'
+                msg == 'NOTOK'
+                and isinstance(res, str)
+                and res.lower() == 'contract source code not verified'
             ):
                 return False
             raise
@@ -97,7 +102,7 @@ class Utils:
                 address=contract_address, start_block=1, page=1, offset=1
             )  # try to find first internal transaction
         except ChainscanClientApiError as e:
-            if e.message.lower() != 'no transactions found':
+            if (e.message or '').lower() != 'no transactions found':
                 raise
             else:
                 response = None
@@ -108,12 +113,12 @@ class Utils:
                     address=contract_address, start_block=1, page=1, offset=1
                 )  # try to find first normal transaction
             except ChainscanClientApiError as e:
-                if e.message.lower() != 'no transactions found':
+                if (e.message or '').lower() != 'no transactions found':
                     raise
 
         return next((i['from'].lower() for i in response), None) if response else None
 
-    async def get_proxy_abi(self, address: str) -> str | None:
+    async def get_proxy_abi(self, address: str) -> dict[str, Any] | list[dict[str, Any]] | None:
         abi_directory = 'abi'
         abi_chain = self._client._url_builder._api_kind
         abi_file_path = f'{abi_directory}/{abi_chain}_{address}.json'
@@ -125,9 +130,13 @@ class Utils:
         # Check if ABI exists locally
         if os.path.exists(abi_file_path):
             with open(abi_file_path) as file:
-                abi = file.read()
+                abi: str = file.read()
                 self._logger.info(f'Retrieved ABI from local storage for {address}')
-                return json.loads(abi)
+                loaded_json: Any = json.loads(abi)
+                # Accept either dict ABI or list ABI depending on scanner
+                if isinstance(loaded_json, dict | list):
+                    return loaded_json
+                return None
 
         # Fetch ABI from the API if not found locally
         try:
@@ -137,7 +146,12 @@ class Utils:
             return None
 
         contract_address = next(
-            (r['Implementation'] for r in source_code if r['Implementation']), None
+            (
+                r['Implementation']
+                for r in source_code
+                if isinstance(r, dict) and r.get('Implementation')
+            ),
+            None,
         )
         if contract_address is not None:
             self._logger.info(f'Found proxy contract {contract_address} for {address}')
@@ -145,43 +159,60 @@ class Utils:
             proxy_abi_file_path = f'{abi_directory}/{abi_chain}_{contract_address}.json'
             if os.path.exists(proxy_abi_file_path):
                 with open(proxy_abi_file_path) as file:
-                    abi = file.read()
+                    abi_str: str = file.read()
                     self._logger.info(
                         f'Retrieved proxy({contract_address}) ABI from local storage for {address}'
                     )
-                    return json.loads(abi)
+                    loaded_any: Any = json.loads(abi_str)
+                    return loaded_any if isinstance(loaded_any, dict | list) else None
 
-            abi = await self._client.contract.contract_abi(address=contract_address)
+            abi_any: Any = await self._client.contract.contract_abi(address=contract_address)
+            # contract_abi returns dict[str, Any] | list[dict[str, Any]] | ''
+            if isinstance(abi_any, str):
+                return None
 
-            if abi:
+            if isinstance(abi_any, dict | list) and abi_any:
                 # Save the ABI to a file
                 with open(proxy_abi_file_path, 'w') as file:
-                    json.dump(abi, file, indent=4)
+                    json.dump(abi_any, file, indent=4)
                     self._logger.info(
                         f'Saved proxy({contract_address}) ABI to local storage for {address}'
                     )
-            return abi
+            return abi_any if isinstance(abi_any, dict | list) else None
 
         abi_status = next(
-            (r['ABI'] for r in source_code if r['ABI'] != 'Contract source code not verified'),
+            (
+                r['ABI']
+                for r in source_code
+                if isinstance(r, dict) and r.get('ABI') != 'Contract source code not verified'
+            ),
             None,
         )
         if abi_status is None:
             self._logger.info(f'No ABI found for {address}')
             return None
 
-        abi = await self._client.contract.contract_abi(address=address)
-        if abi:
+        abi_any2: Any = await self._client.contract.contract_abi(address=address)
+        if isinstance(abi_any2, str):
+            return None
+        if isinstance(abi_any2, dict | list) and abi_any2:
             # Save the ABI to a file
             with open(abi_file_path, 'w') as file:
-                json.dump(abi, file, indent=4)
+                json.dump(abi_any2, file, indent=4)
                 self._logger.info(f'Saved ABI to local storage for {address}')
         else:
             self._logger.warning(f'No proxy contract found for {address}')
 
-        return abi
+        return abi_any2 if isinstance(abi_any2, dict | list) else None
 
-    async def _decode_elements(self, elements, abi, address, function, decode_type):
+    async def _decode_elements(
+        self,
+        elements: list[dict[str, Any]],
+        abi: Any,
+        address: str,
+        function: Callable[..., Any],
+        decode_type: str,
+    ) -> list[dict[str, Any]]:
         if (
             abi is None
             or function.__name__ in ['internal_txs', 'token_transfers']
@@ -205,16 +236,22 @@ class Utils:
                     f'Error decoding element {i} element {element} for {address}: {e}'
                 )
 
-        return elements
+        return elements if isinstance(elements, list) else []
 
     async def _get_elements_batch(
-        self, function, address, start_block, end_block, offset, **kwargs
-    ):
+        self,
+        function: Callable[..., Coroutine[Any, Any, list[dict[str, Any]]]],
+        address: str,
+        start_block: int,
+        end_block: int,
+        offset: int | None,
+        **kwargs: Any,
+    ) -> list[dict[str, Any]]:
         # for scanners like routscan, with limit 25 transactions per request
         if offset is None:
             offset = 1_000 if function.__name__ == 'get_logs' else 10_000
 
-        elements = []
+        elements: list[dict[str, Any]] = []
         start_batch_block = start_block
         end_batch_block = end_block
 
@@ -294,10 +331,10 @@ class Utils:
         start_block: int = 0,
         end_block: int | None = None,
         decode_type: str = 'auto',
-        offset: int = None,
-        *args,
-        **kwargs,
-    ) -> list[dict]:
+        offset: int | None = None,
+        *args: Any,
+        **kwargs: Any,
+    ) -> list[dict[str, Any]]:
         if end_block is None:
             end_block = 999999999
 
@@ -317,10 +354,11 @@ class Utils:
                 ),
                 self.get_proxy_abi(address),
             ]
-            elements, abi = await asyncio.gather(*tasks)
-            if len(elements) > 0:
+            elements_any, abi_any = await asyncio.gather(*tasks)
+            elements: list[dict[str, Any]] = cast(list[dict[str, Any]], elements_any)
+            if isinstance(abi_any, list) and len(elements) > 0:
                 elements = await self._decode_elements(
-                    elements, abi, address, function, decode_type
+                    elements, abi_any, address, function, decode_type
                 )
         else:
             elements = await self._get_elements_batch(
@@ -338,9 +376,9 @@ class Utils:
         decode_type: str = 'auto',
         max_concurrent: int = 3,
         max_offset: int = 10000,
-        *args,
-        **kwargs,
-    ) -> list[dict]:
+        *args: Any,
+        **kwargs: Any,
+    ) -> list[dict[str, Any]]:
         """Optimized fetching using priority queue and dynamic range splitting.
 
         Args:
@@ -367,7 +405,9 @@ class Utils:
 
         # Priority queue for block ranges (negative size for max-heap behavior)
         # Format: (-range_size, range_id, start_block, end_block)
-        range_queue = []
+        RangeInfo: TypeAlias = tuple[int, int, int, int]
+        RangeResult: TypeAlias = tuple[int, int, int, list[dict[str, Any]]]
+        range_queue: list[RangeInfo] = []
         range_counter = 0
 
         # Initialize with three ranges: left edge, center, right edge
@@ -407,11 +447,11 @@ class Utils:
             range_counter += 1
 
         # Results storage
-        all_elements = []
-        completed_ranges = set()
+        all_elements: list[dict[str, Any]] = []
+        completed_ranges: set[int] = set()
         semaphore = asyncio.Semaphore(max_concurrent)
 
-        async def worker(range_info):
+        async def worker(range_info: RangeInfo) -> RangeResult:
             """Worker function to process a single block range."""
             _, range_id, block_start, block_end = range_info
 
@@ -445,7 +485,7 @@ class Utils:
         # Process ranges until queue is empty
         while range_queue:
             # Get batch of ranges to process
-            current_batch = []
+            current_batch: list[RangeInfo] = []
             batch_size = min(max_concurrent, len(range_queue))
 
             for _ in range(batch_size):
@@ -457,12 +497,16 @@ class Utils:
                 break
 
             # Process batch concurrently
-            tasks = [worker(range_info) for range_info in current_batch]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
+            tasks: list[Coroutine[Any, Any, RangeResult]] = [
+                worker(range_info) for range_info in current_batch
+            ]
+            results: list[RangeResult | BaseException] = await asyncio.gather(
+                *tasks, return_exceptions=True
+            )
 
             # Process results
             for result in results:
-                if isinstance(result, Exception):
+                if isinstance(result, BaseException):
                     self._logger.error(f'Worker error: {result}')
                     continue
 
@@ -513,14 +557,14 @@ class Utils:
         # Sort by block number and remove duplicates
         if all_elements:
             # Sort by block number, then by transaction index if available
-            def sort_key(element):
-                block_num = element.get('blockNumber', '0')
+            def sort_key(element: dict[str, Any]) -> tuple[int, int]:
+                block_num: int | str = element.get('blockNumber', '0')
                 if isinstance(block_num, str) and block_num.startswith('0x'):
                     block_num = int(block_num, 16)
                 else:
                     block_num = int(block_num)
 
-                tx_index = element.get('transactionIndex', '0')
+                tx_index: int | str | None = element.get('transactionIndex', '0')
                 if isinstance(tx_index, str) and tx_index.startswith('0x'):
                     tx_index = int(tx_index, 16)
                 else:
@@ -531,8 +575,8 @@ class Utils:
             all_elements.sort(key=sort_key)
 
             # Remove duplicates based on transaction hash
-            seen_hashes = set()
-            unique_elements = []
+            seen_hashes: set[str] = set()
+            unique_elements: list[dict[str, Any]] = []
             for element in all_elements:
                 tx_hash = element.get('hash')
                 if tx_hash and tx_hash not in seen_hashes:
@@ -565,9 +609,9 @@ class Utils:
         start_block: int,
         end_block: int,
         offset: int,
-        address: str = None,
-        contract_address: str = None,
-    ) -> AsyncIterator[dict]:
+        address: str | None = None,
+        contract_address: str | None = None,
+    ) -> AsyncIterator[dict[str, Any]]:
         page = 1
 
         while True:

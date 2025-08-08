@@ -26,7 +26,7 @@ python3 test_simple_optimized.py
 
 #### 🔥 Было ошибок линтера: **85+**
 - F401: Неиспользуемые импорты
-- E501: Длинные строки (>120 символов)  
+- E501: Длинные строки (>120 символов)
 - W293: Пустые строки с пробелами
 - W291: Trailing whitespace
 - E128: Неправильные отступы
@@ -64,7 +64,7 @@ python3 test_simple_optimized.py
 #### ✅ Логические тесты (`test_simple_optimized.py`):
 - Priority queue behavior
 - Deduplication и sorting
-- Concurrent processing simulation  
+- Concurrent processing simulation
 - Hex/decimal number handling
 
 ### 📁 Измененные файлы
@@ -75,7 +75,7 @@ modified: aiochainscan/modules/extra/utils.py
   ✅ Все линтеры проходят
   ✅ Улучшенная читаемость
 
-modified: examples/test_decode_functionality.py  
+modified: examples/test_decode_functionality.py
   ✅ +50 lines: Dual mode support
   ✅ Graceful fallback
   ✅ Сокращенные f-strings

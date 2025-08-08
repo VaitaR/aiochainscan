@@ -3,9 +3,10 @@ from __future__ import annotations
 import json
 import logging
 import os
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 # dotenv is optional - manual env file loading is implemented below
 
@@ -294,16 +295,18 @@ class ConfigurationManager:
         """Load configuration from a JSON file."""
         try:
             with open(config_file) as f:
-                config_data = json.load(f)
+                config_data = cast(dict[str, Any], json.load(f))
 
             # Load custom scanners
             if 'scanners' in config_data:
-                for scanner_id, scanner_data in config_data['scanners'].items():
+                scanners_section = cast(dict[str, dict[str, Any]], config_data['scanners'])
+                for scanner_id, scanner_data in scanners_section.items():
                     self.register_scanner(scanner_id, scanner_data)
 
             # Load API keys
             if 'api_keys' in config_data:
-                for scanner_id, api_key in config_data['api_keys'].items():
+                api_keys = cast(dict[str, str], config_data['api_keys'])
+                for scanner_id, api_key in api_keys.items():
                     if scanner_id in self._scanners:
                         self._scanners[scanner_id].api_key = api_key
 
@@ -320,7 +323,7 @@ class ConfigurationManager:
     def _get_api_key_for_scanner(self, scanner_id: str) -> str | None:
         """Get API key for scanner with multiple fallback strategies."""
         # Priority order for API key lookup:
-        strategies = [
+        strategies: list[Callable[[], str | None]] = [
             # 1. Primary: Scanner name-based variables (e.g., ETHERSCAN_KEY)
             lambda: os.getenv(f'{self._scanners[scanner_id].name.upper().replace(" ", "_")}_KEY'),
             # 2. Fallback: Scanner ID-based variables (e.g., ETH_KEY) - for backward compatibility
@@ -330,7 +333,7 @@ class ConfigurationManager:
             lambda: os.getenv(f'SCANNER_{scanner_id.upper()}_KEY'),
             lambda: os.getenv(f'API_KEY_{scanner_id.upper()}'),
             # 4. Already set in scanner config
-            lambda: getattr(self._scanners[scanner_id], 'api_key', None),
+            lambda: self._scanners[scanner_id].api_key,
         ]
 
         for strategy in strategies:
@@ -346,13 +349,20 @@ class ConfigurationManager:
     def register_scanner(self, scanner_id: str, config_data: dict[str, Any]) -> None:
         """Dynamically register a new scanner."""
         try:
+            networks_any: Any = config_data.get('supported_networks', ['main'])
+            networks_list: list[str]
+            if isinstance(networks_any, set):
+                networks_list = list(cast(set[str], networks_any))
+            else:
+                networks_list = cast(list[str], networks_any)
+
             scanner_config = ScannerConfig(
                 name=config_data['name'],
                 base_domain=config_data['base_domain'],
                 currency=config_data['currency'],
-                supported_networks=set(config_data.get('supported_networks', ['main'])),
-                requires_api_key=config_data.get('requires_api_key', True),
-                special_config=config_data.get('special_config', {}),
+                supported_networks=set(networks_list),
+                requires_api_key=cast(bool, config_data.get('requires_api_key', True)),
+                special_config=cast(dict[str, Any], config_data.get('special_config', {})),
             )
 
             self._scanners[scanner_id] = scanner_config
@@ -439,7 +449,7 @@ class ConfigurationManager:
 
     def list_all_configurations(self) -> dict[str, dict[str, Any]]:
         """Get overview of all scanner configurations."""
-        result = {}
+        result: dict[str, dict[str, Any]] = {}
         for scanner_id, config in self._scanners.items():
             api_key_sources = self._get_api_key_suggestions(scanner_id)
 
@@ -491,10 +501,13 @@ class ConfigurationManager:
 
     def export_config(self, output_file: Path) -> None:
         """Export current configuration to JSON file."""
-        config_data = {'version': '1.0', 'scanners': {}, 'api_keys': {}}
+        config_data: dict[str, Any] = {'version': '1.0', 'scanners': {}, 'api_keys': {}}
+
+        scanners_section = cast(dict[str, Any], config_data['scanners'])
+        api_keys_section = cast(dict[str, str], config_data['api_keys'])
 
         for scanner_id, config in self._scanners.items():
-            config_data['scanners'][scanner_id] = {
+            scanners_section[scanner_id] = {
                 'name': config.name,
                 'base_domain': config.base_domain,
                 'currency': config.currency,
@@ -504,7 +517,7 @@ class ConfigurationManager:
             }
 
             if config.api_key:
-                config_data['api_keys'][scanner_id] = config.api_key
+                api_keys_section[scanner_id] = config.api_key
 
         with open(output_file, 'w') as f:
             json.dump(config_data, f, indent=2)
@@ -520,10 +533,10 @@ config_manager = ConfigurationManager()
 class ChainScanConfig:
     """Backward compatibility wrapper."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._manager = config_manager
 
-    def get_scanner_config(self, scanner: str):
+    def get_scanner_config(self, scanner: str) -> ScannerConfig:
         return self._manager.get_scanner_config(scanner)
 
     def get_api_key(self, scanner: str) -> str | None:

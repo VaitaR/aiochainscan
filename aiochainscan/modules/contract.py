@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from typing import Any
 
 from aiochainscan.exceptions import SourceNotVerifiedError
 from aiochainscan.modules.base import BaseModule
@@ -38,9 +39,9 @@ class Contract(BaseModule):
         if isinstance(result, str) and result.startswith('Contract source code not verified'):
             raise SourceNotVerifiedError(address)
 
-        return result
+        return result if isinstance(result, str) or result is None else str(result)
 
-    async def contract_source_code(self, address: str) -> list[dict]:
+    async def contract_source_code(self, address: str) -> list[dict[str, Any]]:
         """Get Contract Source Code for Verified Contract Source Codes
 
         Args:
@@ -67,18 +68,21 @@ class Contract(BaseModule):
         ):
             raise SourceNotVerifiedError(address)
 
-        return result
+        return list(result)
 
-    async def contract_source(self, address: str) -> list[dict]:
+    async def contract_source(self, address: str) -> list[dict[str, Any]]:
         """Get Contract Source Code for Verified Contract Source Codes
 
         Alias for contract_source_code method
         """
         return await self.contract_source_code(address)
 
-    async def contract_creation(self, addresses: Iterable[str]) -> list[dict]:
+    async def contract_creation(self, addresses: Iterable[str]) -> list[dict[str, Any]]:
         """Get Contract Creator and Creation Tx Hash"""
-        return await self._get(action='getcontractcreation', contractaddresses=','.join(addresses))
+        result = await self._get(
+            action='getcontractcreation', contractaddresses=','.join(addresses)
+        )
+        return list(result)
 
     async def verify_contract_source_code(
         self,
@@ -88,11 +92,12 @@ class Contract(BaseModule):
         compiler_version: str,
         optimization_used: bool = False,
         runs: int = 200,
-        constructor_arguements: str = None,
-        libraries: dict[str, str] = None,
+        constructor_arguements: str | None = None,
+        libraries: dict[str, str] | None = None,
     ) -> str:
         """Submits a contract source code to Chainscan for verification."""
-        return await self._post(
+        result = await self._post(
+            headers=None,
             module='contract',
             action='verifysourcecode',
             contractaddress=contract_address,
@@ -102,27 +107,32 @@ class Contract(BaseModule):
             optimizationUsed=1 if optimization_used else 0,
             runs=runs,
             constructorArguements=constructor_arguements,
-            **self._parse_libraries(libraries or {}),
+            **(self._parse_libraries(libraries or {})),
         )
+        return str(result)
 
     async def check_verification_status(self, guid: str) -> str:
         """Check Source code verification submission status"""
-        return await self._get(action='checkverifystatus', guid=guid)
+        result = await self._get(action='checkverifystatus', guid=guid)
+        return str(result)
 
     async def verify_proxy_contract(
-        self, address: str, expected_implementation: str = None
+        self, address: str, expected_implementation: str | None = None
     ) -> str:
         """Submits a proxy contract source code to Chainscan for verification."""
-        return await self._post(
+        result = await self._post(
+            headers=None,
             module='contract',
             action='verifyproxycontract',
             address=address,
             expectedimplementation=expected_implementation,
         )
+        return str(result)
 
     async def check_proxy_contract_verification(self, guid: str) -> str:
         """Checking Proxy Contract Verification Submission Status"""
-        return await self._get(action='checkproxyverification', guid=guid)
+        result = await self._get(action='checkproxyverification', guid=guid)
+        return str(result)
 
     @staticmethod
     def _parse_libraries(libraries: dict[str, str]) -> dict[str, str]:

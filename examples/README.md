@@ -47,7 +47,7 @@ python examples/unified_client_demo.py
 
 ## Traditional Examples
 
-### `quick_scanner_check.py` 
+### `quick_scanner_check.py`
 
 **QUICK START** - Fast connectivity test for all scanners with minimal API calls:
 
@@ -193,7 +193,7 @@ balance = await oklink_client.call(Method.ACCOUNT_BALANCE, address=address)
 # Quick comparison of legacy vs unified
 python examples/simple_balance_comparison.py
 
-# Advanced multi-scanner comparison  
+# Advanced multi-scanner comparison
 python examples/balance_comparison.py
 
 # Complete architecture demonstration
@@ -220,7 +220,7 @@ python examples/test_decode_functionality.py
 - `scanner_methods_detailed.md` - Method-by-method results for each scanner
 - `scanner_methods_results.json` - Raw test data for further analysis
 
-### Decode Test Outputs  
+### Decode Test Outputs
 - `test_decode.log` - Detailed execution logs
 - `decode_test_report.txt` - Human-readable test report with real data results
 - `decode_test_results.json` - Raw test results for debugging
@@ -242,7 +242,7 @@ This provides a complete end-to-end test of the library's capabilities with prod
 
 If you have API keys for multiple scanners, see `test_with_your_keys.md` for detailed instructions on:
 - Setting up all API keys properly
-- Running comprehensive tests across all scanners  
+- Running comprehensive tests across all scanners
 - Analyzing results and troubleshooting issues
 - Understanding scanner-specific limitations
 
@@ -275,4 +275,4 @@ python examples/routscan_demo.py
 - ✅ Layer 2 low-cost transactions
 - ✅ Standard Etherscan-compatible endpoints
 - ✅ Real-time transaction tracking
-- ✅ 7 supported methods (same as other scanners) 
+- ✅ 7 supported methods (same as other scanners)

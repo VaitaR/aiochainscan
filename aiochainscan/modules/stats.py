@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from datetime import date
+from typing import Any, cast
 
 from aiochainscan.common import check_client_type, check_sync_mode, get_daily_stats_params
 from aiochainscan.modules.base import BaseModule
@@ -22,15 +23,18 @@ class Stats(BaseModule):
 
     async def eth_supply(self) -> str:
         """Get Total Supply of Ether"""
-        return await self._get(action='ethsupply')
+        result = await self._get(action='ethsupply')
+        return str(result)
 
     async def eth2_supply(self) -> str:
         """Get Total Supply of Ether"""
-        return await self._get(action='ethsupply2')
+        result = await self._get(action='ethsupply2')
+        return str(result)
 
-    async def eth_price(self) -> dict:
+    async def eth_price(self) -> dict[str, Any]:
         """Get ETHER LastPrice Price"""
-        return await self._get(action='ethprice')
+        result = await self._get(action='ethprice')
+        return cast(dict[str, Any], result)
 
     async def chain_size(
         self,
@@ -39,7 +43,7 @@ class Stats(BaseModule):
         client_type: str,
         sync_mode: str,
         sort: str | None = None,
-    ) -> dict | None:
+    ) -> dict[str, Any] | None:
         """Get Chain Size"""
         try:
             result = await self._get(
@@ -50,7 +54,7 @@ class Stats(BaseModule):
             # Return None if result is empty array
             if isinstance(result, list) and len(result) == 0:
                 return None
-            return result
+            return cast(dict[str, Any], result)
         except ValueError:
             # Re-raise validation errors from check functions
             raise
@@ -67,7 +71,7 @@ class Stats(BaseModule):
         client_type: str,
         sync_mode: str,
         sort: str | None = None,
-    ) -> dict | None:
+    ) -> dict[str, Any] | None:
         """Get Ethereum Nodes Size
 
         Deprecated: Use chain_size instead.
@@ -80,7 +84,7 @@ class Stats(BaseModule):
         end: date | None = None,
         client: str = 'geth',
         sync: str = 'default',
-    ) -> dict | None:
+    ) -> dict[str, Any] | None:
         """Get Node Size
 
         Args:
@@ -106,7 +110,7 @@ class Stats(BaseModule):
             # Return None if result is empty array
             if isinstance(result, list) and len(result) == 0:
                 return None
-            return result
+            return cast(dict[str, Any], result)
         except ValueError:
             # Re-raise validation errors from check functions
             raise
@@ -116,7 +120,9 @@ class Stats(BaseModule):
             )
             return None
 
-    async def daily_block_count(self, start: date, end: date, sort: str = 'asc') -> dict | None:
+    async def daily_block_count(
+        self, start: date, end: date, sort: str = 'asc'
+    ) -> list[dict[str, Any]] | None:
         """Get Daily Block Count and Rewards
 
         Args:
@@ -137,73 +143,84 @@ class Stats(BaseModule):
             # Return None if result is empty array
             if isinstance(result, list) and len(result) == 0:
                 return None
-            return result
+            return cast(list[dict[str, Any]], result)
         except Exception as e:
             logger.debug(
                 f'Daily block count action not supported for {self._client._url_builder._api_kind}: {e}'
             )
             return None
 
-    async def total_nodes_count(self) -> dict:
+    async def total_nodes_count(self) -> dict[str, Any]:
         """Get Total Nodes Count"""
-        return await self._get(action='nodecount')
+        result = await self._get(action='nodecount')
+        return cast(dict[str, Any], result)
 
     async def daily_network_tx_fee(
         self, start_date: date, end_date: date, sort: str | None = None
-    ) -> dict:
+    ) -> dict[str, Any]:
         """Get Daily Network Transaction Fee"""
-        return await self._get(**get_daily_stats_params('dailytxnfee', start_date, end_date, sort))
+        result = await self._get(
+            **get_daily_stats_params('dailytxnfee', start_date, end_date, sort)
+        )
+        return cast(dict[str, Any], result)
 
     async def daily_new_address_count(
         self, start_date: date, end_date: date, sort: str | None = None
-    ) -> dict:
+    ) -> dict[str, Any]:
         """Get Daily New Address Count"""
-        return await self._get(
+        result = await self._get(
             **get_daily_stats_params('dailynewaddress', start_date, end_date, sort)
         )
+        return cast(dict[str, Any], result)
 
     async def daily_network_utilization(
         self, start_date: date, end_date: date, sort: str | None = None
-    ) -> dict:
+    ) -> dict[str, Any]:
         """Get Daily Network Utilization"""
-        return await self._get(
+        result = await self._get(
             **get_daily_stats_params('dailynetutilization', start_date, end_date, sort)
         )
+        return cast(dict[str, Any], result)
 
     async def daily_average_network_hash_rate(
         self, start_date: date, end_date: date, sort: str | None = None
-    ) -> dict:
+    ) -> dict[str, Any]:
         """Get Daily Average Network Hash Rate"""
-        return await self._get(
+        result = await self._get(
             **get_daily_stats_params('dailyavghashrate', start_date, end_date, sort)
         )
+        return cast(dict[str, Any], result)
 
     async def daily_transaction_count(
         self, start_date: date, end_date: date, sort: str | None = None
-    ) -> dict:
+    ) -> dict[str, Any]:
         """Get Daily Transaction Count"""
-        return await self._get(**get_daily_stats_params('dailytx', start_date, end_date, sort))
+        result = await self._get(**get_daily_stats_params('dailytx', start_date, end_date, sort))
+        return cast(dict[str, Any], result)
 
     async def daily_average_network_difficulty(
         self, start_date: date, end_date: date, sort: str | None = None
-    ) -> dict:
+    ) -> dict[str, Any]:
         """Get Daily Average Network Difficulty"""
-        return await self._get(
+        result = await self._get(
             **get_daily_stats_params('dailyavgnetdifficulty', start_date, end_date, sort)
         )
+        return cast(dict[str, Any], result)
 
     async def ether_historical_daily_market_cap(
         self, start_date: date, end_date: date, sort: str | None = None
-    ) -> dict:
+    ) -> dict[str, Any]:
         """Get Ether Historical Daily Market Cap"""
-        return await self._get(
+        result = await self._get(
             **get_daily_stats_params('ethdailymarketcap', start_date, end_date, sort)
         )
+        return cast(dict[str, Any], result)
 
     async def ether_historical_price(
         self, start_date: date, end_date: date, sort: str | None = None
-    ) -> dict:
+    ) -> dict[str, Any]:
         """Get Ether Historical Price"""
-        return await self._get(
+        result = await self._get(
             **get_daily_stats_params('ethdailyprice', start_date, end_date, sort)
         )
+        return cast(dict[str, Any], result)

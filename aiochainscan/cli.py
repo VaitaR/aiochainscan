@@ -13,7 +13,7 @@ from pathlib import Path
 from aiochainscan.config import config_manager
 
 
-def cmd_list_scanners(args):
+def cmd_list_scanners(args: argparse.Namespace) -> None:
     """List all available scanners and their status."""
     print('🔍 Available Blockchain Scanners')
     print('=' * 50)
@@ -36,7 +36,7 @@ def cmd_list_scanners(args):
             print(f'   💡 Set one of: {", ".join(info["api_key_sources"][:2])}')
 
 
-def cmd_generate_env(args):
+def cmd_generate_env(args: argparse.Namespace) -> None:
     """Generate .env template file."""
     output_file = Path(args.output) if args.output else Path.cwd() / '.env.example'
 
@@ -54,7 +54,7 @@ def cmd_generate_env(args):
         print(template)
 
 
-def cmd_check_config(args):
+def cmd_check_config(args: argparse.Namespace) -> None:
     """Check current configuration status."""
     print('🔧 Configuration Status Check')
     print('=' * 50)
@@ -109,7 +109,7 @@ def cmd_check_config(args):
         print("\n💡 No .env files found. Use 'aiochainscan generate-env' to create one.")
 
 
-def cmd_add_scanner(args):
+def cmd_add_scanner(args: argparse.Namespace) -> None:
     """Add a custom scanner configuration."""
     scanner_data = {
         'name': args.name,
@@ -136,7 +136,7 @@ def cmd_add_scanner(args):
         sys.exit(1)
 
 
-def cmd_export_config(args):
+def cmd_export_config(args: argparse.Namespace) -> None:
     """Export current configuration to JSON."""
     output_file = Path(args.output)
 
@@ -148,13 +148,13 @@ def cmd_export_config(args):
         sys.exit(1)
 
 
-def cmd_test_scanner(args):
+def cmd_test_scanner(args: argparse.Namespace) -> None:
     """Test a scanner configuration."""
     import asyncio
 
     from aiochainscan import Client
 
-    async def test_scanner():
+    async def test_scanner() -> None:
         print(f'🧪 Testing {args.scanner} scanner...')
 
         try:
@@ -182,7 +182,7 @@ def cmd_test_scanner(args):
     asyncio.run(test_scanner())
 
 
-def main():
+def main() -> None:
     """Main CLI entry point."""
     parser = argparse.ArgumentParser(
         description='aiochainscan configuration management CLI',
