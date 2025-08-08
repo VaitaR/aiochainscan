@@ -17,6 +17,8 @@ class Stats(BaseModule):
     https://docs.etherscan.io/api-endpoints/stats-1
     """
 
+    # TODO: Deprecated in next major. Prefer facades in `aiochainscan.__init__`.
+
     @property
     def _module(self) -> str:
         return 'stats'

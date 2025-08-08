@@ -276,3 +276,15 @@ python examples/routscan_demo.py
 - ✅ Standard Etherscan-compatible endpoints
 - ✅ Real-time transaction tracking
 - ✅ 7 supported methods (same as other scanners)
+
+## Logging (optional)
+
+If you use the new facades, lightweight telemetry logs are emitted via structlog when available. Minimal setup:
+
+```python
+import structlog
+
+structlog.configure(processors=[structlog.processors.JSONRenderer()])
+```
+
+If `structlog` is not configured or unavailable, logging safely falls back to the standard logging module.

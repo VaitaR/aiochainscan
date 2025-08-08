@@ -114,6 +114,7 @@ source_modules = [
 ]
 forbidden_modules = [
   "aiochainscan.services",
+  "aiochainscan.domain",
 ]
 
 [[tool.importlinter.contracts]]
@@ -134,6 +135,17 @@ source_modules = [
   "aiochainscan.ports",
 ]
 forbidden_modules = [
+  "aiochainscan.adapters",
+]
+
+[[tool.importlinter.contracts]]
+name = "Modules do not import services or adapters"
+type = "forbidden"
+source_modules = [
+  "aiochainscan.modules",
+]
+forbidden_modules = [
+  "aiochainscan.services",
   "aiochainscan.adapters",
 ]
 

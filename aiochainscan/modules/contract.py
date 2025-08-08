@@ -13,6 +13,8 @@ class Contract(BaseModule):
     https://docs.etherscan.io/api-endpoints/contracts
     """
 
+    # TODO: Deprecated in next major. Prefer facades in `aiochainscan.__init__`.
+
     @property
     def _module(self) -> str:
         return 'contract'

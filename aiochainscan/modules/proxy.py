@@ -12,6 +12,8 @@ class Proxy(BaseModule):
     https://docs.etherscan.io/api-endpoints/geth-parity-proxy
     """
 
+    # TODO: Deprecated in next major. Prefer facades in `aiochainscan.__init__`.
+
     @property
     def _module(self) -> str:
         return 'proxy'
