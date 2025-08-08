@@ -110,7 +110,7 @@ class GasTracker(BaseModule):
                 enddate=end_date.isoformat(),
                 sort=check_sort_direction(sort) if sort is not None else None,
             )
-            return cast(list[dict[str, Any]], result)
+            return list(result)
 
     async def daily_total_gas_used(
         self, start_date: date, end_date: date, sort: str | None = None
@@ -127,7 +127,7 @@ class GasTracker(BaseModule):
                 api_key=self._client.api_key,
                 sort=sort,
             )
-            return cast(dict[str, Any], data)
+            return dict(data)
         except Exception:
             result = await self._get(
                 module='stats',
@@ -136,7 +136,7 @@ class GasTracker(BaseModule):
                 enddate=end_date.isoformat(),
                 sort=check_sort_direction(sort) if sort is not None else None,
             )
-            return cast(dict[str, Any], result)
+            return dict(result)
 
     async def daily_average_gas_price(
         self, start_date: date, end_date: date, sort: str | None = None

@@ -40,7 +40,7 @@ class Account(BaseModule):
         except Exception:
             # Fallback to legacy path if facade unavailable
             result = await self._get(action='balance', address=address, tag=check_tag(tag))
-            return cast(str, result)
+            return str(result)
 
     async def balances(
         self, addresses: Iterable[str], tag: str = 'latest'
@@ -49,15 +49,12 @@ class Account(BaseModule):
         try:
             from aiochainscan import get_address_balances  # lazy
 
-            return cast(
-                list[dict[str, Any]],
-                await get_address_balances(
-                    addresses=list(addresses),
-                    tag=check_tag(tag),
-                    api_kind=self._client.api_kind,
-                    network=self._client.network,
-                    api_key=self._client.api_key,
-                ),
+            return await get_address_balances(
+                addresses=list(addresses),
+                tag=check_tag(tag),
+                api_kind=self._client.api_kind,
+                network=self._client.network,
+                api_key=self._client.api_key,
             )
         except Exception:
             result = await self._get(
@@ -78,19 +75,16 @@ class Account(BaseModule):
         try:
             from aiochainscan import get_normal_transactions  # lazy
 
-            return cast(
-                list[dict[str, Any]],
-                await get_normal_transactions(
-                    address=address,
-                    start_block=start_block,
-                    end_block=end_block,
-                    sort=check_sort_direction(sort) if sort is not None else None,
-                    page=page,
-                    offset=offset,
-                    api_kind=self._client.api_kind,
-                    network=self._client.network,
-                    api_key=self._client.api_key,
-                ),
+            return await get_normal_transactions(
+                address=address,
+                start_block=start_block,
+                end_block=end_block,
+                sort=check_sort_direction(sort) if sort is not None else None,
+                page=page,
+                offset=offset,
+                api_kind=self._client.api_kind,
+                network=self._client.network,
+                api_key=self._client.api_key,
             )
         except Exception:
             result = await self._get(
@@ -118,20 +112,17 @@ class Account(BaseModule):
         try:
             from aiochainscan import get_internal_transactions  # lazy
 
-            return cast(
-                list[dict[str, Any]],
-                await get_internal_transactions(
-                    address=address,
-                    start_block=start_block,
-                    end_block=end_block,
-                    sort=check_sort_direction(sort) if sort is not None else None,
-                    page=page,
-                    offset=offset,
-                    txhash=txhash,
-                    api_kind=self._client.api_kind,
-                    network=self._client.network,
-                    api_key=self._client.api_key,
-                ),
+            return await get_internal_transactions(
+                address=address,
+                start_block=start_block,
+                end_block=end_block,
+                sort=check_sort_direction(sort) if sort is not None else None,
+                page=page,
+                offset=offset,
+                txhash=txhash,
+                api_kind=self._client.api_kind,
+                network=self._client.network,
+                api_key=self._client.api_key,
             )
         except Exception:
             result = await self._get(
@@ -165,21 +156,18 @@ class Account(BaseModule):
         try:
             from aiochainscan import get_token_transfers  # lazy
 
-            return cast(
-                list[dict[str, Any]],
-                await get_token_transfers(
-                    address=address,
-                    contract_address=contract_address,
-                    start_block=start_block,
-                    end_block=end_block,
-                    sort=check_sort_direction(sort) if sort is not None else None,
-                    page=page,
-                    offset=offset,
-                    token_standard=token_standard,
-                    api_kind=self._client.api_kind,
-                    network=self._client.network,
-                    api_key=self._client.api_key,
-                ),
+            return await get_token_transfers(
+                address=address,
+                contract_address=contract_address,
+                start_block=start_block,
+                end_block=end_block,
+                sort=check_sort_direction(sort) if sort is not None else None,
+                page=page,
+                offset=offset,
+                token_standard=token_standard,
+                api_kind=self._client.api_kind,
+                network=self._client.network,
+                api_key=self._client.api_key,
             )
         except Exception:
             actions = {'erc20': 'tokentx', 'erc721': 'tokennfttx', 'erc1155': 'token1155tx'}
@@ -206,17 +194,14 @@ class Account(BaseModule):
         try:
             from aiochainscan import get_mined_blocks  # lazy
 
-            return cast(
-                list[dict[str, Any]],
-                await get_mined_blocks(
-                    address=address,
-                    blocktype=check_blocktype(blocktype),
-                    page=page,
-                    offset=offset,
-                    api_kind=self._client.api_kind,
-                    network=self._client.network,
-                    api_key=self._client.api_key,
-                ),
+            return await get_mined_blocks(
+                address=address,
+                blocktype=check_blocktype(blocktype),
+                page=page,
+                offset=offset,
+                api_kind=self._client.api_kind,
+                network=self._client.network,
+                api_key=self._client.api_key,
             )
         except Exception:
             result = await self._get(
@@ -241,19 +226,16 @@ class Account(BaseModule):
         try:
             from aiochainscan import get_beacon_chain_withdrawals  # lazy
 
-            return cast(
-                list[dict[str, Any]],
-                await get_beacon_chain_withdrawals(
-                    address=address,
-                    start_block=start_block,
-                    end_block=end_block,
-                    sort=check_sort_direction(sort) if sort is not None else None,
-                    page=page,
-                    offset=offset,
-                    api_kind=self._client.api_kind,
-                    network=self._client.network,
-                    api_key=self._client.api_key,
-                ),
+            return await get_beacon_chain_withdrawals(
+                address=address,
+                start_block=start_block,
+                end_block=end_block,
+                sort=check_sort_direction(sort) if sort is not None else None,
+                page=page,
+                offset=offset,
+                api_kind=self._client.api_kind,
+                network=self._client.network,
+                api_key=self._client.api_key,
             )
         except Exception:
             result = await self._get(
@@ -272,15 +254,12 @@ class Account(BaseModule):
         try:
             from aiochainscan import get_account_balance_by_blockno  # lazy
 
-            return cast(
-                str,
-                await get_account_balance_by_blockno(
-                    address=address,
-                    blockno=blockno,
-                    api_kind=self._client.api_kind,
-                    network=self._client.network,
-                    api_key=self._client.api_key,
-                ),
+            return await get_account_balance_by_blockno(
+                address=address,
+                blockno=blockno,
+                api_kind=self._client.api_kind,
+                network=self._client.network,
+                api_key=self._client.api_key,
             )
         except Exception:
             result = await self._get(
