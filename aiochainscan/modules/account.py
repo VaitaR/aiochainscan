@@ -63,7 +63,7 @@ class Account(BaseModule):
             result = await self._get(
                 action='balancemulti', address=','.join(addresses), tag=check_tag(tag)
             )
-            return cast(list[dict[str, Any]], result)
+            return list(result)
 
     async def normal_txs(
         self,
@@ -102,7 +102,7 @@ class Account(BaseModule):
                 page=page,
                 offset=offset,
             )
-            return cast(list[dict[str, Any]], result)
+            return list(result)
 
     async def internal_txs(
         self,
@@ -144,7 +144,7 @@ class Account(BaseModule):
                 offset=offset,
                 txhash=txhash,
             )
-            return cast(list[dict[str, Any]], result)
+            return list(result)
 
     async def token_transfers(
         self,
@@ -193,7 +193,7 @@ class Account(BaseModule):
                 offset=offset,
                 contractaddress=contract_address,
             )
-            return cast(list[dict[str, Any]], result)
+            return list(result)
 
     async def mined_blocks(
         self,
@@ -226,7 +226,7 @@ class Account(BaseModule):
                 page=page,
                 offset=offset,
             )
-            return cast(list[dict[str, Any]], result)
+            return list(result)
 
     async def beacon_chain_withdrawals(
         self,
@@ -265,7 +265,7 @@ class Account(BaseModule):
                 page=page,
                 offset=offset,
             )
-            return cast(list[dict[str, Any]], result)
+            return list(result)
 
     async def account_balance_by_blockno(self, address: str, blockno: int) -> str:
         """Get Historical Ether Balance for a Single Address By BlockNo"""
@@ -286,7 +286,7 @@ class Account(BaseModule):
             result = await self._get(
                 module='account', action='balancehistory', address=address, blockno=blockno
             )
-            return cast(str, result)
+            return str(result)
 
     async def erc20_transfers(
         self,
@@ -341,4 +341,4 @@ class Account(BaseModule):
                 page=page,
                 offset=offset,
             )
-            return cast(list[dict[str, Any]], result)
+            return list(result)

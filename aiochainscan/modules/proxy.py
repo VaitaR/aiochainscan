@@ -140,15 +140,12 @@ class Proxy(BaseModule):
         try:
             from aiochainscan import get_tx_count  # lazy
 
-            return cast(
-                str,
-                await get_tx_count(
-                    address=address,
-                    tag=tag,
-                    api_kind=self._client.api_kind,
-                    network=self._client.network,
-                    api_key=self._client.api_key,
-                ),
+            return await get_tx_count(
+                address=address,
+                tag=tag,
+                api_kind=self._client.api_kind,
+                network=self._client.network,
+                api_key=self._client.api_key,
             )
         except Exception:
             result = await self._get(
@@ -176,16 +173,13 @@ class Proxy(BaseModule):
         try:
             from aiochainscan import eth_call  # lazy
 
-            return cast(
-                str,
-                await eth_call(
-                    to=check_hex(to),
-                    data=check_hex(data),
-                    tag=tag,  # let service handle tag formatting; avoid double validation in tests
-                    api_kind=self._client.api_kind,
-                    network=self._client.network,
-                    api_key=self._client.api_key,
-                ),
+            return await eth_call(
+                to=check_hex(to),
+                data=check_hex(data),
+                tag=tag,  # let service handle tag formatting; avoid double validation in tests
+                api_kind=self._client.api_kind,
+                network=self._client.network,
+                api_key=self._client.api_key,
             )
         except Exception:
             result = await self._get(
@@ -201,15 +195,12 @@ class Proxy(BaseModule):
         try:
             from aiochainscan import get_code  # lazy
 
-            return cast(
-                str,
-                await get_code(
-                    address=address,
-                    tag=tag,  # avoid double validation; service will sanitize
-                    api_kind=self._client.api_kind,
-                    network=self._client.network,
-                    api_key=self._client.api_key,
-                ),
+            return await get_code(
+                address=address,
+                tag=tag,  # avoid double validation; service will sanitize
+                api_kind=self._client.api_kind,
+                network=self._client.network,
+                api_key=self._client.api_key,
             )
         except Exception:
             result = await self._get(
@@ -224,16 +215,13 @@ class Proxy(BaseModule):
         try:
             from aiochainscan import get_storage_at  # lazy
 
-            return cast(
-                str,
-                await get_storage_at(
-                    address=address,
-                    position=position,
-                    tag=tag,  # avoid double validation; service will sanitize
-                    api_kind=self._client.api_kind,
-                    network=self._client.network,
-                    api_key=self._client.api_key,
-                ),
+            return await get_storage_at(
+                address=address,
+                position=position,
+                tag=tag,  # avoid double validation; service will sanitize
+                api_kind=self._client.api_kind,
+                network=self._client.network,
+                api_key=self._client.api_key,
             )
         except Exception:
             result = await self._get(

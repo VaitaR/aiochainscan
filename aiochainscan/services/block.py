@@ -124,7 +124,7 @@ def normalize_block(raw: dict[str, Any]) -> BlockDTO:
         if not h:
             return None
         try:
-            return int(h, 16) if isinstance(h, str) and h.startswith('0x') else int(h)  # type: ignore[arg-type]
+            return int(h, 16) if isinstance(h, str) and h.startswith('0x') else int(h)
         except Exception:
             return None
 

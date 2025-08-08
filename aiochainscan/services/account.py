@@ -4,13 +4,6 @@ from collections.abc import Mapping
 from time import monotonic
 from typing import Any
 
-from aiochainscan.domain.dto import (
-    BeaconWithdrawalDTO,
-    InternalTxDTO,
-    MinedBlockDTO,
-    NormalTxDTO,
-    TokenTransferDTO,
-)
 from aiochainscan.domain.models import Address
 from aiochainscan.ports.cache import Cache
 from aiochainscan.ports.endpoint_builder import EndpointBuilder
@@ -187,7 +180,7 @@ async def get_normal_transactions(
     _rate_limiter: RateLimiter | None = None,
     _retry: RetryPolicy | None = None,
     _telemetry: Telemetry | None = None,
-) -> list[NormalTxDTO]:
+) -> list[dict[str, Any]]:
     endpoint = _endpoint_builder.open(api_key=api_key, api_kind=api_kind, network=network)
     url: str = endpoint.api_url
     params: dict[str, Any] = {
@@ -211,9 +204,9 @@ async def get_normal_transactions(
     if isinstance(response, dict):
         result = response.get('result', response)
         if isinstance(result, list):
-            return [r for r in result if isinstance(r, dict)]  # type: ignore[list-item]
+            return [r for r in result if isinstance(r, dict)]
     if isinstance(response, list):
-        return [r for r in response if isinstance(r, dict)]  # type: ignore[list-item]
+        return [r for r in response if isinstance(r, dict)]
     return []
 
 
@@ -235,7 +228,7 @@ async def get_internal_transactions(
     _rate_limiter: RateLimiter | None = None,
     _retry: RetryPolicy | None = None,
     _telemetry: Telemetry | None = None,
-) -> list[InternalTxDTO]:
+) -> list[dict[str, Any]]:
     endpoint = _endpoint_builder.open(api_key=api_key, api_kind=api_kind, network=network)
     url: str = endpoint.api_url
     params: dict[str, Any] = {
@@ -260,9 +253,9 @@ async def get_internal_transactions(
     if isinstance(response, dict):
         result = response.get('result', response)
         if isinstance(result, list):
-            return [r for r in result if isinstance(r, dict)]  # type: ignore[list-item]
+            return [r for r in result if isinstance(r, dict)]
     if isinstance(response, list):
-        return [r for r in response if isinstance(r, dict)]  # type: ignore[list-item]
+        return [r for r in response if isinstance(r, dict)]
     return []
 
 
@@ -285,7 +278,7 @@ async def get_token_transfers(
     _rate_limiter: RateLimiter | None = None,
     _retry: RetryPolicy | None = None,
     _telemetry: Telemetry | None = None,
-) -> list[TokenTransferDTO]:
+) -> list[dict[str, Any]]:
     endpoint = _endpoint_builder.open(api_key=api_key, api_kind=api_kind, network=network)
     url: str = endpoint.api_url
     actions = {'erc20': 'tokentx', 'erc721': 'tokennfttx', 'erc1155': 'token1155tx'}
@@ -311,9 +304,9 @@ async def get_token_transfers(
     if isinstance(response, dict):
         result = response.get('result', response)
         if isinstance(result, list):
-            return [r for r in result if isinstance(r, dict)]  # type: ignore[list-item]
+            return [r for r in result if isinstance(r, dict)]
     if isinstance(response, list):
-        return [r for r in response if isinstance(r, dict)]  # type: ignore[list-item]
+        return [r for r in response if isinstance(r, dict)]
     return []
 
 
@@ -332,7 +325,7 @@ async def get_mined_blocks(
     _rate_limiter: RateLimiter | None = None,
     _retry: RetryPolicy | None = None,
     _telemetry: Telemetry | None = None,
-) -> list[MinedBlockDTO]:
+) -> list[dict[str, Any]]:
     endpoint = _endpoint_builder.open(api_key=api_key, api_kind=api_kind, network=network)
     url: str = endpoint.api_url
     params: dict[str, Any] = {
@@ -354,9 +347,9 @@ async def get_mined_blocks(
     if isinstance(response, dict):
         result = response.get('result', response)
         if isinstance(result, list):
-            return [r for r in result if isinstance(r, dict)]  # type: ignore[list-item]
+            return [r for r in result if isinstance(r, dict)]
     if isinstance(response, list):
-        return [r for r in response if isinstance(r, dict)]  # type: ignore[list-item]
+        return [r for r in response if isinstance(r, dict)]
     return []
 
 
@@ -377,7 +370,7 @@ async def get_beacon_chain_withdrawals(
     _rate_limiter: RateLimiter | None = None,
     _retry: RetryPolicy | None = None,
     _telemetry: Telemetry | None = None,
-) -> list[BeaconWithdrawalDTO]:
+) -> list[dict[str, Any]]:
     endpoint = _endpoint_builder.open(api_key=api_key, api_kind=api_kind, network=network)
     url: str = endpoint.api_url
     params: dict[str, Any] = {
@@ -401,9 +394,9 @@ async def get_beacon_chain_withdrawals(
     if isinstance(response, dict):
         result = response.get('result', response)
         if isinstance(result, list):
-            return [r for r in result if isinstance(r, dict)]  # type: ignore[list-item]
+            return [r for r in result if isinstance(r, dict)]
     if isinstance(response, list):
-        return [r for r in response if isinstance(r, dict)]  # type: ignore[list-item]
+        return [r for r in response if isinstance(r, dict)]
     return []
 
 
