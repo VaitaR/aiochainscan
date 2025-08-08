@@ -1,7 +1,7 @@
 from typing import Any
 
 from aiochainscan.common import ChainFeatures, check_tag, require_feature_support
-from aiochainscan.modules.base import BaseModule, _should_force_facades
+from aiochainscan.modules.base import BaseModule
 
 
 class Token(BaseModule):
@@ -63,37 +63,23 @@ class Token(BaseModule):
             FeatureNotSupportedError: If block_no is specified but not supported by the scanner
         """
         if block_no is None:
-            # Prefer new service path via facade for hexagonal migration
-            try:
-                from aiochainscan.modules.base import _facade_injection
-                from aiochainscan.services.token import get_token_balance as _svc_get_token_balance
+            from aiochainscan.modules.base import _facade_injection
+            from aiochainscan.services.token import get_token_balance as _svc_get_token_balance
 
-                http, endpoint = _facade_injection(self._client)
-                from aiochainscan.modules.base import _resolve_api_context
+            http, endpoint = _facade_injection(self._client)
+            from aiochainscan.modules.base import _resolve_api_context
 
-                api_kind, network, api_key = _resolve_api_context(self._client)
-                value: int = await _svc_get_token_balance(
-                    holder=address,
-                    token_contract=contract,
-                    api_kind=api_kind,
-                    network=network,
-                    api_key=api_key,
-                    http=http,
-                    _endpoint_builder=endpoint,
-                )
-                return str(value)
-            except Exception:
-                # Fallback to legacy endpoint
-                if _should_force_facades():
-                    raise
-                result = await self._get(
-                    module='account',
-                    action='tokenbalance',
-                    address=address,
-                    contractaddress=contract,
-                    tag='latest',
-                )
-                return str(result)
+            api_kind, network, api_key = _resolve_api_context(self._client)
+            value: int = await _svc_get_token_balance(
+                holder=address,
+                token_contract=contract,
+                api_kind=api_kind,
+                network=network,
+                api_key=api_key,
+                http=http,
+                _endpoint_builder=endpoint,
+            )
+            return str(value)
         else:
             # Use historical balance endpoint
             require_feature_support(self._client, ChainFeatures.TOKEN_BALANCE_BY_BLOCK)

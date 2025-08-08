@@ -1,6 +1,6 @@
 from typing import Any, cast
 
-from aiochainscan.modules.base import BaseModule, _should_force_facades
+from aiochainscan.modules.base import BaseModule
 
 
 class Transaction(BaseModule):
@@ -47,29 +47,21 @@ class Transaction(BaseModule):
 
     async def get_by_hash(self, txhash: str) -> dict[str, Any]:
         """Fetch transaction by hash via facade when available."""
-        try:
-            from aiochainscan.modules.base import _facade_injection
-            from aiochainscan.services.transaction import (
-                get_transaction_by_hash as _svc_get_tx_by_hash,
-            )
+        from aiochainscan.modules.base import _facade_injection
+        from aiochainscan.services.transaction import (
+            get_transaction_by_hash as _svc_get_tx_by_hash,
+        )
 
-            http, endpoint = _facade_injection(self._client)
-            from aiochainscan.domain.models import TxHash
-            from aiochainscan.modules.base import _resolve_api_context
+        http, endpoint = _facade_injection(self._client)
+        from aiochainscan.domain.models import TxHash
+        from aiochainscan.modules.base import _resolve_api_context
 
-            api_kind, network, api_key = _resolve_api_context(self._client)
-            return await _svc_get_tx_by_hash(
-                txhash=TxHash(txhash),
-                api_kind=api_kind,
-                network=network,
-                api_key=api_key,
-                http=http,
-                _endpoint_builder=endpoint,
-            )
-        except Exception:
-            if _should_force_facades():
-                raise
-            data = await self._get(
-                module='proxy', action='eth_getTransactionByHash', txhash=txhash
-            )
-            return cast(dict[str, Any], data)
+        api_kind, network, api_key = _resolve_api_context(self._client)
+        return await _svc_get_tx_by_hash(
+            txhash=TxHash(txhash),
+            api_kind=api_kind,
+            network=network,
+            api_key=api_key,
+            http=http,
+            _endpoint_builder=endpoint,
+        )

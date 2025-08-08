@@ -321,6 +321,7 @@ from aiochainscan import (
   get_logs_typed,
   get_token_balance_typed,
   get_gas_oracle_typed,
+  get_eth_price_typed,
 )
 
 async def main():
@@ -329,10 +330,15 @@ async def main():
     logs = await get_logs_typed(start_block=17000000, end_block=17000100, address='0x...', api_kind='eth', network='main', api_key='YOUR_API_KEY')
     tb = await get_token_balance_typed(holder='0x...', token_contract='0x...', api_kind='eth', network='main', api_key='YOUR_API_KEY')
     gas = await get_gas_oracle_typed(api_kind='eth', network='main', api_key='YOUR_API_KEY')
-    print(block['block_number'], tb['balance_wei'], gas['propose_gas_price_wei'])
+    price = await get_eth_price_typed(api_kind='eth', network='main', api_key='YOUR_API_KEY')
+    print(block['block_number'], tb['balance_wei'], gas['propose_gas_price_wei'], price['eth_usd'])
 
 asyncio.run(main())
 ```
+
+### Deprecation note (modules/*)
+
+Legacy modules (e.g., `client.account`, `client.block`, etc.) now route through facades internally. You can force facade-only mode by setting `AIOCHAINSCAN_FORCE_FACADES=1` in your environment to catch regressions early. Public signatures remain unchanged; full removal of legacy modules is planned for 2.0 with a deprecation window.
 
 ## API Reference
 

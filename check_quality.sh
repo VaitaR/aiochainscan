@@ -54,11 +54,11 @@ else
     ((errors++))
 fi
 
-echo -e "\n${YELLOW}6. Running custom logic tests...${NC}"
-if python3 test_simple_optimized.py > /dev/null 2>&1; then
-    echo -e "${GREEN}✅ Custom logic tests passed${NC}"
+echo -e "\n${YELLOW}6. Running targeted tests with facades forced...${NC}"
+if AIOCHAINSCAN_FORCE_FACADES=1 python3 -m pytest -q tests/test_account.py tests/test_block.py tests/test_transaction.py tests/test_logs.py tests/test_token.py tests/test_stats.py > /dev/null 2>&1; then
+    echo -e "${GREEN}✅ Targeted tests (facades forced) passed${NC}"
 else
-    echo -e "${RED}❌ Custom logic tests failed${NC}"
+    echo -e "${RED}❌ Targeted tests (facades forced) failed${NC}"
     ((errors++))
 fi
 
