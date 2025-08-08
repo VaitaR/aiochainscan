@@ -170,14 +170,21 @@ async def _get_daily_series(
         raise
 
     # Providers may return either {"result": [...]} or just [...]
+    items: list[dict[str, Any]] = []
     if isinstance(response, dict):
         result = response.get('result', [])
         if isinstance(result, list):
-            return result
-        return []
-    if isinstance(response, list):
-        return response
-    return []
+            items = result
+    elif isinstance(response, list):
+        items = response
+
+    if _telemetry is not None:
+        await _telemetry.record_event(
+            f'stats.{action}.ok',
+            {'api_kind': api_kind, 'network': network, 'items': len(items)},
+        )
+
+    return items if isinstance(items, list) else []
 
 
 def _to_int(value: Any) -> int | None:

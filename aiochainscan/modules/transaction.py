@@ -48,13 +48,23 @@ class Transaction(BaseModule):
     async def get_by_hash(self, txhash: str) -> dict[str, Any]:
         """Fetch transaction by hash via facade when available."""
         try:
-            from aiochainscan import get_transaction  # lazy import to avoid cycles
+            from aiochainscan.modules.base import _facade_injection
+            from aiochainscan.services.transaction import (
+                get_transaction_by_hash as _svc_get_tx_by_hash,
+            )
 
-            return await get_transaction(
-                txhash=txhash,
-                api_kind=self._client.api_kind,
-                network=self._client.network,
-                api_key=self._client.api_key,
+            http, endpoint = _facade_injection(self._client)
+            from aiochainscan.domain.models import TxHash
+            from aiochainscan.modules.base import _resolve_api_context
+
+            api_kind, network, api_key = _resolve_api_context(self._client)
+            return await _svc_get_tx_by_hash(
+                txhash=TxHash(txhash),
+                api_kind=api_kind,
+                network=network,
+                api_key=api_key,
+                http=http,
+                _endpoint_builder=endpoint,
             )
         except Exception:
             if _should_force_facades():

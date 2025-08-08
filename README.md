@@ -15,6 +15,17 @@ Async Python wrapper for blockchain explorer APIs (Etherscan, BSCScan, PolygonSc
 - **Flexible HTTP backends** - Support for both aiohttp and curl_cffi
 - **🚀 Fast ABI decoding** - High-performance Rust backend with Python fallback
 
+### Telemetry fields
+
+All high-level facades/services emit telemetry events via the `Telemetry` port (default adapter: `StructlogTelemetry`). Common attributes are standardized:
+
+- api_kind: provider family (e.g., etherscan, blockscout, routscan)
+- network: network key (e.g., eth, bsc)
+- duration_ms: integer latency for the HTTP operation
+- items: for list responses, the number of items returned
+
+You can inject your own `Telemetry` implementation into facade calls or use `open_default_session()` for DI.
+
 ## Supported Blockchains
 
 | Blockchain | Scanner | Networks | API Key Required |
@@ -235,6 +246,47 @@ asyncio.run(main())
 ```
 
 ### Bulk Operations
+### Facades + DI
+
+Facades can be used with dependency injection for reusing HTTP sessions and adapters:
+
+```python
+import asyncio
+from aiochainscan import open_default_session, get_balance, get_token_balance
+
+async def main():
+    session = await open_default_session()
+    try:
+        # Reuse the same session for multiple calls
+        bal = await get_balance(
+            address="0x742d35Cc6634C0532925a3b8D9fa7a3D91D1e9b3",
+            api_kind="eth",
+            network="main",
+            api_key="YOUR_API_KEY",
+            http=session.http,
+            endpoint_builder=session.endpoint,
+            telemetry=session.telemetry,
+        )
+        usdt = await get_token_balance(
+            holder="0x742d35Cc6634C0532925a3b8D9fa7a3D91D1e9b3",
+            token_contract="0xdAC17F958D2ee523a2206206994597C13D831ec7",
+            api_kind="eth",
+            network="main",
+            api_key="YOUR_API_KEY",
+            http=session.http,
+            endpoint_builder=session.endpoint,
+            telemetry=session.telemetry,
+        )
+        print(bal, usdt)
+    finally:
+        await session.aclose()
+
+asyncio.run(main())
+```
+
+### Normalizers/DTO
+
+For many responses, helpers are provided to normalize provider-shaped payloads into light DTOs, e.g. `normalize_block`, `normalize_transaction`, `normalize_token_balance`, `normalize_gas_oracle`, and stats daily series (e.g. `normalize_daily_transaction_count`). These are pure helpers and can be composed with your own caching or telemetry.
 
 ```python
 import asyncio
@@ -253,6 +305,31 @@ async def main():
             print(f"Transfer: {transfer}")
     finally:
         await client.close()
+
+asyncio.run(main())
+```
+
+### Typed DTO facades (non-breaking)
+
+Typed variants of common facades are provided in parallel and return normalized DTOs. These are additive and do not break existing APIs. Use them when you want a stable, typed shape regardless of provider quirks.
+
+```python
+import asyncio
+from aiochainscan import (
+  get_block_typed,
+  get_transaction_typed,
+  get_logs_typed,
+  get_token_balance_typed,
+  get_gas_oracle_typed,
+)
+
+async def main():
+    block = await get_block_typed(tag=17000000, full=False, api_kind='eth', network='main', api_key='YOUR_API_KEY')
+    tx = await get_transaction_typed(txhash='0x...', api_kind='eth', network='main', api_key='YOUR_API_KEY')
+    logs = await get_logs_typed(start_block=17000000, end_block=17000100, address='0x...', api_kind='eth', network='main', api_key='YOUR_API_KEY')
+    tb = await get_token_balance_typed(holder='0x...', token_contract='0x...', api_kind='eth', network='main', api_key='YOUR_API_KEY')
+    gas = await get_gas_oracle_typed(api_kind='eth', network='main', api_key='YOUR_API_KEY')
+    print(block['block_number'], tb['balance_wei'], gas['propose_gas_price_wei'])
 
 asyncio.run(main())
 ```
@@ -406,6 +483,10 @@ make test-integration
 # Run all tests
 make test-all
 ```
+
+### CI note on facades routing
+
+In CI, a smoke job can set the environment variable `AIOCHAINSCAN_FORCE_FACADES=1` to ensure legacy modules route through facades only. All tests must pass under this mode.
 
 ### Setting Up API Keys for Testing
 

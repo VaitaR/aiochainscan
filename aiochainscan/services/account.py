@@ -22,7 +22,7 @@ from aiochainscan.ports.telemetry import Telemetry
 
 async def get_address_balance(
     *,
-    address: Address,
+    address: Address | str,
     api_kind: str,
     network: str,
     api_key: str,
@@ -161,13 +161,37 @@ async def get_address_balances(
                     {'api_kind': api_kind, 'network': network, 'duration_ms': duration_ms},
                 )
 
-    response: Any = await (_retry.run(_do_request) if _retry is not None else _do_request())
+    try:
+        response: Any = await (_retry.run(_do_request) if _retry is not None else _do_request())
+    except Exception as exc:  # noqa: BLE001
+        if _telemetry is not None:
+            await _telemetry.record_error(
+                'get_address_balances.error',
+                exc,
+                {
+                    'api_kind': api_kind,
+                    'network': network,
+                },
+            )
+        raise
     if isinstance(response, dict):
         result = response.get('result', response)
         if isinstance(result, list):
-            return [r for r in result if isinstance(r, dict)]
+            out = [r for r in result if isinstance(r, dict)]
+            if _telemetry is not None:
+                await _telemetry.record_event(
+                    'get_address_balances.ok',
+                    {'api_kind': api_kind, 'network': network, 'items': len(out)},
+                )
+            return out
     if isinstance(response, list):
-        return [r for r in response if isinstance(r, dict)]
+        out = [r for r in response if isinstance(r, dict)]
+        if _telemetry is not None:
+            await _telemetry.record_event(
+                'get_address_balances.ok',
+                {'api_kind': api_kind, 'network': network, 'items': len(out)},
+            )
+        return out
     return []
 
 
@@ -204,17 +228,50 @@ async def get_normal_transactions(
     if extra_params:
         params.update({k: v for k, v in extra_params.items() if v is not None})
     signed_params, headers = endpoint.filter_and_sign(params, headers=None)
-    response: Any = await (
-        _retry.run(lambda: http.get(url, params=signed_params, headers=headers))
-        if _retry is not None
-        else http.get(url, params=signed_params, headers=headers)
-    )
+
+    async def _do_request() -> Any:
+        if _rate_limiter is not None:
+            await _rate_limiter.acquire(key=f'{api_kind}:{network}:txlist')
+        start = monotonic()
+        try:
+            return await http.get(url, params=signed_params, headers=headers)
+        finally:
+            if _telemetry is not None:
+                duration_ms = int((monotonic() - start) * 1000)
+                await _telemetry.record_event(
+                    'account.get_normal_transactions.duration',
+                    {'api_kind': api_kind, 'network': network, 'duration_ms': duration_ms},
+                )
+
+    try:
+        response: Any = await (_retry.run(_do_request) if _retry is not None else _do_request())
+    except Exception as exc:  # noqa: BLE001
+        if _telemetry is not None:
+            await _telemetry.record_error(
+                'get_normal_transactions.error',
+                exc,
+                {'api_kind': api_kind, 'network': network},
+            )
+        raise
+
     if isinstance(response, dict):
         result = response.get('result', response)
         if isinstance(result, list):
-            return [r for r in result if isinstance(r, dict)]
+            out = [r for r in result if isinstance(r, dict)]
+            if _telemetry is not None:
+                await _telemetry.record_event(
+                    'get_normal_transactions.ok',
+                    {'api_kind': api_kind, 'network': network, 'items': len(out)},
+                )
+            return out
     if isinstance(response, list):
-        return [r for r in response if isinstance(r, dict)]
+        out = [r for r in response if isinstance(r, dict)]
+        if _telemetry is not None:
+            await _telemetry.record_event(
+                'get_normal_transactions.ok',
+                {'api_kind': api_kind, 'network': network, 'items': len(out)},
+            )
+        return out
     return []
 
 
@@ -253,17 +310,50 @@ async def get_internal_transactions(
     if extra_params:
         params.update({k: v for k, v in extra_params.items() if v is not None})
     signed_params, headers = endpoint.filter_and_sign(params, headers=None)
-    response: Any = await (
-        _retry.run(lambda: http.get(url, params=signed_params, headers=headers))
-        if _retry is not None
-        else http.get(url, params=signed_params, headers=headers)
-    )
+
+    async def _do_request() -> Any:
+        if _rate_limiter is not None:
+            await _rate_limiter.acquire(key=f'{api_kind}:{network}:txlistinternal')
+        start = monotonic()
+        try:
+            return await http.get(url, params=signed_params, headers=headers)
+        finally:
+            if _telemetry is not None:
+                duration_ms = int((monotonic() - start) * 1000)
+                await _telemetry.record_event(
+                    'account.get_internal_transactions.duration',
+                    {'api_kind': api_kind, 'network': network, 'duration_ms': duration_ms},
+                )
+
+    try:
+        response: Any = await (_retry.run(_do_request) if _retry is not None else _do_request())
+    except Exception as exc:  # noqa: BLE001
+        if _telemetry is not None:
+            await _telemetry.record_error(
+                'get_internal_transactions.error',
+                exc,
+                {'api_kind': api_kind, 'network': network},
+            )
+        raise
+
     if isinstance(response, dict):
         result = response.get('result', response)
         if isinstance(result, list):
-            return [r for r in result if isinstance(r, dict)]
+            out = [r for r in result if isinstance(r, dict)]
+            if _telemetry is not None:
+                await _telemetry.record_event(
+                    'get_internal_transactions.ok',
+                    {'api_kind': api_kind, 'network': network, 'items': len(out)},
+                )
+            return out
     if isinstance(response, list):
-        return [r for r in response if isinstance(r, dict)]
+        out = [r for r in response if isinstance(r, dict)]
+        if _telemetry is not None:
+            await _telemetry.record_event(
+                'get_internal_transactions.ok',
+                {'api_kind': api_kind, 'network': network, 'items': len(out)},
+            )
+        return out
     return []
 
 
@@ -304,17 +394,50 @@ async def get_token_transfers(
     if extra_params:
         params.update({k: v for k, v in extra_params.items() if v is not None})
     signed_params, headers = endpoint.filter_and_sign(params, headers=None)
-    response: Any = await (
-        _retry.run(lambda: http.get(url, params=signed_params, headers=headers))
-        if _retry is not None
-        else http.get(url, params=signed_params, headers=headers)
-    )
+
+    async def _do_request() -> Any:
+        if _rate_limiter is not None:
+            await _rate_limiter.acquire(key=f'{api_kind}:{network}:{params["action"]}')
+        start = monotonic()
+        try:
+            return await http.get(url, params=signed_params, headers=headers)
+        finally:
+            if _telemetry is not None:
+                duration_ms = int((monotonic() - start) * 1000)
+                await _telemetry.record_event(
+                    'account.get_token_transfers.duration',
+                    {'api_kind': api_kind, 'network': network, 'duration_ms': duration_ms},
+                )
+
+    try:
+        response: Any = await (_retry.run(_do_request) if _retry is not None else _do_request())
+    except Exception as exc:  # noqa: BLE001
+        if _telemetry is not None:
+            await _telemetry.record_error(
+                'get_token_transfers.error',
+                exc,
+                {'api_kind': api_kind, 'network': network},
+            )
+        raise
+
     if isinstance(response, dict):
         result = response.get('result', response)
         if isinstance(result, list):
-            return [r for r in result if isinstance(r, dict)]
+            out = [r for r in result if isinstance(r, dict)]
+            if _telemetry is not None:
+                await _telemetry.record_event(
+                    'get_token_transfers.ok',
+                    {'api_kind': api_kind, 'network': network, 'items': len(out)},
+                )
+            return out
     if isinstance(response, list):
-        return [r for r in response if isinstance(r, dict)]
+        out = [r for r in response if isinstance(r, dict)]
+        if _telemetry is not None:
+            await _telemetry.record_event(
+                'get_token_transfers.ok',
+                {'api_kind': api_kind, 'network': network, 'items': len(out)},
+            )
+        return out
     return []
 
 
@@ -347,17 +470,50 @@ async def get_mined_blocks(
     if extra_params:
         params.update({k: v for k, v in extra_params.items() if v is not None})
     signed_params, headers = endpoint.filter_and_sign(params, headers=None)
-    response: Any = await (
-        _retry.run(lambda: http.get(url, params=signed_params, headers=headers))
-        if _retry is not None
-        else http.get(url, params=signed_params, headers=headers)
-    )
+
+    async def _do_request() -> Any:
+        if _rate_limiter is not None:
+            await _rate_limiter.acquire(key=f'{api_kind}:{network}:getminedblocks')
+        start = monotonic()
+        try:
+            return await http.get(url, params=signed_params, headers=headers)
+        finally:
+            if _telemetry is not None:
+                duration_ms = int((monotonic() - start) * 1000)
+                await _telemetry.record_event(
+                    'account.get_mined_blocks.duration',
+                    {'api_kind': api_kind, 'network': network, 'duration_ms': duration_ms},
+                )
+
+    try:
+        response: Any = await (_retry.run(_do_request) if _retry is not None else _do_request())
+    except Exception as exc:  # noqa: BLE001
+        if _telemetry is not None:
+            await _telemetry.record_error(
+                'get_mined_blocks.error',
+                exc,
+                {'api_kind': api_kind, 'network': network},
+            )
+        raise
+
     if isinstance(response, dict):
         result = response.get('result', response)
         if isinstance(result, list):
-            return [r for r in result if isinstance(r, dict)]
+            out = [r for r in result if isinstance(r, dict)]
+            if _telemetry is not None:
+                await _telemetry.record_event(
+                    'get_mined_blocks.ok',
+                    {'api_kind': api_kind, 'network': network, 'items': len(out)},
+                )
+            return out
     if isinstance(response, list):
-        return [r for r in response if isinstance(r, dict)]
+        out = [r for r in response if isinstance(r, dict)]
+        if _telemetry is not None:
+            await _telemetry.record_event(
+                'get_mined_blocks.ok',
+                {'api_kind': api_kind, 'network': network, 'items': len(out)},
+            )
+        return out
     return []
 
 
@@ -394,17 +550,50 @@ async def get_beacon_chain_withdrawals(
     if extra_params:
         params.update({k: v for k, v in extra_params.items() if v is not None})
     signed_params, headers = endpoint.filter_and_sign(params, headers=None)
-    response: Any = await (
-        _retry.run(lambda: http.get(url, params=signed_params, headers=headers))
-        if _retry is not None
-        else http.get(url, params=signed_params, headers=headers)
-    )
+
+    async def _do_request() -> Any:
+        if _rate_limiter is not None:
+            await _rate_limiter.acquire(key=f'{api_kind}:{network}:txsBeaconWithdrawal')
+        start = monotonic()
+        try:
+            return await http.get(url, params=signed_params, headers=headers)
+        finally:
+            if _telemetry is not None:
+                duration_ms = int((monotonic() - start) * 1000)
+                await _telemetry.record_event(
+                    'account.get_beacon_chain_withdrawals.duration',
+                    {'api_kind': api_kind, 'network': network, 'duration_ms': duration_ms},
+                )
+
+    try:
+        response: Any = await (_retry.run(_do_request) if _retry is not None else _do_request())
+    except Exception as exc:  # noqa: BLE001
+        if _telemetry is not None:
+            await _telemetry.record_error(
+                'get_beacon_chain_withdrawals.error',
+                exc,
+                {'api_kind': api_kind, 'network': network},
+            )
+        raise
+
     if isinstance(response, dict):
         result = response.get('result', response)
         if isinstance(result, list):
-            return [r for r in result if isinstance(r, dict)]
+            out = [r for r in result if isinstance(r, dict)]
+            if _telemetry is not None:
+                await _telemetry.record_event(
+                    'get_beacon_chain_withdrawals.ok',
+                    {'api_kind': api_kind, 'network': network, 'items': len(out)},
+                )
+            return out
     if isinstance(response, list):
-        return [r for r in response if isinstance(r, dict)]
+        out = [r for r in response if isinstance(r, dict)]
+        if _telemetry is not None:
+            await _telemetry.record_event(
+                'get_beacon_chain_withdrawals.ok',
+                {'api_kind': api_kind, 'network': network, 'items': len(out)},
+            )
+        return out
     return []
 
 
@@ -433,11 +622,22 @@ async def get_account_balance_by_blockno(
     if extra_params:
         params.update({k: v for k, v in extra_params.items() if v is not None})
     signed_params, headers = endpoint.filter_and_sign(params, headers=None)
-    response: Any = await (
-        _retry.run(lambda: http.get(url, params=signed_params, headers=headers))
-        if _retry is not None
-        else http.get(url, params=signed_params, headers=headers)
-    )
+
+    async def _do_request() -> Any:
+        if _rate_limiter is not None:
+            await _rate_limiter.acquire(key=f'{api_kind}:{network}:balancehistory')
+        start = monotonic()
+        try:
+            return await http.get(url, params=signed_params, headers=headers)
+        finally:
+            if _telemetry is not None:
+                duration_ms = int((monotonic() - start) * 1000)
+                await _telemetry.record_event(
+                    'account.get_balance_by_blockno.duration',
+                    {'api_kind': api_kind, 'network': network, 'duration_ms': duration_ms},
+                )
+
+    response: Any = await (_retry.run(_do_request) if _retry is not None else _do_request())
     if isinstance(response, dict):
         result = response.get('result', response)
         if isinstance(result, str | int):

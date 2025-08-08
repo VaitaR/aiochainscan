@@ -5,7 +5,7 @@ from datetime import date
 from typing import Any, cast
 
 from aiochainscan.common import check_client_type, check_sync_mode, get_daily_stats_params
-from aiochainscan.modules.base import BaseModule
+from aiochainscan.modules.base import BaseModule, _should_force_facades
 from aiochainscan.modules.extra.utils import _default_date_range
 
 logger = logging.getLogger(__name__)
@@ -37,14 +37,23 @@ class Stats(BaseModule):
         """Get ETHER LastPrice Price"""
         # Prefer new service path via facade for hexagonal migration
         try:
-            from aiochainscan import get_eth_price  # lazy import to avoid cycles
+            from aiochainscan.modules.base import _facade_injection
+            from aiochainscan.services.stats import get_eth_price as _svc_get_eth_price
 
-            return await get_eth_price(
-                api_kind=self._client.api_kind,
-                network=self._client.network,
-                api_key=self._client.api_key,
+            http, endpoint = _facade_injection(self._client)
+            from aiochainscan.modules.base import _resolve_api_context
+
+            api_kind, network, api_key = _resolve_api_context(self._client)
+            return await _svc_get_eth_price(
+                api_kind=api_kind,
+                network=network,
+                api_key=api_key,
+                http=http,
+                _endpoint_builder=endpoint,
             )
         except Exception:
+            if _should_force_facades():
+                raise
             result = await self._get(action='ethprice')
             return cast(dict[str, Any], result)
 

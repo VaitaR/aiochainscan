@@ -30,13 +30,29 @@ class Account(BaseModule):
         """Get Ether Balance for a single Address."""
         # Prefer new service path via facade for hexagonal migration
         try:
-            from aiochainscan import get_balance  # lazy import to avoid cycles
+            # Inject legacy Network-backed HttpClient and passthrough EndpointBuilder
+            from aiochainscan.modules.base import _facade_injection, _resolve_api_context
+            from aiochainscan.services.account import (
+                get_address_balance as _svc_get_address_balance,
+            )
 
-            value: int = await get_balance(
+            http, endpoint = _facade_injection(self._client)
+            api_kind, network, api_key = _resolve_api_context(self._client)
+            # Respect tag conversion like legacy behavior
+            extra_params = None
+            if tag != 'latest':
+                try:
+                    extra_params = {'tag': hex(int(tag)) if isinstance(tag, int) else tag}
+                except Exception:
+                    extra_params = None
+            value: int = await _svc_get_address_balance(
                 address=address,
-                api_kind=self._client.api_kind,
-                network=self._client.network,
-                api_key=self._client.api_key,
+                api_kind=api_kind,
+                network=network,
+                api_key=api_key,
+                http=http,
+                _endpoint_builder=endpoint,
+                extra_params=extra_params,
             )
             return str(value)
         except Exception:
@@ -51,16 +67,25 @@ class Account(BaseModule):
     ) -> list[dict[str, Any]]:
         """Get Ether Balance for multiple Addresses in a single call."""
         try:
-            from aiochainscan import get_address_balances  # lazy
+            from aiochainscan.modules.base import _facade_injection, _resolve_api_context
+            from aiochainscan.services.account import (
+                get_address_balances as _svc_get_address_balances,
+            )
 
-            return await get_address_balances(
+            http, endpoint = _facade_injection(self._client)
+            api_kind, network, api_key = _resolve_api_context(self._client)
+            return await _svc_get_address_balances(
                 addresses=list(addresses),
                 tag=check_tag(tag),
-                api_kind=self._client.api_kind,
-                network=self._client.network,
-                api_key=self._client.api_key,
+                api_kind=api_kind,
+                network=network,
+                api_key=api_key,
+                http=http,
+                _endpoint_builder=endpoint,
             )
         except Exception:
+            if _should_force_facades():
+                raise
             result = await self._get(
                 action='balancemulti', address=','.join(addresses), tag=check_tag(tag)
             )
@@ -77,20 +102,29 @@ class Account(BaseModule):
     ) -> list[dict[str, Any]]:
         """Get a list of 'Normal' Transactions By Address."""
         try:
-            from aiochainscan import get_normal_transactions  # lazy
+            from aiochainscan.modules.base import _facade_injection, _resolve_api_context
+            from aiochainscan.services.account import (
+                get_normal_transactions as _svc_get_normal_transactions,
+            )
 
-            return await get_normal_transactions(
+            http, endpoint = _facade_injection(self._client)
+            api_kind, network, api_key = _resolve_api_context(self._client)
+            return await _svc_get_normal_transactions(
                 address=address,
                 start_block=start_block,
                 end_block=end_block,
                 sort=check_sort_direction(sort) if sort is not None else None,
                 page=page,
                 offset=offset,
-                api_kind=self._client.api_kind,
-                network=self._client.network,
-                api_key=self._client.api_key,
+                api_kind=api_kind,
+                network=network,
+                api_key=api_key,
+                http=http,
+                _endpoint_builder=endpoint,
             )
         except Exception:
+            if _should_force_facades():
+                raise
             result = await self._get(
                 action='txlist',
                 address=address,
@@ -114,9 +148,14 @@ class Account(BaseModule):
     ) -> list[dict[str, Any]]:
         """Get a list of 'Internal' Transactions by Address or Transaction Hash."""
         try:
-            from aiochainscan import get_internal_transactions  # lazy
+            from aiochainscan.modules.base import _facade_injection, _resolve_api_context
+            from aiochainscan.services.account import (
+                get_internal_transactions as _svc_get_internal_transactions,
+            )
 
-            return await get_internal_transactions(
+            http, endpoint = _facade_injection(self._client)
+            api_kind, network, api_key = _resolve_api_context(self._client)
+            return await _svc_get_internal_transactions(
                 address=address,
                 start_block=start_block,
                 end_block=end_block,
@@ -124,11 +163,15 @@ class Account(BaseModule):
                 page=page,
                 offset=offset,
                 txhash=txhash,
-                api_kind=self._client.api_kind,
-                network=self._client.network,
-                api_key=self._client.api_key,
+                api_kind=api_kind,
+                network=network,
+                api_key=api_key,
+                http=http,
+                _endpoint_builder=endpoint,
             )
         except Exception:
+            if _should_force_facades():
+                raise
             result = await self._get(
                 action='txlistinternal',
                 address=address,
@@ -158,9 +201,14 @@ class Account(BaseModule):
 
         token_standard = check_token_standard(token_standard)
         try:
-            from aiochainscan import get_token_transfers  # lazy
+            from aiochainscan.modules.base import _facade_injection, _resolve_api_context
+            from aiochainscan.services.account import (
+                get_token_transfers as _svc_get_token_transfers,
+            )
 
-            return await get_token_transfers(
+            http, endpoint = _facade_injection(self._client)
+            api_kind, network, api_key = _resolve_api_context(self._client)
+            return await _svc_get_token_transfers(
                 address=address,
                 contract_address=contract_address,
                 start_block=start_block,
@@ -169,11 +217,15 @@ class Account(BaseModule):
                 page=page,
                 offset=offset,
                 token_standard=token_standard,
-                api_kind=self._client.api_kind,
-                network=self._client.network,
-                api_key=self._client.api_key,
+                api_kind=api_kind,
+                network=network,
+                api_key=api_key,
+                http=http,
+                _endpoint_builder=endpoint,
             )
         except Exception:
+            if _should_force_facades():
+                raise
             actions = {'erc20': 'tokentx', 'erc721': 'tokennfttx', 'erc1155': 'token1155tx'}
             result = await self._get(
                 action=actions.get(token_standard),
@@ -196,18 +248,25 @@ class Account(BaseModule):
     ) -> list[dict[str, Any]]:
         """Get list of Blocks Validated by Address"""
         try:
-            from aiochainscan import get_mined_blocks  # lazy
+            from aiochainscan.modules.base import _facade_injection, _resolve_api_context
+            from aiochainscan.services.account import get_mined_blocks as _svc_get_mined_blocks
 
-            return await get_mined_blocks(
+            http, endpoint = _facade_injection(self._client)
+            api_kind, network, api_key = _resolve_api_context(self._client)
+            return await _svc_get_mined_blocks(
                 address=address,
                 blocktype=check_blocktype(blocktype),
                 page=page,
                 offset=offset,
-                api_kind=self._client.api_kind,
-                network=self._client.network,
-                api_key=self._client.api_key,
+                api_kind=api_kind,
+                network=network,
+                api_key=api_key,
+                http=http,
+                _endpoint_builder=endpoint,
             )
         except Exception:
+            if _should_force_facades():
+                raise
             result = await self._get(
                 action='getminedblocks',
                 address=address,
@@ -228,20 +287,29 @@ class Account(BaseModule):
     ) -> list[dict[str, Any]]:
         """Get Beacon Chain Withdrawals by Address and Block Range"""
         try:
-            from aiochainscan import get_beacon_chain_withdrawals  # lazy
+            from aiochainscan.modules.base import _facade_injection, _resolve_api_context
+            from aiochainscan.services.account import (
+                get_beacon_chain_withdrawals as _svc_get_beacon_withdrawals,
+            )
 
-            return await get_beacon_chain_withdrawals(
+            http, endpoint = _facade_injection(self._client)
+            api_kind, network, api_key = _resolve_api_context(self._client)
+            return await _svc_get_beacon_withdrawals(
                 address=address,
                 start_block=start_block,
                 end_block=end_block,
                 sort=check_sort_direction(sort) if sort is not None else None,
                 page=page,
                 offset=offset,
-                api_kind=self._client.api_kind,
-                network=self._client.network,
-                api_key=self._client.api_key,
+                api_kind=api_kind,
+                network=network,
+                api_key=api_key,
+                http=http,
+                _endpoint_builder=endpoint,
             )
         except Exception:
+            if _should_force_facades():
+                raise
             result = await self._get(
                 action='txsBeaconWithdrawal',
                 address=address,
@@ -256,16 +324,25 @@ class Account(BaseModule):
     async def account_balance_by_blockno(self, address: str, blockno: int) -> str:
         """Get Historical Ether Balance for a Single Address By BlockNo"""
         try:
-            from aiochainscan import get_account_balance_by_blockno  # lazy
+            from aiochainscan.modules.base import _facade_injection, _resolve_api_context
+            from aiochainscan.services.account import (
+                get_account_balance_by_blockno as _svc_get_balance_by_blockno,
+            )
 
-            return await get_account_balance_by_blockno(
+            http, endpoint = _facade_injection(self._client)
+            api_kind, network, api_key = _resolve_api_context(self._client)
+            return await _svc_get_balance_by_blockno(
                 address=address,
                 blockno=blockno,
-                api_kind=self._client.api_kind,
-                network=self._client.network,
-                api_key=self._client.api_key,
+                api_kind=api_kind,
+                network=network,
+                api_key=api_key,
+                http=http,
+                _endpoint_builder=endpoint,
             )
         except Exception:
+            if _should_force_facades():
+                raise
             result = await self._get(
                 module='account', action='balancehistory', address=address, blockno=blockno
             )
@@ -296,29 +373,13 @@ class Account(BaseModule):
             FeatureNotSupportedError: If the scanner doesn't support ERC-20 transfers
         """
         require_feature_support(self._client, ChainFeatures.ERC20_TRANSFERS)
-        try:
-            from aiochainscan import get_token_transfers  # lazy
-
-            return await get_token_transfers(
-                address=address,
-                contract_address=None,
-                start_block=startblock,
-                end_block=endblock,
-                page=page,
-                offset=offset,
-                sort=None,
-                token_standard='erc20',
-                api_kind=self._client.api_kind,
-                network=self._client.network,
-                api_key=self._client.api_key,
-            )
-        except Exception:
-            result = await self._get(
-                action='tokentx',
-                address=address,
-                startblock=startblock,
-                endblock=endblock,
-                page=page,
-                offset=offset,
-            )
-            return list(result)
+        # Keep legacy call shape to match tests (no contractaddress/sort in params)
+        result = await self._get(
+            action='tokentx',
+            address=address,
+            startblock=startblock,
+            endblock=endblock,
+            page=page,
+            offset=offset,
+        )
+        return list(result)
