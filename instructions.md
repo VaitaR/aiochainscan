@@ -799,3 +799,36 @@ The hexagonal skeleton is in place and already useful. Next focus: broaden servi
 - Stats daily endpoints + normalizers: IN PROGRESS (most added). Telemetry standardized.
 - Wire legacy modules to facades: IN PROGRESS (env toggle available)
 - Import-linter tightening: IN PROGRESS (services → core/network DONE)
+
+## Fast migration to clean architecture (Phase 1.4 → 1.5)
+
+### Status (ready to cut over)
+- **Phase 1.4 complete**: modules route via facades by default with safe fallback; `AIOCHAINSCAN_FORCE_FACADES=1` disables fallbacks. Tests are green. Telemetry standardized: `api_kind`, `network`, `duration_ms`, `items` (for lists). Import-linter boundaries tightened and passing. README updated (Telemetry fields, Facades + DI, Normalizers/DTO).
+- **Phase 1.5 started**: parallel typed facades (`*_typed`) added; DTO exports in place; typing/deprecation plan recorded above.
+
+### Cutover checklist (fast path)
+1) Enable forced facades
+   - CI/local: set `AIOCHAINSCAN_FORCE_FACADES=1`; run targeted tests for hot paths.
+   - Example: `pytest -q tests/test_account.py tests/test_block.py tests/test_transaction.py tests/test_logs.py tests/test_token.py tests/test_stats.py`.
+
+2) Make facades the only runtime path
+   - Remove legacy fallbacks in `modules/*` while keeping public signatures intact.
+   - Keep optional deprecation hints behind `AIOCHAINSCAN_DEPRECATE_MODULES=1` until 2.0.
+
+3) Lock architectural boundaries
+   - Keep current contracts enforced; add a rule preventing internal code from importing `aiochainscan.modules` (use facades or unified core).
+   - Maintain: `services` must not import `core/network/scanners/adapters`; `modules` must not import modern layers.
+
+4) Promote typed DTO facades
+   - Prefer `*_typed` facades in docs/examples; keep untyped facades for compatibility.
+   - Mark untyped returns deprecated in docs once coverage ≥80%; removal planned for 2.0.
+
+5) Docs/examples sweep
+   - README and examples should show facades + DI and typed DTO usage first. Legacy examples remain but are not default.
+
+6) Quality gates on every step
+   - `ruff check`, `mypy --strict aiochainscan`, `pytest -q` (targeted locally, full in CI), and `import-linter` must pass.
+
+### Rollout notes
+- Default behavior stays backward compatible; forcing facades in CI catches regressions early without breaking consumers.
+- Actual removal of `modules/*` and `network.py` is reserved for Phase 2.0 with thin shims and a documented deprecation window.

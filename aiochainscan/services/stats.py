@@ -40,6 +40,7 @@ async def get_eth_price(
     if extra_params:
         params.update({k: v for k, v in extra_params.items() if v is not None})
 
+    # Preserve explicit None for sort in tests: keep the key present
     signed_params, headers = endpoint.filter_and_sign(params, headers=None)
 
     cache_key = f'ethprice:{api_kind}:{network}'

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import Any
 
-from aiochainscan.modules.base import BaseModule, _should_force_facades
+from aiochainscan.modules.base import BaseModule
 
 
 class Logs(BaseModule):
@@ -37,46 +37,30 @@ class Logs(BaseModule):
 
         https://github.com/ethereum/wiki/wiki/JSON-RPC#eth_getlogs.
         """
-        # Prefer new service path via facade for hexagonal migration
-        try:
-            from aiochainscan.modules.base import _facade_injection
-            from aiochainscan.services.logs import get_logs as _svc_get_logs
+        from aiochainscan.modules.base import _facade_injection
+        from aiochainscan.services.logs import get_logs as _svc_get_logs
 
-            http, endpoint = _facade_injection(self._client)
-            from aiochainscan.modules.base import _resolve_api_context
+        http, endpoint = _facade_injection(self._client)
+        from aiochainscan.modules.base import _resolve_api_context
 
-            api_kind, network, api_key = _resolve_api_context(self._client)
-            # Preserve original topic filling for tests
-            extra = self._fill_topics(topics, topic_operators) if topics else {}
-            return await _svc_get_logs(
-                start_block=self._check_block(start_block),
-                end_block=self._check_block(end_block),
-                address=address,
-                api_kind=api_kind,
-                network=network,
-                api_key=api_key,
-                http=http,
-                _endpoint_builder=endpoint,
-                topics=None,
-                topic_operators=None,
-                page=page,
-                offset=offset,
-                extra_params=extra,
-            )
-        except Exception:
-            if _should_force_facades():
-                raise
-            result = await self._get(
-                action='getLogs',
-                address=address,
-                fromBlock=self._check_block(start_block),
-                toBlock=self._check_block(end_block),
-                headers=None,
-                **(self._fill_topics(topics, topic_operators) if topics else {}),
-                page=page,
-                offset=offset,
-            )
-            return cast(list[dict[str, Any]], result)
+        api_kind, network, api_key = _resolve_api_context(self._client)
+        # Preserve original topic filling for tests
+        extra = self._fill_topics(topics, topic_operators) if topics else {}
+        return await _svc_get_logs(
+            start_block=self._check_block(start_block),
+            end_block=self._check_block(end_block),
+            address=address,
+            api_kind=api_kind,
+            network=network,
+            api_key=api_key,
+            http=http,
+            _endpoint_builder=endpoint,
+            topics=None,
+            topic_operators=None,
+            page=page,
+            offset=offset,
+            extra_params=extra,
+        )
 
     def _check_block(self, block: str | int) -> str | int:
         if isinstance(block, int):

@@ -53,32 +53,22 @@ class Block(BaseModule):
 
     async def get_by_number(self, number: int, *, full: bool = False) -> dict[str, Any]:
         """Fetch block by number via facade when available."""
-        try:
-            from aiochainscan.modules.base import _facade_injection
-            from aiochainscan.services.block import get_block_by_number as _svc_get_block
+        from aiochainscan.modules.base import _facade_injection
+        from aiochainscan.services.block import get_block_by_number as _svc_get_block
 
-            http, endpoint = _facade_injection(self._client)
-            from aiochainscan.modules.base import _resolve_api_context
+        http, endpoint = _facade_injection(self._client)
+        from aiochainscan.modules.base import _resolve_api_context
 
-            api_kind, network, api_key = _resolve_api_context(self._client)
-            return await _svc_get_block(
-                tag=number,
-                full=full,
-                api_kind=api_kind,
-                network=network,
-                api_key=api_key,
-                http=http,
-                _endpoint_builder=endpoint,
-            )
-        except Exception:
-            # Fallback to legacy proxy endpoint through `proxy` module if exposed
-            if _should_force_facades():
-                raise
-            tag = hex(number)
-            data = await self._get(
-                module='proxy', action='eth_getBlockByNumber', tag=tag, boolean=str(full).lower()
-            )
-            return cast(dict[str, Any], data)
+        api_kind, network, api_key = _resolve_api_context(self._client)
+        return await _svc_get_block(
+            tag=number,
+            full=full,
+            api_kind=api_kind,
+            network=network,
+            api_key=api_key,
+            http=http,
+            _endpoint_builder=endpoint,
+        )
 
     async def block_countdown(
         self, block_no: int | None = None, *, offset: int = 1_000

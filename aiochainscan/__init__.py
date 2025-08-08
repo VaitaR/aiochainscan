@@ -11,6 +11,7 @@ from aiochainscan.domain.dto import (
     BeaconWithdrawalDTO,
     BlockDTO,
     DailySeriesDTO,
+    EthPriceDTO,
     GasOracleDTO,
     InternalTxDTO,
     LogEntryDTO,
@@ -277,6 +278,7 @@ __all__ = [
     'get_daily_average_gas_limit_typed',
     'get_daily_total_gas_used_typed',
     'get_daily_average_gas_price_typed',
+    'get_eth_price_typed',
 ]
 
 
@@ -386,6 +388,32 @@ async def get_block_typed(
         telemetry=telemetry,
     )
     return normalize_block(data)
+
+
+async def get_eth_price_typed(
+    *,
+    api_kind: str,
+    network: str,
+    api_key: str,
+    http: HttpClient | None = None,
+    endpoint_builder: EndpointBuilder | None = None,
+    rate_limiter: RateLimiter | None = None,
+    retry: RetryPolicy | None = None,
+    cache: Cache | None = None,
+    telemetry: Telemetry | None = None,
+) -> EthPriceDTO:
+    data = await get_eth_price(
+        api_kind=api_kind,
+        network=network,
+        api_key=api_key,
+        http=http,
+        endpoint_builder=endpoint_builder,
+        rate_limiter=rate_limiter,
+        retry=retry,
+        cache=cache,
+        telemetry=telemetry,
+    )
+    return normalize_eth_price(data)
 
 
 async def get_transaction_typed(

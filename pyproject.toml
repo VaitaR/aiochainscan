@@ -1,6 +1,6 @@
 [project]
 name = "aiochainscan"
-version = "0.1.0"
+version = "0.2.0"
 description = "Chainscan API async Python wrapper"
 authors = [
     { name = "VaitaR", email = "andrey.shivalin@gmail.com" }
@@ -175,6 +175,19 @@ source_modules = [
 ]
 forbidden_modules = [
   "aiochainscan.scanners",
+]
+
+[[tool.importlinter.contracts]]
+name = "Internal packages do not import modules"
+type = "forbidden"
+source_modules = [
+  "aiochainscan.domain",
+  "aiochainscan.services",
+  "aiochainscan.adapters",
+  "aiochainscan.ports",
+]
+forbidden_modules = [
+  "aiochainscan.modules",
 ]
 
 [[tool.mypy.overrides]]

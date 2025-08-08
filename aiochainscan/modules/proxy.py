@@ -75,24 +75,20 @@ class Proxy(BaseModule):
 
     async def block_number(self) -> str:
         """Returns the number of most recent block via facade when available."""
-        try:
-            from aiochainscan.modules.base import _facade_injection
-            from aiochainscan.services.proxy import get_block_number as _svc_get_block_number
+        from aiochainscan.modules.base import _facade_injection
+        from aiochainscan.services.proxy import get_block_number as _svc_get_block_number
 
-            http, endpoint = _facade_injection(self._client)
-            from aiochainscan.modules.base import _resolve_api_context
+        http, endpoint = _facade_injection(self._client)
+        from aiochainscan.modules.base import _resolve_api_context
 
-            api_kind, network, api_key = _resolve_api_context(self._client)
-            return await _svc_get_block_number(
-                api_kind=api_kind,
-                network=network,
-                api_key=api_key,
-                http=http,
-                _endpoint_builder=endpoint,
-            )
-        except Exception:
-            result = await self._get(action='eth_blockNumber')
-            return str(result)
+        api_kind, network, api_key = _resolve_api_context(self._client)
+        return await _svc_get_block_number(
+            api_kind=api_kind,
+            network=network,
+            api_key=api_key,
+            http=http,
+            _endpoint_builder=endpoint,
+        )
 
     async def block_by_number(self, full: bool, tag: int | str = 'latest') -> dict[str, Any]:
         """Returns information about a block by block number."""
