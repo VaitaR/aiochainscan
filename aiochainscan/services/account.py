@@ -51,6 +51,6 @@ async def get_address_balance(
 
     # Fallback: best-effort int conversion
     try:
-        return int(response)  # type: ignore[arg-type]
+        return int(response)  # best-effort coercion
     except Exception:
         return 0
