@@ -39,6 +39,7 @@ class BlockScoutV1(EtherscanV1):
 
     # BlockScout supports many networks through different instances
     supported_networks = {
+        'eth',  # Ethereum mainnet - ADDED!
         'sepolia',  # Ethereum Sepolia testnet
         'gnosis',  # Gnosis Chain
         'polygon',  # Polygon mainnet
@@ -55,6 +56,7 @@ class BlockScoutV1(EtherscanV1):
 
     # Network to BlockScout instance mapping
     NETWORK_INSTANCES = {
+        'eth': 'eth.blockscout.com',  # Ethereum mainnet - ADDED!
         'sepolia': 'eth-sepolia.blockscout.com',
         'gnosis': 'gnosis.blockscout.com',
         'polygon': 'polygon.blockscout.com',
