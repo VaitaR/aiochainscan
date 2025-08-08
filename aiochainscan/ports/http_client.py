@@ -5,6 +5,9 @@ from typing import Any, Protocol
 
 
 class HttpClient(Protocol):
+    async def aclose(self) -> None:  # noqa: D401 - simple protocol
+        """Close any underlying resources."""
+
     async def get(
         self,
         url: str,
