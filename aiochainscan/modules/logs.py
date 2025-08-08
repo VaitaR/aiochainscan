@@ -11,6 +11,8 @@ class Logs(BaseModule):
     https://docs.etherscan.io/api-endpoints/logs
     """
 
+    # TODO: Deprecated in next major. Prefer facades in `aiochainscan.__init__`.
+
     _TOPIC_OPERATORS = ('and', 'or')
     _BLOCKS = ('latest',)
 

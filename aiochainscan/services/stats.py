@@ -618,3 +618,198 @@ def normalize_daily_average_gas_price(raw: list[dict[str, Any]]) -> list[DailySe
         if raw and isinstance(raw[0], dict) and candidate in raw[0]:
             return normalize_daily_series(raw, value_key=candidate)
     return normalize_daily_series(raw, value_key='avgGasPrice')
+
+
+def normalize_daily_block_count(raw: list[dict[str, Any]]) -> list[DailySeriesDTO]:
+    for candidate in ('blockCount', 'blocks', 'dailyBlockCount'):
+        if raw and isinstance(raw[0], dict) and candidate in raw[0]:
+            return normalize_daily_series(raw, value_key=candidate)
+    return normalize_daily_series(raw, value_key='blockCount')
+
+
+def normalize_daily_average_network_hash_rate(raw: list[dict[str, Any]]) -> list[DailySeriesDTO]:
+    for candidate in (
+        'dailyAvgHashRate',
+        'avgHashRate',
+        'hashRate',
+        'networkHashRate',
+    ):
+        if raw and isinstance(raw[0], dict) and candidate in raw[0]:
+            return normalize_daily_series(raw, value_key=candidate)
+    return normalize_daily_series(raw, value_key='dailyAvgHashRate')
+
+
+def normalize_daily_average_network_difficulty(raw: list[dict[str, Any]]) -> list[DailySeriesDTO]:
+    for candidate in (
+        'dailyAvgNetDifficulty',
+        'avgDifficulty',
+        'difficulty',
+        'networkDifficulty',
+    ):
+        if raw and isinstance(raw[0], dict) and candidate in raw[0]:
+            return normalize_daily_series(raw, value_key=candidate)
+    return normalize_daily_series(raw, value_key='dailyAvgNetDifficulty')
+
+
+def normalize_ether_historical_daily_market_cap(raw: list[dict[str, Any]]) -> list[DailySeriesDTO]:
+    for candidate in ('marketCap', 'marketcapUSD', 'marketCapUsd'):
+        if raw and isinstance(raw[0], dict) and candidate in raw[0]:
+            return normalize_daily_series(raw, value_key=candidate)
+    return normalize_daily_series(raw, value_key='marketCap')
+
+
+def normalize_ether_historical_price(raw: list[dict[str, Any]]) -> list[DailySeriesDTO]:
+    for candidate in ('value', 'price', 'priceUSD', 'priceUsd'):
+        if raw and isinstance(raw[0], dict) and candidate in raw[0]:
+            return normalize_daily_series(raw, value_key=candidate)
+    return normalize_daily_series(raw, value_key='value')
+
+
+async def get_daily_block_count(
+    *,
+    start_date: date,
+    end_date: date,
+    api_kind: str,
+    network: str,
+    api_key: str,
+    http: HttpClient,
+    _endpoint_builder: EndpointBuilder,
+    sort: str | None = None,
+    _rate_limiter: RateLimiter | None = None,
+    _retry: RetryPolicy | None = None,
+    _telemetry: Telemetry | None = None,
+) -> list[dict[str, Any]]:
+    return await _get_daily_series(
+        action='dailyblkcount',
+        start_date=start_date,
+        end_date=end_date,
+        api_kind=api_kind,
+        network=network,
+        api_key=api_key,
+        http=http,
+        _endpoint_builder=_endpoint_builder,
+        sort=sort,
+        _rate_limiter=_rate_limiter,
+        _retry=_retry,
+        _telemetry=_telemetry,
+    )
+
+
+async def get_daily_average_network_hash_rate(
+    *,
+    start_date: date,
+    end_date: date,
+    api_kind: str,
+    network: str,
+    api_key: str,
+    http: HttpClient,
+    _endpoint_builder: EndpointBuilder,
+    sort: str | None = None,
+    _rate_limiter: RateLimiter | None = None,
+    _retry: RetryPolicy | None = None,
+    _telemetry: Telemetry | None = None,
+) -> list[dict[str, Any]]:
+    return await _get_daily_series(
+        action='dailyavghashrate',
+        start_date=start_date,
+        end_date=end_date,
+        api_kind=api_kind,
+        network=network,
+        api_key=api_key,
+        http=http,
+        _endpoint_builder=_endpoint_builder,
+        sort=sort,
+        _rate_limiter=_rate_limiter,
+        _retry=_retry,
+        _telemetry=_telemetry,
+    )
+
+
+async def get_daily_average_network_difficulty(
+    *,
+    start_date: date,
+    end_date: date,
+    api_kind: str,
+    network: str,
+    api_key: str,
+    http: HttpClient,
+    _endpoint_builder: EndpointBuilder,
+    sort: str | None = None,
+    _rate_limiter: RateLimiter | None = None,
+    _retry: RetryPolicy | None = None,
+    _telemetry: Telemetry | None = None,
+) -> list[dict[str, Any]]:
+    return await _get_daily_series(
+        action='dailyavgnetdifficulty',
+        start_date=start_date,
+        end_date=end_date,
+        api_kind=api_kind,
+        network=network,
+        api_key=api_key,
+        http=http,
+        _endpoint_builder=_endpoint_builder,
+        sort=sort,
+        _rate_limiter=_rate_limiter,
+        _retry=_retry,
+        _telemetry=_telemetry,
+    )
+
+
+async def get_ether_historical_daily_market_cap(
+    *,
+    start_date: date,
+    end_date: date,
+    api_kind: str,
+    network: str,
+    api_key: str,
+    http: HttpClient,
+    _endpoint_builder: EndpointBuilder,
+    sort: str | None = None,
+    _rate_limiter: RateLimiter | None = None,
+    _retry: RetryPolicy | None = None,
+    _telemetry: Telemetry | None = None,
+) -> list[dict[str, Any]]:
+    return await _get_daily_series(
+        action='ethdailymarketcap',
+        start_date=start_date,
+        end_date=end_date,
+        api_kind=api_kind,
+        network=network,
+        api_key=api_key,
+        http=http,
+        _endpoint_builder=_endpoint_builder,
+        sort=sort,
+        _rate_limiter=_rate_limiter,
+        _retry=_retry,
+        _telemetry=_telemetry,
+    )
+
+
+async def get_ether_historical_price(
+    *,
+    start_date: date,
+    end_date: date,
+    api_kind: str,
+    network: str,
+    api_key: str,
+    http: HttpClient,
+    _endpoint_builder: EndpointBuilder,
+    sort: str | None = None,
+    _rate_limiter: RateLimiter | None = None,
+    _retry: RetryPolicy | None = None,
+    _telemetry: Telemetry | None = None,
+) -> list[dict[str, Any]]:
+    return await _get_daily_series(
+        action='ethdailyprice',
+        start_date=start_date,
+        end_date=end_date,
+        api_kind=api_kind,
+        network=network,
+        api_key=api_key,
+        http=http,
+        _endpoint_builder=_endpoint_builder,
+        sort=sort,
+        _rate_limiter=_rate_limiter,
+        _retry=_retry,
+        _telemetry=_telemetry,
+    )

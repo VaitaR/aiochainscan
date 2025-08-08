@@ -14,6 +14,8 @@ class Block(BaseModule):
     https://docs.etherscan.io/api-endpoints/blocks
     """
 
+    # TODO: Deprecated in next major. Prefer facades in `aiochainscan.__init__`.
+
     @property
     def _module(self) -> str:
         return 'block'
