@@ -49,7 +49,7 @@ async def fetch_sample_transactions(self, pages: int = 3, use_optimized: bool = 
 async def worker(range_info):
     """Worker function to process a single block range."""
     _, range_id, block_start, block_end = range_info
-    
+
     async with semaphore:  # ≤ RPS_LIMIT одновременно
         elements = await function(
             address=address,
@@ -67,7 +67,7 @@ async def worker(range_info):
 # Если вернулось ровно max_offset элементов → делим диапазон пополам
 if len(elements) >= max_offset and block_end > block_start:
     mid_block = (block_start + block_end) // 2
-    
+
     # Добавляем обе половины обратно в очередь
     heapq.heappush(range_queue, (-(mid_block - block_start), range_counter, block_start, mid_block))
     heapq.heappush(range_queue, (-(block_end - mid_block), range_counter, mid_block + 1, block_end))

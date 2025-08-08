@@ -113,20 +113,20 @@ from aiochainscan import Client
 async def main():
     # Create client using configuration system
     client = Client.from_config('eth', 'main')  # Uses ETHERSCAN_KEY
-    
+
     try:
         # Get ETH price
         price = await client.stats.eth_price()
         print(f"ETH price: ${price}")
-        
+
         # Get block information
         block = await client.block.block_reward(12345678)
         print(f"Block reward: {block}")
-        
+
         # Get account balance
         balance = await client.account.balance('0x123...')
         print(f"Balance: {balance}")
-        
+
     finally:
         await client.close()
 
@@ -142,13 +142,13 @@ from aiochainscan import Client
 
 async def check_prices():
     """Check ETH price on multiple networks."""
-    
+
     networks = [
         ('eth', 'main'),
-        ('bsc', 'main'), 
+        ('bsc', 'main'),
         ('polygon', 'main'),
     ]
-    
+
     for scanner, network in networks:
         try:
             client = Client.from_config(scanner, network)
@@ -193,13 +193,13 @@ async def main():
     # Custom rate limiting and retry logic
     throttler = Throttler(rate_limit=1, period=6.0)  # 1 request per 6 seconds
     retry_options = ExponentialRetry(attempts=3)
-    
+
     client = Client.from_config(
         'eth', 'main',
         throttler=throttler,
         retry_options=retry_options
     )
-    
+
     try:
         # Your API calls here
         balance = await client.account.balance('0x123...')
@@ -223,7 +223,7 @@ async def main():
         api_kind='eth',
         network='main'
     )
-    
+
     try:
         # Your API calls
         price = await client.stats.eth_price()
@@ -242,7 +242,7 @@ from aiochainscan import Client
 
 async def main():
     client = Client.from_config('eth', 'main')
-    
+
     try:
         # Use utility functions for bulk operations
         async for transfer in client.utils.token_transfers_generator(
@@ -343,7 +343,7 @@ from aiochainscan.exceptions import ChainscanClientApiError
 
 async def main():
     client = Client.from_config('eth', 'main')
-    
+
     try:
         balance = await client.account.balance('invalid_address')
     except ChainscanClientApiError as e:
@@ -370,10 +370,16 @@ uv run pytest --cov=aiochainscan
 uv run ruff check
 uv run ruff format --check
 
+# Run type checking (strict)
+uv run mypy --strict aiochainscan
+
 # Auto-fix linting issues
 uv run ruff check --fix
 uv run ruff format
 ```
+
+### CI Note
+- CI now enforces strict static typing with mypy. Run `uv run mypy --strict aiochainscan` locally before pushing to ensure the type check gate passes.
 
 ### Adding dependencies
 ```sh
@@ -423,7 +429,7 @@ python -m pytest tests/test_integration.py -v
 ### Test Categories
 
 - **Unit Tests**: Configuration system, client creation, validation (no API keys needed)
-- **Integration Tests**: Real API calls with blockchain explorers (requires API keys)  
+- **Integration Tests**: Real API calls with blockchain explorers (requires API keys)
 - **Error Handling**: Invalid inputs, rate limiting, network errors
 - **Multi-Scanner**: Cross-chain functionality testing
 
@@ -446,7 +452,7 @@ MIT License - see [LICENSE](LICENSE) file for details.
 
 ### v0.2.0 (Latest)
 - ✅ **Advanced Configuration System**: Professional-grade configuration management
-- ✅ **Multi-Scanner Support**: Unified interface for 15+ blockchain scanners  
+- ✅ **Multi-Scanner Support**: Unified interface for 15+ blockchain scanners
 - ✅ **Smart API Key Management**: Multiple fallback strategies and .env file support
 - ✅ **CLI Tools**: `aiochainscan` command-line interface for configuration
 - ✅ **Dynamic Scanner Registration**: Add custom scanners via JSON or code

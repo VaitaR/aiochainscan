@@ -2,10 +2,13 @@
 Moralis Web3 Data API v1 scanner implementation.
 """
 
+from typing import Any
+
 import aiohttp
 
 from ..core.endpoint import PARSERS, EndpointSpec
 from ..core.method import Method
+from ..url_builder import UrlBuilder
 from . import register_scanner
 from .base import Scanner
 
@@ -36,7 +39,7 @@ class MoralisV1(Scanner):
     auth_mode = 'header'
     auth_field = 'X-API-Key'
 
-    def __init__(self, api_key: str, network: str, url_builder):
+    def __init__(self, api_key: str, network: str, url_builder: UrlBuilder) -> None:
         """
         Initialize Moralis scanner with network-specific chain ID.
 
@@ -55,7 +58,7 @@ class MoralisV1(Scanner):
 
         self.base_url = 'https://deep-index.moralis.io/api/v2.2'
 
-    async def call(self, method: Method, **params):
+    async def call(self, method: Method, **params: Any) -> Any:
         """
         Override call to use Moralis API structure.
 
@@ -72,7 +75,7 @@ class MoralisV1(Scanner):
 
         # Build URL with path parameter substitution
         url_path = spec.path
-        query_params = spec.query.copy()
+        query_params: dict[str, Any] = spec.query.copy()
 
         # Substitute chain ID in query
         if 'chain' in query_params and query_params['chain'] == '{chain_id}':

@@ -1,3 +1,5 @@
+from typing import Any, cast
+
 from aiochainscan.modules.base import BaseModule
 
 
@@ -11,15 +13,17 @@ class Transaction(BaseModule):
     def _module(self) -> str:
         return 'transaction'
 
-    async def contract_execution_status(self, txhash: str) -> dict:
+    async def contract_execution_status(self, txhash: str) -> dict[str, Any]:
         """[BETA] Check Contract Execution Status (if there was an error during contract execution)"""
-        return await self._get(action='getstatus', txhash=txhash)
+        result = await self._get(action='getstatus', txhash=txhash)
+        return cast(dict[str, Any], result)
 
-    async def tx_receipt_status(self, txhash: str) -> dict:
+    async def tx_receipt_status(self, txhash: str) -> dict[str, Any]:
         """[BETA] Check Transaction Receipt Status (Only applicable for Post Byzantium fork transactions)"""
-        return await self._get(action='gettxreceiptstatus', txhash=txhash)
+        result = await self._get(action='gettxreceiptstatus', txhash=txhash)
+        return cast(dict[str, Any], result)
 
-    async def check_tx_status(self, txhash: str) -> dict:
+    async def check_tx_status(self, txhash: str) -> dict[str, Any]:
         """Check transaction receipt status.
 
         This is a wrapper around tx_receipt_status for better naming consistency.

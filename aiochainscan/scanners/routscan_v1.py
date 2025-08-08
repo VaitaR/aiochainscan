@@ -2,8 +2,11 @@
 RoutScan API v1 scanner implementation.
 """
 
+from typing import Any
+
 from ..core.endpoint import PARSERS, EndpointSpec
 from ..core.method import Method
+from ..url_builder import UrlBuilder
 from . import register_scanner
 from .base import Scanner
 
@@ -28,7 +31,7 @@ class RoutScanV1(Scanner):
         'mode': '34443',  # Mode network
     }
 
-    def __init__(self, api_key: str, network: str, url_builder):
+    def __init__(self, api_key: str, network: str, url_builder: UrlBuilder) -> None:
         """
         Initialize RoutScan scanner with network-specific chain ID.
 
@@ -47,7 +50,7 @@ class RoutScanV1(Scanner):
                 f"Network '{network}' not mapped for RoutScan. Available: {available}"
             )
 
-    async def call(self, method: Method, **params):
+    async def call(self, method: Method, **params: Any) -> Any:
         """
         Override call to use proper RoutScan URL structure.
 
@@ -94,14 +97,14 @@ class RoutScanV1(Scanner):
             # Enhanced error reporting for RoutScan
             raise Exception(f'RoutScan API error for chain {self.chain_id}: {e}') from e
 
-    def _build_request(self, spec: EndpointSpec, **params):
+    def _build_request(self, spec: EndpointSpec, **params: Any) -> dict[str, Any]:
         """
         Override to handle RoutScan-specific request building.
 
         RoutScan API key is optional and goes in query parameters.
         """
         # Get base request data from parent
-        request_data = super()._build_request(spec, **params)
+        request_data: dict[str, Any] = super()._build_request(spec, **params)
 
         # RoutScan works without API keys (remove empty apikey)
         if not self.api_key:

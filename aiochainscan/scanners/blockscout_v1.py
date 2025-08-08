@@ -11,8 +11,11 @@ Supports multiple blockchain networks through different BlockScout instances:
 - And many more...
 """
 
+from typing import Any
+
 from ..core.endpoint import EndpointSpec
 from ..core.method import Method
+from ..url_builder import UrlBuilder
 from . import register_scanner
 from .etherscan_v1 import EtherscanV1
 
@@ -67,7 +70,7 @@ class BlockScoutV1(EtherscanV1):
         'linea': 'linea.blockscout.com',
     }
 
-    def __init__(self, api_key: str, network: str, url_builder):
+    def __init__(self, api_key: str, network: str, url_builder: UrlBuilder) -> None:
         """
         Initialize BlockScout scanner with network-specific instance.
 
@@ -86,7 +89,7 @@ class BlockScoutV1(EtherscanV1):
                 f"Network '{network}' not mapped to BlockScout instance. Available: {available}"
             )
 
-    def _build_request(self, spec: EndpointSpec, **params):
+    def _build_request(self, spec: EndpointSpec, **params: Any) -> dict[str, Any]:
         """
         Override to handle BlockScout-specific URL building.
 
@@ -94,7 +97,7 @@ class BlockScoutV1(EtherscanV1):
         unlike Etherscan which uses subdomains.
         """
         # Get base request data from parent
-        request_data = super()._build_request(spec, **params)
+        request_data: dict[str, Any] = super()._build_request(spec, **params)
 
         # BlockScout often works without API keys
         if not self.api_key:
@@ -106,7 +109,7 @@ class BlockScoutV1(EtherscanV1):
 
         return request_data
 
-    async def call(self, method: Method, **params):
+    async def call(self, method: Method, **params: Any) -> Any:
         """
         Override call to use proper BlockScout instance URL.
 
