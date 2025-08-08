@@ -17,7 +17,7 @@ class Address:
 
     value: str
 
-    def __post_init__(self) -> None:  # type: ignore[override]
+    def __post_init__(self) -> None:
         normalized: str = self.value.lower().strip()
         if not (normalized.startswith('0x') and len(normalized) == 42):
             raise ValueError('Address must be 0x-prefixed 40-hex string')
@@ -33,7 +33,7 @@ class TxHash:
 
     value: str
 
-    def __post_init__(self) -> None:  # type: ignore[override]
+    def __post_init__(self) -> None:
         normalized: str = self.value.lower().strip()
         if not (normalized.startswith('0x') and len(normalized) == 66):
             raise ValueError('TxHash must be 0x-prefixed 64-hex string')
@@ -49,7 +49,7 @@ class BlockNumber:
 
     value: int
 
-    def __post_init__(self) -> None:  # type: ignore[override]
+    def __post_init__(self) -> None:
         if self.value < 0:
             raise ValueError('BlockNumber must be non-negative')
 
