@@ -1,3 +1,5 @@
+from typing import Any
+
 from aiochainscan.adapters.aiohttp_client import AiohttpClient
 from aiochainscan.client import Client  # noqa: F401
 from aiochainscan.config import ChainScanConfig, ScannerConfig, config  # noqa: F401
@@ -43,7 +45,7 @@ async def get_balance(*, address: str, api_kind: str, network: str, api_key: str
 
 async def get_block(
     *, tag: int | str, full: bool, api_kind: str, network: str, api_key: str
-) -> dict[str, any]:
+) -> dict[str, Any]:
     """Fetch block by number via default adapter."""
 
     http = AiohttpClient()
@@ -62,7 +64,7 @@ async def get_block(
 
 async def get_transaction(
     *, txhash: str, api_kind: str, network: str, api_key: str
-) -> dict[str, any]:
+) -> dict[str, Any]:
     """Fetch transaction by hash via default adapter."""
 
     http = AiohttpClient()
