@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from typing import Any
 from urllib.parse import urljoin, urlunsplit
 
 
@@ -27,8 +28,8 @@ class UrlBuilder:
         'moralis': ('deep-index.moralis.io', 'Multi-chain'),
     }
 
-    BASE_URL: str = None
-    API_URL: str = None
+    BASE_URL: str
+    API_URL: str
 
     def __init__(self, api_key: str, api_kind: str, network: str) -> None:
         self._API_KEY = api_key
@@ -74,8 +75,8 @@ class UrlBuilder:
             ('optimism', True): 'api-optimistic',
             ('optimism', False): f'api-{self._network}-optimistic',
         }
-        default_prefix = 'api' if self._is_main else f'api-{self._network}'
-        prefix = prefix_exceptions.get((self._api_kind, self._is_main), default_prefix)
+        default_prefix: str = 'api' if self._is_main else f'api-{self._network}'
+        prefix: str | None = prefix_exceptions.get((self._api_kind, self._is_main), default_prefix)
 
         # scanners with other then api url start
         if self._api_kind == 'flare':
@@ -98,19 +99,21 @@ class UrlBuilder:
             ('optimism', True): 'optimistic',
             ('optimism', False): f'{network}-optimism',
         }
-        default_prefix = None if self._is_main else network
+        default_prefix: str | None = None if self._is_main else network
         prefix = prefix_exceptions.get((self._api_kind, self._is_main), default_prefix)
         return self._build_url(prefix)
 
-    def filter_and_sign(self, params: dict, headers: dict):
-        params, headers = self._sign(self._filter_params(params or {}), headers or {})
-        return params, headers
+    def filter_and_sign(
+        self, params: dict[str, Any] | None, headers: dict[str, Any] | None
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        params_typed: dict[str, Any] = params or {}
+        headers_typed: dict[str, Any] = headers or {}
+        params_typed, headers_typed = self._sign(self._filter_params(params_typed), headers_typed)
+        return params_typed, headers_typed
 
-    def _sign(self, params: dict, headers: dict) -> dict:
-        if not params:
-            params = {}
-        if not headers:
-            headers = {}
+    def _sign(
+        self, params: dict[str, Any], headers: dict[str, Any]
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
         # for scanners that don't require API key or have free tier without
         if self._API_KEY != '':
             params['apikey'] = self._API_KEY
@@ -118,5 +121,5 @@ class UrlBuilder:
         return params, headers
 
     @staticmethod
-    def _filter_params(params: dict) -> dict:
+    def _filter_params(params: dict[str, Any]) -> dict[str, Any]:
         return {k: v for k, v in params.items() if v is not None}

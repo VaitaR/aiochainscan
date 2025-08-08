@@ -1,5 +1,6 @@
 from asyncio import AbstractEventLoop
 from contextlib import AbstractAsyncContextManager
+from typing import Any
 
 from aiohttp import ClientTimeout
 from aiohttp_retry import RetryOptionsBase
@@ -16,7 +17,8 @@ from aiochainscan.modules.proxy import Proxy
 from aiochainscan.modules.stats import Stats
 from aiochainscan.modules.token import Token
 from aiochainscan.modules.transaction import Transaction
-from aiochainscan.network import Network, UrlBuilder
+from aiochainscan.network import Network
+from aiochainscan.url_builder import UrlBuilder
 
 
 class Client:
@@ -25,11 +27,11 @@ class Client:
         api_key: str = '',
         api_kind: str = 'eth',
         network: str = 'main',
-        loop: AbstractEventLoop = None,
-        timeout: ClientTimeout = None,
-        proxy: str = None,
-        throttler: AbstractAsyncContextManager = None,
-        retry_options: RetryOptionsBase = None,
+        loop: AbstractEventLoop | None = None,
+        timeout: ClientTimeout | None = None,
+        proxy: str | None = None,
+        throttler: AbstractAsyncContextManager[Any] | None = None,
+        retry_options: RetryOptionsBase | None = None,
     ) -> None:
         self._url_builder = UrlBuilder(api_key, api_kind, network)
         self._http = Network(self._url_builder, loop, timeout, proxy, throttler, retry_options)
@@ -51,7 +53,7 @@ class Client:
     def currency(self) -> str:
         return self._url_builder.currency
 
-    async def close(self):
+    async def close(self) -> None:
         await self._http.close()
 
     @classmethod
@@ -59,11 +61,11 @@ class Client:
         cls,
         scanner: str,
         network: str = 'main',
-        loop: AbstractEventLoop = None,
-        timeout: ClientTimeout = None,
-        proxy: str = None,
-        throttler: AbstractAsyncContextManager = None,
-        retry_options: RetryOptionsBase = None,
+        loop: AbstractEventLoop | None = None,
+        timeout: ClientTimeout | None = None,
+        proxy: str | None = None,
+        throttler: AbstractAsyncContextManager[Any] | None = None,
+        retry_options: RetryOptionsBase | None = None,
     ) -> 'Client':
         """
         Create a Client instance using the configuration system.
@@ -116,6 +118,6 @@ class Client:
         return global_config.get_scanner_networks(scanner)
 
     @classmethod
-    def list_configurations(cls) -> dict[str, dict[str, any]]:
+    def list_configurations(cls) -> dict[str, dict[str, Any]]:
         """Get overview of all scanner configurations and their status."""
         return global_config.list_all_configurations()

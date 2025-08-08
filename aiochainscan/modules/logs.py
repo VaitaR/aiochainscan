@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any, cast
+
 from aiochainscan.modules.base import BaseModule
 
 
@@ -25,7 +27,7 @@ class Logs(BaseModule):
         offset: int | str | None = None,
         topics: list[str] | None = None,  # Make topics optional
         topic_operators: list[str] | None = None,
-    ) -> list[dict]:
+    ) -> list[dict[str, Any]]:
         """https://www.oklink.com/docs/en/#evm-rpc-data-log-get-event-logs"""
         # if url link have oklink prefix so  params startblock and endblock
 
@@ -33,15 +35,17 @@ class Logs(BaseModule):
 
         https://github.com/ethereum/wiki/wiki/JSON-RPC#eth_getlogs.
         """
-        return await self._get(
+        result = await self._get(
             action='getLogs',
             address=address,
             fromBlock=self._check_block(start_block),
             toBlock=self._check_block(end_block),
+            headers=None,
             **(self._fill_topics(topics, topic_operators) if topics else {}),
             page=page,
             offset=offset,
         )
+        return cast(list[dict[str, Any]], result)
 
     def _check_block(self, block: str | int) -> str | int:
         if isinstance(block, int):
@@ -52,7 +56,7 @@ class Logs(BaseModule):
             f'Invalid value {block!r}, only integers or {self._BLOCKS} are supported.'
         )
 
-    def _fill_topics(self, topics: list[str], topic_operators: list[str] | None):
+    def _fill_topics(self, topics: list[str], topic_operators: list[str] | None) -> dict[str, str]:
         if topics and len(topics) > 1:
             self._check_topics(topics, topic_operators)
 

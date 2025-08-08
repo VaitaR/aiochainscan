@@ -39,7 +39,7 @@ class Scanner(ABC):
     SPECS: dict[Method, EndpointSpec]
     """Mapping of logical methods to endpoint specifications"""
 
-    def __init__(self, api_key: str, network: str, url_builder: UrlBuilder):
+    def __init__(self, api_key: str, network: str, url_builder: UrlBuilder) -> None:
         """
         Initialize scanner instance.
 
@@ -62,7 +62,7 @@ class Scanner(ABC):
         self.network = network
         self.url_builder = url_builder
 
-    async def call(self, method: Method, **params) -> Any:
+    async def call(self, method: Method, **params: Any) -> Any:
         """
         Execute a logical method call.
 
@@ -106,7 +106,7 @@ class Scanner(ABC):
         finally:
             await network.close()
 
-    def _build_request(self, spec: EndpointSpec, **params) -> dict[str, Any]:
+    def _build_request(self, spec: EndpointSpec, **params: Any) -> dict[str, Any]:
         """
         Build request data from endpoint spec and parameters.
 
