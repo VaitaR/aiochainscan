@@ -726,3 +726,23 @@ The hexagonal skeleton is in place and already useful. Next focus: broaden servi
   - `pytest -q tests/test_logs.py tests/test_stats.py`
   - `pytest -q tests/test_block.py tests/test_transaction.py tests/test_token.py`
 - CI remains responsible for full-suite and type checks (`mypy --strict`).
+
+## Hexagonal Architecture – Phase 1.2 Progress Update (current)
+
+### Implemented since last update
+- Contract services/facade: `getabi`, `getsourcecode`, `verifysourcecode`, `checkverifystatus`, `verifyproxycontract`, `checkproxyverification`, `getcontractcreation`. Legacy `modules/contract.py` now prefers facades with safe fallbacks.
+- Account list services/facade: multi-balance (`balancemulti`), normal txs (`txlist`), internal txs (`txlistinternal`), token transfers (ERC-20/721/1155), mined blocks, beacon withdrawals, historical balance by block (`balancehistory`). Legacy `modules/account.py` routed to facades with fallbacks.
+- Stats daily series: remaining daily endpoints surfaced via services and facades where applicable.
+- Telemetry: `StructlogTelemetry` adapter added; duration events recorded across services.
+- Import rules: initial import‑linter contracts added (services ↔ adapters forbidden, domain isolated, ports don’t import adapters).
+- Quality gates: ruff, ruff-format, mypy --strict, pytest quick path passing locally; network‑flaky integration acknowledged in CI.
+
+### Backward compatibility
+- Preserved. Legacy modules remain as thin adapters to new facades with try/fallback to original logic.
+
+### Next steps (short)
+- DTOs/normalizers: add/export typed DTOs for list endpoints (normal/internal txs, token transfers, mined blocks, withdrawals) and use in services.
+- Deprecation plan: ship DeprecationWarning in legacy module paths (no breaking), remove in next major.
+- Import-linter: enforce contracts in CI and iterate to stricter rules as migration completes.
+- Infra composition: expose cache/rate‑limit/retry/telemetry composition at the facade; keep adapters pluggable.
+- Minor stats: validate any residual daily endpoints, add tests as needed.
