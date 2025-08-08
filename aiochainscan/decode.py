@@ -12,6 +12,7 @@ try:
     from aiochainscan_fastabi import decode_many as _fast_decode_many
     from aiochainscan_fastabi import decode_many_direct as _fast_decode_many_direct
     from aiochainscan_fastabi import decode_many_hex as _fast_decode_many_hex
+
     FASTABI_AVAILABLE = True
 except ImportError:
     FASTABI_AVAILABLE = False
