@@ -71,7 +71,7 @@ async def get_eth_price(
     except Exception as exc:  # noqa: BLE001
         if _telemetry is not None:
             await _telemetry.record_error(
-                'get_eth_price.error',
+                'stats.get_eth_price.error',
                 exc,
                 {'api_kind': api_kind, 'network': network},
             )
@@ -84,7 +84,7 @@ async def get_eth_price(
                 await _cache.set(cache_key, result, ttl_seconds=30)
             if _telemetry is not None:
                 await _telemetry.record_event(
-                    'get_eth_price.ok',
+                    'stats.get_eth_price.ok',
                     {'api_kind': api_kind, 'network': network},
                 )
             return result

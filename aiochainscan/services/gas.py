@@ -58,7 +58,7 @@ async def get_gas_oracle(
             if _telemetry is not None:
                 duration_ms = int((monotonic() - start) * 1000)
                 await _telemetry.record_event(
-                    'gas.get_oracle.duration',
+                    'gas.get_gas_oracle.duration',
                     {'api_kind': api_kind, 'network': network, 'duration_ms': duration_ms},
                 )
 
@@ -70,7 +70,7 @@ async def get_gas_oracle(
     except Exception as exc:  # noqa: BLE001
         if _telemetry is not None:
             await _telemetry.record_error(
-                'get_gas_oracle.error',
+                'gas.get_gas_oracle.error',
                 exc,
                 {'api_kind': api_kind, 'network': network},
             )
@@ -83,7 +83,7 @@ async def get_gas_oracle(
                 await _cache.set(cache_key, result, ttl_seconds=5)
             if _telemetry is not None:
                 await _telemetry.record_event(
-                    'get_gas_oracle.ok',
+                    'gas.get_gas_oracle.ok',
                     {'api_kind': api_kind, 'network': network},
                 )
             return result
