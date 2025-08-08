@@ -1,6 +1,7 @@
 from typing import Any
 
 from aiochainscan.adapters.aiohttp_client import AiohttpClient
+from aiochainscan.adapters.endpoint_builder_urlbuilder import UrlBuilderEndpoint
 from aiochainscan.client import Client  # noqa: F401
 from aiochainscan.config import ChainScanConfig, ScannerConfig, config  # noqa: F401
 from aiochainscan.domain.models import Address, BlockNumber, TxHash  # re-export domain VOs
@@ -31,6 +32,7 @@ async def get_balance(*, address: str, api_kind: str, network: str, api_key: str
     """
 
     http = AiohttpClient()
+    endpoint = UrlBuilderEndpoint()
     try:
         return await get_address_balance(
             address=Address(address),
@@ -38,6 +40,7 @@ async def get_balance(*, address: str, api_kind: str, network: str, api_key: str
             network=network,
             api_key=api_key,
             http=http,
+            _endpoint_builder=endpoint,
         )
     finally:
         await http.aclose()
@@ -49,6 +52,7 @@ async def get_block(
     """Fetch block by number via default adapter."""
 
     http = AiohttpClient()
+    endpoint = UrlBuilderEndpoint()
     try:
         return await get_block_by_number(
             tag=tag,
@@ -57,6 +61,7 @@ async def get_block(
             network=network,
             api_key=api_key,
             http=http,
+            _endpoint_builder=endpoint,
         )
     finally:
         await http.aclose()
@@ -68,6 +73,7 @@ async def get_transaction(
     """Fetch transaction by hash via default adapter."""
 
     http = AiohttpClient()
+    endpoint = UrlBuilderEndpoint()
     try:
         return await get_transaction_by_hash(
             txhash=TxHash(txhash),
@@ -75,6 +81,7 @@ async def get_transaction(
             network=network,
             api_key=api_key,
             http=http,
+            _endpoint_builder=endpoint,
         )
     finally:
         await http.aclose()

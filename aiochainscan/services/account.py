@@ -4,8 +4,8 @@ from collections.abc import Mapping
 from typing import Any
 
 from aiochainscan.domain.models import Address
+from aiochainscan.ports.endpoint_builder import EndpointBuilder
 from aiochainscan.ports.http_client import HttpClient
-from aiochainscan.url_builder import UrlBuilder
 
 
 async def get_address_balance(
@@ -15,6 +15,7 @@ async def get_address_balance(
     network: str,
     api_key: str,
     http: HttpClient,
+    _endpoint_builder: EndpointBuilder,
     extra_params: Mapping[str, Any] | None = None,
 ) -> int:
     """Fetch address balance (wei) using the canonical HTTP port and legacy UrlBuilder.
@@ -22,8 +23,8 @@ async def get_address_balance(
     This is a thin use-case wrapper. It composes URL and delegates HTTP to the provided port.
     """
 
-    builder = UrlBuilder(api_key=api_key, api_kind=api_kind, network=network)
-    url: str = builder.API_URL
+    endpoint = _endpoint_builder.open(api_key=api_key, api_kind=api_kind, network=network)
+    url: str = endpoint.api_url
 
     params: dict[str, Any] = {
         'module': 'account',
@@ -34,7 +35,7 @@ async def get_address_balance(
     if extra_params:
         params.update({k: v for k, v in extra_params.items() if v is not None})
 
-    signed_params, headers = builder.filter_and_sign(params, headers=None)
+    signed_params, headers = endpoint.filter_and_sign(params, headers=None)
     response: Any = await http.get(url, params=signed_params, headers=headers)
 
     # Etherscan-like response: {"status": "1", "message": "OK", "result": "123..."}
