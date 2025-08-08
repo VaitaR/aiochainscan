@@ -82,7 +82,7 @@ class Proxy(BaseModule):
             )
         except Exception:
             result = await self._get(action='eth_blockNumber')
-            return cast(str, result)
+            return str(result)
 
     async def block_by_number(self, full: bool, tag: int | str = 'latest') -> dict[str, Any]:
         """Returns information about a block by block number."""
@@ -114,7 +114,7 @@ class Proxy(BaseModule):
                 action='eth_getBlockTransactionCountByNumber',
                 tag=check_tag(tag),
             )
-            return cast(str, result)
+            return str(result)
 
     async def tx_by_hash(self, txhash: int | str) -> dict[str, Any]:
         """Returns the information about a transaction requested by transaction hash."""
@@ -194,7 +194,7 @@ class Proxy(BaseModule):
                 data=check_hex(data),
                 tag=check_tag(tag),
             )
-            return cast(str, result)
+            return str(result)
 
     async def code(self, address: str, tag: int | str = 'latest') -> str:
         """Returns code at a given address."""
@@ -217,7 +217,7 @@ class Proxy(BaseModule):
                 address=address,
                 tag=check_tag(tag),
             )
-            return cast(str, result)
+            return str(result)
 
     async def storage_at(self, address: str, position: str, tag: int | str = 'latest') -> str:
         """Returns the value from a storage position at a given address."""
@@ -242,14 +242,14 @@ class Proxy(BaseModule):
                 position=position,
                 tag=check_tag(tag),
             )
-            return cast(str, result)
+            return str(result)
 
     async def gas_price(self) -> str:
         """Returns the current price per gas in wei."""
         result = await self._get(
             action='eth_gasPrice',
         )
-        return cast(str, result)
+        return str(result)
 
     async def estimate_gas(self, to: str, value: str, gas_price: str, gas: str) -> str:
         """Makes a call or transaction, which won't be added to the blockchain and returns the used gas.
@@ -263,4 +263,4 @@ class Proxy(BaseModule):
             gasPrice=gas_price,
             gas=gas,
         )
-        return cast(str, result)
+        return str(result)

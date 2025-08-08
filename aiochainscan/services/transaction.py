@@ -111,8 +111,9 @@ def normalize_transaction(raw: dict[str, Any]) -> TransactionDTO:
         except Exception:
             return None
 
+    tx_hash_value = raw.get('hash') or raw.get('tx_hash') or raw.get('txhash')
     return {
-        'tx_hash': raw.get('hash') or raw.get('tx_hash') or raw.get('txhash'),
+        'tx_hash': str(tx_hash_value) if tx_hash_value is not None else '',
         'block_number': hex_to_int(raw.get('blockNumber') or raw.get('block_number')),
         'from_address': raw.get('from'),
         'to_address': raw.get('to'),

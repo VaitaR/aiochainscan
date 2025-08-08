@@ -14,7 +14,7 @@ class StructlogTelemetry(Telemetry):
 
     def __init__(self) -> None:
         try:
-            import structlog  # type: ignore
+            import structlog
 
             self._logger = structlog.get_logger('aiochainscan')
             self._use_structlog = True
