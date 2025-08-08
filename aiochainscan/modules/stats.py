@@ -40,15 +40,12 @@ class Stats(BaseModule):
 
         http, endpoint = _facade_injection(self._client)
         api_kind, network, api_key = _resolve_api_context(self._client)
-        return cast(
-            dict[str, Any],
-            await _svc_get_eth_price(
-                api_kind=api_kind,
-                network=network,
-                api_key=api_key,
-                http=http,
-                _endpoint_builder=endpoint,
-            ),
+        return await _svc_get_eth_price(
+            api_kind=api_kind,
+            network=network,
+            api_key=api_key,
+            http=http,
+            _endpoint_builder=endpoint,
         )
 
     async def chain_size(
