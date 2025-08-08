@@ -70,7 +70,7 @@ async def get_address_balance(
             if _telemetry is not None:
                 duration_ms = int((monotonic() - start) * 1000)
                 await _telemetry.record_event(
-                    'account.get_balance.duration',
+                    'account.get_address_balance.duration',
                     {'api_kind': api_kind, 'network': network, 'duration_ms': duration_ms},
                 )
 
@@ -82,7 +82,7 @@ async def get_address_balance(
     except Exception as exc:  # noqa: BLE001
         if _telemetry is not None:
             await _telemetry.record_error(
-                'get_address_balance.error',
+                'account.get_address_balance.error',
                 exc,
                 {
                     'api_kind': api_kind,
@@ -108,7 +108,7 @@ async def get_address_balance(
 
     if _telemetry is not None:
         await _telemetry.record_event(
-            'get_address_balance.ok',
+            'account.get_address_balance.ok',
             {
                 'api_kind': api_kind,
                 'network': network,
@@ -157,7 +157,7 @@ async def get_address_balances(
             if _telemetry is not None:
                 duration_ms = int((monotonic() - start) * 1000)
                 await _telemetry.record_event(
-                    'account.get_balances.duration',
+                    'account.get_address_balances.duration',
                     {'api_kind': api_kind, 'network': network, 'duration_ms': duration_ms},
                 )
 
@@ -180,7 +180,7 @@ async def get_address_balances(
             out = [r for r in result if isinstance(r, dict)]
             if _telemetry is not None:
                 await _telemetry.record_event(
-                    'get_address_balances.ok',
+                    'account.get_address_balances.ok',
                     {'api_kind': api_kind, 'network': network, 'items': len(out)},
                 )
             return out
@@ -188,7 +188,7 @@ async def get_address_balances(
         out = [r for r in response if isinstance(r, dict)]
         if _telemetry is not None:
             await _telemetry.record_event(
-                'get_address_balances.ok',
+                'account.get_address_balances.ok',
                 {'api_kind': api_kind, 'network': network, 'items': len(out)},
             )
         return out
@@ -260,7 +260,7 @@ async def get_normal_transactions(
             out = [r for r in result if isinstance(r, dict)]
             if _telemetry is not None:
                 await _telemetry.record_event(
-                    'get_normal_transactions.ok',
+                    'account.get_normal_transactions.ok',
                     {'api_kind': api_kind, 'network': network, 'items': len(out)},
                 )
             return out
@@ -268,7 +268,7 @@ async def get_normal_transactions(
         out = [r for r in response if isinstance(r, dict)]
         if _telemetry is not None:
             await _telemetry.record_event(
-                'get_normal_transactions.ok',
+                'account.get_normal_transactions.ok',
                 {'api_kind': api_kind, 'network': network, 'items': len(out)},
             )
         return out
@@ -342,7 +342,7 @@ async def get_internal_transactions(
             out = [r for r in result if isinstance(r, dict)]
             if _telemetry is not None:
                 await _telemetry.record_event(
-                    'get_internal_transactions.ok',
+                    'account.get_internal_transactions.ok',
                     {'api_kind': api_kind, 'network': network, 'items': len(out)},
                 )
             return out
@@ -350,7 +350,7 @@ async def get_internal_transactions(
         out = [r for r in response if isinstance(r, dict)]
         if _telemetry is not None:
             await _telemetry.record_event(
-                'get_internal_transactions.ok',
+                'account.get_internal_transactions.ok',
                 {'api_kind': api_kind, 'network': network, 'items': len(out)},
             )
         return out
@@ -426,7 +426,7 @@ async def get_token_transfers(
             out = [r for r in result if isinstance(r, dict)]
             if _telemetry is not None:
                 await _telemetry.record_event(
-                    'get_token_transfers.ok',
+                    'account.get_token_transfers.ok',
                     {'api_kind': api_kind, 'network': network, 'items': len(out)},
                 )
             return out
@@ -434,7 +434,7 @@ async def get_token_transfers(
         out = [r for r in response if isinstance(r, dict)]
         if _telemetry is not None:
             await _telemetry.record_event(
-                'get_token_transfers.ok',
+                'account.get_token_transfers.ok',
                 {'api_kind': api_kind, 'network': network, 'items': len(out)},
             )
         return out
@@ -502,7 +502,7 @@ async def get_mined_blocks(
             out = [r for r in result if isinstance(r, dict)]
             if _telemetry is not None:
                 await _telemetry.record_event(
-                    'get_mined_blocks.ok',
+                    'account.get_mined_blocks.ok',
                     {'api_kind': api_kind, 'network': network, 'items': len(out)},
                 )
             return out
@@ -510,7 +510,7 @@ async def get_mined_blocks(
         out = [r for r in response if isinstance(r, dict)]
         if _telemetry is not None:
             await _telemetry.record_event(
-                'get_mined_blocks.ok',
+                'account.get_mined_blocks.ok',
                 {'api_kind': api_kind, 'network': network, 'items': len(out)},
             )
         return out
@@ -582,7 +582,7 @@ async def get_beacon_chain_withdrawals(
             out = [r for r in result if isinstance(r, dict)]
             if _telemetry is not None:
                 await _telemetry.record_event(
-                    'get_beacon_chain_withdrawals.ok',
+                    'account.get_beacon_chain_withdrawals.ok',
                     {'api_kind': api_kind, 'network': network, 'items': len(out)},
                 )
             return out
@@ -590,7 +590,7 @@ async def get_beacon_chain_withdrawals(
         out = [r for r in response if isinstance(r, dict)]
         if _telemetry is not None:
             await _telemetry.record_event(
-                'get_beacon_chain_withdrawals.ok',
+                'account.get_beacon_chain_withdrawals.ok',
                 {'api_kind': api_kind, 'network': network, 'items': len(out)},
             )
         return out
@@ -633,7 +633,7 @@ async def get_account_balance_by_blockno(
             if _telemetry is not None:
                 duration_ms = int((monotonic() - start) * 1000)
                 await _telemetry.record_event(
-                    'account.get_balance_by_blockno.duration',
+                    'account.get_account_balance_by_blockno.duration',
                     {'api_kind': api_kind, 'network': network, 'duration_ms': duration_ms},
                 )
 

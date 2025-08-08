@@ -4,6 +4,18 @@ from typing import Any
 from aiochainscan.adapters.aiohttp_client import AiohttpClient
 from aiochainscan.adapters.endpoint_builder_urlbuilder import UrlBuilderEndpoint
 from aiochainscan.adapters.structlog_telemetry import StructlogTelemetry
+from aiochainscan.capabilities import (
+    FEATURE_SUPPORT as _FEATURE_SUPPORT_SRC,
+)
+from aiochainscan.capabilities import (
+    get_supported_features as _caps_get_supported_features,
+)
+from aiochainscan.capabilities import (
+    get_supported_scanners as _caps_get_supported_scanners,
+)
+from aiochainscan.capabilities import (
+    is_feature_supported as _caps_is_feature_supported,
+)
 from aiochainscan.client import Client  # noqa: F401
 from aiochainscan.config import ChainScanConfig, ScannerConfig, config  # noqa: F401
 from aiochainscan.domain.dto import (
@@ -279,6 +291,11 @@ __all__ = [
     'get_daily_total_gas_used_typed',
     'get_daily_average_gas_price_typed',
     'get_eth_price_typed',
+    # Capabilities facade (read-only)
+    'list_feature_matrix',
+    'is_feature_supported',
+    'get_supported_scanners_for_feature',
+    'get_supported_features_for',
 ]
 
 
@@ -318,6 +335,36 @@ async def get_balance(
         )
     finally:
         await http.aclose()
+
+
+# --- Capabilities read-only facade ---
+
+
+def list_feature_matrix() -> dict[str, set[tuple[str, str]]]:
+    """Return a read-only snapshot of feature→(scanner, network) matrix.
+
+    Source-of-truth: `aiochainscan.capabilities.FEATURE_SUPPORT`.
+    """
+
+    return {feature: set(pairs) for feature, pairs in _FEATURE_SUPPORT_SRC.items()}
+
+
+def is_feature_supported(feature: str, scanner_id: str, network: str) -> bool:
+    """Check if a feature is supported by (scanner_id, network)."""
+
+    return _caps_is_feature_supported(feature, scanner_id, network)
+
+
+def get_supported_scanners_for_feature(feature: str) -> set[tuple[str, str]]:
+    """Get all (scanner_id, network) pairs supporting a feature."""
+
+    return _caps_get_supported_scanners(feature)
+
+
+def get_supported_features_for(scanner_id: str, network: str) -> set[str]:
+    """Get all features supported by (scanner_id, network)."""
+
+    return _caps_get_supported_features(scanner_id, network)
 
 
 async def get_block(
