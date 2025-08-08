@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+
 import requests
 from Crypto.Hash import keccak
 from eth_abi import decode
@@ -8,12 +9,8 @@ from eth_abi import decode
 # Try to import fastabi Rust backend
 try:
     from aiochainscan_fastabi import decode_input as _fast_decode_input
-    from aiochainscan_fastabi import decode_one as _fast_decode_one
-    from aiochainscan_fastabi import decode_one_direct as _fast_decode_one_direct
     from aiochainscan_fastabi import decode_many as _fast_decode_many
     from aiochainscan_fastabi import decode_many_direct as _fast_decode_many_direct
-    from aiochainscan_fastabi import decode_many_raw as _fast_decode_many_raw
-    from aiochainscan_fastabi import decode_many_flat as _fast_decode_many_flat
     from aiochainscan_fastabi import decode_many_hex as _fast_decode_many_hex
     FASTABI_AVAILABLE = True
 except ImportError:
@@ -114,25 +111,25 @@ def _decode_transaction_input_fast(transaction: dict, abi: list):
         transaction['decoded_func'] = ''
         transaction['decoded_data'] = {}
         return transaction
-    
+
     try:
         # Convert hex input to bytes
         input_hex = transaction['input']
         if input_hex.startswith('0x'):
             input_hex = input_hex[2:]
         input_bytes = bytes.fromhex(input_hex)
-        
+
         # Convert ABI to JSON string
         abi_json = json.dumps(abi)
-        
+
         # Call Rust decoder
         result_json = _fast_decode_input(input_bytes, abi_json)
         result = json.loads(result_json)
-        
+
         # Map Rust result format to Python format
         transaction['decoded_func'] = result['function_name']
         transaction['decoded_data'] = result['decoded_data']
-        
+
         return transaction
     except Exception:
         # Fallback to Python implementation on any error
@@ -290,12 +287,12 @@ def decode_transaction_inputs_batch_zero_copy(transactions: list[dict], abi: lis
     if not FASTABI_AVAILABLE or not transactions:
         # Fallback to regular batch function
         return decode_transaction_inputs_batch(transactions, abi)
-    
+
     try:
         # Prepare calldata as bytes (no hex parsing overhead)
         calldatas = []
         valid_indices = []
-        
+
         for i, tx in enumerate(transactions):
             if tx.get('input') and len(tx['input']) >= FUNCTION_SELECTOR_LENGTH:
                 input_hex = tx['input']
@@ -305,17 +302,17 @@ def decode_transaction_inputs_batch_zero_copy(transactions: list[dict], abi: lis
                 valid_indices.append(i)
             else:
                 valid_indices.append(-1)
-        
+
         if not calldatas:
             # No valid transactions
             for tx in transactions:
                 tx['decoded_func'] = ''
                 tx['decoded_data'] = {}
             return transactions
-        
+
         # Call ultimate optimized Rust function (NO JSON!)
         decoded_results = _fast_decode_many_direct(calldatas, abi)
-        
+
         # Map results back (minimal overhead)
         result_idx = 0
         for i, tx in enumerate(transactions):
@@ -327,9 +324,9 @@ def decode_transaction_inputs_batch_zero_copy(transactions: list[dict], abi: lis
             else:
                 tx['decoded_func'] = ''
                 tx['decoded_data'] = {}
-        
+
         return transactions
-        
+
     except Exception:
         # Fallback to regular batch on any error
         return decode_transaction_inputs_batch(transactions, abi)
@@ -343,32 +340,32 @@ def decode_transaction_inputs_batch_optimized(transactions: list[dict], abi: lis
     if not FASTABI_AVAILABLE or not transactions:
         # Fallback to regular batch function
         return decode_transaction_inputs_batch(transactions, abi)
-    
+
     try:
         # Extract hex inputs directly (no bytes conversion in Python)
         hex_inputs = []
         valid_indices = []
-        
+
         for i, tx in enumerate(transactions):
             if tx.get('input') and len(tx['input']) >= FUNCTION_SELECTOR_LENGTH:
                 hex_inputs.append(tx['input'])
                 valid_indices.append(i)
             else:
                 valid_indices.append(-1)
-        
+
         if not hex_inputs:
             # No valid transactions
             for tx in transactions:
                 tx['decoded_func'] = ''
                 tx['decoded_data'] = {}
             return transactions
-        
+
         # Convert ABI to JSON once
         abi_json = json.dumps(abi)
-        
+
         # Call ultimate optimized Rust function
         decoded_results = _fast_decode_many_hex(hex_inputs, abi_json)
-        
+
         # Map results back (minimal overhead)
         result_idx = 0
         for i, tx in enumerate(transactions):
@@ -380,9 +377,9 @@ def decode_transaction_inputs_batch_optimized(transactions: list[dict], abi: lis
             else:
                 tx['decoded_func'] = ''
                 tx['decoded_data'] = {}
-        
+
         return transactions
-        
+
     except Exception:
         # Fallback to regular batch on any error
         return decode_transaction_inputs_batch(transactions, abi)
@@ -392,23 +389,23 @@ def decode_transaction_inputs_batch(transactions: list[dict], abi: list) -> list
     """
     Decode multiple transaction inputs in batch for optimal performance.
     Uses fast Rust backend when available, falls back to Python implementation.
-    
+
     Args:
         transactions: List of transaction dictionaries with 'input' field
         abi: ABI definition as list of dictionaries
-        
+
     Returns:
         List of transaction dictionaries with decoded_func and decoded_data fields
     """
     if not FASTABI_AVAILABLE or not transactions:
         # Fallback to individual Python decoding
         return [decode_transaction_input(tx, abi) for tx in transactions]
-    
+
     try:
         # Prepare data for batch processing
         calldatas = []
         valid_indices = []
-        
+
         for i, tx in enumerate(transactions):
             if tx.get('input') and len(tx['input']) >= FUNCTION_SELECTOR_LENGTH:
                 input_hex = tx['input']
@@ -419,20 +416,20 @@ def decode_transaction_inputs_batch(transactions: list[dict], abi: list) -> list
             else:
                 # Mark invalid transactions
                 valid_indices.append(-1)
-        
+
         if not calldatas:
             # No valid transactions, return with empty decoded fields
             for tx in transactions:
                 tx['decoded_func'] = ''
                 tx['decoded_data'] = {}
             return transactions
-        
+
         # Convert ABI to JSON string
         abi_json = json.dumps(abi)
-        
+
         # Call optimized Rust batch decoder with GIL release
         decoded_results = _fast_decode_many(calldatas, abi_json)
-        
+
         # Map results back to transactions (optimized)
         result_idx = 0
         for i, tx in enumerate(transactions):
@@ -446,9 +443,9 @@ def decode_transaction_inputs_batch(transactions: list[dict], abi: list) -> list
                 # Invalid transaction
                 tx['decoded_func'] = ''
                 tx['decoded_data'] = {}
-        
+
         return transactions
-        
+
     except Exception:
         # Fallback to Python implementation on any error
         return [decode_transaction_input(tx, abi) for tx in transactions]
