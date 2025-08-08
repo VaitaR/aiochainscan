@@ -20,7 +20,7 @@
 ```bash
 git log --oneline -3
 7845d64 (HEAD -> main, origin/main) Merge pull request #6 from VaitaR/config-unification
-3df3e3f demo with moralis integration  
+3df3e3f demo with moralis integration
 c668e49 new config logic, routscan and blockscout added
 ```
 - ✅ Откат к исходному состоянию
@@ -82,7 +82,7 @@ https://github.com/VaitaR/aiochainscan/pull/new/optimize-transaction-fetching
 # Переключиться на ветку с оптимизацией
 git checkout optimize-transaction-fetching
 
-# Переключиться на main (чистое состояние)  
+# Переключиться на main (чистое состояние)
 git checkout main
 
 # Создать новый PR когда потребуется
