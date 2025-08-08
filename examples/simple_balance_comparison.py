@@ -14,7 +14,7 @@ All should return identical results for the same address.
 import asyncio
 import os
 
-from aiochainscan import Client
+from aiochainscan import Client, get_balance
 from aiochainscan.core.client import ChainscanClient
 from aiochainscan.core.method import Method
 
@@ -47,27 +47,27 @@ async def main():
     except Exception as e:
         print(f'   ❌ Error: {e}')
 
-    # Method 2: ChainscanClient with Etherscan v1
-    print('\n2️⃣ ChainscanClient + Etherscan v1:')
+    # Method 2: Facade (preferred)
+    print('\n2️⃣ Facade (preferred):')
     try:
-        client_v1 = ChainscanClient.from_config('etherscan', 'v1', 'eth', 'main')
-        balance2 = await client_v1.call(Method.ACCOUNT_BALANCE, address=address)
+        balance2 = await get_balance(
+            address=address, api_kind='eth', network='main', api_key=etherscan_key
+        )
         print(f'   {balance2} wei')
         print(f'   {int(balance2) / 10**18:.6f} ETH')
-        results.append(('Etherscan v1', balance2))
-        await client_v1.close()
+        results.append(('Facade', balance2))
     except Exception as e:
         print(f'   ❌ Error: {e}')
 
-    # Method 3: ChainscanClient with Etherscan v2 (multichain)
-    print('\n3️⃣ ChainscanClient + Etherscan v2 (multichain):')
+    # Method 3: ChainscanClient with Etherscan v1 (legacy-unified)
+    print('\n3️⃣ ChainscanClient + Etherscan v1 (legacy-unified):')
     try:
-        client_v2 = ChainscanClient.from_config('etherscan', 'v2', 'eth', 'main')
-        balance3 = await client_v2.call(Method.ACCOUNT_BALANCE, address=address)
+        client_v1 = ChainscanClient.from_config('etherscan', 'v1', 'eth', 'main')
+        balance3 = await client_v1.call(Method.ACCOUNT_BALANCE, address=address)
         print(f'   {balance3} wei')
         print(f'   {int(balance3) / 10**18:.6f} ETH')
-        results.append(('Etherscan v2', balance3))
-        await client_v2.close()
+        results.append(('Etherscan v1', balance3))
+        await client_v1.close()
     except Exception as e:
         print(f'   ❌ Error: {e}')
 

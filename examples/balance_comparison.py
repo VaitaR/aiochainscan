@@ -13,7 +13,7 @@ All three should return the same balance for the same address.
 import asyncio
 import os
 
-from aiochainscan import Client
+from aiochainscan import Client, get_balance
 from aiochainscan.core.client import ChainscanClient
 from aiochainscan.core.method import Method
 
@@ -52,16 +52,14 @@ async def main():
     except Exception as e:
         print(f'   ❌ Error: {e}')
 
-    # Method 2: New ChainscanClient with etherscan v1
-    print('\n2️⃣ ChainscanClient with etherscan v1:')
+    # Method 2: Facade (preferred)
+    print('\n2️⃣ Facade (preferred):')
     try:
-        client_unified = ChainscanClient.from_config(
-            scanner_name='etherscan', scanner_version='v1', scanner_id='eth', network='main'
+        balance_v2 = await get_balance(
+            address=TEST_ADDRESS, api_kind='eth', network='main', api_key=etherscan_key
         )
-        balance_v2 = await client_unified.call(Method.ACCOUNT_BALANCE, address=TEST_ADDRESS)
         print(f'   Balance: {balance_v2} wei')
         print(f'   Balance: {int(balance_v2) / 10**18:.6f} ETH')
-        await client_unified.close()
     except Exception as e:
         print(f'   ❌ Error: {e}')
 

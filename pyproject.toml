@@ -1,6 +1,6 @@
 [project]
 name = "aiochainscan"
-version = "0.1.0"
+version = "0.2.0"
 description = "Chainscan API async Python wrapper"
 authors = [
     { name = "VaitaR", email = "andrey.shivalin@gmail.com" }
@@ -40,6 +40,7 @@ dev = [
     "coveralls>=3.3.1",
     "ruff==0.4.7",
     "mypy",
+    "import-linter>=2.0.0",
 ]
 fast = [
     "maturin>=1.6,<2.0",
@@ -62,6 +63,10 @@ pythonpath = [
     "."
 ]
 asyncio_mode = "auto"
+addopts = [
+  "-m",
+  "not benchmark",
+]
 
 [tool.ruff]
 line-length = 99
@@ -114,6 +119,7 @@ source_modules = [
 ]
 forbidden_modules = [
   "aiochainscan.services",
+  "aiochainscan.domain",
 ]
 
 [[tool.importlinter.contracts]]
@@ -135,6 +141,53 @@ source_modules = [
 ]
 forbidden_modules = [
   "aiochainscan.adapters",
+]
+
+[[tool.importlinter.contracts]]
+name = "Modules do not import core/network directly or services/adapters"
+type = "forbidden"
+source_modules = [
+  "aiochainscan.modules",
+]
+forbidden_modules = [
+  "aiochainscan.services",
+  "aiochainscan.adapters",
+  "aiochainscan.core",
+  "aiochainscan.network",
+]
+
+[[tool.importlinter.contracts]]
+name = "Services do not import core or network"
+type = "forbidden"
+source_modules = [
+  "aiochainscan.services",
+]
+forbidden_modules = [
+  "aiochainscan.core",
+  "aiochainscan.network",
+]
+
+[[tool.importlinter.contracts]]
+name = "Services do not import scanners"
+type = "forbidden"
+source_modules = [
+  "aiochainscan.services",
+]
+forbidden_modules = [
+  "aiochainscan.scanners",
+]
+
+[[tool.importlinter.contracts]]
+name = "Internal packages do not import modules"
+type = "forbidden"
+source_modules = [
+  "aiochainscan.domain",
+  "aiochainscan.services",
+  "aiochainscan.adapters",
+  "aiochainscan.ports",
+]
+forbidden_modules = [
+  "aiochainscan.modules",
 ]
 
 [[tool.mypy.overrides]]
