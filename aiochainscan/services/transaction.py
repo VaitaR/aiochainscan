@@ -4,8 +4,8 @@ from collections.abc import Mapping
 from typing import Any
 
 from aiochainscan.domain.models import TxHash
+from aiochainscan.ports.endpoint_builder import EndpointBuilder
 from aiochainscan.ports.http_client import HttpClient
-from aiochainscan.url_builder import UrlBuilder
 
 
 async def get_transaction_by_hash(
@@ -15,12 +15,13 @@ async def get_transaction_by_hash(
     network: str,
     api_key: str,
     http: HttpClient,
+    _endpoint_builder: EndpointBuilder,
     extra_params: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Fetch transaction details by transaction hash via proxy endpoint."""
 
-    builder = UrlBuilder(api_key=api_key, api_kind=api_kind, network=network)
-    url: str = builder.API_URL
+    endpoint = _endpoint_builder.open(api_key=api_key, api_kind=api_kind, network=network)
+    url: str = endpoint.api_url
 
     params: dict[str, Any] = {
         'module': 'proxy',
@@ -30,7 +31,7 @@ async def get_transaction_by_hash(
     if extra_params:
         params.update({k: v for k, v in extra_params.items() if v is not None})
 
-    signed_params, headers = builder.filter_and_sign(params, headers=None)
+    signed_params, headers = endpoint.filter_and_sign(params, headers=None)
     response: Any = await http.get(url, params=signed_params, headers=headers)
 
     if isinstance(response, dict):
