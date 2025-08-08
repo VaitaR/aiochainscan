@@ -65,14 +65,21 @@ class Token(BaseModule):
         if block_no is None:
             # Prefer new service path via facade for hexagonal migration
             try:
-                from aiochainscan import get_token_balance  # lazy import to avoid cycles
+                from aiochainscan.modules.base import _facade_injection
+                from aiochainscan.services.token import get_token_balance as _svc_get_token_balance
 
-                value: int = await get_token_balance(
+                http, endpoint = _facade_injection(self._client)
+                from aiochainscan.modules.base import _resolve_api_context
+
+                api_kind, network, api_key = _resolve_api_context(self._client)
+                value: int = await _svc_get_token_balance(
                     holder=address,
                     token_contract=contract,
-                    api_kind=self._client.api_kind,
-                    network=self._client.network,
-                    api_key=self._client.api_key,
+                    api_kind=api_kind,
+                    network=network,
+                    api_key=api_key,
+                    http=http,
+                    _endpoint_builder=endpoint,
                 )
                 return str(value)
             except Exception:

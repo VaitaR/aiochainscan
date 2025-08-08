@@ -9,13 +9,16 @@ from aiochainscan.config import ChainScanConfig, ScannerConfig, config  # noqa: 
 from aiochainscan.domain.dto import (
     AddressBalanceDTO,
     BeaconWithdrawalDTO,
+    BlockDTO,
     DailySeriesDTO,
+    GasOracleDTO,
     InternalTxDTO,
     LogEntryDTO,
     MinedBlockDTO,
     NormalTxDTO,
     ProxyTxDTO,
     TokenTransferDTO,
+    TransactionDTO,
 )
 from aiochainscan.domain.models import Address, BlockNumber, TxHash  # re-export domain VOs
 from aiochainscan.ports.cache import Cache
@@ -205,6 +208,9 @@ __all__ = [
     'DailySeriesDTO',
     'ProxyTxDTO',
     'LogEntryDTO',
+    'BlockDTO',
+    'TransactionDTO',
+    'GasOracleDTO',
     # New facade helpers
     'get_daily_average_block_size',
     'get_daily_block_rewards',
@@ -254,6 +260,23 @@ __all__ = [
     'get_contract_creation',
     # Context helper
     'open_default_session',
+    # Typed facade helpers (experimental, non-breaking)
+    'get_block_typed',
+    'get_transaction_typed',
+    'get_logs_typed',
+    'get_token_balance_typed',
+    'get_gas_oracle_typed',
+    'get_daily_transaction_count_typed',
+    'get_daily_new_address_count_typed',
+    'get_daily_network_tx_fee_typed',
+    'get_daily_network_utilization_typed',
+    'get_daily_average_block_size_typed',
+    'get_daily_block_rewards_typed',
+    'get_daily_average_block_time_typed',
+    'get_daily_uncle_block_count_typed',
+    'get_daily_average_gas_limit_typed',
+    'get_daily_total_gas_used_typed',
+    'get_daily_average_gas_price_typed',
 ]
 
 
@@ -330,6 +353,218 @@ async def get_block(
         )
     finally:
         await http.aclose()
+
+
+# --- Typed facade helpers (non-breaking, return DTOs) ---
+
+
+async def get_block_typed(
+    *,
+    tag: int | str,
+    full: bool,
+    api_kind: str,
+    network: str,
+    api_key: str,
+    http: HttpClient | None = None,
+    endpoint_builder: EndpointBuilder | None = None,
+    rate_limiter: RateLimiter | None = None,
+    retry: RetryPolicy | None = None,
+    cache: Cache | None = None,
+    telemetry: Telemetry | None = None,
+) -> BlockDTO:
+    data = await get_block(
+        tag=tag,
+        full=full,
+        api_kind=api_kind,
+        network=network,
+        api_key=api_key,
+        http=http,
+        endpoint_builder=endpoint_builder,
+        rate_limiter=rate_limiter,
+        retry=retry,
+        cache=cache,
+        telemetry=telemetry,
+    )
+    return normalize_block(data)
+
+
+async def get_transaction_typed(
+    *,
+    txhash: str,
+    api_kind: str,
+    network: str,
+    api_key: str,
+    http: HttpClient | None = None,
+    endpoint_builder: EndpointBuilder | None = None,
+    rate_limiter: RateLimiter | None = None,
+    retry: RetryPolicy | None = None,
+    cache: Cache | None = None,
+    telemetry: Telemetry | None = None,
+) -> TransactionDTO:
+    data = await get_transaction(
+        txhash=txhash,
+        api_kind=api_kind,
+        network=network,
+        api_key=api_key,
+        http=http,
+        endpoint_builder=endpoint_builder,
+        rate_limiter=rate_limiter,
+        retry=retry,
+        cache=cache,
+        telemetry=telemetry,
+    )
+    return normalize_transaction(data)
+
+
+async def get_logs_typed(
+    *,
+    start_block: int | str,
+    end_block: int | str,
+    address: str,
+    api_kind: str,
+    network: str,
+    api_key: str,
+    topics: list[str] | None = None,
+    topic_operators: list[str] | None = None,
+    page: int | str | None = None,
+    offset: int | str | None = None,
+    http: HttpClient | None = None,
+    endpoint_builder: EndpointBuilder | None = None,
+    rate_limiter: RateLimiter | None = None,
+    retry: RetryPolicy | None = None,
+    telemetry: Telemetry | None = None,
+) -> list[LogEntryDTO]:
+    items = await get_logs(
+        start_block=start_block,
+        end_block=end_block,
+        address=address,
+        api_kind=api_kind,
+        network=network,
+        api_key=api_key,
+        topics=topics,
+        topic_operators=topic_operators,
+        page=page,
+        offset=offset,
+        http=http,
+        endpoint_builder=endpoint_builder,
+        rate_limiter=rate_limiter,
+        retry=retry,
+        telemetry=telemetry,
+    )
+    return normalize_logs(items)
+
+
+async def get_token_balance_typed(
+    *,
+    holder: str,
+    token_contract: str,
+    api_kind: str,
+    network: str,
+    api_key: str,
+    http: HttpClient | None = None,
+    endpoint_builder: EndpointBuilder | None = None,
+    rate_limiter: RateLimiter | None = None,
+    retry: RetryPolicy | None = None,
+    cache: Cache | None = None,
+    telemetry: Telemetry | None = None,
+) -> TokenBalanceDTO:
+    value = await get_token_balance(
+        holder=holder,
+        token_contract=token_contract,
+        api_kind=api_kind,
+        network=network,
+        api_key=api_key,
+        http=http,
+        endpoint_builder=endpoint_builder,
+        rate_limiter=rate_limiter,
+        retry=retry,
+        cache=cache,
+        telemetry=telemetry,
+    )
+    return normalize_token_balance(
+        holder=Address(holder), token_contract=Address(token_contract), value=value
+    )
+
+
+async def get_gas_oracle_typed(
+    *,
+    api_kind: str,
+    network: str,
+    api_key: str,
+    http: HttpClient | None = None,
+    endpoint_builder: EndpointBuilder | None = None,
+    rate_limiter: RateLimiter | None = None,
+    retry: RetryPolicy | None = None,
+    cache: Cache | None = None,
+    telemetry: Telemetry | None = None,
+) -> GasOracleDTO:
+    data = await get_gas_oracle(
+        api_kind=api_kind,
+        network=network,
+        api_key=api_key,
+        http=http,
+        endpoint_builder=endpoint_builder,
+        rate_limiter=rate_limiter,
+        retry=retry,
+        cache=cache,
+        telemetry=telemetry,
+    )
+    return normalize_gas_oracle(data)
+
+
+async def get_daily_transaction_count_typed(**kwargs: Any) -> list[DailySeriesDTO]:
+    items = await get_daily_transaction_count(**kwargs)
+    return normalize_daily_transaction_count(items)
+
+
+async def get_daily_new_address_count_typed(**kwargs: Any) -> list[DailySeriesDTO]:
+    items = await get_daily_new_address_count(**kwargs)
+    return normalize_daily_new_address_count(items)
+
+
+async def get_daily_network_tx_fee_typed(**kwargs: Any) -> list[DailySeriesDTO]:
+    items = await get_daily_network_tx_fee(**kwargs)
+    return normalize_daily_network_tx_fee(items)
+
+
+async def get_daily_network_utilization_typed(**kwargs: Any) -> list[DailySeriesDTO]:
+    items = await get_daily_network_utilization(**kwargs)
+    return normalize_daily_network_utilization(items)
+
+
+async def get_daily_average_block_size_typed(**kwargs: Any) -> list[DailySeriesDTO]:
+    items = await get_daily_average_block_size(**kwargs)
+    return normalize_daily_average_block_size(items)
+
+
+async def get_daily_block_rewards_typed(**kwargs: Any) -> list[DailySeriesDTO]:
+    items = await get_daily_block_rewards(**kwargs)
+    return normalize_daily_block_rewards(items)
+
+
+async def get_daily_average_block_time_typed(**kwargs: Any) -> list[DailySeriesDTO]:
+    items = await get_daily_average_block_time(**kwargs)
+    return normalize_daily_average_block_time(items)
+
+
+async def get_daily_uncle_block_count_typed(**kwargs: Any) -> list[DailySeriesDTO]:
+    items = await get_daily_uncle_block_count(**kwargs)
+    return normalize_daily_uncle_block_count(items)
+
+
+async def get_daily_average_gas_limit_typed(**kwargs: Any) -> list[DailySeriesDTO]:
+    items = await get_daily_average_gas_limit(**kwargs)
+    return normalize_daily_average_gas_limit(items)
+
+
+async def get_daily_total_gas_used_typed(**kwargs: Any) -> list[DailySeriesDTO]:
+    items = await get_daily_total_gas_used(**kwargs)
+    return normalize_daily_total_gas_used(items)
+
+
+async def get_daily_average_gas_price_typed(**kwargs: Any) -> list[DailySeriesDTO]:
+    items = await get_daily_average_gas_price(**kwargs)
+    return normalize_daily_average_gas_price(items)
 
 
 async def get_address_balances(

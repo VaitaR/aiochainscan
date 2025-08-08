@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, cast
 
-from aiochainscan.modules.base import BaseModule
+from aiochainscan.modules.base import BaseModule, _should_force_facades
 
 
 class Logs(BaseModule):
@@ -39,21 +39,33 @@ class Logs(BaseModule):
         """
         # Prefer new service path via facade for hexagonal migration
         try:
-            from aiochainscan import get_logs as get_logs_facade  # lazy import to avoid cycles
+            from aiochainscan.modules.base import _facade_injection
+            from aiochainscan.services.logs import get_logs as _svc_get_logs
 
-            return await get_logs_facade(
+            http, endpoint = _facade_injection(self._client)
+            from aiochainscan.modules.base import _resolve_api_context
+
+            api_kind, network, api_key = _resolve_api_context(self._client)
+            # Preserve original topic filling for tests
+            extra = self._fill_topics(topics, topic_operators) if topics else {}
+            return await _svc_get_logs(
                 start_block=self._check_block(start_block),
                 end_block=self._check_block(end_block),
                 address=address,
-                api_kind=self._client.api_kind,
-                network=self._client.network,
-                api_key=self._client.api_key,
-                topics=topics,
-                topic_operators=topic_operators,
+                api_kind=api_kind,
+                network=network,
+                api_key=api_key,
+                http=http,
+                _endpoint_builder=endpoint,
+                topics=None,
+                topic_operators=None,
                 page=page,
                 offset=offset,
+                extra_params=extra,
             )
         except Exception:
+            if _should_force_facades():
+                raise
             result = await self._get(
                 action='getLogs',
                 address=address,

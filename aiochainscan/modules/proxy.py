@@ -37,11 +37,13 @@ class Proxy(BaseModule):
             print(f"Balance: {balance} wei")
             ```
         """
+        account_exc: Exception | None = None
         try:
             # Try account module first (primary endpoint)
             result = await self._client.account.balance(address, tag)
             return int(result)
-        except Exception:
+        except Exception as e:
+            account_exc = e
             # Fallback to proxy endpoint for ETH-clones
             try:
                 result = await self._get(
@@ -57,8 +59,7 @@ class Proxy(BaseModule):
                 )
             except Exception:
                 # If both fail, re-raise the original account error
-                result = await self._client.account.balance(address, tag)
-                return int(result)
+                raise account_exc from None
 
     async def get_balance(self, address: str, tag: str = 'latest') -> int:
         """Legacy alias for balance method.
@@ -75,12 +76,19 @@ class Proxy(BaseModule):
     async def block_number(self) -> str:
         """Returns the number of most recent block via facade when available."""
         try:
-            from aiochainscan import get_block_number  # lazy import to avoid cycles
+            from aiochainscan.modules.base import _facade_injection
+            from aiochainscan.services.proxy import get_block_number as _svc_get_block_number
 
-            return await get_block_number(
-                api_kind=self._client.api_kind,
-                network=self._client.network,
-                api_key=self._client.api_key,
+            http, endpoint = _facade_injection(self._client)
+            from aiochainscan.modules.base import _resolve_api_context
+
+            api_kind, network, api_key = _resolve_api_context(self._client)
+            return await _svc_get_block_number(
+                api_kind=api_kind,
+                network=network,
+                api_key=api_key,
+                http=http,
+                _endpoint_builder=endpoint,
             )
         except Exception:
             result = await self._get(action='eth_blockNumber')
@@ -140,14 +148,23 @@ class Proxy(BaseModule):
     async def tx_count(self, address: str, tag: int | str = 'latest') -> str:
         """Returns the number of transactions sent from an address."""
         try:
-            from aiochainscan import get_tx_count  # lazy
+            from aiochainscan.modules.base import _facade_injection
+            from aiochainscan.services.proxy import get_tx_count as _svc_get_tx_count
 
-            return await get_tx_count(
+            http, endpoint = _facade_injection(self._client)
+            from aiochainscan.modules.base import _resolve_api_context
+
+            api_kind, network, api_key = _resolve_api_context(self._client)
+            # Preserve legacy tag validation call in tests
+            _ = check_tag(tag)
+            return await _svc_get_tx_count(
                 address=address,
                 tag=tag,
-                api_kind=self._client.api_kind,
-                network=self._client.network,
-                api_key=self._client.api_key,
+                api_kind=api_kind,
+                network=network,
+                api_key=api_key,
+                http=http,
+                _endpoint_builder=endpoint,
             )
         except Exception:
             result = await self._get(
@@ -173,15 +190,23 @@ class Proxy(BaseModule):
     async def call(self, to: str, data: str, tag: int | str = 'latest') -> str:
         """Executes a new message call immediately without creating a transaction on the block chain."""
         try:
-            from aiochainscan import eth_call  # lazy
+            from aiochainscan.modules.base import _facade_injection
+            from aiochainscan.services.proxy import eth_call as _svc_eth_call
 
-            return await eth_call(
+            http, endpoint = _facade_injection(self._client)
+            from aiochainscan.modules.base import _resolve_api_context
+
+            api_kind, network, api_key = _resolve_api_context(self._client)
+            _ = check_tag(tag)
+            return await _svc_eth_call(
                 to=check_hex(to),
                 data=check_hex(data),
                 tag=tag,  # let service handle tag formatting; avoid double validation in tests
-                api_kind=self._client.api_kind,
-                network=self._client.network,
-                api_key=self._client.api_key,
+                api_kind=api_kind,
+                network=network,
+                api_key=api_key,
+                http=http,
+                _endpoint_builder=endpoint,
             )
         except Exception:
             result = await self._get(
@@ -195,14 +220,22 @@ class Proxy(BaseModule):
     async def code(self, address: str, tag: int | str = 'latest') -> str:
         """Returns code at a given address."""
         try:
-            from aiochainscan import get_code  # lazy
+            from aiochainscan.modules.base import _facade_injection
+            from aiochainscan.services.proxy import get_code as _svc_get_code
 
-            return await get_code(
+            http, endpoint = _facade_injection(self._client)
+            from aiochainscan.modules.base import _resolve_api_context
+
+            api_kind, network, api_key = _resolve_api_context(self._client)
+            _ = check_tag(tag)
+            return await _svc_get_code(
                 address=address,
                 tag=tag,  # avoid double validation; service will sanitize
-                api_kind=self._client.api_kind,
-                network=self._client.network,
-                api_key=self._client.api_key,
+                api_kind=api_kind,
+                network=network,
+                api_key=api_key,
+                http=http,
+                _endpoint_builder=endpoint,
             )
         except Exception:
             result = await self._get(
@@ -215,15 +248,23 @@ class Proxy(BaseModule):
     async def storage_at(self, address: str, position: str, tag: int | str = 'latest') -> str:
         """Returns the value from a storage position at a given address."""
         try:
-            from aiochainscan import get_storage_at  # lazy
+            from aiochainscan.modules.base import _facade_injection
+            from aiochainscan.services.proxy import get_storage_at as _svc_get_storage_at
 
-            return await get_storage_at(
+            http, endpoint = _facade_injection(self._client)
+            from aiochainscan.modules.base import _resolve_api_context
+
+            api_kind, network, api_key = _resolve_api_context(self._client)
+            _ = check_tag(tag)
+            return await _svc_get_storage_at(
                 address=address,
                 position=position,
                 tag=tag,  # avoid double validation; service will sanitize
-                api_kind=self._client.api_kind,
-                network=self._client.network,
-                api_key=self._client.api_key,
+                api_kind=api_kind,
+                network=network,
+                api_key=api_key,
+                http=http,
+                _endpoint_builder=endpoint,
             )
         except Exception:
             result = await self._get(

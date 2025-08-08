@@ -756,14 +756,33 @@ The hexagonal skeleton is in place and already useful. Next focus: broaden servi
 - Migrate examples to facade usage while keeping legacy examples intact. Status: DONE.
 
 ### Phase 1.4 (facade hardening, smooth transition)
-- Route `modules/*` through facades unconditionally where stable; gradually remove legacy fallbacks without changing public signatures. Environment toggle available: set `AIOCHAINSCAN_FORCE_FACADES=1` to disable legacy fallbacks (default off). Status: IN PROGRESS.
+- Route `modules/*` through facades unconditionally where stable; gradually remove legacy fallbacks without changing public signatures. Environment toggle available: set `AIOCHAINSCAN_FORCE_FACADES=1` to disable legacy fallbacks (default off). Status: DONE for key paths (account, block, transaction, logs, token, contract, proxy) with strict raises when forced.
 - Optional deprecation messaging behind an environment flag (default off). Implemented via `AIOCHAINSCAN_DEPRECATE_MODULES=1` (default off). Status: DONE.
 - Tighten import-linter: forbid services → core/network, modules → services/adapters, and add explicit core boundary contracts. Status: services → core/network DONE; others IN PROGRESS.
 
 ### Phase 1.5 (quality/observability)
 - Keep retry/rate limit/cache defaults opt-in only; no hidden behavior changes.
 - Standardize telemetry events/fields (api_kind, network, duration_ms, items) across services.
+  - Implemented across high-traffic services (account, logs, stats, token, block, transaction, proxy, gas). Events now emit `duration_ms` for request timing and `items` for list-returning endpoints.
 - Update README with short sections: “Facades + DI”, “Normalizers/DTO”.
+ - Introduce typed DTO facades in parallel (non-breaking): `get_block_typed`, `get_transaction_typed`, `get_logs_typed`, `get_token_balance_typed`, `get_gas_oracle_typed`, and typed daily stats helpers. Keep legacy facades intact; typed versions are opt-in.
+
+#### Phase 1.5 preparation: DTO typing plan
+
+- Safe-to-type endpoints (introduce parallel `*_typed` facades, keep legacy untyped):
+  - `get_block`, `get_transaction`, `get_logs`, `get_token_balance`, daily stats series (tx count, gas used, block count), `get_gas_oracle`.
+  - Rationale: stable shapes across providers, existing normalizers already define field sets.
+- Approach:
+  - Define DTOs as `TypedDict` under `aiochainscan/domain/dto.py` and re-export via facade.
+  - Add sibling facades (e.g., `get_block_typed`) returning DTOs; keep current facades returning `dict`/`list[dict]`.
+  - Deprecation policy: mark untyped returns as deprecated in README once coverage ≥80%; remove in 2.0.
+- Endpoint shortlist for `_typed` in 1.5:
+  - Blocks: `get_block_typed`
+  - Transactions: `get_transaction_typed`
+  - Logs: `get_logs_typed`
+  - Tokens: `get_token_balance_typed`
+  - Gas: `get_gas_oracle_typed`
+  - Stats: `get_daily_tx_count_typed`, `get_daily_gas_used_typed`, `get_daily_block_count_typed`
 
 ### Phase 2.0 (major, breaking)
 - Switch service return types from `list[dict]` to strict DTOs (or introduce `*_typed` and deprecate old ones).
@@ -777,6 +796,6 @@ The hexagonal skeleton is in place and already useful. Next focus: broaden servi
 - DI parity across facades: DONE
 - Reusable session helper: DONE
 - Account/list DTOs + normalizers (incl. logs): DONE
-- Stats daily endpoints + normalizers: IN PROGRESS (most added)
+- Stats daily endpoints + normalizers: IN PROGRESS (most added). Telemetry standardized.
 - Wire legacy modules to facades: IN PROGRESS (env toggle available)
 - Import-linter tightening: IN PROGRESS (services → core/network DONE)
