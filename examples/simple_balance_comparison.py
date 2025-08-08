@@ -28,7 +28,6 @@ async def main():
 
     # Check API keys
     etherscan_key = os.getenv('ETHERSCAN_KEY')
-    oklink_key = os.getenv('OKLINK_KEY')
 
     if not etherscan_key:
         print('❌ ETHERSCAN_KEY not found')
