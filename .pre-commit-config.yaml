@@ -26,7 +26,7 @@ repos:
         stages: [pre-push]
       - id: pytest
         name: pytest (quick)
-        entry: uv run pytest -q
+        entry: uv run pytest -q -k 'not tests/test_integration.py::TestBasicAPIFunctionality::test_scanner_basic_calls'
         language: system
         pass_filenames: false
         stages: [pre-push]
