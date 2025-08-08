@@ -3,6 +3,8 @@ from aiochainscan.client import Client  # noqa: F401
 from aiochainscan.config import ChainScanConfig, ScannerConfig, config  # noqa: F401
 from aiochainscan.domain.models import Address, BlockNumber, TxHash  # re-export domain VOs
 from aiochainscan.services.account import get_address_balance  # facade use-case
+from aiochainscan.services.block import get_block_by_number  # facade use-case
+from aiochainscan.services.transaction import get_transaction_by_hash  # facade use-case
 
 __all__ = [
     'Client',
@@ -15,6 +17,8 @@ __all__ = [
     'TxHash',
     # Services (facade)
     'get_address_balance',
+    'get_block_by_number',
+    'get_transaction_by_hash',
 ]
 
 
@@ -28,6 +32,43 @@ async def get_balance(*, address: str, api_kind: str, network: str, api_key: str
     try:
         return await get_address_balance(
             address=Address(address),
+            api_kind=api_kind,
+            network=network,
+            api_key=api_key,
+            http=http,
+        )
+    finally:
+        await http.aclose()
+
+
+async def get_block(
+    *, tag: int | str, full: bool, api_kind: str, network: str, api_key: str
+) -> dict[str, any]:
+    """Fetch block by number via default adapter."""
+
+    http = AiohttpClient()
+    try:
+        return await get_block_by_number(
+            tag=tag,
+            full=full,
+            api_kind=api_kind,
+            network=network,
+            api_key=api_key,
+            http=http,
+        )
+    finally:
+        await http.aclose()
+
+
+async def get_transaction(
+    *, txhash: str, api_kind: str, network: str, api_key: str
+) -> dict[str, any]:
+    """Fetch transaction by hash via default adapter."""
+
+    http = AiohttpClient()
+    try:
+        return await get_transaction_by_hash(
+            txhash=TxHash(txhash),
             api_kind=api_kind,
             network=network,
             api_key=api_key,
