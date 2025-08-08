@@ -89,7 +89,7 @@ class GasTracker(BaseModule):
             raise FeatureNotSupportedError('gas_oracle', f'{scanner_id}:{network}')
         if isinstance(raw, dict) and 'status' not in raw:
             return {'status': '1', 'result': raw}
-        return cast(dict[str, Any], raw)
+        return raw
 
     async def daily_average_gas_limit(
         self, start_date: date, end_date: date, sort: str | None = None
