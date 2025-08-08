@@ -119,7 +119,8 @@ def normalize_log_entry(raw: dict[str, Any]) -> LogEntryDTO:
         except Exception:
             return None
 
-    topics = raw.get('topics') if isinstance(raw.get('topics'), list) else []
+    topics_value = raw.get('topics')
+    topics: list[Any] = topics_value if isinstance(topics_value, list) else []
     return {
         'address': raw.get('address', ''),
         'block_number': hex_to_int(raw.get('blockNumber')),
