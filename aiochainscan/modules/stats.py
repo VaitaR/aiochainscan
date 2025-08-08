@@ -17,6 +17,8 @@ class Stats(BaseModule):
     https://docs.etherscan.io/api-endpoints/stats-1
     """
 
+    # TODO: Deprecated in next major. Prefer facades in `aiochainscan.__init__`.
+
     @property
     def _module(self) -> str:
         return 'stats'
@@ -33,18 +35,18 @@ class Stats(BaseModule):
 
     async def eth_price(self) -> dict[str, Any]:
         """Get ETHER LastPrice Price"""
-        # Prefer new service path via facade for hexagonal migration
-        try:
-            from aiochainscan import get_eth_price  # lazy import to avoid cycles
+        from aiochainscan.modules.base import _facade_injection, _resolve_api_context
+        from aiochainscan.services.stats import get_eth_price as _svc_get_eth_price
 
-            return await get_eth_price(
-                api_kind=self._client.api_kind,
-                network=self._client.network,
-                api_key=self._client.api_key,
-            )
-        except Exception:
-            result = await self._get(action='ethprice')
-            return cast(dict[str, Any], result)
+        http, endpoint = _facade_injection(self._client)
+        api_kind, network, api_key = _resolve_api_context(self._client)
+        return await _svc_get_eth_price(
+            api_kind=api_kind,
+            network=network,
+            api_key=api_key,
+            http=http,
+            _endpoint_builder=endpoint,
+        )
 
     async def chain_size(
         self,
@@ -169,67 +171,80 @@ class Stats(BaseModule):
         self, start_date: date, end_date: date, sort: str | None = None
     ) -> dict[str, Any]:
         """Get Daily Network Transaction Fee"""
-        try:
-            from aiochainscan import get_daily_network_tx_fee  # lazy to avoid cycles
+        from aiochainscan.common import check_sort_direction
+        from aiochainscan.modules.base import _facade_injection, _resolve_api_context
+        from aiochainscan.services.stats import (
+            get_daily_network_tx_fee as _svc_get_daily_network_tx_fee,
+        )
 
-            data = await get_daily_network_tx_fee(
-                start_date=start_date,
-                end_date=end_date,
-                api_kind=self._client.api_kind,
-                network=self._client.network,
-                api_key=self._client.api_key,
-                sort=sort,
-            )
-            return cast(dict[str, Any], data)
-        except Exception:
-            result = await self._get(
-                **get_daily_stats_params('dailytxnfee', start_date, end_date, sort)
-            )
-            return cast(dict[str, Any], result)
+        http, endpoint = _facade_injection(self._client)
+        api_kind, network, api_key = _resolve_api_context(self._client)
+        # Validate sort when provided to match legacy behavior/tests
+        if sort is not None:
+            sort = check_sort_direction(sort)
+        data = await _svc_get_daily_network_tx_fee(
+            start_date=start_date,
+            end_date=end_date,
+            api_kind=api_kind,
+            network=network,
+            api_key=api_key,
+            sort=sort,
+            http=http,
+            _endpoint_builder=endpoint,
+        )
+        return cast(dict[str, Any], data)
 
     async def daily_new_address_count(
         self, start_date: date, end_date: date, sort: str | None = None
     ) -> dict[str, Any]:
         """Get Daily New Address Count"""
-        try:
-            from aiochainscan import get_daily_new_address_count  # lazy
+        from aiochainscan.common import check_sort_direction
+        from aiochainscan.modules.base import _facade_injection, _resolve_api_context
+        from aiochainscan.services.stats import (
+            get_daily_new_address_count as _svc_get_daily_new_address_count,
+        )
 
-            data = await get_daily_new_address_count(
-                start_date=start_date,
-                end_date=end_date,
-                api_kind=self._client.api_kind,
-                network=self._client.network,
-                api_key=self._client.api_key,
-                sort=sort,
-            )
-            return cast(dict[str, Any], data)
-        except Exception:
-            result = await self._get(
-                **get_daily_stats_params('dailynewaddress', start_date, end_date, sort)
-            )
-            return cast(dict[str, Any], result)
+        http, endpoint = _facade_injection(self._client)
+        api_kind, network, api_key = _resolve_api_context(self._client)
+        if sort is not None:
+            sort = check_sort_direction(sort)
+        data = await _svc_get_daily_new_address_count(
+            start_date=start_date,
+            end_date=end_date,
+            api_kind=api_kind,
+            network=network,
+            api_key=api_key,
+            sort=sort,
+            http=http,
+            _endpoint_builder=endpoint,
+        )
+        return cast(dict[str, Any], data)
 
     async def daily_network_utilization(
         self, start_date: date, end_date: date, sort: str | None = None
     ) -> dict[str, Any]:
         """Get Daily Network Utilization"""
-        try:
-            from aiochainscan import get_daily_network_utilization  # lazy
+        from aiochainscan.common import check_sort_direction
+        from aiochainscan.modules.base import _facade_injection, _resolve_api_context
+        from aiochainscan.services.stats import (
+            get_daily_network_utilization as _svc_get_daily_network_utilization,
+        )
 
-            data = await get_daily_network_utilization(
-                start_date=start_date,
-                end_date=end_date,
-                api_kind=self._client.api_kind,
-                network=self._client.network,
-                api_key=self._client.api_key,
-                sort=sort,
-            )
-            return cast(dict[str, Any], data)
-        except Exception:
-            result = await self._get(
-                **get_daily_stats_params('dailynetutilization', start_date, end_date, sort)
-            )
-            return cast(dict[str, Any], result)
+        http, endpoint = _facade_injection(self._client)
+        api_kind, network, api_key = _resolve_api_context(self._client)
+        if sort is not None:
+            sort = check_sort_direction(sort)
+        data = await _svc_get_daily_network_utilization(
+            start_date=start_date,
+            end_date=end_date,
+            api_kind=api_kind,
+            network=network,
+            api_key=api_key,
+            sort=sort,
+            http=http,
+            _endpoint_builder=endpoint,
+        )
+        return cast(dict[str, Any], data)
 
     async def daily_average_network_hash_rate(
         self, start_date: date, end_date: date, sort: str | None = None
@@ -244,23 +259,27 @@ class Stats(BaseModule):
         self, start_date: date, end_date: date, sort: str | None = None
     ) -> dict[str, Any]:
         """Get Daily Transaction Count"""
-        try:
-            from aiochainscan import get_daily_transaction_count  # lazy
+        from aiochainscan.common import check_sort_direction
+        from aiochainscan.modules.base import _facade_injection, _resolve_api_context
+        from aiochainscan.services.stats import (
+            get_daily_transaction_count as _svc_get_daily_transaction_count,
+        )
 
-            data = await get_daily_transaction_count(
-                start_date=start_date,
-                end_date=end_date,
-                api_kind=self._client.api_kind,
-                network=self._client.network,
-                api_key=self._client.api_key,
-                sort=sort,
-            )
-            return cast(dict[str, Any], data)
-        except Exception:
-            result = await self._get(
-                **get_daily_stats_params('dailytx', start_date, end_date, sort)
-            )
-            return cast(dict[str, Any], result)
+        http, endpoint = _facade_injection(self._client)
+        api_kind, network, api_key = _resolve_api_context(self._client)
+        if sort is not None:
+            sort = check_sort_direction(sort)
+        data = await _svc_get_daily_transaction_count(
+            start_date=start_date,
+            end_date=end_date,
+            api_kind=api_kind,
+            network=network,
+            api_key=api_key,
+            sort=sort,
+            http=http,
+            _endpoint_builder=endpoint,
+        )
+        return cast(dict[str, Any], data)
 
     async def daily_average_network_difficulty(
         self, start_date: date, end_date: date, sort: str | None = None

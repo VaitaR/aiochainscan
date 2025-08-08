@@ -14,8 +14,8 @@ from aiochainscan.ports.telemetry import Telemetry
 
 async def get_token_balance(
     *,
-    holder: Address,
-    token_contract: Address,
+    holder: Address | str,
+    token_contract: Address | str,
     api_kind: str,
     network: str,
     api_key: str,

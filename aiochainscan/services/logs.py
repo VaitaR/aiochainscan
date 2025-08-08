@@ -128,3 +128,12 @@ def normalize_log_entry(raw: dict[str, Any]) -> LogEntryDTO:
         'data': raw.get('data'),
         'topics': [str(t) for t in topics],
     }
+
+
+def normalize_logs(items: list[dict[str, Any]]) -> list[LogEntryDTO]:
+    """Normalize a list of raw log entries using `normalize_log_entry`."""
+    out: list[LogEntryDTO] = []
+    for item in items:
+        if isinstance(item, dict):
+            out.append(normalize_log_entry(item))
+    return out

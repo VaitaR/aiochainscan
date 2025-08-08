@@ -726,3 +726,109 @@ The hexagonal skeleton is in place and already useful. Next focus: broaden servi
   - `pytest -q tests/test_logs.py tests/test_stats.py`
   - `pytest -q tests/test_block.py tests/test_transaction.py tests/test_token.py`
 - CI remains responsible for full-suite and type checks (`mypy --strict`).
+
+## Hexagonal Architecture – Phase 1.2 Progress Update (current)
+
+### Implemented since last update
+- Contract services/facade: `getabi`, `getsourcecode`, `verifysourcecode`, `checkverifystatus`, `verifyproxycontract`, `checkproxyverification`, `getcontractcreation`. Legacy `modules/contract.py` now prefers facades with safe fallbacks.
+- Account list services/facade: multi-balance (`balancemulti`), normal txs (`txlist`), internal txs (`txlistinternal`), token transfers (ERC-20/721/1155), mined blocks, beacon withdrawals, historical balance by block (`balancehistory`). Legacy `modules/account.py` routed to facades with fallbacks.
+- Stats daily series: remaining daily endpoints surfaced via services and facades where applicable.
+- Telemetry: `StructlogTelemetry` adapter added; duration events recorded across services.
+- Import rules: initial import‑linter contracts added (services ↔ adapters forbidden, domain isolated, ports don’t import adapters).
+- Quality gates: ruff, ruff-format, mypy --strict, pytest quick path passing locally; network‑flaky integration acknowledged in CI.
+
+### Backward compatibility
+- Preserved. Legacy modules remain as thin adapters to new facades with try/fallback to original logic.
+
+### Next steps (short)
+- Modules routing: increase coverage of unconditional facade routing for stable endpoints; with `AIOCHAINSCAN_FORCE_FACADES=1` verify no hidden legacy calls in CI.
+- Telemetry: standardize events/fields across services (api_kind, network, duration_ms, items) and document in README.
+- Import-linter: keep contracts enforced in CI; consider stricter boundaries for `facade` to avoid cross-layer leakage.
+- Infra composition: expose cache/rate‑limit/retry/telemetry composition ergonomically at the facade; keep adapters opt‑in.
+- Stats coverage: validate any residual daily endpoints and add tests if gaps are found.
+
+## Hexagonal Migration – Next Steps (Phase 1.3 → 2.0)
+
+### Phase 1.3 (DI completion, non-breaking)
+- Ensure DI kwargs on all facades (http, endpoint_builder, rate_limiter, retry, cache, telemetry). Status: DONE.
+- Provide a small reusable session helper to reuse HTTP connections across multiple calls. Status: DONE (`open_default_session()`).
+- Finish DTOs/normalizers for any remaining list/aggregate endpoints; export via `aiochainscan/__init__.py`. Status: DONE.
+- Migrate examples to facade usage while keeping legacy examples intact. Status: DONE.
+
+### Phase 1.4 (facade hardening, smooth transition)
+- Route `modules/*` through facades unconditionally where stable; gradually remove legacy fallbacks without changing public signatures. Environment toggle available: set `AIOCHAINSCAN_FORCE_FACADES=1` to disable legacy fallbacks (default off). Status: DONE for key paths (account, block, transaction, logs, token, contract, proxy) with strict raises when forced.
+- Optional deprecation messaging behind an environment flag (default off). Implemented via `AIOCHAINSCAN_DEPRECATE_MODULES=1` (default off). Status: DONE.
+- Tighten import-linter: forbid services → core/network, modules → services/adapters, and add explicit core boundary contracts. Status: services → core/network DONE; others IN PROGRESS.
+
+### Phase 1.5 (quality/observability)
+- Keep retry/rate limit/cache defaults opt-in only; no hidden behavior changes.
+- Standardize telemetry events/fields (api_kind, network, duration_ms, items) across services.
+  - Implemented across high-traffic services (account, logs, stats, token, block, transaction, proxy, gas). Events now emit `duration_ms` for request timing and `items` for list-returning endpoints.
+- Update README with short sections: “Facades + DI”, “Normalizers/DTO”.
+ - Introduce typed DTO facades in parallel (non-breaking): `get_block_typed`, `get_transaction_typed`, `get_logs_typed`, `get_token_balance_typed`, `get_gas_oracle_typed`, and typed daily stats helpers. Keep legacy facades intact; typed versions are opt-in.
+
+#### Phase 1.5 preparation: DTO typing plan
+
+- Safe-to-type endpoints (introduce parallel `*_typed` facades, keep legacy untyped):
+  - `get_block`, `get_transaction`, `get_logs`, `get_token_balance`, daily stats series (tx count, gas used, block count), `get_gas_oracle`.
+  - Rationale: stable shapes across providers, existing normalizers already define field sets.
+- Approach:
+  - Define DTOs as `TypedDict` under `aiochainscan/domain/dto.py` and re-export via facade.
+  - Add sibling facades (e.g., `get_block_typed`) returning DTOs; keep current facades returning `dict`/`list[dict]`.
+  - Deprecation policy: mark untyped returns as deprecated in README once coverage ≥80%; remove in 2.0.
+- Endpoint shortlist for `_typed` in 1.5:
+  - Blocks: `get_block_typed`
+  - Transactions: `get_transaction_typed`
+  - Logs: `get_logs_typed`
+  - Tokens: `get_token_balance_typed`
+  - Gas: `get_gas_oracle_typed`
+  - Stats: `get_daily_tx_count_typed`, `get_daily_gas_used_typed`, `get_daily_block_count_typed`
+
+### Phase 2.0 (major, breaking)
+- Switch service return types from `list[dict]` to strict DTOs (or introduce `*_typed` and deprecate old ones).
+- Remove legacy `modules/*` and `network`; provide minimal shims only where essential.
+- Consolidate examples/docs around facades and DTO usage.
+
+### CI and quality gates (unchanged)
+- Pre-commit/CI: ruff, ruff-format, mypy --strict, pytest -q (benchmarks excluded by marker), import-linter.
+
+### Current checklist snapshot
+- DI parity across facades: DONE
+- Reusable session helper: DONE
+- Account/list DTOs + normalizers (incl. logs): DONE
+- Stats daily endpoints + normalizers: IN PROGRESS (most added). Telemetry standardized.
+- Wire legacy modules to facades: IN PROGRESS (env toggle available)
+- Import-linter tightening: IN PROGRESS (services → core/network DONE)
+
+## Fast migration to clean architecture (Phase 1.4 → 1.5)
+
+### Status (ready to cut over)
+- **Phase 1.4 complete**: modules route via facades by default with safe fallback; `AIOCHAINSCAN_FORCE_FACADES=1` disables fallbacks. Tests are green. Telemetry standardized: `api_kind`, `network`, `duration_ms`, `items` (for lists). Import-linter boundaries tightened and passing. README updated (Telemetry fields, Facades + DI, Normalizers/DTO).
+- **Phase 1.5 started**: parallel typed facades (`*_typed`) added; DTO exports in place; typing/deprecation plan recorded above.
+
+### Cutover checklist (fast path)
+1) Enable forced facades
+   - CI/local: set `AIOCHAINSCAN_FORCE_FACADES=1`; run targeted tests for hot paths.
+   - Example: `pytest -q tests/test_account.py tests/test_block.py tests/test_transaction.py tests/test_logs.py tests/test_token.py tests/test_stats.py`.
+
+2) Make facades the only runtime path
+   - Remove legacy fallbacks in `modules/*` while keeping public signatures intact.
+   - Keep optional deprecation hints behind `AIOCHAINSCAN_DEPRECATE_MODULES=1` until 2.0.
+
+3) Lock architectural boundaries
+   - Keep current contracts enforced; add a rule preventing internal code from importing `aiochainscan.modules` (use facades or unified core).
+   - Maintain: `services` must not import `core/network/scanners/adapters`; `modules` must not import modern layers.
+
+4) Promote typed DTO facades
+   - Prefer `*_typed` facades in docs/examples; keep untyped facades for compatibility.
+   - Mark untyped returns deprecated in docs once coverage ≥80%; removal planned for 2.0.
+
+5) Docs/examples sweep
+   - README and examples should show facades + DI and typed DTO usage first. Legacy examples remain but are not default.
+
+6) Quality gates on every step
+   - `ruff check`, `mypy --strict aiochainscan`, `pytest -q` (targeted locally, full in CI), and `import-linter` must pass.
+
+### Rollout notes
+- Default behavior stays backward compatible; forcing facades in CI catches regressions early without breaking consumers.
+- Actual removal of `modules/*` and `network.py` is reserved for Phase 2.0 with thin shims and a documented deprecation window.

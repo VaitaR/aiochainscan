@@ -7,7 +7,7 @@ from typing import Any, cast
 from aiochainscan.capabilities import is_feature_supported
 from aiochainscan.common import check_sort_direction
 from aiochainscan.exceptions import FeatureNotSupportedError
-from aiochainscan.modules.base import BaseModule
+from aiochainscan.modules.base import BaseModule, _facade_injection, _resolve_api_context
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +17,8 @@ class GasTracker(BaseModule):
 
     https://docs.etherscan.io/api-endpoints/gas-tracker
     """
+
+    # TODO: Deprecated in next major. Prefer facades in `aiochainscan.__init__`.
 
     @property
     def _module(self) -> str:
@@ -71,95 +73,92 @@ class GasTracker(BaseModule):
         if not is_feature_supported('gas_oracle', scanner_id, network):
             raise FeatureNotSupportedError('gas_oracle', f'{scanner_id}:{network}')
 
-        try:
-            from aiochainscan import get_gas_oracle  # lazy import to avoid cycles
+        http, endpoint = _facade_injection(self._client)
+        from aiochainscan.services.gas import get_gas_oracle as _svc_get_gas_oracle
 
-            return await get_gas_oracle(
-                api_kind=self._client.api_kind,
-                network=self._client.network,
-                api_key=self._client.api_key,
-            )
-        except Exception:
-            # Fallback to legacy behavior
-            response = await self._get(action='gasoracle')
-            if isinstance(response, dict) and response.get('status') != '1':
-                raise FeatureNotSupportedError('gas_oracle', f'{scanner_id}:{network}') from None
-            return cast(dict[str, Any], response)
+        api_kind, network, api_key = _resolve_api_context(self._client)
+        raw = await _svc_get_gas_oracle(
+            api_kind=api_kind,
+            network=network,
+            api_key=api_key,
+            http=http,
+            _endpoint_builder=endpoint,
+        )
+        # Service returns provider-shaped inner result or the whole dict if no 'result' wrapper.
+        if isinstance(raw, dict) and 'status' in raw and raw.get('status') != '1':
+            raise FeatureNotSupportedError('gas_oracle', f'{scanner_id}:{network}')
+        if isinstance(raw, dict) and 'status' not in raw:
+            return {'status': '1', 'result': raw}
+        return raw
 
     async def daily_average_gas_limit(
         self, start_date: date, end_date: date, sort: str | None = None
     ) -> list[dict[str, Any]]:
         """Get Daily Average Gas Limit"""
-        try:
-            from aiochainscan import get_daily_average_gas_limit  # lazy
+        http, endpoint = _facade_injection(self._client)
+        from aiochainscan.services.stats import (
+            get_daily_average_gas_limit as _svc_daily_avg_gas_limit,
+        )
 
-            data = await get_daily_average_gas_limit(
-                start_date=start_date,
-                end_date=end_date,
-                api_kind=self._client.api_kind,
-                network=self._client.network,
-                api_key=self._client.api_key,
-                sort=sort,
-            )
-            return data
-        except Exception:
-            result = await self._get(
-                module='stats',
-                action='dailyavggaslimit',
-                startdate=start_date.isoformat(),
-                enddate=end_date.isoformat(),
-                sort=check_sort_direction(sort) if sort is not None else None,
-            )
-            return list(result)
+        api_kind, network, api_key = _resolve_api_context(self._client)
+        if sort is not None:
+            sort = check_sort_direction(sort)
+        data = await _svc_daily_avg_gas_limit(
+            start_date=start_date,
+            end_date=end_date,
+            api_kind=api_kind,
+            network=network,
+            api_key=api_key,
+            sort=sort,
+            http=http,
+            _endpoint_builder=endpoint,
+        )
+        return list(data)
 
     async def daily_total_gas_used(
         self, start_date: date, end_date: date, sort: str | None = None
     ) -> dict[str, Any]:
         """Get Ethereum Daily Total Gas Used"""
-        try:
-            from aiochainscan import get_daily_total_gas_used  # lazy
+        http, endpoint = _facade_injection(self._client)
+        from aiochainscan.services.stats import (
+            get_daily_total_gas_used as _svc_daily_total_gas_used,
+        )
 
-            data = await get_daily_total_gas_used(
-                start_date=start_date,
-                end_date=end_date,
-                api_kind=self._client.api_kind,
-                network=self._client.network,
-                api_key=self._client.api_key,
-                sort=sort,
-            )
-            return cast(dict[str, Any], data)
-        except Exception:
-            result = await self._get(
-                module='stats',
-                action='dailygasused',
-                startdate=start_date.isoformat(),
-                enddate=end_date.isoformat(),
-                sort=check_sort_direction(sort) if sort is not None else None,
-            )
-            return cast(dict[str, Any], result)
+        api_kind, network, api_key = _resolve_api_context(self._client)
+        if sort is not None:
+            sort = check_sort_direction(sort)
+        data = await _svc_daily_total_gas_used(
+            start_date=start_date,
+            end_date=end_date,
+            api_kind=api_kind,
+            network=network,
+            api_key=api_key,
+            sort=sort,
+            http=http,
+            _endpoint_builder=endpoint,
+        )
+        return cast(dict[str, Any], data)
 
     async def daily_average_gas_price(
         self, start_date: date, end_date: date, sort: str | None = None
     ) -> dict[str, Any]:
         """Get Daily Average Gas Price"""
-        try:
-            from aiochainscan import get_daily_average_gas_price  # lazy
+        http, endpoint = _facade_injection(self._client)
+        from aiochainscan.services.stats import (
+            get_daily_average_gas_price as _svc_daily_avg_gas_price,
+        )
 
-            data = await get_daily_average_gas_price(
-                start_date=start_date,
-                end_date=end_date,
-                api_kind=self._client.api_kind,
-                network=self._client.network,
-                api_key=self._client.api_key,
-                sort=sort,
-            )
-            return cast(dict[str, Any], data)
-        except Exception:
-            result = await self._get(
-                module='stats',
-                action='dailyavggasprice',
-                startdate=start_date.isoformat(),
-                enddate=end_date.isoformat(),
-                sort=check_sort_direction(sort) if sort is not None else None,
-            )
-            return cast(dict[str, Any], result)
+        api_kind, network, api_key = _resolve_api_context(self._client)
+        if sort is not None:
+            sort = check_sort_direction(sort)
+        data = await _svc_daily_avg_gas_price(
+            start_date=start_date,
+            end_date=end_date,
+            api_kind=api_kind,
+            network=network,
+            api_key=api_key,
+            sort=sort,
+            http=http,
+            _endpoint_builder=endpoint,
+        )
+        return cast(dict[str, Any], data)
