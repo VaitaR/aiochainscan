@@ -62,6 +62,10 @@ pythonpath = [
     "."
 ]
 asyncio_mode = "auto"
+addopts = [
+  "-m",
+  "not benchmark",
+]
 
 [tool.ruff]
 line-length = 99
@@ -147,6 +151,17 @@ source_modules = [
 forbidden_modules = [
   "aiochainscan.services",
   "aiochainscan.adapters",
+]
+
+[[tool.importlinter.contracts]]
+name = "Services do not import core or network"
+type = "forbidden"
+source_modules = [
+  "aiochainscan.services",
+]
+forbidden_modules = [
+  "aiochainscan.core",
+  "aiochainscan.network",
 ]
 
 [[tool.mypy.overrides]]

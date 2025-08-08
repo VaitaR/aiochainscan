@@ -5,6 +5,7 @@ from time import monotonic
 from typing import Any
 
 from aiochainscan.domain.dto import (
+    AddressBalanceDTO,
     BeaconWithdrawalDTO,
     InternalTxDTO,
     MinedBlockDTO,
@@ -569,6 +570,32 @@ def normalize_beacon_withdrawals(items: list[dict[str, Any]]) -> list[BeaconWith
                 'timeStamp': _to_str(it.get('timeStamp')),
                 'address': _to_str(it.get('address')),
                 'amount': _to_str(it.get('amount')),
+            }
+        )
+    return normalized
+
+
+def normalize_address_balances(items: list[dict[str, Any]]) -> list[AddressBalanceDTO]:
+    """Normalize multi-balance response items into `AddressBalanceDTO` list.
+
+    Providers usually return entries like {'account': '0x..', 'balance': '123'}.
+    This helper coerces balance to int when possible and renames fields.
+    """
+
+    def to_int(value: Any) -> int | None:
+        try:
+            return int(value) if value is not None else None
+        except Exception:
+            return None
+
+    normalized: list[AddressBalanceDTO] = []
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        normalized.append(
+            {
+                'address': _to_str(it.get('account') or it.get('address')),
+                'balance_wei': to_int(it.get('balance')),
             }
         )
     return normalized

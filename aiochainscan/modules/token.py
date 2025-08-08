@@ -1,7 +1,7 @@
 from typing import Any
 
 from aiochainscan.common import ChainFeatures, check_tag, require_feature_support
-from aiochainscan.modules.base import BaseModule
+from aiochainscan.modules.base import BaseModule, _should_force_facades
 
 
 class Token(BaseModule):
@@ -77,6 +77,8 @@ class Token(BaseModule):
                 return str(value)
             except Exception:
                 # Fallback to legacy endpoint
+                if _should_force_facades():
+                    raise
                 result = await self._get(
                     module='account',
                     action='tokenbalance',

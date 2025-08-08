@@ -4,7 +4,7 @@ from datetime import date
 from typing import Any, cast
 
 from aiochainscan.common import check_closest_value, get_daily_stats_params
-from aiochainscan.modules.base import BaseModule
+from aiochainscan.modules.base import BaseModule, _should_force_facades
 from aiochainscan.utils.date import default_range
 
 
@@ -61,6 +61,8 @@ class Block(BaseModule):
             )
         except Exception:
             # Fallback to legacy proxy endpoint through `proxy` module if exposed
+            if _should_force_facades():
+                raise
             tag = hex(number)
             data = await self._get(
                 module='proxy', action='eth_getBlockByNumber', tag=tag, boolean=str(full).lower()
@@ -145,6 +147,8 @@ class Block(BaseModule):
             )
             return cast(dict[str, Any], data)
         except Exception:
+            if _should_force_facades():
+                raise
             result = await self._get(
                 **get_daily_stats_params('dailyavgblocksize', start_date, end_date, sort)
             )
@@ -212,6 +216,8 @@ class Block(BaseModule):
             )
             return cast(dict[str, Any], data)
         except Exception:
+            if _should_force_facades():
+                raise
             result = await self._get(
                 **get_daily_stats_params('dailyblockrewards', start_date, end_date, sort)
             )
@@ -234,6 +240,8 @@ class Block(BaseModule):
             )
             return cast(dict[str, Any], data)
         except Exception:
+            if _should_force_facades():
+                raise
             result = await self._get(
                 **get_daily_stats_params('dailyavgblocktime', start_date, end_date, sort)
             )
@@ -256,6 +264,8 @@ class Block(BaseModule):
             )
             return cast(dict[str, Any], data)
         except Exception:
+            if _should_force_facades():
+                raise
             result = await self._get(
                 **get_daily_stats_params('dailyuncleblkcount', start_date, end_date, sort)
             )
