@@ -7,7 +7,7 @@ import logging
 import os
 from collections.abc import AsyncIterator, Callable, Coroutine, Iterator
 from datetime import date, timedelta
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
 from aiochainscan.decode import decode_log_data, decode_transaction_input
 from aiochainscan.exceptions import ChainscanClientApiError
@@ -35,7 +35,9 @@ class Utils:
 
     def __init__(self, client: Client):
         self._client = client
-        self.data_model_mapping: dict[str, Callable] = {
+        self.data_model_mapping: dict[
+            str, Callable[..., Coroutine[Any, Any, list[dict[str, Any]]]]
+        ] = {
             'internal_txs': self._client.account.internal_txs,
             'normal_txs': self._client.account.normal_txs,
             'get_logs': self._client.logs.get_logs,
@@ -374,9 +376,9 @@ class Utils:
         decode_type: str = 'auto',
         max_concurrent: int = 3,
         max_offset: int = 10000,
-        *args,
-        **kwargs,
-    ) -> list[dict]:
+        *args: Any,
+        **kwargs: Any,
+    ) -> list[dict[str, Any]]:
         """Optimized fetching using priority queue and dynamic range splitting.
 
         Args:
@@ -403,7 +405,9 @@ class Utils:
 
         # Priority queue for block ranges (negative size for max-heap behavior)
         # Format: (-range_size, range_id, start_block, end_block)
-        range_queue = []
+        RangeInfo: TypeAlias = tuple[int, int, int, int]
+        RangeResult: TypeAlias = tuple[int, int, int, list[dict[str, Any]]]
+        range_queue: list[RangeInfo] = []
         range_counter = 0
 
         # Initialize with three ranges: left edge, center, right edge
@@ -443,11 +447,11 @@ class Utils:
             range_counter += 1
 
         # Results storage
-        all_elements = []
-        completed_ranges = set()
+        all_elements: list[dict[str, Any]] = []
+        completed_ranges: set[int] = set()
         semaphore = asyncio.Semaphore(max_concurrent)
 
-        async def worker(range_info):
+        async def worker(range_info: RangeInfo) -> RangeResult:
             """Worker function to process a single block range."""
             _, range_id, block_start, block_end = range_info
 
@@ -481,7 +485,7 @@ class Utils:
         # Process ranges until queue is empty
         while range_queue:
             # Get batch of ranges to process
-            current_batch = []
+            current_batch: list[RangeInfo] = []
             batch_size = min(max_concurrent, len(range_queue))
 
             for _ in range(batch_size):
@@ -493,12 +497,16 @@ class Utils:
                 break
 
             # Process batch concurrently
-            tasks = [worker(range_info) for range_info in current_batch]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
+            tasks: list[Coroutine[Any, Any, RangeResult]] = [
+                worker(range_info) for range_info in current_batch
+            ]
+            results: list[RangeResult | BaseException] = await asyncio.gather(
+                *tasks, return_exceptions=True
+            )
 
             # Process results
             for result in results:
-                if isinstance(result, Exception):
+                if isinstance(result, BaseException):
                     self._logger.error(f'Worker error: {result}')
                     continue
 
@@ -549,14 +557,14 @@ class Utils:
         # Sort by block number and remove duplicates
         if all_elements:
             # Sort by block number, then by transaction index if available
-            def sort_key(element):
-                block_num = element.get('blockNumber', '0')
+            def sort_key(element: dict[str, Any]) -> tuple[int, int]:
+                block_num: int | str = element.get('blockNumber', '0')
                 if isinstance(block_num, str) and block_num.startswith('0x'):
                     block_num = int(block_num, 16)
                 else:
                     block_num = int(block_num)
 
-                tx_index = element.get('transactionIndex', '0')
+                tx_index: int | str | None = element.get('transactionIndex', '0')
                 if isinstance(tx_index, str) and tx_index.startswith('0x'):
                     tx_index = int(tx_index, 16)
                 else:
@@ -567,8 +575,8 @@ class Utils:
             all_elements.sort(key=sort_key)
 
             # Remove duplicates based on transaction hash
-            seen_hashes = set()
-            unique_elements = []
+            seen_hashes: set[str] = set()
+            unique_elements: list[dict[str, Any]] = []
             for element in all_elements:
                 tx_hash = element.get('hash')
                 if tx_hash and tx_hash not in seen_hashes:
