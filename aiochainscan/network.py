@@ -4,14 +4,14 @@ import asyncio
 import logging
 from asyncio import AbstractEventLoop
 from contextlib import AbstractAsyncContextManager
-from typing import Any
+from typing import Any, cast
 
 import aiohttp
 from aiohttp import ClientTimeout
 from aiohttp.client import ClientSession
 from aiohttp.hdrs import METH_GET, METH_POST
 from aiohttp_retry import RetryClient, RetryOptionsBase
-from asyncio_throttle import Throttler
+from asyncio_throttle import Throttler  # type: ignore[attr-defined]
 from curl_cffi.requests import AsyncSession as cffiClientSession
 
 from aiochainscan.exceptions import (
@@ -30,7 +30,7 @@ class Network:
         loop: AbstractEventLoop | None = None,
         timeout: float | ClientTimeout | None = 10,
         proxy: str | None = None,
-        throttler: AbstractAsyncContextManager | None = None,
+        throttler: AbstractAsyncContextManager[Any] | None = None,
         retry_options: RetryOptionsBase | None = None,
         use_cffi: bool = True,
     ) -> None:
@@ -38,8 +38,10 @@ class Network:
         self._loop = loop or asyncio.get_running_loop()
         self._timeout = self._prepare_timeout(timeout)
         self._proxy = proxy
-        self._throttler = throttler or Throttler(rate_limit=5, period=1.0)
-        self._retry_client = None
+        self._throttler: AbstractAsyncContextManager[Any] = throttler or Throttler(
+            rate_limit=5, period=1.0
+        )
+        self._retry_client: Any | None = None
         self._retry_options = retry_options
         self._logger = logging.getLogger(__name__)
         self._use_cffi = use_cffi
@@ -52,28 +54,39 @@ class Network:
         else:
             return ClientTimeout(total=10)  # Default timeout
 
-    async def close(self):
+    async def close(self) -> None:
         if self._retry_client is not None:
             await self._retry_client.close()
 
-    async def get(self, params: dict = None, headers: dict = None) -> dict | list | str:
+    async def get(
+        self, params: dict[str, Any] | None = None, headers: dict[str, str] | None = None
+    ) -> dict[str, Any] | list[Any] | str:
         params, headers = self._url_builder.filter_and_sign(params, headers)
         return await self._request(METH_GET, params=params, headers=headers)
 
-    async def post(self, data: dict = None, headers: dict = None) -> dict | list | str:
+    async def post(
+        self, data: dict[str, Any] | None = None, headers: dict[str, str] | None = None
+    ) -> dict[str, Any] | list[Any] | str:
         data, headers = self._url_builder.filter_and_sign(data, headers)
         return await self._request(METH_POST, data=data, headers=headers)
 
-    def _get_retry_client(self) -> RetryClient | cffiClientSession:
+    def _get_retry_client(self) -> Any:
         if self._use_cffi:
-            return cffiClientSession(timeout=self._timeout.total)
+            total_timeout: float = (
+                float(self._timeout.total) if self._timeout.total is not None else 10.0
+            )
+            return cffiClientSession(timeout=total_timeout)
         else:
             session = ClientSession(loop=self._loop, timeout=self._timeout)
             return RetryClient(client_session=session, retry_options=self._retry_options)
 
     async def _request(
-        self, method: str, data: dict = None, params: dict = None, headers: dict = None
-    ) -> dict | list | str:
+        self,
+        method: str,
+        data: dict[str, Any] | None = None,
+        params: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> dict[str, Any] | list[Any] | str:
         if self._retry_client is None:
             self._retry_client = self._get_retry_client()
 
@@ -86,7 +99,11 @@ class Network:
             return await self._handle_response(response)
 
     async def _cffi_request(
-        self, method: str, data: dict = None, params: dict = None, headers: dict = None
+        self,
+        method: str,
+        data: dict[str, Any] | None = None,
+        params: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
     ) -> Any:
         kwargs = {
             'url': self._url_builder.API_URL,
@@ -104,7 +121,11 @@ class Network:
         return response
 
     async def _aiohttp_request(
-        self, method: str, data: dict = None, params: dict = None, headers: dict = None
+        self,
+        method: str,
+        data: dict[str, Any] | None = None,
+        params: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
     ) -> aiohttp.ClientResponse:
         session_method = getattr(self._retry_client, method.lower())
         async with session_method(
@@ -113,13 +134,15 @@ class Network:
             self._logger.debug(
                 '[%s] %r %r %s', method, str(response.url), data, headers, response.status
             )
-            return response
+            return cast(aiohttp.ClientResponse, response)
 
-    async def _handle_response(self, response: aiohttp.ClientResponse | Any) -> dict | list | str:
+    async def _handle_response(
+        self, response: aiohttp.ClientResponse | Any
+    ) -> dict[str, Any] | list[Any] | str:
         try:
             if isinstance(response, aiohttp.ClientResponse):
                 status = response.status
-                response_json = await response.json()
+                response_json: Any = await response.json()
             else:  # cffiClientSession response
                 status = response.status_code
                 response_json = response.json()
@@ -133,17 +156,17 @@ class Network:
                 status,
                 await response.text()
                 if isinstance(response, aiohttp.ClientResponse)
-                else response.text,
+                else cast(str, response.text),
             ) from None
         except Exception as e:
             raise ChainscanClientError(e) from e
         else:
             self._logger.debug('Response: %r', str(response_json)[0:200])
             self._raise_if_error(response_json)
-            return response_json['result']
+            return cast(dict[str, Any] | list[Any] | str, response_json['result'])
 
     @staticmethod
-    def _raise_if_error(response_json: dict):
+    def _raise_if_error(response_json: dict[str, Any]) -> None:
         if 'status' in response_json and response_json['status'] != '1':
             message, result = response_json.get('message'), response_json.get('result')
             raise ChainscanClientApiError(message, result)

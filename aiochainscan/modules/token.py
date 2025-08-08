@@ -1,3 +1,5 @@
+from typing import Any
+
 from aiochainscan.common import ChainFeatures, check_tag, require_feature_support
 from aiochainscan.modules.base import BaseModule
 
@@ -27,20 +29,22 @@ class Token(BaseModule):
         """
         if block_no is None:
             # Use stats module for current supply
-            return await self._get(
+            result = await self._get(
                 module='stats',
                 action='tokensupply',
                 contractaddress=contract,
             )
+            return str(result)
         else:
             # Use tokensupplyhistory for historical data
             require_feature_support(self._client, ChainFeatures.TOKEN_SUPPLY_BY_BLOCK)
-            return await self._get(
+            result = await self._get(
                 module='stats',
                 action='tokensupplyhistory',
                 contractaddress=contract,
                 blockno=block_no,
             )
+            return str(result)
 
     async def token_balance(self, contract: str, address: str, block_no: int | None = None) -> str:
         """Get ERC20-Token Account Balance for TokenContractAddress.
@@ -58,23 +62,25 @@ class Token(BaseModule):
         """
         if block_no is None:
             # Use current balance endpoint
-            return await self._get(
+            result = await self._get(
                 module='account',
                 action='tokenbalance',
                 address=address,
                 contractaddress=contract,
                 tag='latest',
             )
+            return str(result)
         else:
             # Use historical balance endpoint
             require_feature_support(self._client, ChainFeatures.TOKEN_BALANCE_BY_BLOCK)
-            return await self._get(
+            result = await self._get(
                 module='account',
                 action='tokenbalancehistory',
                 address=address,
                 contractaddress=contract,
                 blockno=block_no,
             )
+            return str(result)
 
     # Keep existing methods for backwards compatibility
     async def total_supply(self, contract_address: str) -> str:
@@ -98,13 +104,14 @@ class Token(BaseModule):
             except ValueError:
                 pass
 
-        return await self._get(
+        result = await self._get(
             module='account',
             action='tokenbalance',
             address=address,
             contractaddress=contract_address,
             tag=check_tag(tag),
         )
+        return str(result)
 
     async def total_supply_by_blockno(self, contract_address: str, blockno: int) -> str:
         """Get Historical ERC20-Token TotalSupply by ContractAddress & BlockNo"""
@@ -119,63 +126,67 @@ class Token(BaseModule):
     async def token_holder_list(
         self,
         contract_address: str,
-        page: int = None,
-        offset: int = None,
-    ) -> list[dict]:
+        page: int | None = None,
+        offset: int | None = None,
+    ) -> list[dict[str, Any]]:
         """Get Token Holder List by Contract Address"""
-        return await self._get(
+        result = await self._get(
             action='tokenholderlist', contractaddress=contract_address, page=page, offset=offset
         )
+        return list(result)
 
     async def token_info(
         self,
-        contract_address: str = None,
-    ) -> list[dict]:
+        contract_address: str | None = None,
+    ) -> list[dict[str, Any]]:
         """Get Token Info by ContractAddress"""
-        return await self._get(
+        result = await self._get(
             action='tokeninfo',
             contractaddress=contract_address,
         )
+        return list(result)
 
     async def token_holding_erc20(
         self,
         address: str,
-        page: int = None,
-        offset: int = None,
-    ) -> list[dict]:
+        page: int | None = None,
+        offset: int | None = None,
+    ) -> list[dict[str, Any]]:
         """Get Address ERC20 Token Holding"""
-        return await self._get(
+        result = await self._get(
             module='account',
             action='addresstokenbalance',
             address=address,
             page=page,
             offset=offset,
         )
+        return list(result)
 
     async def token_holding_erc721(
         self,
         address: str,
-        page: int = None,
-        offset: int = None,
-    ) -> list[dict]:
+        page: int | None = None,
+        offset: int | None = None,
+    ) -> list[dict[str, Any]]:
         """Get Address ERC721 Token Holding"""
-        return await self._get(
+        result = await self._get(
             module='account',
             action='addresstokennftbalance',
             address=address,
             page=page,
             offset=offset,
         )
+        return list(result)
 
     async def token_inventory(
         self,
         address: str,
         contract_address: str,
-        page: int = None,
-        offset: int = None,
-    ) -> list[dict]:
+        page: int | None = None,
+        offset: int | None = None,
+    ) -> list[dict[str, Any]]:
         """Get Address ERC721 Token Inventory By Contract Address"""
-        return await self._get(
+        result = await self._get(
             module='account',
             action='addresstokennftinventory',
             address=address,
@@ -183,3 +194,4 @@ class Token(BaseModule):
             page=page,
             offset=offset,
         )
+        return list(result)

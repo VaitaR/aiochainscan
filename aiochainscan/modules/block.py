@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+from typing import Any, cast
 
 from aiochainscan.common import check_closest_value, get_daily_stats_params
 from aiochainscan.modules.base import BaseModule
@@ -17,7 +18,7 @@ class Block(BaseModule):
     def _module(self) -> str:
         return 'block'
 
-    async def block_reward(self, block_no: int | None = None) -> dict | None:
+    async def block_reward(self, block_no: int | None = None) -> dict[str, Any] | None:
         """Get Block And Uncle Rewards by BlockNo
 
         Args:
@@ -42,11 +43,11 @@ class Block(BaseModule):
         if isinstance(data, dict) and data.get('status') == '0':
             return None  # No reward yet / PoS block / error
 
-        return data
+        return cast(dict[str, Any], data)
 
     async def block_countdown(
         self, block_no: int | None = None, *, offset: int = 1_000
-    ) -> dict | None:
+    ) -> dict[str, Any] | None:
         """Get Estimated Block Countdown Time by BlockNo
 
         Args:
@@ -89,35 +90,37 @@ class Block(BaseModule):
             elif message.startswith('No transactions found'):
                 return None
 
-        return response
+        return cast(dict[str, Any], response)
 
-    async def est_block_countdown_time(self, blockno: int) -> dict:
+    async def est_block_countdown_time(self, blockno: int) -> dict[str, Any] | None:
         """Get Estimated Block Countdown Time by BlockNo
 
         Deprecated: Use block_countdown instead
         """
         return await self.block_countdown(blockno)
 
-    async def block_number_by_ts(self, ts: int, closest: str) -> dict:
+    async def block_number_by_ts(self, ts: int, closest: str) -> dict[str, Any]:
         """Get Block Number by Timestamp"""
-        return await self._get(
+        result = await self._get(
             action='getblocknobytime', timestamp=ts, closest=check_closest_value(closest)
         )
+        return cast(dict[str, Any], result)
 
     async def daily_average_block_size(
         self, start_date: date, end_date: date, sort: str | None = None
-    ) -> dict:
+    ) -> dict[str, Any]:
         """Get Daily Average Block Size"""
-        return await self._get(
+        result = await self._get(
             **get_daily_stats_params('dailyavgblocksize', start_date, end_date, sort)
         )
+        return cast(dict[str, Any], result)
 
     async def daily_block_count(
         self,
         start_date: date | None = None,
         end_date: date | None = None,
         sort: str | None = None,
-    ) -> dict | None:
+    ) -> dict[str, Any] | None:
         """Get Daily Block Count and Rewards
 
         Args:
@@ -155,28 +158,31 @@ class Block(BaseModule):
         ):
             return None
 
-        return response
+        return cast(dict[str, Any], response)
 
     async def daily_block_rewards(
         self, start_date: date, end_date: date, sort: str | None = None
-    ) -> dict:
+    ) -> dict[str, Any]:
         """Get Daily Block Rewards"""
-        return await self._get(
+        result = await self._get(
             **get_daily_stats_params('dailyblockrewards', start_date, end_date, sort)
         )
+        return cast(dict[str, Any], result)
 
     async def daily_average_time_for_a_block(
         self, start_date: date, end_date: date, sort: str | None = None
-    ) -> dict:
+    ) -> dict[str, Any]:
         """Get Daily Average Time for A Block to be Included in the Ethereum Blockchain"""
-        return await self._get(
+        result = await self._get(
             **get_daily_stats_params('dailyavgblocktime', start_date, end_date, sort)
         )
+        return cast(dict[str, Any], result)
 
     async def daily_uncle_block_count(
         self, start_date: date, end_date: date, sort: str | None = None
-    ) -> dict:
+    ) -> dict[str, Any]:
         """Get Daily Uncle Block Count and Rewards"""
-        return await self._get(
+        result = await self._get(
             **get_daily_stats_params('dailyuncleblkcount', start_date, end_date, sort)
         )
+        return cast(dict[str, Any], result)

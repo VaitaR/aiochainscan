@@ -23,27 +23,27 @@ from aiochainscan.url_builder import UrlBuilder
 async def main():
     # Test address with ETH balance
     address = "0x4838B106FCe9647Bdf1E7877BF73cE8B0BAD5f97"
-    
+
     print("🚀 Multi-Scanner Architecture Demonstration")
     print("=" * 70)
     print(f"📍 Target Address: {address}")
-    
+
     # Check API keys
     etherscan_key = os.getenv('ETHERSCAN_KEY')
     oklink_key = os.getenv('OKLINK_KEY')
-    basescan_key = os.getenv("BASESCAN_KEY")    
+    basescan_key = os.getenv("BASESCAN_KEY")
     print(f"🔑 ETHERSCAN_KEY: {'✅ Available' if etherscan_key else '❌ Missing'}")
     print(f"🔑 OKLINK_KEY: {'✅ Available' if oklink_key else '❌ Missing'}")
-    
+
     if not etherscan_key:
         print("\n❌ ETHERSCAN_KEY required for demo")
         return
-    
+
     results = []
-    
+
     print("\n" + "=" * 70)
     print("📊 Balance Retrieval Methods:")
-    
+
     # Method 1: Legacy Client (Etherscan via config)
     print("\n1️⃣ Legacy Client (traditional per-module approach):")
     print("   Code: client.account.balance(address)")
@@ -55,7 +55,7 @@ async def main():
         await client_legacy.close()
     except Exception as e:
         print(f"   ❌ Error: {e}")
-    
+
     # Method 2: ChainscanClient + Etherscan v1
     print("\n2️⃣ ChainscanClient + Etherscan v1:")
     print("   Code: client.call(Method.ACCOUNT_BALANCE, address=address)")
@@ -67,7 +67,7 @@ async def main():
         await client_v1.close()
     except Exception as e:
         print(f"   ❌ Error: {e}")
-    
+
     # Method 3: ChainscanClient + Etherscan v2 (multichain)
     print("\n3️⃣ ChainscanClient + Etherscan v2 (multichain support):")
     print("   Code: client.call(Method.ACCOUNT_BALANCE, address=address)")
@@ -79,7 +79,7 @@ async def main():
         await client_v2.close()
     except Exception as e:
         print(f"   ❌ Error: {e}")
-    
+
     # Method 4: Direct OKLink (if available)
     # print("\n4️⃣ ChainscanClient + OKLink (direct initialization):")
     # if oklink_key:
@@ -102,22 +102,22 @@ async def main():
     #         print(f"   ❌ Error: {e}")
     # else:
     #     print("   ⚠️  OKLINK_KEY not available - skipping")
-    
+
     # Show available scanners
     print("\n" + "=" * 70)
     print("🔧 Available Scanner Implementations:")
-    
+
     available_scanners = ChainscanClient.get_available_scanners()
     for (name, version), scanner_class in available_scanners.items():
         networks = ', '.join(sorted(scanner_class.supported_networks))
         auth_info = f"{scanner_class.auth_mode} ({scanner_class.auth_field})"
         method_count = len(scanner_class.SPECS)
         print(f"   📦 {name} {version}: {method_count} methods, networks: {networks}, auth: {auth_info}")
-    
+
     # Compare results
     print("\n" + "=" * 70)
     print("📈 Results Analysis:")
-    
+
     if len(results) >= 2:
         etherscan_results = [r for r in results if 'Etherscan' in r[0] or 'Legacy' in r[0]]
         if len(etherscan_results) >= 2:
@@ -130,7 +130,7 @@ async def main():
                 print("⚠️  Etherscan results differ (unexpected):")
                 for method, balance in etherscan_results:
                     print(f"     {method}: {balance} wei")
-        
+
         print(f"\n📊 Summary: {len(results)} successful calls")
         for method, balance in results:
             if isinstance(balance, str) and balance.isdigit():
@@ -141,7 +141,7 @@ async def main():
                 print(f"   {method}: {balance} wei ({balance_eth:.6f} ETH)")
             else:
                 print(f"   {method}: {balance} (raw)")
-    
+
     # Architecture benefits
     print("\n" + "=" * 70)
     print("🎯 Architecture Benefits Demonstrated:")
@@ -149,17 +149,17 @@ async def main():
     print("   • Same Method.ACCOUNT_BALANCE works across all scanners")
     print("   • Same client.call() pattern regardless of implementation")
     print("   • Type-safe operations with IDE autocomplete")
-    
+
     print("\n🔌 Scanner Flexibility:")
     print("   • Easy to switch between Etherscan v1 and v2")
     print("   • Support for different authentication methods (query vs header)")
     print("   • Automatic parameter mapping (address vs wallet, etc.)")
-    
+
     print("\n🚀 Future-Proof Design:")
     print("   • Add new scanners with ~30 lines of code")
     print("   • Backward compatibility with legacy Client")
     print("   • Extensible for new blockchain networks")
-    
+
     print("\n💡 Next Steps:")
     print("   • Try with other networks: client.call(Method.ACCOUNT_BALANCE, address=addr)")
     print("   • Test other methods: Method.ACCOUNT_TRANSACTIONS, Method.TX_BY_HASH")
@@ -167,4 +167,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main()) 
+    asyncio.run(main())

@@ -28,13 +28,13 @@ class EndpointSpec:
     param_map: dict[str, str] = field(default_factory=dict)
     """Maps public parameter names to scanner-specific parameter names."""
 
-    parser: Callable[[dict], Any] | None = None
+    parser: Callable[[Any], Any] | None = None
     """Optional function to transform raw API response to standardized format."""
 
     requires_api_key: bool = True
     """Whether this endpoint requires API key authentication."""
 
-    def map_params(self, **params) -> dict[str, Any]:
+    def map_params(self, **params: Any) -> dict[str, Any]:
         """
         Map public parameters to scanner-specific parameter names.
 
@@ -44,7 +44,7 @@ class EndpointSpec:
         Returns:
             Dictionary with scanner-specific parameter names
         """
-        mapped = {}
+        mapped: dict[str, Any] = {}
 
         # Add static query parameters
         mapped.update(self.query)
@@ -57,7 +57,7 @@ class EndpointSpec:
 
         return mapped
 
-    def parse_response(self, raw_response: dict) -> Any:
+    def parse_response(self, raw_response: Any) -> Any:
         """
         Parse raw API response using the configured parser.
 
@@ -73,14 +73,14 @@ class EndpointSpec:
 
 
 # Common parsers for different response formats
-def etherscan_parser(response: dict) -> Any:
+def etherscan_parser(response: dict[str, Any]) -> Any:
     """Standard Etherscan API response parser."""
     if 'result' in response:
         return response['result']
     return response
 
 
-def oklink_parser(response: dict) -> Any:
+def oklink_parser(response: dict[str, Any]) -> Any:
     """OKLink API response parser."""
     if 'data' in response and isinstance(response['data'], list) and response['data']:
         return response['data'][0]
@@ -89,7 +89,7 @@ def oklink_parser(response: dict) -> Any:
     return response
 
 
-def moralis_balance_parser(response: dict) -> int:
+def moralis_balance_parser(response: dict[str, Any]) -> int:
     """Moralis balance response parser."""
     # Moralis возвращает: {"balance": "123456789000000000000"} или в другом формате
     if 'balance' in response:
@@ -104,13 +104,13 @@ def moralis_balance_parser(response: dict) -> int:
     return 0
 
 
-def moralis_transactions_parser(response: dict) -> dict:
+def moralis_transactions_parser(response: dict[str, Any]) -> Any:
     """Moralis transactions response parser."""
     # Moralis returns: {"page": 1, "page_size": 100, "result": [...]}
     return response.get('result', response)
 
 
-def moralis_token_balances_parser(response: dict) -> list:
+def moralis_token_balances_parser(response: dict[str, Any]) -> Any:
     """Moralis token balances response parser."""
     # Moralis returns array directly or in result field
     if isinstance(response, list):
@@ -118,19 +118,25 @@ def moralis_token_balances_parser(response: dict) -> list:
     return response.get('result', response)
 
 
-def moralis_transaction_parser(response: dict) -> dict:
+def moralis_transaction_parser(response: dict[str, Any]) -> dict[str, Any]:
     """Moralis single transaction response parser."""
     # Moralis returns transaction object directly
     return response
 
 
 # Pre-defined parsers for common use cases
-PARSERS = {
+
+
+def raw_parser(response: dict[str, Any]) -> Any:
+    return response
+
+
+PARSERS: dict[str, Callable[[dict[str, Any]], Any]] = {
     'etherscan': etherscan_parser,
     'oklink': oklink_parser,
     'moralis_balance': moralis_balance_parser,
     'moralis_transactions': moralis_transactions_parser,
     'moralis_token_balances': moralis_token_balances_parser,
     'moralis_transaction': moralis_transaction_parser,
-    'raw': lambda x: x,  # No parsing
+    'raw': raw_parser,
 }

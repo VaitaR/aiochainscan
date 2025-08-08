@@ -1,6 +1,6 @@
 from datetime import date
 from enum import Enum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from aiochainscan.client import Client
@@ -23,7 +23,8 @@ class ChainFeatures(Enum):
 
 
 # Scanner feature capabilities mapping
-SCANNER_FEATURES = {
+# Scanner feature capabilities mapping
+SCANNER_FEATURES: dict[str, set[ChainFeatures]] = {
     'eth': {
         ChainFeatures.ERC20_TRANSFERS,
         ChainFeatures.TOKEN_SUPPLY_BY_BLOCK,
@@ -99,7 +100,7 @@ SCANNER_FEATURES = {
 def check_feature_support(client: 'Client', feature: ChainFeatures) -> bool:
     """Check if a feature is supported by the current scanner."""
     scanner_id = client._url_builder._api_kind
-    scanner_features = SCANNER_FEATURES.get(scanner_id, set())
+    scanner_features = SCANNER_FEATURES.get(scanner_id, set[ChainFeatures]())
     return feature in scanner_features
 
 
@@ -138,7 +139,7 @@ def check_tag(tag: str | int) -> str:
         'pending',  # for the pending state/transactions
     )
 
-    if tag in _tags:
+    if isinstance(tag, str) and tag in _tags:
         return tag
     return check_hex(tag)
 
@@ -196,11 +197,13 @@ def check_token_standard(token_standard: str) -> str:
     return check_value(token_standard, _token_standards)
 
 
-def get_daily_stats_params(action: str, start_date: date, end_date: date, sort: str) -> dict:
+def get_daily_stats_params(
+    action: str, start_date: date, end_date: date, sort: str | None
+) -> dict[str, Any]:
     return {
         'module': 'stats',
         'action': action,
         'startdate': start_date.isoformat(),
         'enddate': end_date.isoformat(),
-        'sort': check_sort_direction(sort),
+        'sort': check_sort_direction(sort) if sort is not None else None,
     }

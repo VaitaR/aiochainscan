@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
+from typing import Any, cast
 
 import requests
 from Crypto.Hash import keccak
-from eth_abi import decode
+from eth_abi.abi import decode
 
 # Try to import fastabi Rust backend
 try:
@@ -23,9 +25,9 @@ FUNCTION_SELECTOR_LENGTH = 10  # '0x' + 4 bytes
 class SignatureDatabase:
     """A class for interacting with an online signature database with in-memory caching."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.cache: dict[str, str] = {}
-        self.api_url = 'https://www.4byte.directory/api/v1/signatures/?hex_signature='
+        self.api_url: str = 'https://www.4byte.directory/api/v1/signatures/?hex_signature='
 
     def get_function_signature(self, selector: str) -> str | None:
         if selector in self.cache:
@@ -34,9 +36,10 @@ class SignatureDatabase:
         try:
             response = requests.get(f'{self.api_url}{selector}', timeout=5)
             if response.status_code == 200:
-                data = response.json()
-                if data.get('results'):
-                    signature = data['results'][0]['text_signature']
+                data = cast(dict[str, Any], response.json())
+                results = cast(list[dict[str, Any]] | None, data.get('results'))
+                if results:
+                    signature = cast(str, results[0]['text_signature'])
                     self.cache[selector] = signature  # Save to cache
                     return signature
         except requests.RequestException:
@@ -49,23 +52,27 @@ class SignatureDatabase:
 sig_db = SignatureDatabase()
 
 
-def _preprocess_abi(abi: list) -> tuple[dict, dict]:
+def _preprocess_abi(
+    abi: list[dict[str, Any]],
+) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
     """Pre-processes an ABI list into lookup maps for functions and events."""
-    function_map = {}
-    event_map = {}
+    function_map: dict[str, dict[str, Any]] = {}
+    event_map: dict[str, dict[str, Any]] = {}
 
     for item in abi:
-        item_type = item.get('type')
+        item_type = cast(str | None, item.get('type'))
         if item_type == 'function':
-            name = item.get('name', '')
-            inputs = ','.join([param['type'] for param in item.get('inputs', [])])
+            name = cast(str, item.get('name', ''))
+            inputs_list = cast(list[dict[str, Any]], item.get('inputs', []))
+            inputs = ','.join([cast(str, param['type']) for param in inputs_list])
             signature_text = f'{name}({inputs})'
             # 4-byte selector
             selector = '0x' + keccak_hash(signature_text)[:8]
             function_map[selector] = item
         elif item_type == 'event':
-            name = item.get('name', '')
-            inputs = ','.join([param['type'] for param in item.get('inputs', [])])
+            name = cast(str, item.get('name', ''))
+            inputs_list = cast(list[dict[str, Any]], item.get('inputs', []))
+            inputs = ','.join([cast(str, param['type']) for param in inputs_list])
             signature_text = f'{name}({inputs})'
             # 32-byte topic hash
             topic_hash = '0x' + keccak_hash(signature_text)
@@ -74,18 +81,18 @@ def _preprocess_abi(abi: list) -> tuple[dict, dict]:
     return function_map, event_map
 
 
-def _convert_bytes_to_hex(data):
+def _convert_bytes_to_hex(data: Any) -> Any:
     """Recursively traverses data structures and converts bytes to hex strings."""
     if isinstance(data, bytes):
         return '0x' + data.hex()
     if isinstance(data, dict):
         return {key: _convert_bytes_to_hex(value) for key, value in data.items()}
     if isinstance(data, list | tuple):
-        return type(data)([_convert_bytes_to_hex(item) for item in data])
+        return type(data)([_convert_bytes_to_hex(item) for item in cast(Sequence[Any], data)])
     return data
 
 
-def _convert_large_ints_to_strings(data):
+def _convert_large_ints_to_strings(data: Any) -> Any:
     """Recursively converts large integers to strings for compatibility."""
     if isinstance(data, int):
         # Convert integers larger than i64::MAX to strings for consistency with Rust
@@ -95,18 +102,22 @@ def _convert_large_ints_to_strings(data):
     if isinstance(data, dict):
         return {key: _convert_large_ints_to_strings(value) for key, value in data.items()}
     if isinstance(data, list | tuple):
-        return type(data)([_convert_large_ints_to_strings(item) for item in data])
+        return type(data)(
+            [_convert_large_ints_to_strings(item) for item in cast(Sequence[Any], data)]
+        )
     return data
 
 
 # Function to generate Keccak hash of the input text
-def keccak_hash(text):
+def keccak_hash(text: str) -> str:
     k = keccak.new(digest_bits=256)
     k.update(text.encode('utf-8'))
     return k.hexdigest()
 
 
-def _decode_transaction_input_fast(transaction: dict, abi: list):
+def _decode_transaction_input_fast(
+    transaction: dict[str, Any], abi: list[dict[str, Any]]
+) -> dict[str, Any]:
     """Fast Rust-based transaction input decoding."""
     if not transaction.get('input') or len(transaction['input']) < FUNCTION_SELECTOR_LENGTH:
         transaction['decoded_func'] = ''
@@ -125,7 +136,7 @@ def _decode_transaction_input_fast(transaction: dict, abi: list):
 
         # Call Rust decoder
         result_json = _fast_decode_input(input_bytes, abi_json)
-        result = json.loads(result_json)
+        result = cast(dict[str, Any], json.loads(result_json))
 
         # Map Rust result format to Python format
         transaction['decoded_func'] = result['function_name']
@@ -137,7 +148,9 @@ def _decode_transaction_input_fast(transaction: dict, abi: list):
         return _decode_transaction_input_python(transaction, abi)
 
 
-def _decode_transaction_input_python(transaction: dict, abi: list):
+def _decode_transaction_input_python(
+    transaction: dict[str, Any], abi: list[dict[str, Any]]
+) -> dict[str, Any]:
     """Python-based transaction input decoding (fallback)."""
     function_map, _ = _preprocess_abi(abi)
 
@@ -146,13 +159,15 @@ def _decode_transaction_input_python(transaction: dict, abi: list):
         transaction['decoded_data'] = {}
         return transaction
 
-    func_selector = transaction['input'][:FUNCTION_SELECTOR_LENGTH]
+    func_selector = cast(str, transaction['input'])[:FUNCTION_SELECTOR_LENGTH]
     function = function_map.get(func_selector)
 
     if function:
         # Decode input transaction
-        input_types = [param['type'] for param in function['inputs']]
-        input_data = transaction['input'][FUNCTION_SELECTOR_LENGTH:]
+        input_types = [
+            cast(str, param['type']) for param in cast(list[dict[str, Any]], function['inputs'])
+        ]
+        input_data = cast(str, transaction['input'])[FUNCTION_SELECTOR_LENGTH:]
         try:
             decoded_input = decode(input_types, bytes.fromhex(input_data))
 
@@ -160,8 +175,15 @@ def _decode_transaction_input_python(transaction: dict, abi: list):
             transaction['decoded_func'] = function['name']
 
             # Create a new dictionary for decoded transaction
-            decoded_transaction = dict(
-                zip([param['name'] for param in function['inputs']], decoded_input, strict=False)
+            decoded_transaction: dict[str, Any] = dict(
+                zip(
+                    [
+                        cast(str, param['name'])
+                        for param in cast(list[dict[str, Any]], function['inputs'])
+                    ],
+                    decoded_input,
+                    strict=False,
+                )
             )
             transaction['decoded_data'] = decoded_transaction
         except Exception:
@@ -181,7 +203,9 @@ def _decode_transaction_input_python(transaction: dict, abi: list):
 
 
 # Main function that uses fast Rust backend or falls back to Python
-def decode_transaction_input(transaction: dict, abi: list):
+def decode_transaction_input(
+    transaction: dict[str, Any], abi: list[dict[str, Any]]
+) -> dict[str, Any]:
     """
     Decode transaction input and return updated transaction with decoded data.
     Uses fast Rust backend when available, falls back to Python implementation.
@@ -192,13 +216,13 @@ def decode_transaction_input(transaction: dict, abi: list):
         return _decode_transaction_input_python(transaction, abi)
 
 
-def generate_function_abi(signature: str) -> list:
+def generate_function_abi(signature: str) -> list[dict[str, Any]]:
     # Extract the function name and parameters from the signature
     func_name, params = signature.split('(')
     params = params[:-1]  # Remove the trailing ')'
 
     # Create a list of dictionaries for each parameter
-    inputs = []
+    inputs: list[dict[str, Any]] = []
 
     # Handle empty parameters (functions with no arguments)
     if params.strip():
@@ -220,7 +244,7 @@ def generate_function_abi(signature: str) -> list:
                 inputs.append({'type': parts[0].strip(), 'name': f'param_{len(inputs)}'})
 
     # Construct the ABI
-    function_abi = [
+    function_abi: list[dict[str, Any]] = [
         {
             'type': 'function',
             'name': func_name.strip(),
@@ -234,8 +258,8 @@ def generate_function_abi(signature: str) -> list:
 
 
 def decode_transaction_input_with_function_name(
-    transaction: dict, signature_name: str = 'function_name'
-):
+    transaction: dict[str, Any], signature_name: str = 'function_name'
+) -> dict[str, Any]:
     signature = transaction[signature_name]
     function_abi = generate_function_abi(signature)
     transaction = decode_transaction_input(transaction, function_abi)
@@ -243,7 +267,7 @@ def decode_transaction_input_with_function_name(
 
 
 # Function to decode transaction input and return updated log with decoded data
-def decode_log_data(log: dict, abi: list):
+def decode_log_data(log: dict[str, Any], abi: list[dict[str, Any]]) -> dict[str, Any]:
     _, event_map = _preprocess_abi(abi)
 
     if not log.get('topics'):
@@ -254,21 +278,31 @@ def decode_log_data(log: dict, abi: list):
     event = event_map.get(receipt_event_signature_hex)
 
     if event:
-        decoded_log = {'event': event['name']}
+        decoded_log: dict[str, Any] = {'event': event['name']}
 
         # Decode indexed topics
-        indexed_params = [input for input in event['inputs'] if input['indexed']]
+        indexed_params: list[dict[str, Any]] = [
+            input for input in cast(list[dict[str, Any]], event['inputs']) if input['indexed']
+        ]
         for i, param in enumerate(indexed_params):
             topic = log['topics'][i + 1]
-            decoded_log[param['name']] = decode([param['type']], bytes.fromhex(topic[2:]))[0]
+            decoded_log[cast(str, param['name'])] = decode(
+                [cast(str, param['type'])], bytes.fromhex(cast(str, topic)[2:])
+            )[0]
 
         # Decode non-indexed data
-        non_indexed_params = [input for input in event['inputs'] if not input['indexed']]
+        non_indexed_params: list[dict[str, Any]] = [
+            input for input in cast(list[dict[str, Any]], event['inputs']) if not input['indexed']
+        ]
         if log.get('data', '0x') != '0x':
-            non_indexed_types = [param['type'] for param in non_indexed_params]
-            non_indexed_values = decode(non_indexed_types, bytes.fromhex(log['data'][2:]))
+            non_indexed_types: list[str] = [
+                cast(str, param['type']) for param in non_indexed_params
+            ]
+            non_indexed_values = decode(
+                non_indexed_types, bytes.fromhex(cast(str, log['data'])[2:])
+            )
             for i, param in enumerate(non_indexed_params):
-                decoded_log[param['name']] = non_indexed_values[i]
+                decoded_log[cast(str, param['name'])] = non_indexed_values[i]
 
         log['decoded_data'] = decoded_log
     # If no matching event was found, 'decoded_data' will not be in log
@@ -280,7 +314,9 @@ def decode_log_data(log: dict, abi: list):
     return log
 
 
-def decode_transaction_inputs_batch_zero_copy(transactions: list[dict], abi: list) -> list[dict]:
+def decode_transaction_inputs_batch_zero_copy(
+    transactions: list[dict[str, Any]], abi: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
     """
     ULTIMATE zero-copy batch decode: NO JSON, direct Python ABI, GIL release.
     This is the fastest possible implementation with minimal overhead.
@@ -291,8 +327,8 @@ def decode_transaction_inputs_batch_zero_copy(transactions: list[dict], abi: lis
 
     try:
         # Prepare calldata as bytes (no hex parsing overhead)
-        calldatas = []
-        valid_indices = []
+        calldatas: list[bytes] = []
+        valid_indices: list[int] = []
 
         for i, tx in enumerate(transactions):
             if tx.get('input') and len(tx['input']) >= FUNCTION_SELECTOR_LENGTH:
@@ -312,7 +348,7 @@ def decode_transaction_inputs_batch_zero_copy(transactions: list[dict], abi: lis
             return transactions
 
         # Call ultimate optimized Rust function (NO JSON!)
-        decoded_results = _fast_decode_many_direct(calldatas, abi)
+        decoded_results = cast(list[dict[str, Any]], _fast_decode_many_direct(calldatas, abi))
 
         # Map results back (minimal overhead)
         result_idx = 0
@@ -333,7 +369,9 @@ def decode_transaction_inputs_batch_zero_copy(transactions: list[dict], abi: lis
         return decode_transaction_inputs_batch(transactions, abi)
 
 
-def decode_transaction_inputs_batch_optimized(transactions: list[dict], abi: list) -> list[dict]:
+def decode_transaction_inputs_batch_optimized(
+    transactions: list[dict[str, Any]], abi: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
     """
     Ultra-optimized batch decode with GIL release and hex parsing in Rust.
     Uses the fastest possible path with minimal Python overhead.
@@ -344,8 +382,8 @@ def decode_transaction_inputs_batch_optimized(transactions: list[dict], abi: lis
 
     try:
         # Extract hex inputs directly (no bytes conversion in Python)
-        hex_inputs = []
-        valid_indices = []
+        hex_inputs: list[str] = []
+        valid_indices: list[int] = []
 
         for i, tx in enumerate(transactions):
             if tx.get('input') and len(tx['input']) >= FUNCTION_SELECTOR_LENGTH:
@@ -365,7 +403,7 @@ def decode_transaction_inputs_batch_optimized(transactions: list[dict], abi: lis
         abi_json = json.dumps(abi)
 
         # Call ultimate optimized Rust function
-        decoded_results = _fast_decode_many_hex(hex_inputs, abi_json)
+        decoded_results = cast(list[dict[str, Any]], _fast_decode_many_hex(hex_inputs, abi_json))
 
         # Map results back (minimal overhead)
         result_idx = 0
@@ -386,7 +424,9 @@ def decode_transaction_inputs_batch_optimized(transactions: list[dict], abi: lis
         return decode_transaction_inputs_batch(transactions, abi)
 
 
-def decode_transaction_inputs_batch(transactions: list[dict], abi: list) -> list[dict]:
+def decode_transaction_inputs_batch(
+    transactions: list[dict[str, Any]], abi: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
     """
     Decode multiple transaction inputs in batch for optimal performance.
     Uses fast Rust backend when available, falls back to Python implementation.
@@ -404,8 +444,8 @@ def decode_transaction_inputs_batch(transactions: list[dict], abi: list) -> list
 
     try:
         # Prepare data for batch processing
-        calldatas = []
-        valid_indices = []
+        calldatas: list[bytes] = []
+        valid_indices: list[int] = []
 
         for i, tx in enumerate(transactions):
             if tx.get('input') and len(tx['input']) >= FUNCTION_SELECTOR_LENGTH:
@@ -429,7 +469,7 @@ def decode_transaction_inputs_batch(transactions: list[dict], abi: list) -> list
         abi_json = json.dumps(abi)
 
         # Call optimized Rust batch decoder with GIL release
-        decoded_results = _fast_decode_many(calldatas, abi_json)
+        decoded_results = cast(list[dict[str, Any]], _fast_decode_many(calldatas, abi_json))
 
         # Map results back to transactions (optimized)
         result_idx = 0
@@ -452,7 +492,7 @@ def decode_transaction_inputs_batch(transactions: list[dict], abi: list) -> list
         return [decode_transaction_input(tx, abi) for tx in transactions]
 
 
-def decode_input_with_online_lookup(transaction: dict) -> dict:
+def decode_input_with_online_lookup(transaction: dict[str, Any]) -> dict[str, Any]:
     """
     Attempts to decode transaction input using an online signature database.
     This function makes a network request and may be slower.

@@ -38,6 +38,7 @@ dev = [
     "pre-commit>=3.5.0",
     "coveralls>=3.3.1",
     "ruff>=0.1.0",
+    "mypy",
 ]
 fast = [
     "maturin>=1.6,<2.0",
@@ -84,3 +85,43 @@ python-source = "aiochainscan"
 features = ["pyo3/extension-module"]
 
 [tool.poetry.group.dev.dependencies]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+files = ["aiochainscan"]
+plugins = []
+
+[[tool.mypy.overrides]]
+module = [
+  "aiochainscan.modules.extra.*",
+]
+ignore_errors = false
+
+[[tool.mypy.overrides]]
+module = [
+  "aiochainscan.modules.transaction",
+  "aiochainscan.modules.logs",
+  "aiochainscan.modules.contract",
+  "aiochainscan.modules.token",
+  "aiochainscan.modules.stats",
+  "aiochainscan.modules.proxy",
+  "aiochainscan.modules.gas_tracker",
+ "aiochainscan.modules.block",
+ "aiochainscan.modules.account",
+ "aiochainscan.common",
+ "aiochainscan.network",
+ "aiochainscan.config",
+ "aiochainscan.decode",
+ "aiochainscan.scanners.*",
+]
+ignore_errors = false
+
+[[tool.mypy.overrides]]
+module = [
+  "aiochainscan.aiochainscan_fastabi",
+  "aiochainscan_fastabi",
+  "eth_abi.*",
+  "requests",
+]
+ignore_missing_imports = true

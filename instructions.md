@@ -34,7 +34,7 @@ Async Python wrapper for blockchain explorer APIs (Etherscan, BSCScan, PolygonSc
    - Methods: 17 (full feature set)
    - Auth: API key via query parameter
 
-2. **EtherscanV2** - Multichain Etherscan format  
+2. **EtherscanV2** - Multichain Etherscan format
    - Networks: Ethereum, BSC, Polygon, Arbitrum, Optimism, etc.
    - Methods: 7 (core methods)
    - Auth: API key via query parameter
@@ -62,7 +62,7 @@ Async Python wrapper for blockchain explorer APIs (Etherscan, BSCScan, PolygonSc
 
 ### Legacy Module Support
 - Ethereum (etherscan.io)
-- BSC (bscscan.com)  
+- BSC (bscscan.com)
 - Polygon (polygonscan.com)
 - Optimism, Arbitrum, Fantom, Gnosis, Flare, Wemix, Chiliz, Mode, Linea, Blast, Base
 
@@ -72,9 +72,9 @@ aiochainscan/
 ├── client.py          # Legacy Client class (backward compatibility)
 ├── core/              # ✅ Unified architecture components
 │   ├── client.py      # ChainscanClient - unified interface
-│   ├── method.py      # Method enum - logical operations  
+│   ├── method.py      # Method enum - logical operations
 │   ├── endpoint.py    # EndpointSpec - endpoint configuration
-│   └── __init__.py    
+│   └── __init__.py
 ├── scanners/          # ✅ Scanner implementations (5 working)
 │   ├── base.py        # Scanner abstract base class
 │   ├── etherscan_v1.py # Etherscan API v1 (17 methods)
@@ -112,7 +112,7 @@ client = ChainscanClient.from_config('blockscout', 'v1', 'blockscout_sepolia', '
 balance = await client.call(Method.ACCOUNT_BALANCE, address='0x...')
 
 # RoutScan (Mode network)
-client = ChainscanClient.from_config('routscan', 'v1', 'routscan_mode', 'mode')  
+client = ChainscanClient.from_config('routscan', 'v1', 'routscan_mode', 'mode')
 balance = await client.call(Method.ACCOUNT_BALANCE, address='0x...')
 
 # Moralis (multi-chain Web3 API) - NEW
@@ -175,6 +175,7 @@ AIOCHAINSCAN_CONFIG_PATH=/path/to/config.json
 - **Integration Tests**: Real API calls with multiple scanners
 - **Mocking**: Network calls mocked for reliable CI/CD
 - **Error Handling**: Comprehensive error scenarios covered
+ - **Typing**: CI enforces `mypy --strict` on `aiochainscan/`. Run locally via `uv run mypy --strict aiochainscan`.
 
 ---
 
@@ -196,7 +197,7 @@ This guide is based on successful implementation of 5 different scanner types du
 @register_scanner
 class BaseScanV1(EtherscanV1):
     name = "basescan"
-    version = "v1" 
+    version = "v1"
     supported_networks = {"main", "goerli", "sepolia"}
     # All SPECS and logic inherited from EtherscanV1
 ```
@@ -210,15 +211,15 @@ class BaseScanV1(EtherscanV1):
 
 ```python
 # ✅ BlockScout implementation (successful)
-@register_scanner  
+@register_scanner
 class BlockScoutV1(EtherscanV1):
     name = "blockscout"
     supported_networks = {"sepolia", "gnosis", "polygon", ...}
-    
+
     def __init__(self, api_key: str, network: str, url_builder: UrlBuilder):
         # Custom initialization for network-specific instances
         super().__init__(api_key, network, url_builder)
-        
+
     async def call(self, method: Method, **params):
         # Custom URL building for BlockScout instances
         # Uses aiohttp directly, bypasses standard Network class
@@ -237,7 +238,7 @@ class BlockScoutV1(EtherscanV1):
 class RoutScanV1(Scanner):
     name = "routscan"
     NETWORK_CHAIN_IDS = {"mode": "34443"}
-    
+
     async def call(self, method: Method, **params):
         # Completely custom URL building
         base_url = f"https://api.routescan.io/v2/network/mainnet/evm/{self.chain_id}"
@@ -291,7 +292,7 @@ class NewScannerV1(Scanner):  # or inherit from EtherscanV1
     supported_networks = {"main", "testnet"}
     auth_mode = "query"  # or "header"
     auth_field = "apikey"  # or custom field name
-    
+
     SPECS = {
         Method.ACCOUNT_BALANCE: EndpointSpec(
             http_method="GET",
@@ -332,16 +333,16 @@ from aiochainscan.core.method import Method
 async def test_new_scanner():
     client = ChainscanClient(
         scanner_name='new_scanner',
-        scanner_version='v1', 
+        scanner_version='v1',
         api_kind='new_scanner',
         network='main',
         api_key='test_key'
     )
-    
+
     # Test basic functionality
     result = await client.call(Method.ACCOUNT_BALANCE, address='0x...')
     print(f"Result: {result}")
-    
+
     await client.close()
 
 if __name__ == "__main__":
@@ -354,7 +355,7 @@ if __name__ == "__main__":
 python3 -m ruff check . --fix
 python3 -m pytest tests/ -v
 
-# ✅ Integration test  
+# ✅ Integration test
 python3 test_new_scanner.py
 ```
 
@@ -435,7 +436,7 @@ python3 test_new_scanner.py
 3. **Multiple Addresses**: Test with various address types
 4. **Error Scenarios**: Test invalid addresses, networks, methods
 
-#### **Configuration Management**  
+#### **Configuration Management**
 1. **Environment Variables**: Support standard API key patterns
 2. **Network Validation**: Validate networks at client creation
 3. **Flexible Authentication**: Support both query and header auth
@@ -466,7 +467,7 @@ python3 test_new_scanner.py
 | Scanner | Status | Methods | Networks | Complexity | Maintenance |
 |---------|--------|---------|----------|------------|-------------|
 | **EtherscanV1** | ✅ Production | 17 | 4+ | Medium | Low |
-| **EtherscanV2** | ✅ Production | 7 | 8+ | Medium | Low |  
+| **EtherscanV2** | ✅ Production | 7 | 8+ | Medium | Low |
 | **BaseScanV1** | ✅ Production | 17 | 3 | Very Low | Minimal |
 | **BlockScoutV1** | ✅ Production | 17 | 8+ | Medium | Low |
 | **RoutScanV1** | ✅ Production | 7 | 1 | High | Medium |
@@ -503,7 +504,7 @@ class MoralisV1(Scanner):
     version = "v1"
     auth_mode = "header"
     auth_field = "X-API-Key"
-    
+
     # Custom call() method for RESTful endpoints
     # Direct aiohttp usage for non-standard URL patterns
     # Chain ID mapping for multi-chain support
@@ -511,7 +512,7 @@ class MoralisV1(Scanner):
 
 ### Supported Methods (7 core methods)
 - `ACCOUNT_BALANCE` → `/wallets/{address}/balance`
-- `ACCOUNT_TRANSACTIONS` → `/wallets/{address}/history`  
+- `ACCOUNT_TRANSACTIONS` → `/wallets/{address}/history`
 - `TOKEN_BALANCE` → `/wallets/{address}/tokens`
 - `ACCOUNT_ERC20_TRANSFERS` → `/wallets/{address}/tokens/transfers`
 - `TX_BY_HASH` → `/transaction/{txhash}`
@@ -520,7 +521,7 @@ class MoralisV1(Scanner):
 
 ### Configuration Added
 - **Config System**: Added to `BUILTIN_SCANNERS` with multi-chain mappings
-- **URL Builder**: Added Moralis domain support  
+- **URL Builder**: Added Moralis domain support
 - **Parsers**: 4 custom parsers for Moralis response formats
 - **Environment**: `MORALIS_API_KEY` support
 
@@ -536,10 +537,10 @@ for network in networks:
         api_kind='moralis', network=network,
         api_key=os.getenv('MORALIS_API_KEY')
     )
-    
+
     balance = await client.call(Method.ACCOUNT_BALANCE, address=address)
     tokens = await client.call(Method.TOKEN_BALANCE, address=address)
-    
+
     print(f"{network}: {balance} wei, {len(tokens)} tokens")
     await client.close()
 ```
@@ -554,7 +555,7 @@ for network in networks:
 
 ### Lessons Applied from Project Guidelines
 1. **Inheritance Strategy**: Used direct `Scanner` inheritance (not `EtherscanV1`) due to API differences
-2. **URL Handling**: Custom `call()` method following `RoutScanV1` pattern  
+2. **URL Handling**: Custom `call()` method following `RoutScanV1` pattern
 3. **Authentication**: Proper header-based auth implementation
 4. **Error Handling**: Chain-specific error context
 5. **Testing**: Comprehensive integration testing

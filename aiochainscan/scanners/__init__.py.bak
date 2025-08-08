@@ -15,13 +15,13 @@ SCANNER_REGISTRY: Dict[Tuple[str, str], Type[Scanner]] = {}
 def register_scanner(scanner_class: Type[Scanner]) -> Type[Scanner]:
     """
     Decorator to register a scanner implementation.
-    
+
     Args:
         scanner_class: Scanner class to register
-        
+
     Returns:
         The same scanner class (for use as decorator)
-        
+
     Example:
         @register_scanner
         class EtherscanV1(Scanner):
@@ -34,7 +34,7 @@ def register_scanner(scanner_class: Type[Scanner]) -> Type[Scanner]:
         raise ValueError(
             f"Scanner {scanner_class.name} v{scanner_class.version} already registered"
         )
-    
+
     SCANNER_REGISTRY[key] = scanner_class
     return scanner_class
 
@@ -42,14 +42,14 @@ def register_scanner(scanner_class: Type[Scanner]) -> Type[Scanner]:
 def get_scanner_class(name: str, version: str) -> Type[Scanner]:
     """
     Get scanner class by name and version.
-    
+
     Args:
         name: Scanner name (e.g., 'etherscan', 'oklink')
         version: Scanner version (e.g., 'v1', 'v2')
-        
+
     Returns:
         Scanner class
-        
+
     Raises:
         ValueError: If scanner not found
     """
@@ -59,14 +59,14 @@ def get_scanner_class(name: str, version: str) -> Type[Scanner]:
         raise ValueError(
             f"Unknown scanner {name} v{version}. Available: {', '.join(available)}"
         )
-    
+
     return SCANNER_REGISTRY[key]
 
 
 def list_scanners() -> Dict[Tuple[str, str], Type[Scanner]]:
     """
     Get all registered scanners.
-    
+
     Returns:
         Dictionary mapping (name, version) to scanner classes
     """
@@ -81,13 +81,13 @@ from .oklink_v1 import OklinkV1
 from .routscan_v1 import RoutScanV1
 from .basescan_v1 import BaseScanV1
 __all__ = [
-    'Scanner', 
-    'register_scanner', 
-    'get_scanner_class', 
+    'Scanner',
+    'register_scanner',
+    'get_scanner_class',
     'list_scanners',
     'EtherscanV1',
     'EtherscanV2',
     'OklinkV1',
     'OklinkEthV1',
     'RoutScanV1',
-    'BaseScanV1',] 
+    'BaseScanV1',]
