@@ -654,3 +654,8 @@ Keep existing modules (`core/`, `modules/`, `scanners/`, `network.py`, `url_buil
 - Add services for block/transaction reads.
 - Extract `endpoint builder` into a port and its adapter; reduce reliance on legacy modules.
 - Introduce DTO validation where responses are complex; consider Pydantic if/when it adds value.
+
+### Progress log (brief)
+- Phase 1: added domain VOs (`Address`, `TxHash`, `BlockNumber`), `HttpClient` port with `AiohttpClient` adapter, services for balance/block/transaction, and facade functions (`get_balance`, `get_block`, `get_transaction`). CI enforces import-linter.
+- Added `EndpointBuilder` port with `UrlBuilder` adapter; refactored services to use it (no direct dependency on `url_builder` inside services).
+- Added `get_token_balance` service and a simple facade helper `get_token_balance_facade` for convenience.
