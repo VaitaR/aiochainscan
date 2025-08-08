@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-BlockScout API Demo.
+BlockScout API Demo - FIXED VERSION
 
-Demonstrates the new BlockScout scanner integration with multiple networks.
+Demonstrates the BlockScout scanner integration with proper error handling
+and testing on Ethereum mainnet with Vitalik Buterin's address.
 BlockScout provides Etherscan-compatible API without requiring API keys.
 """
 
@@ -12,16 +13,206 @@ from aiochainscan.core.client import ChainscanClient
 from aiochainscan.core.method import Method
 
 
-async def main():
-    print('🔗 BlockScout Scanner Demonstration')
+async def test_blockscout_network(network_name: str, api_kind: str, test_address: str):
+    """Test a specific BlockScout network."""
+
+    print(f'\n📍 Testing {network_name}:')
+
+    try:
+        # Create client
+        client = ChainscanClient(
+            scanner_name='blockscout',
+            scanner_version='v1',
+            api_kind=api_kind,
+            network=network_name.lower(),
+            api_key='',  # BlockScout works without API key
+        )
+
+        print(f'   ✅ Client: {client}')
+
+        # Get instance domain
+        if hasattr(client._scanner, 'instance_domain'):
+            print(f'   🔗 Instance: {client._scanner.instance_domain}')
+
+        print(f'   🎯 Methods: {len(client.get_supported_methods())}')
+        print(f'   📡 Testing ACCOUNT_BALANCE for {test_address[:12]}...')
+
+        # Test account balance
+        balance = await client.call(Method.ACCOUNT_BALANCE, address=test_address)
+
+        # Proper error checking!
+        if balance is None:
+            print('   ❌ Error: Got None response (API might not support this network)')
+            result = False
+        elif isinstance(balance, dict) and 'error' in balance:
+            print(f'   ❌ Error: {balance["error"]}')
+            result = False
+        elif isinstance(balance, str | int):
+            balance_wei = int(balance)
+            balance_eth = balance_wei / 10**18
+            print(f'   ✅ Balance: {balance_eth:.6f} ETH ({balance_wei:,} wei)')
+            result = True
+        else:
+            print(f'   ⚠️  Unexpected response: {type(balance)} = {balance}')
+            result = False
+
+        await client.close()
+        return result
+
+    except Exception as e:
+        print(f'   ❌ Error: {e}')
+        return False
+
+
+async def test_blockscout_ethereum_mainnet():
+    """Test BlockScout with Ethereum mainnet using Vitalik's address."""
+
+    print("\n🔥 Testing Ethereum Mainnet with Vitalik Buterin's Address")
     print('=' * 60)
 
-    # Test addresses for different networks
-    test_addresses = {
-        'sepolia': '0x742d35Cc6634C0532925a3b8D9Fa7a3D91',  # Sepolia test address
-        'gnosis': '0x742d35Cc6634C0532925a3b8D9Fa7a3D91',  # Gnosis test address
-        'polygon': '0x742d35Cc6634C0532925a3b8D9Fa7a3D91',  # Polygon test address
-    }
+    # Vitalik Buterin's actual address
+    vitalik_address = '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045'
+
+    print(f'👤 Address: {vitalik_address}')
+    print('🔗 Network: Ethereum Mainnet')
+
+    # Check if BlockScout supports Ethereum mainnet
+    try:
+        # Try to find Ethereum mainnet BlockScout instance
+        from aiochainscan.scanners.blockscout_v1 import BlockScoutV1
+
+        print('\n📋 Available BlockScout networks:')
+        for network in sorted(BlockScoutV1.supported_networks):
+            instance = BlockScoutV1.NETWORK_INSTANCES.get(network, 'Unknown')
+            print(f'   • {network}: {instance}')
+
+        # Test if 'eth' or 'main' network exists
+        if 'eth' in BlockScoutV1.supported_networks:
+            result = await test_blockscout_network('eth', 'blockscout_eth', vitalik_address)
+        elif 'main' in BlockScoutV1.supported_networks:
+            result = await test_blockscout_network('main', 'blockscout_main', vitalik_address)
+        else:
+            print("\n❌ BlockScout doesn't support Ethereum mainnet directly")
+            print('🔍 Testing Sepolia testnet instead...')
+            result = await test_blockscout_network(
+                'sepolia', 'blockscout_sepolia', vitalik_address
+            )
+
+        return result
+
+    except Exception as e:
+        print(f'\n❌ Error testing Ethereum mainnet: {e}')
+        return False
+
+
+async def test_blockscout_comprehensive():
+    """Comprehensive test of BlockScout functionality."""
+
+    print('\n🧪 Comprehensive BlockScout Testing')
+    print('=' * 60)
+
+    # Vitalik's address for testing
+    vitalik_address = '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045'
+
+    # Test different networks
+    networks_to_test = [
+        ('sepolia', 'blockscout_sepolia'),
+        ('gnosis', 'blockscout_gnosis'),
+        ('polygon', 'blockscout_polygon'),
+    ]
+
+    results = []
+
+    for network, api_kind in networks_to_test:
+        result = await test_blockscout_network(network, api_kind, vitalik_address)
+        results.append((network, result))
+
+    return results
+
+
+async def test_blockscout_methods():
+    """Test different BlockScout methods."""
+
+    print('\n🔧 Testing BlockScout Methods')
+    print('=' * 60)
+
+    vitalik_address = '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045'
+
+    try:
+        # Use Sepolia as most likely to work
+        client = ChainscanClient(
+            scanner_name='blockscout',
+            scanner_version='v1',
+            api_kind='blockscout_sepolia',
+            network='sepolia',
+            api_key='',
+        )
+
+        print(f'🧪 Testing on Sepolia with {vitalik_address[:12]}...')
+
+        methods_to_test = [
+            Method.ACCOUNT_BALANCE,
+            Method.ACCOUNT_TRANSACTIONS,
+            Method.ACCOUNT_INTERNAL_TXS,
+            Method.ACCOUNT_ERC20_TRANSFERS,
+        ]
+
+        results = {}
+
+        for method in methods_to_test:
+            try:
+                print(f'\n📡 Testing {method}...')
+
+                if method == Method.ACCOUNT_BALANCE:
+                    response = await client.call(method, address=vitalik_address)
+                elif method in [
+                    Method.ACCOUNT_TRANSACTIONS,
+                    Method.ACCOUNT_INTERNAL_TXS,
+                    Method.ACCOUNT_ERC20_TRANSFERS,
+                ]:
+                    response = await client.call(method, address=vitalik_address, page=1, offset=5)
+                else:
+                    response = await client.call(method, address=vitalik_address)
+
+                if response is None:
+                    print('   ❌ Got None response')
+                    results[method] = False
+                elif isinstance(response, dict) and 'error' in response:
+                    print(f'   ❌ Error: {response["error"]}')
+                    results[method] = False
+                elif isinstance(response, list):
+                    print(f'   ✅ Got list with {len(response)} items')
+                    results[method] = True
+                elif isinstance(response, str | int):
+                    print(f'   ✅ Got value: {response}')
+                    results[method] = True
+                else:
+                    print(f'   ⚠️  Unexpected: {type(response)}')
+                    results[method] = False
+
+            except Exception as e:
+                print(f'   ❌ Exception: {e}')
+                results[method] = False
+
+        await client.close()
+
+        # Summary
+        successful = sum(results.values())
+        total = len(results)
+        print(f'\n📊 Method test results: {successful}/{total} successful')
+
+        return results
+
+    except Exception as e:
+        print(f'❌ Error in method testing: {e}')
+        return {}
+
+
+async def main():
+    """Main demonstration function."""
+
+    print('🔗 BlockScout Scanner Demonstration - FIXED VERSION')
+    print('=' * 60)
 
     print('🌐 BlockScout Features:')
     print('   • Etherscan-compatible API')
@@ -34,129 +225,86 @@ async def main():
     print('📦 BlockScout Scanner Capabilities:')
 
     # Show scanner info
-    blockscout_scanner = ChainscanClient.get_available_scanners()[('blockscout', 'v1')]
-    print(f'   📦 Scanner: {blockscout_scanner.name} v{blockscout_scanner.version}')
-    print(f'   🌐 Networks: {", ".join(sorted(blockscout_scanner.supported_networks))}')
-    print(f'   🔐 Auth: {blockscout_scanner.auth_mode} (API key optional)')
-    print(f'   ⚙️  Methods: {len(blockscout_scanner.SPECS)} inherited from EtherscanV1')
+    try:
+        client = ChainscanClient(
+            scanner_name='blockscout',
+            scanner_version='v1',
+            api_kind='blockscout_sepolia',
+            network='sepolia',
+            api_key='',
+        )
 
-    print('\n📋 Inherited Methods from EtherscanV1:')
-    methods = list(blockscout_scanner.SPECS.keys())
-    for i, method in enumerate(methods[:10], 1):  # Show first 10
-        method_name = str(method).replace('Method.', '')
-        print(f'   {i:2d}. {method_name}')
-    if len(methods) > 10:
-        print(f'   ... and {len(methods) - 10} more')
+        scanner = client._scanner
+        print(f'   📦 Scanner: {scanner.name} v{scanner.version}')
+        print(f'   🌐 Networks: {", ".join(sorted(scanner.supported_networks))}')
+        print(f'   🔐 Auth: {scanner.auth_mode} (API key optional)')
+        print(f'   ⚙️  Methods: {len(scanner.SPECS)} inherited from EtherscanV1')
 
+        await client.close()
+
+    except Exception as e:
+        print(f'❌ Error getting scanner info: {e}')
+
+    # Run tests
     print('\n' + '=' * 60)
-    print('🌐 Network Testing:')
 
-    # Test different BlockScout networks
-    test_networks = [
-        ('sepolia', 'Ethereum Sepolia Testnet'),
-        ('gnosis', 'Gnosis Chain'),
-        ('polygon', 'Polygon Network'),
-    ]
+    # Test 1: Ethereum mainnet (or best available)
+    mainnet_result = await test_blockscout_ethereum_mainnet()
 
-    results = []
+    # Test 2: Comprehensive network testing
+    network_results = await test_blockscout_comprehensive()
 
-    for network, description in test_networks:
-        print(f'\n📍 Testing {description}:')
+    # Test 3: Method testing
+    method_results = await test_blockscout_methods()
 
-        try:
-            # Create BlockScout client for this network
-            client = ChainscanClient(
-                scanner_name='blockscout',
-                scanner_version='v1',
-                api_kind=f'blockscout_{network}',  # Maps to config
-                network=network,
-                api_key='',  # No API key needed
-            )
-
-            print(f'   �� Client: {client}')
-            print(f'   🔗 Instance: {client._scanner.instance_domain}')
-            print(f'   🎯 Methods: {len(client.get_supported_methods())}')
-
-            # Test balance call
-            address = test_addresses[network]
-            print(f'   📡 Testing ACCOUNT_BALANCE for {address[:10]}...')
-
-            try:
-                balance = await client.call(Method.ACCOUNT_BALANCE, address=address)
-
-                if isinstance(balance, str) and balance.isdigit():
-                    eth_balance = int(balance) / 10**18
-                    print(f'   ✅ Balance: {balance} wei ({eth_balance:.6f} {client.currency})')
-                    results.append((description, balance, eth_balance))
-                else:
-                    print(f'   ✅ Response: {balance}')
-                    results.append((description, str(balance), 'N/A'))
-
-            except Exception as e:
-                print(f'   ⚠️  API call issue: {str(e)[:80]}...')
-                # This is expected for some test addresses/networks
-
-            await client.close()
-
-        except Exception as e:
-            print(f'   ❌ Client creation failed: {e}')
-
+    # Final summary
     print('\n' + '=' * 60)
-    print('🔧 BlockScout Architecture Benefits:')
+    print('📊 FIXED BlockScout Demo Results:')
 
-    print('\n✨ Etherscan Compatibility:')
-    print('   • Same API endpoints as Etherscan')
-    print('   • Same parameter structure')
-    print('   • Same response format')
-    print('   • Drop-in replacement capability')
+    print(f'\n🔥 Ethereum Test: {"✅ PASSED" if mainnet_result else "❌ FAILED"}')
 
-    print('\n🆓 No API Key Required:')
-    print('   • Public endpoints')
-    print('   • No rate limiting concerns')
-    print('   • Immediate testing capability')
-    print('   • Lower barrier to entry')
+    print('\n🌐 Network Tests:')
+    successful_networks = sum(1 for _, result in network_results if result)
+    total_networks = len(network_results)
+    for network, result in network_results:
+        status = '✅ PASSED' if result else '❌ FAILED'
+        print(f'   {network}: {status}')
+    print(f'   Total: {successful_networks}/{total_networks} networks working')
 
-    print('\n🌐 Multi-Network Support:')
-    print('   • Separate instances per network')
-    print('   • Network-specific currencies')
-    print('   • Consistent API across chains')
-    print('   • Easy network switching')
+    print('\n🔧 Method Tests:')
+    if method_results:
+        successful_methods = sum(method_results.values())
+        total_methods = len(method_results)
+        print(f'   Total: {successful_methods}/{total_methods} methods working')
 
-    print('\n🏗️  Easy Integration:')
-    print('   • Inherits all 17 methods from EtherscanV1')
-    print('   • Custom URL building for instances')
-    print('   • Automatic network mapping')
-    print('   • Unified client interface')
+        for method, result in method_results.items():
+            status = '✅ WORKS' if result else '❌ FAILS'
+            method_name = str(method).replace('Method.', '')
+            print(f'   {method_name}: {status}')
 
-    print('\n💡 Usage Examples:')
-    print("""
-    # Ethereum Sepolia testnet
-    client = ChainscanClient('blockscout', 'v1', 'blockscout_sepolia', 'sepolia', '')
-    balance = await client.call(Method.ACCOUNT_BALANCE, address='0x...')
+    # Overall assessment
+    overall_success = (
+        mainnet_result
+        or successful_networks > 0
+        or (method_results and sum(method_results.values()) > 0)
+    )
 
-    # Gnosis Chain
-    client = ChainscanClient('blockscout', 'v1', 'blockscout_gnosis', 'gnosis', '')
-    txs = await client.call(Method.ACCOUNT_TRANSACTIONS, address='0x...')
-    """)
+    print(
+        f'\n🎯 Overall BlockScout Status: {"✅ WORKING" if overall_success else "❌ NOT WORKING"}'
+    )
 
-    print('\n🎯 BlockScout vs Traditional Scanners:')
-    print('   BlockScout: Free, public, multi-chain, open source')
-    print('   Etherscan: API key required, rate limited, established')
-    print('   Choice: Use BlockScout for testing, Etherscan for production')
-
-    if results:
-        print('\n📊 Test Results Summary:')
-        for description, balance, eth_balance in results:
-            if eth_balance != 'N/A':
-                print(f'   {description}: {balance} wei ({eth_balance:.6f})')
-            else:
-                print(f'   {description}: {balance}')
-
-    print('\n🎉 BlockScout integration complete!')
-    print('   ✅ Full Etherscan API compatibility')
-    print('   ✅ Multiple network support')
-    print('   ✅ No API key requirements')
-    print('   ✅ Production ready')
+    if not overall_success:
+        print('\n💡 Possible issues:')
+        print('   • BlockScout instances might be down')
+        print('   • Network configuration issues')
+        print('   • API rate limiting')
+        print('   • Test address has no activity on tested networks')
+    else:
+        print('\n🎉 BlockScout integration is functional!')
+        print('   Some networks/methods may not work due to:')
+        print('   • Different BlockScout instance capabilities')
+        print('   • Network-specific limitations')
+        print('   • Temporary service issues')
 
 
 if __name__ == '__main__':

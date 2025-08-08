@@ -28,7 +28,6 @@ async def main():
 
     # Check API keys
     etherscan_key = os.getenv('ETHERSCAN_KEY')
-    oklink_key = os.getenv('OKLINK_KEY')
 
     if not etherscan_key:
         print('❌ ETHERSCAN_KEY not found')
@@ -71,24 +70,6 @@ async def main():
         await client_v2.close()
     except Exception as e:
         print(f'   ❌ Error: {e}')
-
-    # Method 4: OKLink (if API key available)
-    print('\n4️⃣ ChainscanClient + OKLink (if available):')
-    if oklink_key:
-        try:
-            client_oklink = ChainscanClient.from_config('oklink_eth', 'v1', 'oklink_eth', 'main')
-            balance4 = await client_oklink.call(Method.ACCOUNT_BALANCE, address=address)
-            print(f'   {balance4} wei')
-            try:
-                print(f'   {float(balance4) / 10**18:.6f} ETH')
-            except (ValueError, TypeError):
-                print(f'   (raw response: {balance4})')
-            results.append(('OKLink', balance4))
-            await client_oklink.close()
-        except Exception as e:
-            print(f'   ❌ Error: {e}')
-    else:
-        print('   ⚠️  OKLINK_KEY not available - skipping')
 
     # Compare results
     print('\n' + '=' * 60)
