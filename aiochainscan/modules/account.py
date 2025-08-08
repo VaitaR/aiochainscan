@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import Any, cast
+from typing import Any
 
 from aiochainscan.common import (
     ChainFeatures,
@@ -295,21 +295,18 @@ class Account(BaseModule):
         try:
             from aiochainscan import get_token_transfers  # lazy
 
-            return cast(
-                list[dict[str, Any]],
-                await get_token_transfers(
-                    address=address,
-                    contract_address=None,
-                    start_block=startblock,
-                    end_block=endblock,
-                    page=page,
-                    offset=offset,
-                    sort=None,
-                    token_standard='erc20',
-                    api_kind=self._client.api_kind,
-                    network=self._client.network,
-                    api_key=self._client.api_key,
-                ),
+            return await get_token_transfers(
+                address=address,
+                contract_address=None,
+                start_block=startblock,
+                end_block=endblock,
+                page=page,
+                offset=offset,
+                sort=None,
+                token_standard='erc20',
+                api_kind=self._client.api_kind,
+                network=self._client.network,
+                api_key=self._client.api_key,
             )
         except Exception:
             result = await self._get(
