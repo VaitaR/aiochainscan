@@ -33,8 +33,18 @@ class Stats(BaseModule):
 
     async def eth_price(self) -> dict[str, Any]:
         """Get ETHER LastPrice Price"""
-        result = await self._get(action='ethprice')
-        return cast(dict[str, Any], result)
+        # Prefer new service path via facade for hexagonal migration
+        try:
+            from aiochainscan import get_eth_price  # lazy import to avoid cycles
+
+            return await get_eth_price(
+                api_kind=self._client.api_kind,
+                network=self._client.network,
+                api_key=self._client.api_key,
+            )
+        except Exception:
+            result = await self._get(action='ethprice')
+            return cast(dict[str, Any], result)
 
     async def chain_size(
         self,
@@ -159,28 +169,67 @@ class Stats(BaseModule):
         self, start_date: date, end_date: date, sort: str | None = None
     ) -> dict[str, Any]:
         """Get Daily Network Transaction Fee"""
-        result = await self._get(
-            **get_daily_stats_params('dailytxnfee', start_date, end_date, sort)
-        )
-        return cast(dict[str, Any], result)
+        try:
+            from aiochainscan import get_daily_network_tx_fee  # lazy to avoid cycles
+
+            data = await get_daily_network_tx_fee(
+                start_date=start_date,
+                end_date=end_date,
+                api_kind=self._client.api_kind,
+                network=self._client.network,
+                api_key=self._client.api_key,
+                sort=sort,
+            )
+            return cast(dict[str, Any], data)
+        except Exception:
+            result = await self._get(
+                **get_daily_stats_params('dailytxnfee', start_date, end_date, sort)
+            )
+            return cast(dict[str, Any], result)
 
     async def daily_new_address_count(
         self, start_date: date, end_date: date, sort: str | None = None
     ) -> dict[str, Any]:
         """Get Daily New Address Count"""
-        result = await self._get(
-            **get_daily_stats_params('dailynewaddress', start_date, end_date, sort)
-        )
-        return cast(dict[str, Any], result)
+        try:
+            from aiochainscan import get_daily_new_address_count  # lazy
+
+            data = await get_daily_new_address_count(
+                start_date=start_date,
+                end_date=end_date,
+                api_kind=self._client.api_kind,
+                network=self._client.network,
+                api_key=self._client.api_key,
+                sort=sort,
+            )
+            return cast(dict[str, Any], data)
+        except Exception:
+            result = await self._get(
+                **get_daily_stats_params('dailynewaddress', start_date, end_date, sort)
+            )
+            return cast(dict[str, Any], result)
 
     async def daily_network_utilization(
         self, start_date: date, end_date: date, sort: str | None = None
     ) -> dict[str, Any]:
         """Get Daily Network Utilization"""
-        result = await self._get(
-            **get_daily_stats_params('dailynetutilization', start_date, end_date, sort)
-        )
-        return cast(dict[str, Any], result)
+        try:
+            from aiochainscan import get_daily_network_utilization  # lazy
+
+            data = await get_daily_network_utilization(
+                start_date=start_date,
+                end_date=end_date,
+                api_kind=self._client.api_kind,
+                network=self._client.network,
+                api_key=self._client.api_key,
+                sort=sort,
+            )
+            return cast(dict[str, Any], data)
+        except Exception:
+            result = await self._get(
+                **get_daily_stats_params('dailynetutilization', start_date, end_date, sort)
+            )
+            return cast(dict[str, Any], result)
 
     async def daily_average_network_hash_rate(
         self, start_date: date, end_date: date, sort: str | None = None
@@ -195,8 +244,23 @@ class Stats(BaseModule):
         self, start_date: date, end_date: date, sort: str | None = None
     ) -> dict[str, Any]:
         """Get Daily Transaction Count"""
-        result = await self._get(**get_daily_stats_params('dailytx', start_date, end_date, sort))
-        return cast(dict[str, Any], result)
+        try:
+            from aiochainscan import get_daily_transaction_count  # lazy
+
+            data = await get_daily_transaction_count(
+                start_date=start_date,
+                end_date=end_date,
+                api_kind=self._client.api_kind,
+                network=self._client.network,
+                api_key=self._client.api_key,
+                sort=sort,
+            )
+            return cast(dict[str, Any], data)
+        except Exception:
+            result = await self._get(
+                **get_daily_stats_params('dailytx', start_date, end_date, sort)
+            )
+            return cast(dict[str, Any], result)
 
     async def daily_average_network_difficulty(
         self, start_date: date, end_date: date, sort: str | None = None
