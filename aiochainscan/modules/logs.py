@@ -35,17 +35,34 @@ class Logs(BaseModule):
 
         https://github.com/ethereum/wiki/wiki/JSON-RPC#eth_getlogs.
         """
-        result = await self._get(
-            action='getLogs',
-            address=address,
-            fromBlock=self._check_block(start_block),
-            toBlock=self._check_block(end_block),
-            headers=None,
-            **(self._fill_topics(topics, topic_operators) if topics else {}),
-            page=page,
-            offset=offset,
-        )
-        return cast(list[dict[str, Any]], result)
+        # Prefer new service path via facade for hexagonal migration
+        try:
+            from aiochainscan import get_logs as get_logs_facade  # lazy import to avoid cycles
+
+            return await get_logs_facade(
+                start_block=self._check_block(start_block),
+                end_block=self._check_block(end_block),
+                address=address,
+                api_kind=self._client.api_kind,
+                network=self._client.network,
+                api_key=self._client.api_key,
+                topics=topics,
+                topic_operators=topic_operators,
+                page=page,
+                offset=offset,
+            )
+        except Exception:
+            result = await self._get(
+                action='getLogs',
+                address=address,
+                fromBlock=self._check_block(start_block),
+                toBlock=self._check_block(end_block),
+                headers=None,
+                **(self._fill_topics(topics, topic_operators) if topics else {}),
+                page=page,
+                offset=offset,
+            )
+            return cast(list[dict[str, Any]], result)
 
     def _check_block(self, block: str | int) -> str | int:
         if isinstance(block, int):

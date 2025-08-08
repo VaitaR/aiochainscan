@@ -33,7 +33,17 @@ class Contract(BaseModule):
             >>> abi = await client.contract.contract_abi("0xdAC17F958D2ee523a2206206994597C13D831ec7")
             >>> print(abi)  # JSON ABI string
         """
-        result = await self._get(action='getabi', address=address)
+        try:
+            from aiochainscan import get_contract_abi  # lazy import to avoid cycles
+
+            return await get_contract_abi(
+                address=address,
+                api_kind=self._client.api_kind,
+                network=self._client.network,
+                api_key=self._client.api_key,
+            )
+        except Exception:
+            result = await self._get(action='getabi', address=address)
 
         # Check for unverified contract responses
         if isinstance(result, str) and result.startswith('Contract source code not verified'):
@@ -57,7 +67,17 @@ class Contract(BaseModule):
             >>> source = await client.contract.contract_source_code("0xdAC17F958D2ee523a2206206994597C13D831ec7")
             >>> print(source[0]['SourceCode'])
         """
-        result = await self._get(action='getsourcecode', address=address)
+        try:
+            from aiochainscan import get_contract_source_code  # lazy
+
+            return await get_contract_source_code(
+                address=address,
+                api_kind=self._client.api_kind,
+                network=self._client.network,
+                api_key=self._client.api_key,
+            )
+        except Exception:
+            result = await self._get(action='getsourcecode', address=address)
 
         # Check for unverified contract in the result list
         if (
@@ -79,10 +99,20 @@ class Contract(BaseModule):
 
     async def contract_creation(self, addresses: Iterable[str]) -> list[dict[str, Any]]:
         """Get Contract Creator and Creation Tx Hash"""
-        result = await self._get(
-            action='getcontractcreation', contractaddresses=','.join(addresses)
-        )
-        return list(result)
+        try:
+            from aiochainscan import get_contract_creation  # lazy
+
+            return await get_contract_creation(
+                contract_addresses=list(addresses),
+                api_kind=self._client.api_kind,
+                network=self._client.network,
+                api_key=self._client.api_key,
+            )
+        except Exception:
+            result = await self._get(
+                action='getcontractcreation', contractaddresses=','.join(addresses)
+            )
+            return list(result)
 
     async def verify_contract_source_code(
         self,
@@ -96,43 +126,94 @@ class Contract(BaseModule):
         libraries: dict[str, str] | None = None,
     ) -> str:
         """Submits a contract source code to Chainscan for verification."""
-        result = await self._post(
-            headers=None,
-            module='contract',
-            action='verifysourcecode',
-            contractaddress=contract_address,
-            sourceCode=source_code,
-            contractname=contract_name,
-            compilerversion=compiler_version,
-            optimizationUsed=1 if optimization_used else 0,
-            runs=runs,
-            constructorArguements=constructor_arguements,
-            **(self._parse_libraries(libraries or {})),
-        )
-        return str(result)
+        try:
+            from aiochainscan import verify_contract_source_code as verify  # lazy
+
+            result = await verify(
+                contract_address=contract_address,
+                source_code=source_code,
+                contract_name=contract_name,
+                compiler_version=compiler_version,
+                optimization_used=optimization_used,
+                runs=runs,
+                constructor_arguements=constructor_arguements or '',
+                api_kind=self._client.api_kind,
+                network=self._client.network,
+                api_key=self._client.api_key,
+            )
+            return str(result)
+        except Exception:
+            result = await self._post(
+                headers=None,
+                module='contract',
+                action='verifysourcecode',
+                contractaddress=contract_address,
+                sourceCode=source_code,
+                contractname=contract_name,
+                compilerversion=compiler_version,
+                optimizationUsed=1 if optimization_used else 0,
+                runs=runs,
+                constructorArguements=constructor_arguements,
+                **(self._parse_libraries(libraries or {})),
+            )
+            return str(result)
 
     async def check_verification_status(self, guid: str) -> str:
         """Check Source code verification submission status"""
-        result = await self._get(action='checkverifystatus', guid=guid)
-        return str(result)
+        try:
+            from aiochainscan import check_verification_status  # lazy
+
+            result = await check_verification_status(
+                guid=guid,
+                api_kind=self._client.api_kind,
+                network=self._client.network,
+                api_key=self._client.api_key,
+            )
+            return str(result)
+        except Exception:
+            result = await self._get(action='checkverifystatus', guid=guid)
+            return str(result)
 
     async def verify_proxy_contract(
         self, address: str, expected_implementation: str | None = None
     ) -> str:
         """Submits a proxy contract source code to Chainscan for verification."""
-        result = await self._post(
-            headers=None,
-            module='contract',
-            action='verifyproxycontract',
-            address=address,
-            expectedimplementation=expected_implementation,
-        )
-        return str(result)
+        try:
+            from aiochainscan import verify_proxy_contract  # lazy
+
+            result = await verify_proxy_contract(
+                address=address,
+                expected_implementation=expected_implementation,
+                api_kind=self._client.api_kind,
+                network=self._client.network,
+                api_key=self._client.api_key,
+            )
+            return str(result)
+        except Exception:
+            result = await self._post(
+                headers=None,
+                module='contract',
+                action='verifyproxycontract',
+                address=address,
+                expectedimplementation=expected_implementation,
+            )
+            return str(result)
 
     async def check_proxy_contract_verification(self, guid: str) -> str:
         """Checking Proxy Contract Verification Submission Status"""
-        result = await self._get(action='checkproxyverification', guid=guid)
-        return str(result)
+        try:
+            from aiochainscan import check_proxy_contract_verification  # lazy
+
+            result = await check_proxy_contract_verification(
+                guid=guid,
+                api_kind=self._client.api_kind,
+                network=self._client.network,
+                api_key=self._client.api_key,
+            )
+            return str(result)
+        except Exception:
+            result = await self._get(action='checkproxyverification', guid=guid)
+            return str(result)
 
     @staticmethod
     def _parse_libraries(libraries: dict[str, str]) -> dict[str, str]:

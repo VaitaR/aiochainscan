@@ -27,6 +27,7 @@ dependencies = [
     "eth-abi",
     "curl-cffi>=0.12.0",
     "requests>=2.31.0",
+    "structlog>=23.1.0",
 ]
 
 [project.optional-dependencies]
@@ -91,6 +92,50 @@ python_version = "3.10"
 strict = true
 files = ["aiochainscan"]
 plugins = []
+
+[tool.importlinter]
+root_package = "aiochainscan"
+
+[[tool.importlinter.contracts]]
+name = "Services do not import adapters"
+type = "forbidden"
+source_modules = [
+  "aiochainscan.services",
+]
+forbidden_modules = [
+  "aiochainscan.adapters",
+]
+
+[[tool.importlinter.contracts]]
+name = "Adapters do not import services"
+type = "forbidden"
+source_modules = [
+  "aiochainscan.adapters",
+]
+forbidden_modules = [
+  "aiochainscan.services",
+]
+
+[[tool.importlinter.contracts]]
+name = "Domain isolated from infra"
+type = "forbidden"
+source_modules = [
+  "aiochainscan.domain",
+]
+forbidden_modules = [
+  "aiochainscan.adapters",
+  "aiochainscan.services",
+]
+
+[[tool.importlinter.contracts]]
+name = "Ports do not import adapters"
+type = "forbidden"
+source_modules = [
+  "aiochainscan.ports",
+]
+forbidden_modules = [
+  "aiochainscan.adapters",
+]
 
 [[tool.mypy.overrides]]
 module = [
