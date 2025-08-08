@@ -1,16 +1,18 @@
-use ethers::abi::{Abi, Function, Token, FunctionExt};
+use ethers::abi::{Abi, Function, Token};
 use ethers::utils::keccak256;
 use once_cell::sync::OnceCell;
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyDict, PyList, PyTuple, PyAny};
+use pyo3::types::{PyBytes, PyDict, PyList, PyTuple, PyAny, PyMemoryView};
 use pythonize::depythonize;
 use rayon::prelude::*;
 use dashmap::DashMap;
 use twox_hash::XxHash64;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use thiserror::Error;
+
+const BATCH_PAR_THRESHOLD: usize = 256;
 
 #[derive(Error, Debug)]
 pub enum FastAbiError {
@@ -30,6 +32,9 @@ impl From<FastAbiError> for PyErr {
 
 // Global ABI cache with selector maps for multiple ABIs
 static ABI_CACHE: OnceCell<DashMap<u64, Arc<AbiData>>> = OnceCell::new();
+// Micro-caches to avoid repeated work on hot paths
+static LAST_ABI_HASH: OnceCell<Mutex<Option<(usize, usize, u64)>>> = OnceCell::new();
+static LAST_INPUT_JSON: OnceCell<Mutex<Option<(usize, usize, u64, String)>>> = OnceCell::new();
 
 #[derive(Clone)]
 struct AbiData {
@@ -41,6 +46,20 @@ fn calculate_abi_hash(abi_json: &str) -> u64 {
     let mut hasher = XxHash64::default();
     abi_json.hash(&mut hasher);
     hasher.finish()
+}
+
+fn calculate_abi_hash_memoized(abi_json: &str) -> u64 {
+    let ptr = abi_json.as_ptr() as usize;
+    let len = abi_json.len();
+    let cell = LAST_ABI_HASH.get_or_init(|| Mutex::new(None));
+    if let Some((p, l, h)) = *cell.lock().unwrap() {
+        if p == ptr && l == len {
+            return h;
+        }
+    }
+    let h = calculate_abi_hash(abi_json);
+    *cell.lock().unwrap() = Some((ptr, len, h));
+    h
 }
 
 fn calculate_function_selector(function: &Function) -> [u8; 4] {
@@ -58,7 +77,7 @@ fn calculate_function_selector(function: &Function) -> [u8; 4] {
 
 fn get_abi_data_from_json(abi_json: &str) -> PyResult<Arc<AbiData>> {
     let cache = ABI_CACHE.get_or_init(|| DashMap::new());
-    let abi_hash = calculate_abi_hash(abi_json);
+    let abi_hash = calculate_abi_hash_memoized(abi_json);
     
     // Check cache first
     if let Some(cached) = cache.get(&abi_hash) {
@@ -88,32 +107,45 @@ fn get_abi_data_from_json(abi_json: &str) -> PyResult<Arc<AbiData>> {
 
 fn get_abi_data_direct(py_abi: &Bound<'_, PyAny>) -> PyResult<Arc<AbiData>> {
     let cache = ABI_CACHE.get_or_init(|| DashMap::new());
-    
-    // For direct Python objects, we'll use the repr as a simple hash
-    let abi_key = py_abi.repr()?.to_string();
-    let abi_hash = calculate_abi_hash(&abi_key);
-    
-    // Check cache first
-    if let Some(cached) = cache.get(&abi_hash) {
-        return Ok(Arc::clone(&cached));
-    }
-    
+
     // Parse ABI directly from Python object
     let abi: Abi = depythonize(py_abi).map_err(|e| {
         FastAbiError::InvalidAbi(format!("Failed to depythonize ABI: {}", e))
     })?;
-    
+
+    // Build a canonical signature list for a stable cache key
+    let mut canonical_sigs: Vec<String> = abi
+        .functions()
+        .map(|function| {
+            let input_types: Vec<String> = function
+                .inputs
+                .iter()
+                .map(|input| input.kind.to_string())
+                .collect();
+            format!("{}({})", function.name, input_types.join(","))
+        })
+        .collect();
+    canonical_sigs.sort_unstable();
+    let abi_key = canonical_sigs.join(";");
+    let abi_hash = calculate_abi_hash(&abi_key);
+
+    // Check cache first
+    if let Some(cached) = cache.get(&abi_hash) {
+        return Ok(Arc::clone(&cached));
+    }
+
+    // Build selector map
     let mut selector_map = HashMap::new();
     for function in abi.functions() {
         let selector = calculate_function_selector(function);
         selector_map.insert(selector, function.clone());
     }
-    
+
     let abi_data = Arc::new(AbiData {
         abi: Arc::new(abi),
         selector_map,
     });
-    
+
     // Cache it
     cache.insert(abi_hash, Arc::clone(&abi_data));
     Ok(abi_data)
@@ -123,11 +155,9 @@ fn get_abi_data_direct(py_abi: &Bound<'_, PyAny>) -> PyResult<Arc<AbiData>> {
 fn token_to_raw_py(py: Python<'_>, token: Token) -> PyResult<PyObject> {
     match token {
         Token::Address(addr) => {
-            // Return as memoryview for zero-copy efficiency
+            // Return addresses as bytes for compatibility and low overhead
             let addr_bytes = addr.as_bytes();
-            let py_bytes = PyBytes::new_bound(py, addr_bytes);
-            let memoryview = py.import_bound("builtins")?.call_method1("memoryview", (py_bytes,))?;
-            Ok(memoryview.into())
+            Ok(PyBytes::new_bound(py, addr_bytes).into())
         }
         Token::Uint(uint) => {
             // Return native int when possible, string for very large numbers
@@ -149,9 +179,9 @@ fn token_to_raw_py(py: Python<'_>, token: Token) -> PyResult<PyObject> {
         Token::String(s) => Ok(s.into_py(py)),
         Token::Bytes(bytes) => {
             // Return as memoryview for large byte arrays
-            if bytes.len() > 32 {  // Only for larger arrays to avoid overhead
+            if bytes.len() > 256 {  // Only for larger arrays to avoid overhead
                 let py_bytes = PyBytes::new_bound(py, &bytes);
-                let memoryview = py.import_bound("builtins")?.call_method1("memoryview", (py_bytes,))?;
+                let memoryview = PyMemoryView::from_bound(py_bytes.as_any())?;
                 Ok(memoryview.into())
             } else {
                 Ok(PyBytes::new_bound(py, &bytes).into())
@@ -159,9 +189,9 @@ fn token_to_raw_py(py: Python<'_>, token: Token) -> PyResult<PyObject> {
         }
         Token::FixedBytes(bytes) => {
             // Return as memoryview for large byte arrays
-            if bytes.len() > 32 {
+            if bytes.len() > 256 {
                 let py_bytes = PyBytes::new_bound(py, &bytes);
-                let memoryview = py.import_bound("builtins")?.call_method1("memoryview", (py_bytes,))?;
+                let memoryview = PyMemoryView::from_bound(py_bytes.as_any())?;
                 Ok(memoryview.into())
             } else {
                 Ok(PyBytes::new_bound(py, &bytes).into())
@@ -296,29 +326,52 @@ fn decode_many_raw<'p>(
 ) -> PyResult<Vec<Py<PyTuple>>> {
     let abi_data = get_abi_data_from_json(abi_json)?;
     
-    // Release GIL and do ALL computation in parallel
+    // Release GIL and process (parallel for large batches)
+    let use_par = calldatas.len() >= BATCH_PAR_THRESHOLD;
     let results: Result<Vec<_>, FastAbiError> = py.allow_threads(|| {
-        calldatas
-            .par_iter()  // PARALLEL processing with rayon
-            .map(|calldata| {
-                if calldata.len() < 4 {
-                    return Ok((String::new(), Vec::new()));
-                }
-                
-                let selector = &calldata[..4];
-                let mut selector_array = [0u8; 4];
-                selector_array.copy_from_slice(selector);
-                
-                // O(1) lookup using cached selector map
-                let function = abi_data.selector_map.get(&selector_array)
-                    .ok_or(FastAbiError::UnknownSelector)?;
-                
-                let tokens = function.decode_input(&calldata[4..])
-                    .map_err(|e| FastAbiError::DecodeError(e.to_string()))?;
-                
-                Ok((function.name.clone(), tokens))
-            })
-            .collect()
+        if use_par {
+            calldatas
+                .par_iter()
+                .map(|calldata| {
+                    if calldata.len() < 4 {
+                        return Ok((String::new(), Vec::new()));
+                    }
+                    let selector = &calldata[..4];
+                    let mut selector_array = [0u8; 4];
+                    selector_array.copy_from_slice(selector);
+                    let function = match abi_data.selector_map.get(&selector_array) {
+                        Some(f) => f,
+                        None => return Ok((String::new(), Vec::new())),
+                    };
+                    let tokens = match function.decode_input(&calldata[4..]) {
+                        Ok(t) => t,
+                        Err(_e) => return Ok((String::new(), Vec::new())),
+                    };
+                    Ok((function.name.clone(), tokens))
+                })
+                .collect()
+        } else {
+            calldatas
+                .iter()
+                .map(|calldata| {
+                    if calldata.len() < 4 {
+                        return Ok((String::new(), Vec::new()));
+                    }
+                    let selector = &calldata[..4];
+                    let mut selector_array = [0u8; 4];
+                    selector_array.copy_from_slice(selector);
+                    let function = match abi_data.selector_map.get(&selector_array) {
+                        Some(f) => f,
+                        None => return Ok((String::new(), Vec::new())),
+                    };
+                    let tokens = match function.decode_input(&calldata[4..]) {
+                        Ok(t) => t,
+                        Err(_e) => return Ok((String::new(), Vec::new())),
+                    };
+                    Ok((function.name.clone(), tokens))
+                })
+                .collect()
+        }
     });
     
     // Convert results to raw Python tuples (minimal overhead)
@@ -531,54 +584,73 @@ fn decode_many_direct<'p>(
 ) -> PyResult<Vec<Py<PyDict>>> {
     let abi_data = get_abi_data_direct(py_abi)?;
     
-    // Release GIL and do heavy computation in parallel
+    // Release GIL and process with thresholded parallelism
+    let use_par = calldatas.len() >= BATCH_PAR_THRESHOLD;
     let results: Result<Vec<_>, FastAbiError> = py.allow_threads(|| {
-        calldatas
-            .into_iter()
-            .map(|calldata| {
-                let calldata = &calldata[..];
-                if calldata.len() < 4 {
-                    return Ok((String::new(), Vec::new()));
-                }
-                
-                let selector = &calldata[..4];
-                let mut selector_array = [0u8; 4];
-                selector_array.copy_from_slice(selector);
-                
-                // O(1) lookup using cached selector map
-                let function = abi_data.selector_map.get(&selector_array)
-                    .ok_or(FastAbiError::UnknownSelector)?;
-                
-                let tokens = function.decode_input(&calldata[4..])
-                    .map_err(|e| FastAbiError::DecodeError(e.to_string()))?;
-                
-                Ok((function.name.clone(), tokens))
-            })
-            .collect()
+        if use_par {
+            calldatas
+                .par_iter()
+                .map(|calldata| {
+                    let calldata = &calldata[..];
+                    if calldata.len() < 4 {
+                        return Ok((String::new(), Vec::new(), Vec::new()));
+                    }
+                    let selector = &calldata[..4];
+                    let mut selector_array = [0u8; 4];
+                    selector_array.copy_from_slice(selector);
+                    let function = match abi_data.selector_map.get(&selector_array) {
+                        Some(f) => f,
+                        None => return Ok((String::new(), Vec::new(), Vec::new())),
+                    };
+                    let tokens = match function.decode_input(&calldata[4..]) {
+                        Ok(t) => t,
+                        Err(_e) => return Ok((String::new(), Vec::new(), Vec::new())),
+                    };
+                    let mut param_names: Vec<String> = Vec::with_capacity(function.inputs.len());
+                    for param in &function.inputs { if param.name.is_empty() { param_names.push(String::new()); } else { param_names.push(param.name.clone()); } }
+                    Ok((function.name.clone(), tokens, param_names))
+                })
+                .collect()
+        } else {
+            calldatas
+                .iter()
+                .map(|calldata| {
+                    let calldata = &calldata[..];
+                    if calldata.len() < 4 {
+                        return Ok((String::new(), Vec::new(), Vec::new()));
+                    }
+                    let selector = &calldata[..4];
+                    let mut selector_array = [0u8; 4];
+                    selector_array.copy_from_slice(selector);
+                    let function = match abi_data.selector_map.get(&selector_array) {
+                        Some(f) => f,
+                        None => return Ok((String::new(), Vec::new(), Vec::new())),
+                    };
+                    let tokens = match function.decode_input(&calldata[4..]) {
+                        Ok(t) => t,
+                        Err(_e) => return Ok((String::new(), Vec::new(), Vec::new())),
+                    };
+                    let mut param_names: Vec<String> = Vec::with_capacity(function.inputs.len());
+                    for param in &function.inputs { if param.name.is_empty() { param_names.push(String::new()); } else { param_names.push(param.name.clone()); } }
+                    Ok((function.name.clone(), tokens, param_names))
+                })
+                .collect()
+        }
     });
     
     // Convert results to Python objects (with GIL)
     let decoded_results = results.map_err(FastAbiError::from)?;
-    let mut py_results = Vec::new();
+    let mut py_results: Vec<Py<PyDict>> = Vec::with_capacity(decoded_results.len());
     
-    for (func_name, tokens) in decoded_results {
+    for (func_name, tokens, param_names) in decoded_results {
         let result = PyDict::new_bound(py);
         result.set_item("function_name", &func_name)?;
         
         if !func_name.is_empty() {
-            // Find function again to get parameter names
-            let function = abi_data.abi.functions()
-                .find(|f| f.name == func_name)
-                .ok_or(FastAbiError::UnknownSelector)?;
-            
             let py_params = PyDict::new_bound(py);
-            for (param, token) in function.inputs.iter().zip(tokens) {
-                let param_name = if param.name.is_empty() {
-                    format!("param_{}", py_params.len())
-                } else {
-                    param.name.clone()
-                };
-                py_params.set_item(param_name, token_to_py(py, token)?)?;
+            for (idx, token) in tokens.into_iter().enumerate() {
+                let name = if let Some(n) = param_names.get(idx) { if n.is_empty() { format!("param_{}", idx) } else { n.clone() } } else { format!("param_{}", idx) };
+                py_params.set_item(name, token_to_py(py, token)?)?;
             }
             result.set_item("decoded_data", py_params)?;
         } else {
@@ -600,62 +672,59 @@ fn decode_many_hex<'p>(
 ) -> PyResult<Vec<Py<PyDict>>> {
     let abi_data = get_abi_data_from_json(abi_json)?;
     
-    // Release GIL and do everything including hex parsing
+    // Release GIL and do everything including hex parsing (with thresholded parallelism)
+    let use_par = hex_inputs.len() >= BATCH_PAR_THRESHOLD;
     let results: Result<Vec<_>, FastAbiError> = py.allow_threads(|| {
-        hex_inputs
-            .into_iter()
-            .map(|hex_input| {
-                // Parse hex in Rust
-                let hex_clean = if hex_input.starts_with("0x") {
-                    &hex_input[2..]
-                } else {
-                    &hex_input
-                };
-                
-                let calldata = hex::decode(hex_clean)
-                    .map_err(|e| FastAbiError::DecodeError(format!("Invalid hex: {}", e)))?;
-                
-                if calldata.len() < 4 {
-                    return Ok((String::new(), Vec::new()));
-                }
-                
-                let selector = &calldata[..4];
-                let mut selector_array = [0u8; 4];
-                selector_array.copy_from_slice(selector);
-                
-                // O(1) lookup using cached selector map
-                let function = abi_data.selector_map.get(&selector_array)
-                    .ok_or(FastAbiError::UnknownSelector)?;
-                
-                let tokens = function.decode_input(&calldata[4..])
-                    .map_err(|e| FastAbiError::DecodeError(e.to_string()))?;
-                
-                Ok((function.name.clone(), tokens))
-            })
-            .collect()
+        if use_par {
+            hex_inputs
+                .par_iter()
+                .map(|hex_input| {
+                    let hex_clean = if hex_input.starts_with("0x") { &hex_input[2..] } else { &hex_input };
+                    let calldata = match hex::decode(hex_clean) { Ok(b) => b, Err(_e) => return Ok((String::new(), Vec::new(), Vec::new())) };
+                    if calldata.len() < 4 { return Ok((String::new(), Vec::new(), Vec::new())); }
+                    let selector = &calldata[..4];
+                    let mut selector_array = [0u8; 4];
+                    selector_array.copy_from_slice(selector);
+                    let function = match abi_data.selector_map.get(&selector_array) { Some(f) => f, None => return Ok((String::new(), Vec::new(), Vec::new())) };
+                    let tokens = match function.decode_input(&calldata[4..]) { Ok(t) => t, Err(_e) => return Ok((String::new(), Vec::new(), Vec::new())) };
+                    let mut param_names: Vec<String> = Vec::with_capacity(function.inputs.len());
+                    for param in &function.inputs { if param.name.is_empty() { param_names.push(String::new()); } else { param_names.push(param.name.clone()); } }
+                    Ok((function.name.clone(), tokens, param_names))
+                })
+                .collect()
+        } else {
+            hex_inputs
+                .iter()
+                .map(|hex_input| {
+                    let hex_clean = if hex_input.starts_with("0x") { &hex_input[2..] } else { &hex_input };
+                    let calldata = match hex::decode(hex_clean) { Ok(b) => b, Err(_e) => return Ok((String::new(), Vec::new(), Vec::new())) };
+                    if calldata.len() < 4 { return Ok((String::new(), Vec::new(), Vec::new())); }
+                    let selector = &calldata[..4];
+                    let mut selector_array = [0u8; 4];
+                    selector_array.copy_from_slice(selector);
+                    let function = match abi_data.selector_map.get(&selector_array) { Some(f) => f, None => return Ok((String::new(), Vec::new(), Vec::new())) };
+                    let tokens = match function.decode_input(&calldata[4..]) { Ok(t) => t, Err(_e) => return Ok((String::new(), Vec::new(), Vec::new())) };
+                    let mut param_names: Vec<String> = Vec::with_capacity(function.inputs.len());
+                    for param in &function.inputs { if param.name.is_empty() { param_names.push(String::new()); } else { param_names.push(param.name.clone()); } }
+                    Ok((function.name.clone(), tokens, param_names))
+                })
+                .collect()
+        }
     });
     
     // Convert results to Python objects (with GIL)
     let decoded_results = results.map_err(FastAbiError::from)?;
-    let mut py_results = Vec::new();
+    let mut py_results: Vec<Py<PyDict>> = Vec::with_capacity(decoded_results.len());
     
-    for (func_name, tokens) in decoded_results {
+    for (func_name, tokens, param_names) in decoded_results {
         let result = PyDict::new_bound(py);
         result.set_item("function_name", &func_name)?;
         
         if !func_name.is_empty() {
-            let function = abi_data.abi.functions()
-                .find(|f| f.name == func_name)
-                .ok_or(FastAbiError::UnknownSelector)?;
-            
             let py_params = PyDict::new_bound(py);
-            for (param, token) in function.inputs.iter().zip(tokens) {
-                let param_name = if param.name.is_empty() {
-                    format!("param_{}", py_params.len())
-                } else {
-                    param.name.clone()
-                };
-                py_params.set_item(param_name, token_to_py(py, token)?)?;
+            for (idx, token) in tokens.into_iter().enumerate() {
+                let name = if let Some(n) = param_names.get(idx) { if n.is_empty() { format!("param_{}", idx) } else { n.clone() } } else { format!("param_{}", idx) };
+                py_params.set_item(name, token_to_py(py, token)?)?;
             }
             result.set_item("decoded_data", py_params)?;
         } else {
@@ -679,21 +748,23 @@ fn decode_input(input_data: &Bound<'_, PyBytes>, abi_json: &str) -> PyResult<Str
             "decoded_data": {}
         }).to_string());
     }
-    
-    // Parse ABI from JSON
-    let abi: Abi = serde_json::from_str(abi_json)
-        .map_err(|e| FastAbiError::InvalidAbi(e.to_string()))?;
-    
-    let mut function_map = HashMap::new();
-    for function in abi.functions() {
-        let selector = calculate_function_selector(function);
-        function_map.insert(selector, function.clone());
+    // Use global ABI cache and precomputed selector map
+    let abi_data = get_abi_data_from_json(abi_json)?;
+    let abi_hash = calculate_abi_hash_memoized(abi_json);
+
+    // Fast-path: if exactly same input bytes and ABI as previous call, return cached JSON
+    let ptr = data.as_ptr() as usize;
+    let len = data.len();
+    if let Some((p, l, h, ref cached)) = *LAST_INPUT_JSON.get_or_init(|| Mutex::new(None)).lock().unwrap() {
+        if p == ptr && l == len && h == abi_hash {
+            return Ok(cached.clone());
+        }
     }
     
     let mut selector = [0u8; 4];
     selector.copy_from_slice(&data[0..4]);
     
-    if let Some(function) = function_map.get(&selector) {
+    if let Some(function) = abi_data.selector_map.get(&selector) {
         let calldata = &data[4..];
         
         match function.decode_input(calldata) {
@@ -713,8 +784,10 @@ fn decode_input(input_data: &Bound<'_, PyBytes>, abi_json: &str) -> PyResult<Str
                     "function_name": function.name,
                     "decoded_data": decoded_data
                 });
-                
-                Ok(result.to_string())
+                let out = result.to_string();
+                // Update micro-cache
+                *LAST_INPUT_JSON.get_or_init(|| Mutex::new(None)).lock().unwrap() = Some((ptr, len, abi_hash, out.clone()));
+                Ok(out)
             }
             Err(_e) => {
                 Ok(serde_json::json!({
