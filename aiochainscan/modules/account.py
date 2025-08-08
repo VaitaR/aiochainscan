@@ -35,8 +35,6 @@ class Account(BaseModule):
                 api_kind=self._client.api_kind,
                 network=self._client.network,
                 api_key=self._client.api_key,
-                tag=tag,
-                full=False,  # unused in balance
             )
             return str(value)
         except Exception:
