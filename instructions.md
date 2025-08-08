@@ -741,8 +741,42 @@ The hexagonal skeleton is in place and already useful. Next focus: broaden servi
 - Preserved. Legacy modules remain as thin adapters to new facades with try/fallback to original logic.
 
 ### Next steps (short)
-- DTOs/normalizers: add/export typed DTOs for list endpoints (normal/internal txs, token transfers, mined blocks, withdrawals) and use in services.
-- Deprecation plan: ship DeprecationWarning in legacy module paths (no breaking), remove in next major.
-- Import-linter: enforce contracts in CI and iterate to stricter rules as migration completes.
-- Infra composition: expose cache/rate‑limit/retry/telemetry composition at the facade; keep adapters pluggable.
-- Minor stats: validate any residual daily endpoints, add tests as needed.
+- Modules routing: increase coverage of unconditional facade routing for stable endpoints; with `AIOCHAINSCAN_FORCE_FACADES=1` verify no hidden legacy calls in CI.
+- Telemetry: standardize events/fields across services (api_kind, network, duration_ms, items) and document in README.
+- Import-linter: keep contracts enforced in CI; consider stricter boundaries for `facade` to avoid cross-layer leakage.
+- Infra composition: expose cache/rate‑limit/retry/telemetry composition ergonomically at the facade; keep adapters opt‑in.
+- Stats coverage: validate any residual daily endpoints and add tests if gaps are found.
+
+## Hexagonal Migration – Next Steps (Phase 1.3 → 2.0)
+
+### Phase 1.3 (DI completion, non-breaking)
+- Ensure DI kwargs on all facades (http, endpoint_builder, rate_limiter, retry, cache, telemetry). Status: DONE.
+- Provide a small reusable session helper to reuse HTTP connections across multiple calls. Status: DONE (`open_default_session()`).
+- Finish DTOs/normalizers for any remaining list/aggregate endpoints; export via `aiochainscan/__init__.py`. Status: DONE.
+- Migrate examples to facade usage while keeping legacy examples intact. Status: DONE.
+
+### Phase 1.4 (facade hardening, smooth transition)
+- Route `modules/*` through facades unconditionally where stable; gradually remove legacy fallbacks without changing public signatures. Environment toggle available: set `AIOCHAINSCAN_FORCE_FACADES=1` to disable legacy fallbacks (default off). Status: IN PROGRESS.
+- Optional deprecation messaging behind an environment flag (default off). Implemented via `AIOCHAINSCAN_DEPRECATE_MODULES=1` (default off). Status: DONE.
+- Tighten import-linter: forbid services → core/network, modules → services/adapters, and add explicit core boundary contracts. Status: services → core/network DONE; others IN PROGRESS.
+
+### Phase 1.5 (quality/observability)
+- Keep retry/rate limit/cache defaults opt-in only; no hidden behavior changes.
+- Standardize telemetry events/fields (api_kind, network, duration_ms, items) across services.
+- Update README with short sections: “Facades + DI”, “Normalizers/DTO”.
+
+### Phase 2.0 (major, breaking)
+- Switch service return types from `list[dict]` to strict DTOs (or introduce `*_typed` and deprecate old ones).
+- Remove legacy `modules/*` and `network`; provide minimal shims only where essential.
+- Consolidate examples/docs around facades and DTO usage.
+
+### CI and quality gates (unchanged)
+- Pre-commit/CI: ruff, ruff-format, mypy --strict, pytest -q (benchmarks excluded by marker), import-linter.
+
+### Current checklist snapshot
+- DI parity across facades: DONE
+- Reusable session helper: DONE
+- Account/list DTOs + normalizers (incl. logs): DONE
+- Stats daily endpoints + normalizers: IN PROGRESS (most added)
+- Wire legacy modules to facades: IN PROGRESS (env toggle available)
+- Import-linter tightening: IN PROGRESS (services → core/network DONE)

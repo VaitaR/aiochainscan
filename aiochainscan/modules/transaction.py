@@ -1,6 +1,6 @@
 from typing import Any, cast
 
-from aiochainscan.modules.base import BaseModule
+from aiochainscan.modules.base import BaseModule, _should_force_facades
 
 
 class Transaction(BaseModule):
@@ -57,6 +57,8 @@ class Transaction(BaseModule):
                 api_key=self._client.api_key,
             )
         except Exception:
+            if _should_force_facades():
+                raise
             data = await self._get(
                 module='proxy', action='eth_getTransactionByHash', txhash=txhash
             )

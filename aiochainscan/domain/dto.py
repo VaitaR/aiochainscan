@@ -150,3 +150,15 @@ class BeaconWithdrawalDTO(TypedDict, total=False):
     timeStamp: str | None
     address: str | None
     amount: str | None
+
+
+class AddressBalanceDTO(TypedDict, total=False):
+    """Normalized multi-balance entry.
+
+    Provider returns fields like 'account' and 'balance' (string). We expose
+    a normalized pair: 'address' and integer 'balance_wei'. Missing fields are
+    omitted to allow best-effort normalization across providers.
+    """
+
+    address: str | None
+    balance_wei: int | None

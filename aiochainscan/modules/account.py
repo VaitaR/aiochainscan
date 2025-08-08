@@ -11,7 +11,7 @@ from aiochainscan.common import (
     check_token_standard,
     require_feature_support,
 )
-from aiochainscan.modules.base import BaseModule
+from aiochainscan.modules.base import BaseModule, _should_force_facades
 
 
 class Account(BaseModule):
@@ -41,6 +41,8 @@ class Account(BaseModule):
             return str(value)
         except Exception:
             # Fallback to legacy path if facade unavailable
+            if _should_force_facades():
+                raise
             result = await self._get(action='balance', address=address, tag=check_tag(tag))
             return str(result)
 
