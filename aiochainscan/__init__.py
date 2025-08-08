@@ -7,6 +7,7 @@ from aiochainscan.config import ChainScanConfig, ScannerConfig, config  # noqa: 
 from aiochainscan.domain.models import Address, BlockNumber, TxHash  # re-export domain VOs
 from aiochainscan.services.account import get_address_balance  # facade use-case
 from aiochainscan.services.block import get_block_by_number  # facade use-case
+from aiochainscan.services.gas import get_gas_oracle  # facade use-case
 from aiochainscan.services.token import get_token_balance  # facade use-case
 from aiochainscan.services.transaction import get_transaction_by_hash  # facade use-case
 
@@ -24,6 +25,7 @@ __all__ = [
     'get_block_by_number',
     'get_transaction_by_hash',
     'get_token_balance',
+    'get_gas_oracle',
 ]
 
 
@@ -100,6 +102,23 @@ async def get_token_balance_facade(
         return await get_token_balance(
             holder=Address(holder),
             token_contract=Address(token_contract),
+            api_kind=api_kind,
+            network=network,
+            api_key=api_key,
+            http=http,
+            _endpoint_builder=endpoint,
+        )
+    finally:
+        await http.aclose()
+
+
+async def get_gas_oracle_facade(*, api_kind: str, network: str, api_key: str) -> dict[str, Any]:
+    """Fetch gas oracle via default adapter."""
+
+    http = AiohttpClient()
+    endpoint = UrlBuilderEndpoint()
+    try:
+        return await get_gas_oracle(
             api_kind=api_kind,
             network=network,
             api_key=api_key,
