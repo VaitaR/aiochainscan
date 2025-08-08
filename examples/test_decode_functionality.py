@@ -130,13 +130,72 @@ class DecodeTestRunner:
         logger.info(f'Total logs collected: {len(logs)}')
         return logs[:50]  # Limit for testing
 
-    async def fetch_sample_transactions(self, pages: int = 3) -> list[dict[str, Any]]:
-        """Fetch real transactions from UNI token contract."""
+    async def fetch_sample_transactions(
+        self, pages: int = 3, use_optimized: bool = True
+    ) -> list[dict[str, Any]]:
+        """Fetch real transactions from UNI token contract.
+
+        Args:
+            pages: Number of pages to fetch (used only for legacy method)
+            use_optimized: Whether to use the new optimized fetching method
+        """
+        contract_address = '0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984'  # UNI token
+
+        if use_optimized:
+            try:
+                logger.info(
+                    f'Fetching transactions using optimized method for UNI token: {contract_address}'
+                )
+
+                # Import the Utils class for optimized fetching
+                from aiochainscan.modules.extra.utils import Utils
+
+                utils = Utils(self.client)
+
+                # Get current block for reasonable range (last ~1000 blocks for testing)
+                current_block = int(await self.client.proxy.block_number(), 16)
+                start_block = max(0, current_block - 1000)  # Last 1000 blocks
+
+                # Use optimized method
+                all_transactions = await utils.fetch_all_elements_optimized(
+                    address=contract_address,
+                    data_type='normal_txs',
+                    start_block=start_block,
+                    end_block=current_block,
+                    max_concurrent=3,  # Respect rate limits
+                    max_offset=1000,  # Reduced for testing
+                    sort='desc',
+                )
+
+                # Filter transactions with input data (function calls)
+                transactions = [
+                    tx for tx in all_transactions if tx.get('input') and tx['input'] != '0x'
+                ]
+
+                logger.info(
+                    f'Optimized fetch: {len(all_transactions)} total, {len(transactions)} with input data'
+                )
+
+            except Exception as e:
+                logger.error(f'Error with optimized fetch, falling back to legacy method: {e}')
+                self.results['errors'].append(f'Optimized fetch error: {str(e)}')
+                # Fall back to legacy method
+                return await self._fetch_sample_transactions_legacy(pages)
+
+        else:
+            return await self._fetch_sample_transactions_legacy(pages)
+
+        return transactions[:50]  # Limit for testing
+
+    async def _fetch_sample_transactions_legacy(self, pages: int = 3) -> list[dict[str, Any]]:
+        """Legacy method for fetching transactions (kept for fallback)."""
         transactions = []
         contract_address = '0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984'  # UNI token
 
         try:
-            logger.info(f'Fetching transactions for UNI token contract: {contract_address}')
+            logger.info(
+                f'Fetching transactions using legacy method for UNI token: {contract_address}'
+            )
 
             for page in range(1, pages + 1):
                 try:
@@ -154,7 +213,8 @@ class DecodeTestRunner:
                         ]
                         transactions.extend(tx_with_input)
                         logger.info(
-                            f'Page {page}: Found {len(page_txs)} total transactions, {len(tx_with_input)} with input data'
+                            f'Page {page}: Found {len(page_txs)} total transactions, '
+                            f'{len(tx_with_input)} with input data'
                         )
 
                         # If we got fewer transactions than requested, we're at the end
@@ -359,6 +419,11 @@ class DecodeTestRunner:
             self.results['decode_stats']['online_decodes']['success'] / max(total_txs, 1) * 100
         )
 
+        # Prepare shorter variables for f-strings
+        log_success = self.results['decode_stats']['log_decodes']['success']
+        abi_success = self.results['decode_stats']['abi_decodes']['success']
+        online_success = self.results['decode_stats']['online_decodes']['success']
+
         report = f"""
 # aiochainscan Decode Functionality Test Report
 
@@ -377,9 +442,9 @@ This test validates the aiochainscan library's ability to fetch and decode real 
 - **Errors encountered:** {len(self.results['errors'])}
 
 ### Decode Success Rates
-- **Log decoding (Real ABI):** {log_success_rate:.1f}% ({self.results['decode_stats']['log_decodes']['success']}/{total_logs})
-- **Transaction ABI decoding:** {abi_success_rate:.1f}% ({self.results['decode_stats']['abi_decodes']['success']}/{total_txs})
-- **Transaction online decoding:** {online_success_rate:.1f}% ({self.results['decode_stats']['online_decodes']['success']}/{total_txs})
+- **Log decoding (Real ABI):** {log_success_rate:.1f}% ({log_success}/{total_logs})
+- **Transaction ABI decoding:** {abi_success_rate:.1f}% ({abi_success}/{total_txs})
+- **Transaction online decoding:** {online_success_rate:.1f}% ({online_success}/{total_txs})
 
 ## Test Results Details
 
@@ -413,10 +478,14 @@ This test validates the aiochainscan library's ability to fetch and decode real 
             for error in self.results['errors'][:5]:  # Show first 5 errors
                 report += f'- {error}\n'
 
+        # Determine test result
+        test_passed = log_success_rate > 0 or abi_success_rate > 0 or online_success_rate > 0
+        test_result = '✅ PASSED' if test_passed else '❌ FAILED'
+
         report += f"""
 ## Conclusion
 
-The aiochainscan library {'✅ PASSED' if (log_success_rate > 0 or abi_success_rate > 0 or online_success_rate > 0) else '❌ FAILED'} real-world functionality tests.
+The aiochainscan library {test_result} real-world functionality tests.
 
 - Library successfully fetches real logs and transactions from Ethereum mainnet
 - Real contract ABI decoding works with verified contracts
