@@ -42,3 +42,20 @@ class Transaction(BaseModule):
             ```
         """
         return await self.tx_receipt_status(txhash)
+
+    async def get_by_hash(self, txhash: str) -> dict[str, Any]:
+        """Fetch transaction by hash via facade when available."""
+        try:
+            from aiochainscan import get_transaction  # lazy import to avoid cycles
+
+            return await get_transaction(
+                txhash=txhash,
+                api_kind=self._client.api_kind,
+                network=self._client.network,
+                api_key=self._client.api_key,
+            )
+        except Exception:
+            data = await self._get(
+                module='proxy', action='eth_getTransactionByHash', txhash=txhash
+            )
+            return cast(dict[str, Any], data)

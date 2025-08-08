@@ -578,3 +578,151 @@ This integration serves as a reference implementation for adding complex, modern
 ---
 
 This guide reflects real-world experience implementing 6 different scanner types, including successful patterns and actual failures encountered during development.
+
+## Hexagonal Architecture Migration Guide (Phase 1)
+
+This section is the authoritative, living guide for migrating to a Hexagonal Architecture without breaking the public API. Keep it concise and update as we progress.
+
+- **Intent**: Improve testability, evolvability, and LLM-friendly edits via clear layering and ports/adapters. Zero breaking changes in this phase.
+- **Canonical choices**: `aiohttp` for HTTP; first use-case: address balance; introduce import-linter contracts.
+
+### Layering and dependency rules
+- **domain**: pure entities/value-objects/rules. No I/O, no logging, no env access.
+- **ports**: Protocol/ABC for external deps (HTTP, cache, telemetry, rate-limits, endpoint builder later).
+- **services**: use-cases/orchestration; compose domain through ports.
+- **adapters**: concrete implementations of ports (e.g., `aiohttp`). Mapping DTO ↔ domain.
+- **facade (public API)**: stable exports via `aiochainscan.__init__` (re-exports).
+- Dependency direction: `domain -> ports -> services -> adapters -> facade` (no cycles; only rightward imports).
+
+### Directory plan (added under `aiochainscan/`)
+- `domain/` (new)
+- `ports/` (new)
+- `services/` (new)
+- `adapters/` (new)
+
+Keep existing modules (`core/`, `modules/`, `scanners/`, `network.py`, `url_builder.py`) intact initially. Do not change `fastabi` paths or build settings.
+
+### First slice (minimal but valuable)
+1) Create packages: `aiochainscan/domain`, `aiochainscan/ports`, `aiochainscan/services`, `aiochainscan/adapters` (each with `__init__.py`).
+2) Domain models: add `aiochainscan/domain/models.py` with clean VO/aliases (e.g., `Address`, `BlockNumber`, `TxHash`). Gradually migrate existing dataclasses that are truly pure. Do not move config managers or any I/O.
+3) HTTP port: `aiochainscan/ports/http_client.py` with `Protocol`:
+   - `async def get(url: str, params: Mapping[str, Any] | None = None) -> Any`
+   - `async def post(url: str, data: Any | None = None, json: Any | None = None) -> Any`
+4) HTTP adapter (canonical): `aiochainscan/adapters/aiohttp_client.py` implementing the port using `aiohttp.ClientSession` with proper lifecycle and `raise_for_status()`.
+5) Service: `aiochainscan/services/account.py` exposing `async def get_address_balance(address: Address, network: str, api_kind: str, api_key: str | None) -> int`.
+   - Build URL using existing `url_builder` (temporarily). Inject the HTTP port. Parse response via existing parsers if appropriate.
+6) Facade: add new re-exports in `aiochainscan/__init__.py`:
+   - `from .domain.models import Address` (and other VO as they appear)
+   - `from .services.account import get_address_balance`
+   Preserve existing exports (`Client`, `config`, etc.).
+7) Backward compatibility: keep old imports working via re-exports in their original modules when feasible (e.g., thin aliasing in `config.py`). Avoid warnings in this phase.
+
+### DTO policy (Phase 1)
+- Use `TypedDict`/dataclasses for DTO validation at boundaries; keep domain models pydantic-free.
+- Consider Pydantic later if needed; not required now.
+
+### Import-linter contracts (initial)
+- Add import-linter to dev dependencies and CI.
+- Contracts (soft to start):
+  - `domain` must not import from `aiochainscan.ports`, `services`, `adapters`, `core`, `modules`, `scanners`.
+  - `ports` must not import from `services`, `adapters`, `core`, `modules`, `scanners`.
+  - `services` may import `domain`, `ports`, and selected legacy helpers (`url_builder` temporarily) but not `adapters`.
+  - `adapters` may import `ports` (and stdlib/third-party), not `services` or `domain`.
+  - `facade` can import from anywhere; it is the composition edge.
+
+### Quality gates
+- `pytest -q` green (all existing tests must pass).
+- `ruff` passes; formatting unchanged unless touched code requires it.
+- `mypy --strict` passes for new code; avoid `Any` in public APIs.
+- `import-linter` passes with initial contracts.
+
+### Risks and mitigations
+- **Cyclic imports**: Only move pure VO to `domain`. Use lazy imports in services if needed; keep adapters isolated.
+- **Import paths compatibility**: Re-export names in original modules and in `__init__` to keep old imports working.
+- **HTTP lifecycle**: Provide context manager or explicit `close()` in adapter; reuse session in services; no unclosed sessions.
+- **Stack choice**: Use `aiohttp` (already a dependency). Add retries/timeouts where appropriate.
+- **`url_builder` coupling**: Inject it as a function/dependency in the service to avoid cycles; later promote to a dedicated port.
+
+### Definition of Done (Phase 1)
+- New packages created and wired.
+- `domain/models.py` exists with initial VO (`Address`, etc.) and re-exported via `aiochainscan/__init__.py`.
+- `ports/http_client.py` and `adapters/aiohttp_client.py` implemented.
+- `services/account.py:get_address_balance` implemented and exported via facade.
+- All tests green; `mypy --strict`, `ruff`, and `import-linter` pass.
+
+### Next iterations (high level)
+- Add services for block/transaction reads.
+- Extract `endpoint builder` into a port and its adapter; reduce reliance on legacy modules.
+- Introduce DTO validation where responses are complex; consider Pydantic if/when it adds value.
+
+### Progress log (brief)
+- Phase 1: added domain VOs (`Address`, `TxHash`, `BlockNumber`), `HttpClient` port with `AiohttpClient` adapter, services for balance/block/transaction, and facade functions (`get_balance`, `get_block`, `get_transaction`). CI enforces import-linter.
+- Added `EndpointBuilder` port with `UrlBuilder` adapter; refactored services to use it (no direct dependency on `url_builder` inside services).
+- Added `get_token_balance` service and a simple facade helper `get_token_balance_facade` for convenience.
+
+## Hexagonal Architecture – Current Stage (Phase 1 slice complete)
+
+### What is in place
+- domain: value objects (`Address`, `TxHash`, `BlockNumber`)
+- ports: `HttpClient`, `EndpointBuilder`
+- adapters: `AiohttpClient`, `UrlBuilderEndpoint`
+- services: balance, block, transaction, token balance, gas oracle (all consume ports)
+- facade: top-level helpers in `aiochainscan/__init__.py` with re-exports preserved
+- dependency control: import-linter contracts enabled in CI and passing
+- quality: `mypy --strict`, `ruff`, and tests are green; a flaky integration test is excluded from fast pre-push, still executed in CI
+- URL decoupling: services use `EndpointBuilder` port (no direct dependency on `url_builder`)
+
+### Risks / technical debt
+- Legacy layer (`modules/*`, parts of `network.py`) still active in parallel; needs gradual migration/consolidation
+- DTO/validation not standardized yet; services return provider-shaped payloads
+- No unified structlog-based tracing/logging in adapters/services
+- Cache/retries/rate limiting exist only in legacy; not modeled as ports
+- Facade naming has minor inconsistency (`get_token_balance_facade` vs `get_balance`)
+
+### Next steps (prioritized)
+1) Service coverage: add services for logs, stats, proxy reads via `EndpointBuilder`
+2) DTO layer: introduce `TypedDict` for service inputs/outputs and a provider→domain normalization
+3) Infra ports: add `Cache`, `RateLimiter`/`RetryPolicy`, `Telemetry` (+ adapters) and align behavior with legacy
+4) Facade: standardize helper names (prefer `get_*` form) and keep backward-compatible aliases
+5) Legacy migration: route `modules/*` through services or deprecate; reduce direct `network.py` usage
+6) Import rules: gradually tighten import-linter contracts
+7) Tests: unit-test new services/adapters with mocked ports; add DTO snapshot tests
+
+### Short take
+The hexagonal skeleton is in place and already useful. Next focus: broaden services, introduce DTO normalization, migrate legacy module paths, and add infrastructure ports (cache/retries/telemetry).
+
+## Hexagonal Architecture – Phase 1.1 Progress Update
+
+### Implemented (since last update)
+- domain DTOs: `GasOracleDTO`, `BlockDTO`, `TransactionDTO`, `LogEntryDTO`, `EthPriceDTO`.
+- ports (infra added): `Cache`, `RateLimiter`, `RetryPolicy`, `Telemetry`.
+- adapters (infra): `InMemoryCache`, `SimpleRateLimiter`, `ExponentialBackoffRetry`, `NoopTelemetry`.
+- services (+ normalization helpers):
+  - account: `get_address_balance`
+  - block: `get_block_by_number`, `normalize_block`
+  - transaction: `get_transaction_by_hash`, `normalize_transaction`
+  - token: `get_token_balance`, `normalize_token_balance`
+  - gas: `get_gas_oracle`, `normalize_gas_oracle`
+  - logs: `get_logs`, `normalize_log_entry`
+  - stats: `get_eth_price`, `normalize_eth_price`
+- facade helpers exported: `get_balance`, `get_block`, `get_transaction`, `get_token_balance` (+ alias `get_token_balance_facade`), `get_gas_oracle` (+ alias `get_gas_oracle_facade`), `get_logs`, `get_eth_price`.
+- facade normalizers exported: `normalize_block`, `normalize_transaction`, `normalize_log_entry`, `normalize_gas_oracle`, `normalize_token_balance`, `normalize_eth_price`.
+- legacy migration (non-breaking):
+  - `modules/account.py:balance` → calls `get_balance` first (fallback to legacy).
+  - `modules/token.py:token_balance` → calls `get_token_balance` first (fallback to legacy).
+  - `modules/block.py:get_by_number` → calls `get_block` first (fallback to legacy).
+  - `modules/transaction.py:get_by_hash` → calls `get_transaction` first (fallback to legacy).
+
+### Not yet implemented (known gaps)
+- services coverage: remaining `stats` endpoints; broader proxy reads where applicable.
+- DTOs: normalization for more `stats` responses and other complex payloads.
+- telemetry/logging: unify on structlog adapter and propagate through services by default.
+- cache/policy composition: configurable TTLs, composition at facade-level (currently adapters exist but wired as optional parameters inside services).
+- legacy routing: migrate `modules/stats.py` and `modules/logs.py` to services internally, keep public interface intact.
+- import rules: tighten import-linter contracts stepwise as migration proceeds.
+
+### Testing notes (local fast path)
+- Prefer running only related tests when touching specific layers, e.g.:
+  - `pytest -q tests/test_logs.py tests/test_stats.py`
+  - `pytest -q tests/test_block.py tests/test_transaction.py tests/test_token.py`
+- CI remains responsible for full-suite and type checks (`mypy --strict`).

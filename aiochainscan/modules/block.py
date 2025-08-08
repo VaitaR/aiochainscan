@@ -45,6 +45,26 @@ class Block(BaseModule):
 
         return cast(dict[str, Any], data)
 
+    async def get_by_number(self, number: int, *, full: bool = False) -> dict[str, Any]:
+        """Fetch block by number via facade when available."""
+        try:
+            from aiochainscan import get_block  # lazy import to avoid cycles
+
+            return await get_block(
+                tag=number,
+                full=full,
+                api_kind=self._client.api_kind,
+                network=self._client.network,
+                api_key=self._client.api_key,
+            )
+        except Exception:
+            # Fallback to legacy proxy endpoint through `proxy` module if exposed
+            tag = hex(number)
+            data = await self._get(
+                module='proxy', action='eth_getBlockByNumber', tag=tag, boolean=str(full).lower()
+            )
+            return cast(dict[str, Any], data)
+
     async def block_countdown(
         self, block_no: int | None = None, *, offset: int = 1_000
     ) -> dict[str, Any] | None:
@@ -110,10 +130,23 @@ class Block(BaseModule):
         self, start_date: date, end_date: date, sort: str | None = None
     ) -> dict[str, Any]:
         """Get Daily Average Block Size"""
-        result = await self._get(
-            **get_daily_stats_params('dailyavgblocksize', start_date, end_date, sort)
-        )
-        return cast(dict[str, Any], result)
+        try:
+            from aiochainscan import get_daily_average_block_size  # lazy
+
+            data = await get_daily_average_block_size(
+                start_date=start_date,
+                end_date=end_date,
+                api_kind=self._client.api_kind,
+                network=self._client.network,
+                api_key=self._client.api_key,
+                sort=sort,
+            )
+            return cast(dict[str, Any], data)
+        except Exception:
+            result = await self._get(
+                **get_daily_stats_params('dailyavgblocksize', start_date, end_date, sort)
+            )
+            return cast(dict[str, Any], result)
 
     async def daily_block_count(
         self,
@@ -164,25 +197,64 @@ class Block(BaseModule):
         self, start_date: date, end_date: date, sort: str | None = None
     ) -> dict[str, Any]:
         """Get Daily Block Rewards"""
-        result = await self._get(
-            **get_daily_stats_params('dailyblockrewards', start_date, end_date, sort)
-        )
-        return cast(dict[str, Any], result)
+        try:
+            from aiochainscan import get_daily_block_rewards  # lazy
+
+            data = await get_daily_block_rewards(
+                start_date=start_date,
+                end_date=end_date,
+                api_kind=self._client.api_kind,
+                network=self._client.network,
+                api_key=self._client.api_key,
+                sort=sort,
+            )
+            return cast(dict[str, Any], data)
+        except Exception:
+            result = await self._get(
+                **get_daily_stats_params('dailyblockrewards', start_date, end_date, sort)
+            )
+            return cast(dict[str, Any], result)
 
     async def daily_average_time_for_a_block(
         self, start_date: date, end_date: date, sort: str | None = None
     ) -> dict[str, Any]:
         """Get Daily Average Time for A Block to be Included in the Ethereum Blockchain"""
-        result = await self._get(
-            **get_daily_stats_params('dailyavgblocktime', start_date, end_date, sort)
-        )
-        return cast(dict[str, Any], result)
+        try:
+            from aiochainscan import get_daily_average_block_time  # lazy
+
+            data = await get_daily_average_block_time(
+                start_date=start_date,
+                end_date=end_date,
+                api_kind=self._client.api_kind,
+                network=self._client.network,
+                api_key=self._client.api_key,
+                sort=sort,
+            )
+            return cast(dict[str, Any], data)
+        except Exception:
+            result = await self._get(
+                **get_daily_stats_params('dailyavgblocktime', start_date, end_date, sort)
+            )
+            return cast(dict[str, Any], result)
 
     async def daily_uncle_block_count(
         self, start_date: date, end_date: date, sort: str | None = None
     ) -> dict[str, Any]:
         """Get Daily Uncle Block Count and Rewards"""
-        result = await self._get(
-            **get_daily_stats_params('dailyuncleblkcount', start_date, end_date, sort)
-        )
-        return cast(dict[str, Any], result)
+        try:
+            from aiochainscan import get_daily_uncle_block_count  # lazy
+
+            data = await get_daily_uncle_block_count(
+                start_date=start_date,
+                end_date=end_date,
+                api_kind=self._client.api_kind,
+                network=self._client.network,
+                api_key=self._client.api_key,
+                sort=sort,
+            )
+            return cast(dict[str, Any], data)
+        except Exception:
+            result = await self._get(
+                **get_daily_stats_params('dailyuncleblkcount', start_date, end_date, sort)
+            )
+            return cast(dict[str, Any], result)

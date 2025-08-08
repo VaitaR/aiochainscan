@@ -61,15 +61,28 @@ class Token(BaseModule):
             FeatureNotSupportedError: If block_no is specified but not supported by the scanner
         """
         if block_no is None:
-            # Use current balance endpoint
-            result = await self._get(
-                module='account',
-                action='tokenbalance',
-                address=address,
-                contractaddress=contract,
-                tag='latest',
-            )
-            return str(result)
+            # Prefer new service path via facade for hexagonal migration
+            try:
+                from aiochainscan import get_token_balance  # lazy import to avoid cycles
+
+                value: int = await get_token_balance(
+                    holder=address,
+                    token_contract=contract,
+                    api_kind=self._client.api_kind,
+                    network=self._client.network,
+                    api_key=self._client.api_key,
+                )
+                return str(value)
+            except Exception:
+                # Fallback to legacy endpoint
+                result = await self._get(
+                    module='account',
+                    action='tokenbalance',
+                    address=address,
+                    contractaddress=contract,
+                    tag='latest',
+                )
+                return str(result)
         else:
             # Use historical balance endpoint
             require_feature_support(self._client, ChainFeatures.TOKEN_BALANCE_BY_BLOCK)
