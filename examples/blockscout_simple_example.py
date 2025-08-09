@@ -23,6 +23,7 @@ from aiochainscan import (  # noqa: E402  (import after sys.path tweak)
 from aiochainscan.services.fetch_all import (
     fetch_all_transactions_basic,
     fetch_all_transactions_fast,
+    fetch_all_transactions_eth_sliding_fast,
 )
 
 
@@ -63,45 +64,43 @@ async def fetch_all_transactions_optimized_demo(*, address: str) -> list[dict]:
     elapsed = time.time() - started
     print(f'duration_s={elapsed:.2f} items={len(txs_bs_fast)} tps={len(txs_bs_fast)/elapsed:.1f}')
 
-    print('--- Blockscout (basic) ---')
-    started = time.time()
-    txs_bs_basic = await fetch_all_transactions_basic(
-        address=address,
-        start_block=0,
-        end_block=99_999_999,
-        api_kind=api_kind,
-        network=network,
-        api_key=api_key,
-        http=http,
-        endpoint_builder=endpoint,
-        rate_limiter=rate_limiter,
-        retry=retry,
-        telemetry=telemetry,
-        max_offset=10_000,
-    )
-    elapsed = time.time() - started
-    print(f'duration_s={elapsed:.2f} items={len(txs_bs_basic)} tps={len(txs_bs_basic)/elapsed:.1f}')
+    # print('--- Blockscout (basic) ---')
+    # started = time.time()
+    # txs_bs_basic = await fetch_all_transactions_basic(
+    #     address=address,
+    #     start_block=0,
+    #     end_block=99_999_999,
+    #     api_kind=api_kind,
+    #     network=network,
+    #     api_key=api_key,
+    #     http=http,
+    #     endpoint_builder=endpoint,
+    #     rate_limiter=rate_limiter,
+    #     retry=retry,
+    #     telemetry=telemetry,
+    #     max_offset=10_000,
+    # )
+    # elapsed = time.time() - started
+    # print(f'duration_s={elapsed:.2f} items={len(txs_bs_basic)} tps={len(txs_bs_basic)/elapsed:.1f}')
 
     # Etherscan test (requires ETHERSCAN_KEY)
-    print('--- Etherscan (fast sliding window) ---')
+    print('--- Etherscan (fast sliding bi-directional) ---')
     import os
     eth_key = os.getenv('ETHERSCAN_KEY', '')
     if eth_key:
         started = time.time()
-        txs_es_fast = await fetch_all_transactions_fast(
+        txs_es_fast = await fetch_all_transactions_eth_sliding_fast(
             address=address,
             start_block=0,
             end_block=None,
-            api_kind='eth',
             network='main',
             api_key=eth_key,
             http=http,
             endpoint_builder=endpoint,
-            rate_limiter=SimpleRateLimiter(min_interval_seconds=0.25, burst=1),
+            rate_limiter=SimpleRateLimiter(min_interval_seconds=0.2, burst=1),  # 5 rps
             retry=retry,
             telemetry=telemetry,
             max_offset=10_000,
-            max_concurrent=4,
         )
         elapsed = time.time() - started
         print(f'duration_s={elapsed:.2f} items={len(txs_es_fast)} tps={len(txs_es_fast)/max(elapsed,1e-6):.1f}')

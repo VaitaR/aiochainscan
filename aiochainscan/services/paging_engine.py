@@ -38,6 +38,8 @@ class FetchSpec:
 
     name: str
     fetch_page: FetchPage
+    # Optional alternative page fetcher using reverse order (e.g., sort='desc')
+    fetch_page_desc: FetchPage | None = None
     key_fn: KeyFn
     order_fn: OrderFn
     max_offset: int
@@ -55,7 +57,7 @@ class ProviderPolicy:
         rps_key: Key to use with RateLimiter.acquire before outbound calls.
     """
 
-    mode: Literal['paged', 'sliding']
+    mode: Literal['paged', 'sliding', 'sliding_bi']
     prefetch: int
     window_cap: int | None
     rps_key: str | None
@@ -119,13 +121,19 @@ async def fetch_all_generic(
 
     pages_processed: int = 0
     all_items: list[Item] = []
-    offset: int = max(1, int(fetch_spec.max_offset))
+    # Respect provider window caps (e.g., Etherscan 10_000) by clamping requested offset
+    base_offset: int = max(1, int(fetch_spec.max_offset))
+    effective_offset_for_provider: int = (
+        min(base_offset, int(policy.window_cap)) if policy.window_cap is not None else base_offset
+    )
 
     async def _call_fetch_page(*, page: int, s: int, e: int) -> list[Item]:
         async def _inner() -> list[Item]:
             if rate_limiter is not None and policy.rps_key is not None:
                 await rate_limiter.acquire(policy.rps_key)
-            return await fetch_spec.fetch_page(page=page, start_block=s, end_block=e, offset=offset)
+            return await fetch_spec.fetch_page(
+                page=page, start_block=s, end_block=e, offset=effective_offset_for_provider
+            )
 
         if retry is not None:
             return await retry.run(lambda: _inner())
@@ -134,6 +142,62 @@ async def fetch_all_generic(
     start_ts = monotonic() if telemetry is not None else 0.0
 
     try:
+        if policy.mode == 'sliding_bi':
+            # Bidirectional sliding requires a descending fetcher
+            if fetch_spec.fetch_page_desc is None:
+                # Fallback to simple sliding
+                policy = ProviderPolicy(mode='sliding', prefetch=1, window_cap=policy.window_cap, rps_key=policy.rps_key)
+            else:
+                low: int = effective_start_block
+                up: int = effective_end_block
+                base_offset = max(1, int(fetch_spec.max_offset))
+                effective_offset_for_provider = (
+                    min(base_offset, int(policy.window_cap)) if policy.window_cap is not None else base_offset
+                )
+                while low <= up:
+                    # ASC
+                    items_asc = await _call_fetch_page(page=1, s=low, e=up)
+                    pages_processed += 1
+                    if telemetry is not None:
+                        await telemetry.record_event('paging.page_ok', {'mode': 'sliding_bi_asc', 'page': 1, 'items': len(items_asc)})
+                    if not items_asc:
+                        break
+                    all_items.extend(items_asc)
+                    if len(items_asc) < effective_offset_for_provider:
+                        break
+                    try:
+                        last_block_asc = int(fetch_spec.order_fn(items_asc[-1])[0])
+                    except Exception:
+                        break
+                    low = max(low, last_block_asc + 1)
+                    if low > up:
+                        break
+                    # DESC
+                    async def _call_desc() -> list[Item]:
+                        async def _inner_desc() -> list[Item]:
+                            if rate_limiter is not None and policy.rps_key is not None:
+                                await rate_limiter.acquire(policy.rps_key)
+                            return await fetch_spec.fetch_page_desc(  # type: ignore[func-returns-value]
+                                page=1, start_block=low, end_block=up, offset=effective_offset_for_provider
+                            )
+                        return await (retry.run(_inner_desc) if retry is not None else _inner_desc())
+
+                    items_desc = await _call_desc()
+                    pages_processed += 1
+                    if telemetry is not None:
+                        await telemetry.record_event('paging.page_ok', {'mode': 'sliding_bi_desc', 'page': 1, 'items': len(items_desc)})
+                    if not items_desc:
+                        break
+                    all_items.extend(items_desc)
+                    if len(items_desc) < effective_offset_for_provider:
+                        break
+                    try:
+                        oldest_block_desc = int(fetch_spec.order_fn(items_desc[-1])[0])
+                    except Exception:
+                        break
+                    up = min(up, oldest_block_desc - 1)
+                # Finish
+                raise _SlidingBiCompleted()
         if policy.mode == 'sliding':
             current_start: int = effective_start_block
             while True:
@@ -147,7 +211,7 @@ async def fetch_all_generic(
                 if not items:
                     break
                 all_items.extend(items)
-                if len(items) < offset:
+                if len(items) < effective_offset_for_provider:
                     break
                 # Advance to the next block after last item; order_fn's first element must be block number
                 try:
@@ -178,7 +242,7 @@ async def fetch_all_generic(
                         next_page = 0  # sentinel to exit outer loop
                         break
                     all_items.extend(items)
-                    if len(items) < offset:
+                    if len(items) < effective_offset_for_provider:
                         next_page = 0
                         break
                 if next_page <= 0:
@@ -188,6 +252,8 @@ async def fetch_all_generic(
         if telemetry is not None:
             await telemetry.record_error('paging.error', exc, {'mode': policy.mode})
         raise
+    except _SlidingBiCompleted:
+        pass
     finally:
         if telemetry is not None:
             duration_ms = int((monotonic() - start_ts) * 1000)
@@ -249,5 +315,143 @@ async def _gather_pages(coros: list[Awaitable[list[Item]]]) -> list[list[Item]]:
     import asyncio
 
     return await asyncio.gather(*coros)
+
+
+class _SlidingBiCompleted(Exception):
+    """Internal sentinel to finalize sliding_bi path and run common tail (telemetry/sort)."""
+    pass
+
+
+async def fetch_all_sliding_bi(
+    *,
+    start_block: int | None,
+    end_block: int | None,
+    fetch_spec: FetchSpec,
+    policy: ProviderPolicy,
+    rate_limiter: RateLimiter | None,
+    retry: RetryPolicy | None,
+    telemetry: Telemetry | None,
+    stats: dict[str, int] | None = None,
+) -> list[Item]:
+    """Bidirectional sliding window using asc+desc page fetchers.
+
+    Requirements:
+      - fetch_spec.fetch_page: ascending order (oldest→newest)
+      - fetch_spec.fetch_page_desc: descending order (newest→oldest)
+      - Dedup and stable sort are applied at the end
+    """
+
+    if fetch_spec.fetch_page_desc is None:
+        # No descending fetcher available; fallback to normal sliding
+        return await fetch_all_generic(
+            start_block=start_block,
+            end_block=end_block,
+            fetch_spec=fetch_spec,
+            policy=ProviderPolicy(mode='sliding', prefetch=1, window_cap=policy.window_cap, rps_key=policy.rps_key),
+            rate_limiter=rate_limiter,
+            retry=retry,
+            telemetry=telemetry,
+            max_concurrent=1,
+            stats=stats,
+        )
+
+    # Determine snapshot end_block
+    if end_block is None:
+        if fetch_spec.resolve_end_block is not None:
+            try:
+                effective_end = int(await fetch_spec.resolve_end_block())
+            except Exception:
+                effective_end = 99_999_999
+        else:
+            effective_end = 99_999_999
+    else:
+        effective_end = int(end_block)
+    low = 0 if start_block is None else int(start_block)
+    up = effective_end
+    if up <= low:
+        return []
+
+    # Offset clamp by provider window cap
+    base_offset: int = max(1, int(fetch_spec.max_offset))
+    effective_offset: int = min(base_offset, int(policy.window_cap)) if policy.window_cap is not None else base_offset
+
+    async def _call(fetcher: FetchPage, *, s: int, e: int) -> list[Item]:
+        async def _inner() -> list[Item]:
+            if rate_limiter is not None and policy.rps_key is not None:
+                await rate_limiter.acquire(policy.rps_key)
+            return await fetcher(page=1, start_block=s, end_block=e, offset=effective_offset)
+
+        return await (retry.run(_inner) if retry is not None else _inner())
+
+    all_items: list[Item] = []
+    pages_processed: int = 0
+    start_ts = monotonic() if telemetry is not None else 0.0
+
+    while low <= up:
+        asc_items = await _call(fetch_spec.fetch_page, s=low, e=up)
+        pages_processed += 1
+        if telemetry is not None:
+            await telemetry.record_event('paging.page_ok', {'mode': 'sliding_bi_asc', 'page': 1, 'items': len(asc_items)})
+        if not asc_items:
+            break
+        all_items.extend(asc_items)
+        if len(asc_items) < effective_offset:
+            break
+        try:
+            # order_fn first element is block number
+            last_block = int(fetch_spec.order_fn(asc_items[-1])[0])
+        except Exception:
+            break
+        low = max(low, last_block + 1)
+        if low > up:
+            break
+
+        desc_items = await _call(fetch_spec.fetch_page_desc, s=low, e=up)  # type: ignore[arg-type]
+        pages_processed += 1
+        if telemetry is not None:
+            await telemetry.record_event('paging.page_ok', {'mode': 'sliding_bi_desc', 'page': 1, 'items': len(desc_items)})
+        if not desc_items:
+            break
+        all_items.extend(desc_items)
+        if len(desc_items) < effective_offset:
+            break
+        try:
+            oldest_block = int(fetch_spec.order_fn(desc_items[-1])[0])
+        except Exception:
+            break
+        up = min(up, oldest_block - 1)
+
+    if telemetry is not None:
+        await telemetry.record_event(
+            'paging.duration',
+            {
+                'mode': 'sliding_bi',
+                'duration_ms': int((monotonic() - start_ts) * 1000),
+                'start_block': int(low),
+                'end_block': int(up),
+            },
+        )
+
+    # Dedup and stable sort
+    seen: set[str] = set()
+    unique: list[Item] = []
+    for it in all_items:
+        if not isinstance(it, dict):
+            continue
+        key = fetch_spec.key_fn(it)
+        if key is None or key in seen:
+            continue
+        seen.add(key)
+        unique.append(it)
+    try:
+        unique.sort(key=fetch_spec.order_fn)
+    except Exception:
+        pass
+
+    if telemetry is not None:
+        await telemetry.record_event('paging.ok', {'mode': 'sliding_bi', 'items': len(unique)})
+    if stats is not None:
+        stats.update({'pages_processed': pages_processed, 'items_total': len(all_items), 'mode': 3, 'prefetch': 1})
+    return unique
 
 

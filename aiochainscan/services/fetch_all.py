@@ -16,6 +16,7 @@ from aiochainscan.services.paging_engine import (
     ResolveEndBlock,
     ProviderPolicy,
     fetch_all_generic,
+    fetch_all_sliding_bi,
     resolve_policy_for_provider,
 )
 
@@ -469,5 +470,170 @@ async def fetch_all_logs_fast(
         retry=retry,
         telemetry=telemetry,
         max_concurrent=max_concurrent,
+    )
+
+
+# --- Etherscan-only explicit sliding variants (normal transactions) ---
+
+
+async def fetch_all_transactions_eth_sliding(
+    *,
+    address: str,
+    start_block: int | None,
+    end_block: int | None,
+    network: str,
+    api_key: str,
+    http: HttpClient,
+    endpoint_builder: EndpointBuilder,
+    rate_limiter: RateLimiter | None = None,
+    retry: RetryPolicy | None = None,
+    telemetry: Telemetry | None = None,
+    max_offset: int = 10_000,
+) -> list[dict[str, Any]]:
+    """Etherscan-specific sliding window (page=1, ascend, respect 10k window).
+
+    This is equivalent to the 'eth' fast path but exposed explicitly.
+    """
+
+    api_kind = 'eth'
+
+    spec = FetchSpec(
+        name='account.txs.eth.sliding',
+        fetch_page=lambda *, page, start_block, end_block, offset: get_normal_transactions(
+            address=address,
+            start_block=start_block,
+            end_block=end_block,
+            sort='asc',
+            page=page,
+            offset=offset,
+            api_kind=api_kind,
+            network=network,
+            api_key=api_key,
+            http=http,
+            _endpoint_builder=endpoint_builder,
+            _rate_limiter=None,
+            _retry=None,
+            _telemetry=telemetry,
+        ),
+        fetch_page_desc=lambda *, page, start_block, end_block, offset: get_normal_transactions(
+            address=address,
+            start_block=start_block,
+            end_block=end_block,
+            sort='desc',
+            page=page,
+            offset=offset,
+            api_kind=api_kind,
+            network=network,
+            api_key=api_key,
+            http=http,
+            _endpoint_builder=endpoint_builder,
+            _rate_limiter=None,
+            _retry=None,
+            _telemetry=telemetry,
+        ),
+        key_fn=lambda it: it.get('hash') if isinstance(it.get('hash'), str) else None,
+        order_fn=lambda it: (_to_int(it.get('blockNumber')), _to_int(it.get('transactionIndex'))),
+        max_offset=min(10_000, int(max_offset)),
+        resolve_end_block=_resolve_end_block_factory(
+            api_kind=api_kind,
+            network=network,
+            api_key=api_key,
+            http=http,
+            endpoint_builder=endpoint_builder,
+            rate_limiter=rate_limiter,
+            retry=retry,
+        ),
+    )
+    policy = ProviderPolicy(mode='sliding', prefetch=1, window_cap=10_000, rps_key=f'{api_kind}:{network}:txlist')
+    return await fetch_all_generic(
+        start_block=start_block,
+        end_block=end_block,
+        fetch_spec=spec,
+        policy=policy,
+        rate_limiter=rate_limiter,
+        retry=retry,
+        telemetry=telemetry,
+        max_concurrent=1,
+    )
+
+
+async def fetch_all_transactions_eth_sliding_fast(
+    *,
+    address: str,
+    start_block: int | None,
+    end_block: int | None,
+    network: str,
+    api_key: str,
+    http: HttpClient,
+    endpoint_builder: EndpointBuilder,
+    rate_limiter: RateLimiter | None = None,
+    retry: RetryPolicy | None = None,
+    telemetry: Telemetry | None = None,
+    max_offset: int = 10_000,
+    ) -> list[dict[str, Any]]:
+    """Etherscan sliding fast: alternate asc/desc pages to utilize window from both ends.
+
+    - Always page=1 with offset<=10_000; adjust [low..up] after each page
+    - Stop when low > up or short/empty page on a side
+    """
+
+    api_kind = 'eth'
+    spec = FetchSpec(
+        name='account.txs.eth.sliding_bi',
+        fetch_page=lambda *, page, start_block, end_block, offset: get_normal_transactions(
+            address=address,
+            start_block=start_block,
+            end_block=end_block,
+            sort='asc',
+            page=page,
+            offset=offset,
+            api_kind=api_kind,
+            network=network,
+            api_key=api_key,
+            http=http,
+            _endpoint_builder=endpoint_builder,
+            _rate_limiter=None,
+            _retry=None,
+            _telemetry=telemetry,
+        ),
+        fetch_page_desc=lambda *, page, start_block, end_block, offset: get_normal_transactions(
+            address=address,
+            start_block=start_block,
+            end_block=end_block,
+            sort='desc',
+            page=page,
+            offset=offset,
+            api_kind=api_kind,
+            network=network,
+            api_key=api_key,
+            http=http,
+            _endpoint_builder=endpoint_builder,
+            _rate_limiter=None,
+            _retry=None,
+            _telemetry=telemetry,
+        ),
+        key_fn=lambda it: it.get('hash') if isinstance(it.get('hash'), str) else None,
+        order_fn=lambda it: (_to_int(it.get('blockNumber')), _to_int(it.get('transactionIndex'))),
+        max_offset=min(10_000, int(max_offset)),
+        resolve_end_block=_resolve_end_block_factory(
+            api_kind=api_kind,
+            network=network,
+            api_key=api_key,
+            http=http,
+            endpoint_builder=endpoint_builder,
+            rate_limiter=rate_limiter,
+            retry=retry,
+        ),
+    )
+    policy = ProviderPolicy(mode='sliding_bi', prefetch=1, window_cap=10_000, rps_key=f'{api_kind}:{network}:txlist')
+    return await fetch_all_generic(
+        start_block=start_block,
+        end_block=end_block,
+        fetch_spec=spec,
+        policy=policy,
+        rate_limiter=rate_limiter,
+        retry=retry,
+        telemetry=telemetry,
+        max_concurrent=1,
     )
 
