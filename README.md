@@ -323,6 +323,43 @@ Notes:
 - You can pass an optional `stats` dict to collect execution metrics (ranges processed/split/retries, item counts).
 - Typed variant for normal transactions is available as `get_all_transactions_optimized_typed`.
 
+### Fetch-all engine (paged/sliding)
+
+The library also provides a universal fetch-all paging engine designed for explorer-style APIs.
+
+- Core API (module `aiochainscan.services.paging_engine`):
+  - `FetchSpec`: what/how to load (page fetcher, dedup key, order key, page size, end-block resolver)
+  - `ProviderPolicy`: how to page (mode: `paged` or `sliding`, `prefetch`, optional `window_cap`, `rps_key`)
+  - `fetch_all_generic(...)`: engine that orchestrates paging with RPS, retries, telemetry and stats
+  - `resolve_policy_for_provider(api_kind, network, max_concurrent)`: sensible defaults per provider family
+
+- Policies (defaults):
+  - Etherscan (`api_kind='eth'`): `mode='sliding'`, `window_cap=10000`, `prefetch=1`
+  - Blockscout (`api_kind` startswith `blockscout_`): `mode='paged'`, `prefetch=max_concurrent`
+  - Others: `mode='paged'`, `prefetch=1`
+
+- Engine behavior:
+  - `paged`: fetch batches of pages in parallel; stop on empty page or `len(items) < offset`
+  - `sliding`: always `page=1`; advance `start_block = last_block + 1`; same stop conditions
+  - RPS via `RateLimiter.acquire(policy.rps_key)`, retries via `RetryPolicy.run`, telemetry via `Telemetry`
+  - End-block snapshot via proxy `eth_blockNumber` (fallback `99_999_999`)
+  - Dedup by spec.key_fn; stable sort by spec.order_fn (safe hex/str→int)
+
+- Telemetry events emitted by the engine:
+  - `paging.duration`, `paging.page_ok` (page, items), `paging.ok` (total)
+  - `paging.error` on fatal errors
+
+- Stats (optional):
+  - `pages_processed`, `items_total`, `mode`, `prefetch`, `start_block`, `end_block`
+
+Convenience wrappers in `aiochainscan/services/fetch_all.py` expose a stable public API for common data types:
+
+- `fetch_all_transactions_basic/fast`
+- `fetch_all_internal_basic/fast`
+- `fetch_all_logs_basic/fast`
+
+Wrappers select the right policy for the provider (`eth` → sliding; `blockscout_*` → paged) and ensure no duplicates or gaps while respecting provider windows and RPS.
+
 ### Normalizers/DTO
 
 For many responses, helpers are provided to normalize provider-shaped payloads into light DTOs, e.g. `normalize_block`, `normalize_transaction`, `normalize_token_balance`, `normalize_gas_oracle`, and stats daily series (e.g. `normalize_daily_transaction_count`). These are pure helpers and can be composed with your own caching or telemetry.
