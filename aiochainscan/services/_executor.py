@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+import hashlib
+import json
+from collections.abc import Awaitable, Callable, Mapping
 from time import monotonic
 from typing import Any
 
@@ -48,3 +50,16 @@ async def run_with_policies(
                 f'{telemetry_name}.duration',
                 {'api_kind': api_kind, 'network': network, 'duration_ms': duration_ms},
             )
+
+
+def make_hashed_cache_key(*, prefix: str, payload: Mapping[str, Any], length: int = 24) -> str:
+    """Build a deterministic short-hash cache key from an arbitrary payload.
+
+    - JSON-encodes with stable ordering and compact separators
+    - SHA-256 digest truncated to ``length`` (default 24 hex chars)
+    - Returned format: ``"{prefix}:{short_hash}"``
+    """
+
+    payload_str = json.dumps(dict(payload), sort_keys=True, separators=(',', ':'))
+    digest = hashlib.sha256(payload_str.encode('utf-8')).hexdigest()
+    return f'{prefix}:{digest[:length]}'

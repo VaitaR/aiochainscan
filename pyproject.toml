@@ -190,6 +190,16 @@ forbidden_modules = [
   "aiochainscan.modules",
 ]
 
+[[tool.importlinter.contracts]]
+name = "Facade does not import modules (no back-edges)"
+type = "forbidden"
+source_modules = [
+  "aiochainscan",
+]
+forbidden_modules = [
+  "aiochainscan.modules",
+]
+
 [[tool.mypy.overrides]]
 module = [
   "aiochainscan.modules.extra.*",

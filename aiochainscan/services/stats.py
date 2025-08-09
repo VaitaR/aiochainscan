@@ -12,6 +12,7 @@ from aiochainscan.ports.http_client import HttpClient
 from aiochainscan.ports.rate_limiter import RateLimiter, RetryPolicy
 from aiochainscan.ports.telemetry import Telemetry
 from aiochainscan.services._executor import run_with_policies
+from aiochainscan.services.constants import CACHE_TTL_ETH_PRICE_SECONDS
 
 
 async def get_eth_price(
@@ -66,9 +67,7 @@ async def get_eth_price(
         result = response.get('result', response)
     if isinstance(result, dict):
         if _cache is not None:
-            # TTL constant for ETH price (conservative default)
-            cache_ttl_seconds_eth_price: int = 30
-            await _cache.set(cache_key, result, ttl_seconds=cache_ttl_seconds_eth_price)
+            await _cache.set(cache_key, result, ttl_seconds=CACHE_TTL_ETH_PRICE_SECONDS)
         if _telemetry is not None:
             await _telemetry.record_event(
                 'stats.get_eth_price.ok',
