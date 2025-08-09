@@ -48,6 +48,19 @@ async def fetch_all_ranges_optimized(
             items = await fetch_range(s, e)
             return s, e, items if isinstance(items, list) else []
 
+    # Stats and accumulation containers
+    local_stats: dict[str, int] = {
+        'ranges_seeded': 0,
+        'ranges_processed': 0,
+        'ranges_split': 0,
+        'retries': 0,
+        'errors': 0,
+        'ranges_failed': 0,
+        'items_total': 0,
+    }
+
+    all_items: list[dict[str, Any]] = []
+
     # Priority queue of ranges: (-size, counter, start, end)
     range_queue: list[tuple[int, int, int, int]] = []
     counter = 0
@@ -73,12 +86,18 @@ async def fetch_all_ranges_optimized(
 
         results = await asyncio.gather(*edge_tasks, return_exceptions=True)
         local_items: list[tuple[int, int, list[dict[str, Any]]]] = []
+        left_done = False
+        right_done = False
         for res in results:
             if isinstance(res, BaseException):
-                # If edge fetch failed, fall back to queueing the edge for normal processing
-                # Do not increment stats here; retries are handled in the main loop
+                # If edge fetch failed, it will be re-queued below
                 continue
-            local_items.append(res)
+            s2, e2, items = res
+            local_items.append((s2, e2, items))
+            if s2 == start_block and e2 == left_end:
+                left_done = True
+            if s2 == right_start and e2 == end_block:
+                right_done = True
 
         # Process edge fetch results (split or accept)
         for s2, e2, items in local_items:
@@ -91,20 +110,30 @@ async def fetch_all_ranges_optimized(
                 pivot = min(e2 - 1, s2 + target_len - 1)
                 push_range(s2, pivot)
                 push_range(pivot + 1, e2)
+                local_stats['ranges_split'] += 1
+                if telemetry is not None:
+                    await telemetry.record_event(
+                        f'{telemetry_prefix}.range_split',
+                        {'start': s2, 'end': e2, 'pivot': pivot},
+                    )
             else:
-                # Store items directly; they will be deduped later
-                # We append into all_items after the loop to keep variables in scope
-                pass
+                all_items.extend(items)
+                local_stats['items_total'] += len(items)
+                if telemetry is not None:
+                    await telemetry.record_event(
+                        f'{telemetry_prefix}.range_ok',
+                        {'start': s2, 'end': e2, 'items': len(items)},
+                    )
 
-        # Seed the center range into the queue (and re-queue edges if they failed)
+        # Seed the center range into the queue (and re-queue only failed edges)
         center_start = left_end + 1
         center_end = right_start - 1
         if center_start <= center_end:
             push_range(center_start, center_end)
-        # If any edge runs were skipped due to error, put them in the queue now
-        if start_block <= left_end:
+        # Re-queue edges only if they failed
+        if start_block <= left_end and not left_done:
             push_range(start_block, left_end)
-        if right_start <= end_block:
+        if right_start <= end_block and not right_done:
             push_range(right_start, end_block)
     else:
         push_range(start_block, left_end)
@@ -112,15 +141,19 @@ async def fetch_all_ranges_optimized(
             push_range(left_end + 1, right_start - 1)
         push_range(right_start, end_block)
 
-    local_stats: dict[str, int] = {
-        'ranges_seeded': 3,
-        'ranges_processed': 0,
-        'ranges_split': 0,
-        'retries': 0,
-        'errors': 0,
-        'ranges_failed': 0,
-        'items_total': 0,
-    }
+    # Stats
+    # Approximate seeded ranges count (best-effort)
+    if edges_first:
+        seeded = 0
+        center_start = left_end + 1
+        center_end = right_start - 1
+        if center_start <= center_end:
+            seeded += 1
+        # Edges always attempted (either run now or re-queued on failure)
+        seeded += 2
+        local_stats['ranges_seeded'] = seeded
+    else:
+        local_stats['ranges_seeded'] = 3
     if stats is not None:
         stats.update(
             {
@@ -138,7 +171,7 @@ async def fetch_all_ranges_optimized(
     if telemetry is not None:
         start_ts = __import__('time').monotonic()
 
-    all_items: list[dict[str, Any]] = []
+    # (moved earlier)
 
     while range_queue:
         batch = [heapq.heappop(range_queue) for _ in range(min(max_concurrent, len(range_queue)))]
