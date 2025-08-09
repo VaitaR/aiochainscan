@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from time import monotonic
 from typing import Any
 
 from aiochainscan.domain.dto import LogEntryDTO
@@ -12,9 +13,9 @@ from aiochainscan.ports.http_client import HttpClient
 from aiochainscan.ports.provider_federator import ProviderFederator
 from aiochainscan.ports.rate_limiter import RateLimiter, RetryPolicy
 from aiochainscan.ports.telemetry import Telemetry
-from aiochainscan.services.pagination import encode_rest_cursor
 from aiochainscan.services._executor import make_hashed_cache_key, run_with_policies
 from aiochainscan.services.constants import CACHE_TTL_LOGS_SECONDS as CACHE_TTL_SECONDS
+from aiochainscan.services.pagination import encode_rest_cursor
 
 
 async def get_logs(
