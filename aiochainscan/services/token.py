@@ -10,6 +10,9 @@ from aiochainscan.ports.endpoint_builder import EndpointBuilder
 from aiochainscan.ports.http_client import HttpClient
 from aiochainscan.ports.rate_limiter import RateLimiter, RetryPolicy
 from aiochainscan.ports.telemetry import Telemetry
+from aiochainscan.services.constants import (
+    CACHE_TTL_TOKEN_BALANCE_SECONDS as CACHE_TTL_SECONDS_TOKEN_BALANCE,
+)
 
 
 async def get_token_balance(
@@ -100,7 +103,7 @@ async def get_token_balance(
 
     if _telemetry is not None:
         await _telemetry.record_event(
-            'get_token_balance.ok',
+            'token.get_token_balance.ok',
             {
                 'api_kind': api_kind,
                 'network': network,
@@ -108,7 +111,7 @@ async def get_token_balance(
         )
 
     if _cache is not None and value >= 0:
-        await _cache.set(cache_key, value, ttl_seconds=10)
+        await _cache.set(cache_key, value, ttl_seconds=CACHE_TTL_SECONDS_TOKEN_BALANCE)
 
     return value
 
@@ -130,4 +133,4 @@ def normalize_token_balance(
 
 
 # TTL constants (conservative defaults)
-CACHE_TTL_SECONDS_TOKEN_BALANCE: int = 10
+# centralized in constants module

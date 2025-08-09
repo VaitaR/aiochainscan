@@ -144,3 +144,33 @@ def test_api_kinds_smoke(api_kind, network, expected_base_contains, expected_api
     ub = UrlBuilder(apikey(), api_kind, network)
     assert expected_base_contains in ub.BASE_URL
     assert ub.API_URL.startswith(expected_api_contains)
+
+
+def test_api_kinds_drift_guard():
+    # Ensure UrlBuilder knows all officially supported kinds from docs/instructions
+    expected = {
+        'eth',
+        'bsc',
+        'polygon',
+        'optimism',
+        'arbitrum',
+        'fantom',
+        'gnosis',
+        'flare',
+        'wemix',
+        'chiliz',
+        'mode',
+        'linea',
+        'blast',
+        'base',
+        'routscan_mode',
+        'blockscout_eth',
+        'blockscout_sepolia',
+        'blockscout_gnosis',
+        'blockscout_polygon',
+        'moralis',
+    }
+    actual = set(UrlBuilder._API_KINDS.keys())
+    # Must include at least the expected set (allowing more kinds in future)
+    missing = expected - actual
+    assert not missing, f'Missing api_kinds in UrlBuilder: {sorted(missing)}'

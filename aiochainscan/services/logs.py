@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import hashlib
-import json
 from collections.abc import Mapping
 from typing import Any
 
@@ -11,9 +9,10 @@ from aiochainscan.ports.endpoint_builder import EndpointBuilder
 from aiochainscan.ports.http_client import HttpClient
 from aiochainscan.ports.rate_limiter import RateLimiter, RetryPolicy
 from aiochainscan.ports.telemetry import Telemetry
-from aiochainscan.services._executor import run_with_policies
+from aiochainscan.services._executor import make_hashed_cache_key, run_with_policies
+from aiochainscan.services.constants import CACHE_TTL_LOGS_SECONDS as CACHE_TTL_SECONDS
 
-CACHE_TTL_SECONDS: int = 15
+# moved to constants module
 
 
 async def get_logs(
@@ -74,8 +73,7 @@ async def get_logs(
         'page': None if page is None else str(page),
         'offset': None if offset is None else str(offset),
     }
-    payload_str = json.dumps(payload, sort_keys=True, separators=(',', ':'))
-    cache_key = 'logs:' + hashlib.sha256(payload_str.encode('utf-8')).hexdigest()[:24]
+    cache_key = make_hashed_cache_key(prefix='logs', payload=payload, length=24)
     if _cache is not None:
         cached = await _cache.get(cache_key)
         if isinstance(cached, list):

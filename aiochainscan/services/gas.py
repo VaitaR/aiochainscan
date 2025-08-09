@@ -10,8 +10,7 @@ from aiochainscan.ports.http_client import HttpClient
 from aiochainscan.ports.rate_limiter import RateLimiter, RetryPolicy
 from aiochainscan.ports.telemetry import Telemetry
 from aiochainscan.services._executor import run_with_policies
-
-CACHE_TTL_SECONDS: int = 5
+from aiochainscan.services.constants import CACHE_TTL_GAS_SECONDS as CACHE_TTL_SECONDS
 
 
 async def get_gas_oracle(
