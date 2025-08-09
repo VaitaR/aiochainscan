@@ -18,6 +18,9 @@ from aiochainscan.ports.endpoint_builder import EndpointBuilder
 from aiochainscan.ports.http_client import HttpClient
 from aiochainscan.ports.rate_limiter import RateLimiter, RetryPolicy
 from aiochainscan.ports.telemetry import Telemetry
+from aiochainscan.services._executor import run_with_policies
+
+CACHE_TTL_SECONDS_BALANCE: int = 10
 
 
 async def get_address_balance(
@@ -60,36 +63,16 @@ async def get_address_balance(
         if isinstance(cached, int):
             return cached
 
-    async def _do_request() -> Any:
-        if _rate_limiter is not None:
-            await _rate_limiter.acquire(key=f'{api_kind}:{network}:balance')
-        start = monotonic()
-        try:
-            return await http.get(url, params=signed_params, headers=headers)
-        finally:
-            if _telemetry is not None:
-                duration_ms = int((monotonic() - start) * 1000)
-                await _telemetry.record_event(
-                    'account.get_address_balance.duration',
-                    {'api_kind': api_kind, 'network': network, 'duration_ms': duration_ms},
-                )
-
-    try:
-        if _retry is not None:
-            response: Any = await _retry.run(_do_request)
-        else:
-            response = await _do_request()
-    except Exception as exc:  # noqa: BLE001
-        if _telemetry is not None:
-            await _telemetry.record_error(
-                'account.get_address_balance.error',
-                exc,
-                {
-                    'api_kind': api_kind,
-                    'network': network,
-                },
-            )
-        raise
+    response: Any = await run_with_policies(
+        do_call=lambda: http.get(url, params=signed_params, headers=headers),
+        telemetry=_telemetry,
+        telemetry_name='account.get_address_balance',
+        api_kind=api_kind,
+        network=network,
+        rate_limiter=_rate_limiter,
+        rate_limiter_key=f'{api_kind}:{network}:balance',
+        retry_policy=_retry,
+    )
 
     # Etherscan-like response: {"status": "1", "message": "OK", "result": "123..."}
     value: int = 0
@@ -116,7 +99,7 @@ async def get_address_balance(
         )
 
     if _cache is not None and value >= 0:
-        await _cache.set(cache_key, value, ttl_seconds=10)
+        await _cache.set(cache_key, value, ttl_seconds=CACHE_TTL_SECONDS_BALANCE)
 
     return value
 
@@ -147,33 +130,16 @@ async def get_address_balances(
         params.update({k: v for k, v in extra_params.items() if v is not None})
     signed_params, headers = endpoint.filter_and_sign(params, headers=None)
 
-    async def _do_request() -> Any:
-        if _rate_limiter is not None:
-            await _rate_limiter.acquire(key=f'{api_kind}:{network}:balancemulti')
-        start = monotonic()
-        try:
-            return await http.get(url, params=signed_params, headers=headers)
-        finally:
-            if _telemetry is not None:
-                duration_ms = int((monotonic() - start) * 1000)
-                await _telemetry.record_event(
-                    'account.get_address_balances.duration',
-                    {'api_kind': api_kind, 'network': network, 'duration_ms': duration_ms},
-                )
-
-    try:
-        response: Any = await (_retry.run(_do_request) if _retry is not None else _do_request())
-    except Exception as exc:  # noqa: BLE001
-        if _telemetry is not None:
-            await _telemetry.record_error(
-                'get_address_balances.error',
-                exc,
-                {
-                    'api_kind': api_kind,
-                    'network': network,
-                },
-            )
-        raise
+    response: Any = await run_with_policies(
+        do_call=lambda: http.get(url, params=signed_params, headers=headers),
+        telemetry=_telemetry,
+        telemetry_name='account.get_address_balances',
+        api_kind=api_kind,
+        network=network,
+        rate_limiter=_rate_limiter,
+        rate_limiter_key=f'{api_kind}:{network}:balancemulti',
+        retry_policy=_retry,
+    )
     if isinstance(response, dict):
         result = response.get('result', response)
         if isinstance(result, list):
@@ -229,30 +195,16 @@ async def get_normal_transactions(
         params.update({k: v for k, v in extra_params.items() if v is not None})
     signed_params, headers = endpoint.filter_and_sign(params, headers=None)
 
-    async def _do_request() -> Any:
-        if _rate_limiter is not None:
-            await _rate_limiter.acquire(key=f'{api_kind}:{network}:txlist')
-        start = monotonic()
-        try:
-            return await http.get(url, params=signed_params, headers=headers)
-        finally:
-            if _telemetry is not None:
-                duration_ms = int((monotonic() - start) * 1000)
-                await _telemetry.record_event(
-                    'account.get_normal_transactions.duration',
-                    {'api_kind': api_kind, 'network': network, 'duration_ms': duration_ms},
-                )
-
-    try:
-        response: Any = await (_retry.run(_do_request) if _retry is not None else _do_request())
-    except Exception as exc:  # noqa: BLE001
-        if _telemetry is not None:
-            await _telemetry.record_error(
-                'get_normal_transactions.error',
-                exc,
-                {'api_kind': api_kind, 'network': network},
-            )
-        raise
+    response: Any = await run_with_policies(
+        do_call=lambda: http.get(url, params=signed_params, headers=headers),
+        telemetry=_telemetry,
+        telemetry_name='account.get_normal_transactions',
+        api_kind=api_kind,
+        network=network,
+        rate_limiter=_rate_limiter,
+        rate_limiter_key=f'{api_kind}:{network}:txlist',
+        retry_policy=_retry,
+    )
 
     if isinstance(response, dict):
         result = response.get('result', response)
@@ -311,30 +263,16 @@ async def get_internal_transactions(
         params.update({k: v for k, v in extra_params.items() if v is not None})
     signed_params, headers = endpoint.filter_and_sign(params, headers=None)
 
-    async def _do_request() -> Any:
-        if _rate_limiter is not None:
-            await _rate_limiter.acquire(key=f'{api_kind}:{network}:txlistinternal')
-        start = monotonic()
-        try:
-            return await http.get(url, params=signed_params, headers=headers)
-        finally:
-            if _telemetry is not None:
-                duration_ms = int((monotonic() - start) * 1000)
-                await _telemetry.record_event(
-                    'account.get_internal_transactions.duration',
-                    {'api_kind': api_kind, 'network': network, 'duration_ms': duration_ms},
-                )
-
-    try:
-        response: Any = await (_retry.run(_do_request) if _retry is not None else _do_request())
-    except Exception as exc:  # noqa: BLE001
-        if _telemetry is not None:
-            await _telemetry.record_error(
-                'get_internal_transactions.error',
-                exc,
-                {'api_kind': api_kind, 'network': network},
-            )
-        raise
+    response: Any = await run_with_policies(
+        do_call=lambda: http.get(url, params=signed_params, headers=headers),
+        telemetry=_telemetry,
+        telemetry_name='account.get_internal_transactions',
+        api_kind=api_kind,
+        network=network,
+        rate_limiter=_rate_limiter,
+        rate_limiter_key=f'{api_kind}:{network}:txlistinternal',
+        retry_policy=_retry,
+    )
 
     if isinstance(response, dict):
         result = response.get('result', response)
@@ -376,6 +314,7 @@ async def get_token_transfers(
     _rate_limiter: RateLimiter | None = None,
     _retry: RetryPolicy | None = None,
     _telemetry: Telemetry | None = None,
+    preserve_none: bool = False,
 ) -> list[dict[str, Any]]:
     endpoint = _endpoint_builder.open(api_key=api_key, api_kind=api_kind, network=network)
     url: str = endpoint.api_url
@@ -384,6 +323,8 @@ async def get_token_transfers(
         'module': 'account',
         'action': actions.get(token_standard, 'tokentx'),
         'address': address,
+        # Preserve legacy tests shape: omit keys with None to match expected params
+        # (contractaddress and sort are optional and should not appear when None)
         'contractaddress': contract_address,
         'startblock': start_block,
         'endblock': end_block,
@@ -391,34 +332,23 @@ async def get_token_transfers(
         'page': page,
         'offset': offset,
     }
+    # Preserve or drop None-valued optional keys depending on caller needs
+    if not preserve_none:
+        params = {k: v for k, v in params.items() if v is not None}
     if extra_params:
         params.update({k: v for k, v in extra_params.items() if v is not None})
     signed_params, headers = endpoint.filter_and_sign(params, headers=None)
 
-    async def _do_request() -> Any:
-        if _rate_limiter is not None:
-            await _rate_limiter.acquire(key=f'{api_kind}:{network}:{params["action"]}')
-        start = monotonic()
-        try:
-            return await http.get(url, params=signed_params, headers=headers)
-        finally:
-            if _telemetry is not None:
-                duration_ms = int((monotonic() - start) * 1000)
-                await _telemetry.record_event(
-                    'account.get_token_transfers.duration',
-                    {'api_kind': api_kind, 'network': network, 'duration_ms': duration_ms},
-                )
-
-    try:
-        response: Any = await (_retry.run(_do_request) if _retry is not None else _do_request())
-    except Exception as exc:  # noqa: BLE001
-        if _telemetry is not None:
-            await _telemetry.record_error(
-                'get_token_transfers.error',
-                exc,
-                {'api_kind': api_kind, 'network': network},
-            )
-        raise
+    response: Any = await run_with_policies(
+        do_call=lambda: http.get(url, params=signed_params, headers=headers),
+        telemetry=_telemetry,
+        telemetry_name='account.get_token_transfers',
+        api_kind=api_kind,
+        network=network,
+        rate_limiter=_rate_limiter,
+        rate_limiter_key=f'{api_kind}:{network}:{params["action"]}',
+        retry_policy=_retry,
+    )
 
     if isinstance(response, dict):
         result = response.get('result', response)
@@ -471,30 +401,16 @@ async def get_mined_blocks(
         params.update({k: v for k, v in extra_params.items() if v is not None})
     signed_params, headers = endpoint.filter_and_sign(params, headers=None)
 
-    async def _do_request() -> Any:
-        if _rate_limiter is not None:
-            await _rate_limiter.acquire(key=f'{api_kind}:{network}:getminedblocks')
-        start = monotonic()
-        try:
-            return await http.get(url, params=signed_params, headers=headers)
-        finally:
-            if _telemetry is not None:
-                duration_ms = int((monotonic() - start) * 1000)
-                await _telemetry.record_event(
-                    'account.get_mined_blocks.duration',
-                    {'api_kind': api_kind, 'network': network, 'duration_ms': duration_ms},
-                )
-
-    try:
-        response: Any = await (_retry.run(_do_request) if _retry is not None else _do_request())
-    except Exception as exc:  # noqa: BLE001
-        if _telemetry is not None:
-            await _telemetry.record_error(
-                'get_mined_blocks.error',
-                exc,
-                {'api_kind': api_kind, 'network': network},
-            )
-        raise
+    response: Any = await run_with_policies(
+        do_call=lambda: http.get(url, params=signed_params, headers=headers),
+        telemetry=_telemetry,
+        telemetry_name='account.get_mined_blocks',
+        api_kind=api_kind,
+        network=network,
+        rate_limiter=_rate_limiter,
+        rate_limiter_key=f'{api_kind}:{network}:getminedblocks',
+        retry_policy=_retry,
+    )
 
     if isinstance(response, dict):
         result = response.get('result', response)
@@ -551,30 +467,16 @@ async def get_beacon_chain_withdrawals(
         params.update({k: v for k, v in extra_params.items() if v is not None})
     signed_params, headers = endpoint.filter_and_sign(params, headers=None)
 
-    async def _do_request() -> Any:
-        if _rate_limiter is not None:
-            await _rate_limiter.acquire(key=f'{api_kind}:{network}:txsBeaconWithdrawal')
-        start = monotonic()
-        try:
-            return await http.get(url, params=signed_params, headers=headers)
-        finally:
-            if _telemetry is not None:
-                duration_ms = int((monotonic() - start) * 1000)
-                await _telemetry.record_event(
-                    'account.get_beacon_chain_withdrawals.duration',
-                    {'api_kind': api_kind, 'network': network, 'duration_ms': duration_ms},
-                )
-
-    try:
-        response: Any = await (_retry.run(_do_request) if _retry is not None else _do_request())
-    except Exception as exc:  # noqa: BLE001
-        if _telemetry is not None:
-            await _telemetry.record_error(
-                'get_beacon_chain_withdrawals.error',
-                exc,
-                {'api_kind': api_kind, 'network': network},
-            )
-        raise
+    response: Any = await run_with_policies(
+        do_call=lambda: http.get(url, params=signed_params, headers=headers),
+        telemetry=_telemetry,
+        telemetry_name='account.get_beacon_chain_withdrawals',
+        api_kind=api_kind,
+        network=network,
+        rate_limiter=_rate_limiter,
+        rate_limiter_key=f'{api_kind}:{network}:txsBeaconWithdrawal',
+        retry_policy=_retry,
+    )
 
     if isinstance(response, dict):
         result = response.get('result', response)

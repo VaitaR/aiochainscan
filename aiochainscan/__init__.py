@@ -17,6 +17,7 @@ from aiochainscan.capabilities import (
 )
 from aiochainscan.client import Client  # noqa: F401
 from aiochainscan.config import ChainScanConfig, ScannerConfig, config  # noqa: F401
+from aiochainscan.config import config_manager as _config_manager
 from aiochainscan.domain.dto import (
     AddressBalanceDTO,
     BeaconWithdrawalDTO,
@@ -263,13 +264,18 @@ __all__ = [
     'get_daily_total_gas_used_typed',
     'get_daily_average_gas_price_typed',
     'get_eth_price_typed',
+    'get_daily_block_count_typed',
+    'get_daily_average_network_hash_rate_typed',
+    'get_daily_average_network_difficulty_typed',
+    'get_ether_historical_daily_market_cap_typed',
+    'get_ether_historical_price_typed',
     # Capabilities facade (read-only)
     'list_feature_matrix',
     'is_feature_supported',
     'get_supported_scanners_for_feature',
     'get_supported_features_for',
-    # GraphQL-aware paginated logs facade
     'get_logs_page_typed',
+    'get_capabilities_overview',
 ]
 
 
@@ -339,6 +345,19 @@ def get_supported_features_for(scanner_id: str, network: str) -> set[str]:
     """Get all features supported by (scanner_id, network)."""
 
     return _caps_get_supported_features(scanner_id, network)
+
+
+def get_capabilities_overview() -> dict[str, Any]:
+    """Return merged read-only overview of capabilities and scanner configs.
+
+    - features: a copy of feature->(scanner, network) pairs
+    - scanners: metadata from configuration manager (name, domain, networks, etc.)
+    """
+
+    return {
+        'features': {feature: set(pairs) for feature, pairs in _FEATURE_SUPPORT_SRC.items()},
+        'scanners': _config_manager.list_all_configurations(),
+    }
 
 
 async def get_block(
@@ -839,6 +858,35 @@ async def get_daily_total_gas_used_typed(**kwargs: Any) -> list[DailySeriesDTO]:
 async def get_daily_average_gas_price_typed(**kwargs: Any) -> list[DailySeriesDTO]:
     items = await get_daily_average_gas_price(**kwargs)
     return normalize_daily_average_gas_price(items)
+
+
+async def get_daily_block_count_typed(**kwargs: Any) -> list[DailySeriesDTO]:
+    items = await get_daily_block_count(**kwargs)
+    return normalize_daily_block_count(items)
+
+
+async def get_daily_average_network_hash_rate_typed(**kwargs: Any) -> list[DailySeriesDTO]:
+    items = await get_daily_average_network_hash_rate(**kwargs)
+    return normalize_daily_average_network_hash_rate(items)
+
+
+async def get_daily_average_network_difficulty_typed(
+    **kwargs: Any,
+) -> list[DailySeriesDTO]:
+    items = await get_daily_average_network_difficulty(**kwargs)
+    return normalize_daily_average_network_difficulty(items)
+
+
+async def get_ether_historical_daily_market_cap_typed(
+    **kwargs: Any,
+) -> list[DailySeriesDTO]:
+    items = await get_ether_historical_daily_market_cap(**kwargs)
+    return normalize_ether_historical_daily_market_cap(items)
+
+
+async def get_ether_historical_price_typed(**kwargs: Any) -> list[DailySeriesDTO]:
+    items = await get_ether_historical_price(**kwargs)
+    return normalize_ether_historical_price(items)
 
 
 async def get_address_balances(
@@ -1711,6 +1759,191 @@ async def get_daily_average_gas_price(
     telemetry: Telemetry | None = None,
 ) -> list[dict[str, Any]]:
     from aiochainscan.services.stats import get_daily_average_gas_price as svc
+
+    http = http or AiohttpClient()
+    endpoint = endpoint_builder or UrlBuilderEndpoint()
+    telemetry = telemetry or StructlogTelemetry()
+    try:
+        return await svc(
+            start_date=start_date,
+            end_date=end_date,
+            api_kind=api_kind,
+            network=network,
+            api_key=api_key,
+            http=http,
+            _endpoint_builder=endpoint,
+            sort=sort,
+            _rate_limiter=rate_limiter,
+            _retry=retry,
+            _telemetry=telemetry,
+        )
+    finally:
+        await http.aclose()
+
+
+async def get_daily_block_count(
+    *,
+    start_date: date,
+    end_date: date,
+    api_kind: str,
+    network: str,
+    api_key: str,
+    sort: str | None = None,
+    http: HttpClient | None = None,
+    endpoint_builder: EndpointBuilder | None = None,
+    rate_limiter: RateLimiter | None = None,
+    retry: RetryPolicy | None = None,
+    telemetry: Telemetry | None = None,
+) -> list[dict[str, Any]]:
+    from aiochainscan.services.stats import get_daily_block_count as svc
+
+    http = http or AiohttpClient()
+    endpoint = endpoint_builder or UrlBuilderEndpoint()
+    telemetry = telemetry or StructlogTelemetry()
+    try:
+        return await svc(
+            start_date=start_date,
+            end_date=end_date,
+            api_kind=api_kind,
+            network=network,
+            api_key=api_key,
+            http=http,
+            _endpoint_builder=endpoint,
+            sort=sort,
+            _rate_limiter=rate_limiter,
+            _retry=retry,
+            _telemetry=telemetry,
+        )
+    finally:
+        await http.aclose()
+
+
+async def get_daily_average_network_hash_rate(
+    *,
+    start_date: date,
+    end_date: date,
+    api_kind: str,
+    network: str,
+    api_key: str,
+    sort: str | None = None,
+    http: HttpClient | None = None,
+    endpoint_builder: EndpointBuilder | None = None,
+    rate_limiter: RateLimiter | None = None,
+    retry: RetryPolicy | None = None,
+    telemetry: Telemetry | None = None,
+) -> list[dict[str, Any]]:
+    from aiochainscan.services.stats import get_daily_average_network_hash_rate as svc
+
+    http = http or AiohttpClient()
+    endpoint = endpoint_builder or UrlBuilderEndpoint()
+    telemetry = telemetry or StructlogTelemetry()
+    try:
+        return await svc(
+            start_date=start_date,
+            end_date=end_date,
+            api_kind=api_kind,
+            network=network,
+            api_key=api_key,
+            http=http,
+            _endpoint_builder=endpoint,
+            sort=sort,
+            _rate_limiter=rate_limiter,
+            _retry=retry,
+            _telemetry=telemetry,
+        )
+    finally:
+        await http.aclose()
+
+
+async def get_daily_average_network_difficulty(
+    *,
+    start_date: date,
+    end_date: date,
+    api_kind: str,
+    network: str,
+    api_key: str,
+    sort: str | None = None,
+    http: HttpClient | None = None,
+    endpoint_builder: EndpointBuilder | None = None,
+    rate_limiter: RateLimiter | None = None,
+    retry: RetryPolicy | None = None,
+    telemetry: Telemetry | None = None,
+) -> list[dict[str, Any]]:
+    from aiochainscan.services.stats import get_daily_average_network_difficulty as svc
+
+    http = http or AiohttpClient()
+    endpoint = endpoint_builder or UrlBuilderEndpoint()
+    telemetry = telemetry or StructlogTelemetry()
+    try:
+        return await svc(
+            start_date=start_date,
+            end_date=end_date,
+            api_kind=api_kind,
+            network=network,
+            api_key=api_key,
+            http=http,
+            _endpoint_builder=endpoint,
+            sort=sort,
+            _rate_limiter=rate_limiter,
+            _retry=retry,
+            _telemetry=telemetry,
+        )
+    finally:
+        await http.aclose()
+
+
+async def get_ether_historical_daily_market_cap(
+    *,
+    start_date: date,
+    end_date: date,
+    api_kind: str,
+    network: str,
+    api_key: str,
+    sort: str | None = None,
+    http: HttpClient | None = None,
+    endpoint_builder: EndpointBuilder | None = None,
+    rate_limiter: RateLimiter | None = None,
+    retry: RetryPolicy | None = None,
+    telemetry: Telemetry | None = None,
+) -> list[dict[str, Any]]:
+    from aiochainscan.services.stats import get_ether_historical_daily_market_cap as svc
+
+    http = http or AiohttpClient()
+    endpoint = endpoint_builder or UrlBuilderEndpoint()
+    telemetry = telemetry or StructlogTelemetry()
+    try:
+        return await svc(
+            start_date=start_date,
+            end_date=end_date,
+            api_kind=api_kind,
+            network=network,
+            api_key=api_key,
+            http=http,
+            _endpoint_builder=endpoint,
+            sort=sort,
+            _rate_limiter=rate_limiter,
+            _retry=retry,
+            _telemetry=telemetry,
+        )
+    finally:
+        await http.aclose()
+
+
+async def get_ether_historical_price(
+    *,
+    start_date: date,
+    end_date: date,
+    api_kind: str,
+    network: str,
+    api_key: str,
+    sort: str | None = None,
+    http: HttpClient | None = None,
+    endpoint_builder: EndpointBuilder | None = None,
+    rate_limiter: RateLimiter | None = None,
+    retry: RetryPolicy | None = None,
+    telemetry: Telemetry | None = None,
+) -> list[dict[str, Any]]:
+    from aiochainscan.services.stats import get_ether_historical_price as svc
 
     http = http or AiohttpClient()
     endpoint = endpoint_builder or UrlBuilderEndpoint()
