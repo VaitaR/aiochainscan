@@ -950,3 +950,49 @@ architecture:
 - `aiochainscan/capabilities.py`: feature→(scanner,network) gating used by tests; treat as authoritative for feature toggles (e.g., gas_estimate, gas_oracle).
 - `aiochainscan/config.py:ScannerCapabilities`: per‑scanner descriptive flags intended for documentation/UX; do not drive gating. Keep in sync conceptually but prefer `capabilities.py` for runtime checks.
 - Future: if consolidation is desired, expose a single read‑only facade that merges both views while keeping `capabilities.py` as the backing store to preserve test stability.
+
+## Action Plan: Hex Migration Follow-ups (non-prod adapters)
+
+Short, high-impact tasks to stabilize the new architecture without introducing production-grade adapters.
+
+
+4) Cache key normalization
+- Normalize complex cache keys (e.g., logs `topics`/`topic_operators`) via deterministic JSON + short hash.
+
+5) Request executor helper
+- Extract a common light-weight executor used by services for RL/Retry/Telemetry.
+- No production-grade policies needed (keep current simple adapters).
+
+6) HTTP session guidance
+- Keep `open_default_session()` as the recommended path; highlight in README/examples for multi-call reuse.
+
+7) TTL and config hygiene
+- Consolidate per-endpoint TTLs as constants in services; keep conservative defaults.
+
+8) URL builder smoke checks
+- Add a small test ensuring `_API_KINDS` build correct base/api URLs for each `api_kind` (no network I/O).
+
+Scope notes
+- No production-grade adapters will be added.
+- Backward compatibility preserved; facades remain default path.
+
+
+## Phase 1.5 – Short Change Log (current)
+
+- Cache key normalization: Implemented for logs via deterministic JSON payload and short SHA-256 key.
+- Request executor helper: Added `services/_executor.py: run_with_policies` and adopted by high-traffic services (block, logs, gas, stats, proxy, token).
+- HTTP session guidance: `open_default_session()` available; showcased in README and examples for multi-call reuse.
+- TTL hygiene: Per-endpoint TTLs surfaced as constants in services (block=5s, gas=5s, logs=15s, token_balance=10s, eth_price=30s).
+- URL builder smoke checks: Parametrized tests ensure `_API_KINDS` produce correct BASE/API URLs for special `api_kind`s (Blockscout variants, Base, RoutScan Mode, Moralis) without network I/O.
+
+
+## Next library tasks (with confidence)
+
+- Expand stats services to cover any residual daily endpoints and provide typed DTO facades for them. Confidence: 0.90
+- Standardize telemetry fields across all services (ensure `ok` events include `items` for list endpoints). Confidence: 0.85
+- Add a read-only capabilities facade that merges `capabilities.py` with config metadata, while keeping tests backed by `capabilities.py`. Confidence: 0.70
+- Normalize cache keys for any future complex, multi-parameter endpoints (beyond logs), using deterministic JSON + short hash. Confidence: 0.80
+- Tighten import-linter by forbidding accidental facade→modules back-edges to avoid leakage. Confidence: 0.75
+- Raise typed facades coverage to ≥80% and mark untyped returns deprecated in docs (no runtime warning). Confidence: 0.80
+- Add a lightweight drift test to assert `_API_KINDS` includes all officially supported kinds and expected domain shape. Confidence: 0.65
+- Optional: centralize default TTLs in a small constants module for reuse, keeping service-level overrides via DI. Confidence: 0.60

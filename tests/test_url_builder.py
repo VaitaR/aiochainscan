@@ -105,3 +105,42 @@ def test_invalid_api_kind():
 def test_currency(api_kind, expected):
     ub = UrlBuilder(apikey(), api_kind, 'main')
     assert ub.currency == expected
+
+
+# Smoke check for new/more api_kinds mapping shapes (no network I/O)
+@pytest.mark.parametrize(
+    'api_kind,network,expected_base_contains,expected_api_contains',
+    [
+        ('base', 'main', 'basescan.org', 'api.basescan.org'),
+        (
+            'routscan_mode',
+            'main',
+            'api.routescan.io/v2/network/mainnet/evm/34443',
+            'https://etherscan.api.routescan.io',
+        ),
+        ('blockscout_eth', 'main', 'eth.blockscout.com', 'https://eth.blockscout.com/api'),
+        (
+            'blockscout_sepolia',
+            'sepolia',
+            'eth-sepolia.blockscout.com',
+            'https://eth-sepolia.blockscout.com/api',
+        ),
+        (
+            'blockscout_gnosis',
+            'main',
+            'gnosis.blockscout.com',
+            'https://gnosis.blockscout.com/api',
+        ),
+        (
+            'blockscout_polygon',
+            'main',
+            'polygon.blockscout.com',
+            'https://polygon.blockscout.com/api',
+        ),
+        ('moralis', 'main', 'deep-index.moralis.io', 'https://api.deep-index.moralis.io'),
+    ],
+)
+def test_api_kinds_smoke(api_kind, network, expected_base_contains, expected_api_contains):
+    ub = UrlBuilder(apikey(), api_kind, network)
+    assert expected_base_contains in ub.BASE_URL
+    assert ub.API_URL.startswith(expected_api_contains)

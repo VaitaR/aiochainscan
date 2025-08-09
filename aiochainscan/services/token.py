@@ -127,3 +127,7 @@ def normalize_token_balance(
         'token_contract': str(token_contract),
         'balance_wei': int(value),
     }
+
+
+# TTL constants (conservative defaults)
+CACHE_TTL_SECONDS_TOKEN_BALANCE: int = 10

@@ -10,6 +10,7 @@ from aiochainscan.ports.endpoint_builder import EndpointBuilder
 from aiochainscan.ports.http_client import HttpClient
 from aiochainscan.ports.rate_limiter import RateLimiter, RetryPolicy
 from aiochainscan.ports.telemetry import Telemetry
+from aiochainscan.services._executor import run_with_policies
 
 
 def _to_tag(value: int | str) -> str:
@@ -44,33 +45,16 @@ async def get_block_number(
 
     signed_params, headers = endpoint.filter_and_sign(params, headers=None)
 
-    async def _do_request() -> Any:
-        if _rate_limiter is not None:
-            await _rate_limiter.acquire(key=f'{api_kind}:{network}:proxy.blockNumber')
-        start = monotonic()
-        try:
-            return await http.get(url, params=signed_params, headers=headers)
-        finally:
-            if _telemetry is not None:
-                duration_ms = int((monotonic() - start) * 1000)
-                await _telemetry.record_event(
-                    'proxy.get_block_number.duration',
-                    {'api_kind': api_kind, 'network': network, 'duration_ms': duration_ms},
-                )
-
-    try:
-        if _retry is not None:
-            response: Any = await _retry.run(_do_request)
-        else:
-            response = await _do_request()
-    except Exception as exc:  # noqa: BLE001
-        if _telemetry is not None:
-            await _telemetry.record_error(
-                'proxy.get_block_number.error',
-                exc,
-                {'api_kind': api_kind, 'network': network},
-            )
-        raise
+    response: Any = await run_with_policies(
+        do_call=lambda: http.get(url, params=signed_params, headers=headers),
+        telemetry=_telemetry,
+        telemetry_name='proxy.get_block_number',
+        api_kind=api_kind,
+        network=network,
+        rate_limiter=_rate_limiter,
+        rate_limiter_key=f'{api_kind}:{network}:proxy.blockNumber',
+        retry_policy=_retry,
+    )
 
     if isinstance(response, dict):
         result = response.get('result', response)
@@ -204,25 +188,16 @@ async def get_gas_price(
 
     signed_params, headers = endpoint.filter_and_sign(params, headers=None)
 
-    async def _do_request() -> Any:
-        if _rate_limiter is not None:
-            await _rate_limiter.acquire(key=f'{api_kind}:{network}:proxy.gasPrice')
-        start = monotonic()
-        try:
-            return await http.get(url, params=signed_params, headers=headers)
-        finally:
-            if _telemetry is not None:
-                duration_ms = int((monotonic() - start) * 1000)
-                await _telemetry.record_event(
-                    'proxy.get_gas_price.duration',
-                    {'api_kind': api_kind, 'network': network, 'duration_ms': duration_ms},
-                )
-
-    response: Any
-    if _retry is not None:
-        response = await _retry.run(_do_request)
-    else:
-        response = await _do_request()
+    response: Any = await run_with_policies(
+        do_call=lambda: http.get(url, params=signed_params, headers=headers),
+        telemetry=_telemetry,
+        telemetry_name='proxy.get_gas_price',
+        api_kind=api_kind,
+        network=network,
+        rate_limiter=_rate_limiter,
+        rate_limiter_key=f'{api_kind}:{network}:proxy.gasPrice',
+        retry_policy=_retry,
+    )
 
     if isinstance(response, dict):
         result = response.get('result', response)
@@ -259,25 +234,16 @@ async def get_tx_count(
 
     signed_params, headers = endpoint.filter_and_sign(params, headers=None)
 
-    async def _do_request() -> Any:
-        if _rate_limiter is not None:
-            await _rate_limiter.acquire(key=f'{api_kind}:{network}:proxy.txCount')
-        start = monotonic()
-        try:
-            return await http.get(url, params=signed_params, headers=headers)
-        finally:
-            if _telemetry is not None:
-                duration_ms = int((monotonic() - start) * 1000)
-                await _telemetry.record_event(
-                    'proxy.get_tx_count.duration',
-                    {'api_kind': api_kind, 'network': network, 'duration_ms': duration_ms},
-                )
-
-    response: Any
-    if _retry is not None:
-        response = await _retry.run(_do_request)
-    else:
-        response = await _do_request()
+    response: Any = await run_with_policies(
+        do_call=lambda: http.get(url, params=signed_params, headers=headers),
+        telemetry=_telemetry,
+        telemetry_name='proxy.get_tx_count',
+        api_kind=api_kind,
+        network=network,
+        rate_limiter=_rate_limiter,
+        rate_limiter_key=f'{api_kind}:{network}:proxy.txCount',
+        retry_policy=_retry,
+    )
 
     if isinstance(response, dict):
         result = response.get('result', response)
@@ -314,25 +280,16 @@ async def get_code(
 
     signed_params, headers = endpoint.filter_and_sign(params, headers=None)
 
-    async def _do_request() -> Any:
-        if _rate_limiter is not None:
-            await _rate_limiter.acquire(key=f'{api_kind}:{network}:proxy.getCode')
-        start = monotonic()
-        try:
-            return await http.get(url, params=signed_params, headers=headers)
-        finally:
-            if _telemetry is not None:
-                duration_ms = int((monotonic() - start) * 1000)
-                await _telemetry.record_event(
-                    'proxy.get_code.duration',
-                    {'api_kind': api_kind, 'network': network, 'duration_ms': duration_ms},
-                )
-
-    response: Any
-    if _retry is not None:
-        response = await _retry.run(_do_request)
-    else:
-        response = await _do_request()
+    response: Any = await run_with_policies(
+        do_call=lambda: http.get(url, params=signed_params, headers=headers),
+        telemetry=_telemetry,
+        telemetry_name='proxy.get_code',
+        api_kind=api_kind,
+        network=network,
+        rate_limiter=_rate_limiter,
+        rate_limiter_key=f'{api_kind}:{network}:proxy.getCode',
+        retry_policy=_retry,
+    )
 
     if isinstance(response, dict):
         result = response.get('result', response)
@@ -371,25 +328,16 @@ async def eth_call(
 
     signed_params, headers = endpoint.filter_and_sign(params, headers=None)
 
-    async def _do_request() -> Any:
-        if _rate_limiter is not None:
-            await _rate_limiter.acquire(key=f'{api_kind}:{network}:proxy.ethCall')
-        start = monotonic()
-        try:
-            return await http.get(url, params=signed_params, headers=headers)
-        finally:
-            if _telemetry is not None:
-                duration_ms = int((monotonic() - start) * 1000)
-                await _telemetry.record_event(
-                    'proxy.eth_call.duration',
-                    {'api_kind': api_kind, 'network': network, 'duration_ms': duration_ms},
-                )
-
-    response: Any
-    if _retry is not None:
-        response = await _retry.run(_do_request)
-    else:
-        response = await _do_request()
+    response: Any = await run_with_policies(
+        do_call=lambda: http.get(url, params=signed_params, headers=headers),
+        telemetry=_telemetry,
+        telemetry_name='proxy.eth_call',
+        api_kind=api_kind,
+        network=network,
+        rate_limiter=_rate_limiter,
+        rate_limiter_key=f'{api_kind}:{network}:proxy.ethCall',
+        retry_policy=_retry,
+    )
 
     if isinstance(response, dict):
         result = response.get('result', response)
@@ -428,25 +376,16 @@ async def get_storage_at(
 
     signed_params, headers = endpoint.filter_and_sign(params, headers=None)
 
-    async def _do_request() -> Any:
-        if _rate_limiter is not None:
-            await _rate_limiter.acquire(key=f'{api_kind}:{network}:proxy.getStorageAt')
-        start = monotonic()
-        try:
-            return await http.get(url, params=signed_params, headers=headers)
-        finally:
-            if _telemetry is not None:
-                duration_ms = int((monotonic() - start) * 1000)
-                await _telemetry.record_event(
-                    'proxy.get_storage_at.duration',
-                    {'api_kind': api_kind, 'network': network, 'duration_ms': duration_ms},
-                )
-
-    response: Any
-    if _retry is not None:
-        response = await _retry.run(_do_request)
-    else:
-        response = await _do_request()
+    response: Any = await run_with_policies(
+        do_call=lambda: http.get(url, params=signed_params, headers=headers),
+        telemetry=_telemetry,
+        telemetry_name='proxy.get_storage_at',
+        api_kind=api_kind,
+        network=network,
+        rate_limiter=_rate_limiter,
+        rate_limiter_key=f'{api_kind}:{network}:proxy.getStorageAt',
+        retry_policy=_retry,
+    )
 
     if isinstance(response, dict):
         result = response.get('result', response)
@@ -480,16 +419,16 @@ async def get_block_tx_count_by_number(
 
     signed_params, headers = endpoint.filter_and_sign(params, headers=None)
 
-    async def _do_request() -> Any:
-        if _rate_limiter is not None:
-            await _rate_limiter.acquire(key=f'{api_kind}:{network}:proxy.blockTxCount')
-        return await http.get(url, params=signed_params, headers=headers)
-
-    response: Any
-    if _retry is not None:
-        response = await _retry.run(_do_request)
-    else:
-        response = await _do_request()
+    response: Any = await run_with_policies(
+        do_call=lambda: http.get(url, params=signed_params, headers=headers),
+        telemetry=_telemetry,
+        telemetry_name='proxy.get_block_tx_count_by_number',
+        api_kind=api_kind,
+        network=network,
+        rate_limiter=_rate_limiter,
+        rate_limiter_key=f'{api_kind}:{network}:proxy.blockTxCount',
+        retry_policy=_retry,
+    )
 
     if isinstance(response, dict):
         result = response.get('result', response)
@@ -525,16 +464,16 @@ async def get_tx_by_block_number_and_index(
 
     signed_params, headers = endpoint.filter_and_sign(params, headers=None)
 
-    async def _do_request() -> Any:
-        if _rate_limiter is not None:
-            await _rate_limiter.acquire(key=f'{api_kind}:{network}:proxy.txByBlockIndex')
-        return await http.get(url, params=signed_params, headers=headers)
-
-    response: Any
-    if _retry is not None:
-        response = await _retry.run(_do_request)
-    else:
-        response = await _do_request()
+    response: Any = await run_with_policies(
+        do_call=lambda: http.get(url, params=signed_params, headers=headers),
+        telemetry=_telemetry,
+        telemetry_name='proxy.get_tx_by_block_number_and_index',
+        api_kind=api_kind,
+        network=network,
+        rate_limiter=_rate_limiter,
+        rate_limiter_key=f'{api_kind}:{network}:proxy.txByBlockIndex',
+        retry_policy=_retry,
+    )
 
     if isinstance(response, dict):
         result = response.get('result', response)
@@ -570,16 +509,16 @@ async def get_uncle_by_block_number_and_index(
 
     signed_params, headers = endpoint.filter_and_sign(params, headers=None)
 
-    async def _do_request() -> Any:
-        if _rate_limiter is not None:
-            await _rate_limiter.acquire(key=f'{api_kind}:{network}:proxy.uncleByBlockIndex')
-        return await http.get(url, params=signed_params, headers=headers)
-
-    response: Any
-    if _retry is not None:
-        response = await _retry.run(_do_request)
-    else:
-        response = await _do_request()
+    response: Any = await run_with_policies(
+        do_call=lambda: http.get(url, params=signed_params, headers=headers),
+        telemetry=_telemetry,
+        telemetry_name='proxy.get_uncle_by_block_number_and_index',
+        api_kind=api_kind,
+        network=network,
+        rate_limiter=_rate_limiter,
+        rate_limiter_key=f'{api_kind}:{network}:proxy.uncleByBlockIndex',
+        retry_policy=_retry,
+    )
 
     if isinstance(response, dict):
         result = response.get('result', response)
@@ -619,16 +558,16 @@ async def estimate_gas(
 
     signed_params, headers = endpoint.filter_and_sign(params, headers=None)
 
-    async def _do_request() -> Any:
-        if _rate_limiter is not None:
-            await _rate_limiter.acquire(key=f'{api_kind}:{network}:proxy.estimateGas')
-        return await http.get(url, params=signed_params, headers=headers)
-
-    response: Any
-    if _retry is not None:
-        response = await _retry.run(_do_request)
-    else:
-        response = await _do_request()
+    response: Any = await run_with_policies(
+        do_call=lambda: http.get(url, params=signed_params, headers=headers),
+        telemetry=_telemetry,
+        telemetry_name='proxy.estimate_gas',
+        api_kind=api_kind,
+        network=network,
+        rate_limiter=_rate_limiter,
+        rate_limiter_key=f'{api_kind}:{network}:proxy.estimateGas',
+        retry_policy=_retry,
+    )
 
     if isinstance(response, dict):
         result = response.get('result', response)
@@ -662,16 +601,16 @@ async def send_raw_tx(
 
     signed_data, headers = endpoint.filter_and_sign(data, headers=None)
 
-    async def _do_request() -> Any:
-        if _rate_limiter is not None:
-            await _rate_limiter.acquire(key=f'{api_kind}:{network}:proxy.sendRawTx')
-        return await http.post(url, data=signed_data, headers=headers)
-
-    response: Any
-    if _retry is not None:
-        response = await _retry.run(_do_request)
-    else:
-        response = await _do_request()
+    response: Any = await run_with_policies(
+        do_call=lambda: http.post(url, data=signed_data, headers=headers),
+        telemetry=_telemetry,
+        telemetry_name='proxy.send_raw_tx',
+        api_kind=api_kind,
+        network=network,
+        rate_limiter=_rate_limiter,
+        rate_limiter_key=f'{api_kind}:{network}:proxy.sendRawTx',
+        retry_policy=_retry,
+    )
 
     if isinstance(response, dict):
         return response
@@ -703,16 +642,16 @@ async def get_tx_receipt(
 
     signed_params, headers = endpoint.filter_and_sign(params, headers=None)
 
-    async def _do_request() -> Any:
-        if _rate_limiter is not None:
-            await _rate_limiter.acquire(key=f'{api_kind}:{network}:proxy.txReceipt')
-        return await http.get(url, params=signed_params, headers=headers)
-
-    response: Any
-    if _retry is not None:
-        response = await _retry.run(_do_request)
-    else:
-        response = await _do_request()
+    response: Any = await run_with_policies(
+        do_call=lambda: http.get(url, params=signed_params, headers=headers),
+        telemetry=_telemetry,
+        telemetry_name='proxy.get_tx_receipt',
+        api_kind=api_kind,
+        network=network,
+        rate_limiter=_rate_limiter,
+        rate_limiter_key=f'{api_kind}:{network}:proxy.txReceipt',
+        retry_policy=_retry,
+    )
 
     if isinstance(response, dict):
         result = response.get('result', response)

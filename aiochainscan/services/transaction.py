@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from time import monotonic
 from typing import Any
 
 from aiochainscan.domain.dto import TransactionDTO
@@ -11,6 +10,9 @@ from aiochainscan.ports.endpoint_builder import EndpointBuilder
 from aiochainscan.ports.http_client import HttpClient
 from aiochainscan.ports.rate_limiter import RateLimiter, RetryPolicy
 from aiochainscan.ports.telemetry import Telemetry
+from aiochainscan.services._executor import run_with_policies
+
+CACHE_TTL_SECONDS: int = 10
 
 
 async def get_transaction_by_hash(
@@ -48,36 +50,16 @@ async def get_transaction_by_hash(
         if isinstance(cached, dict):
             return cached
 
-    async def _do_request() -> Any:
-        if _rate_limiter is not None:
-            await _rate_limiter.acquire(key=f'{api_kind}:{network}:tx')
-        start = monotonic()
-        try:
-            return await http.get(url, params=signed_params, headers=headers)
-        finally:
-            if _telemetry is not None:
-                duration_ms = int((monotonic() - start) * 1000)
-                await _telemetry.record_event(
-                    'transaction.get_transaction_by_hash.duration',
-                    {'api_kind': api_kind, 'network': network, 'duration_ms': duration_ms},
-                )
-
-    try:
-        if _retry is not None:
-            response: Any = await _retry.run(_do_request)
-        else:
-            response = await _do_request()
-    except Exception as exc:  # noqa: BLE001
-        if _telemetry is not None:
-            await _telemetry.record_error(
-                'transaction.get_transaction_by_hash.error',
-                exc,
-                {
-                    'api_kind': api_kind,
-                    'network': network,
-                },
-            )
-        raise
+    response: Any = await run_with_policies(
+        do_call=lambda: http.get(url, params=signed_params, headers=headers),
+        telemetry=_telemetry,
+        telemetry_name='transaction.get_transaction_by_hash',
+        api_kind=api_kind,
+        network=network,
+        rate_limiter=_rate_limiter,
+        rate_limiter_key=f'{api_kind}:{network}:tx',
+        retry_policy=_retry,
+    )
 
     out: dict[str, Any] = {}
     if isinstance(response, dict):
@@ -95,7 +77,7 @@ async def get_transaction_by_hash(
         )
 
     if _cache is not None and out:
-        await _cache.set(cache_key, out, ttl_seconds=10)
+        await _cache.set(cache_key, out, ttl_seconds=CACHE_TTL_SECONDS)
 
     return out
 
