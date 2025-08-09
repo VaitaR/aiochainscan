@@ -4,10 +4,17 @@ Blockscout fetch-all example (technical, minimal output)
 """
 
 import asyncio
+import sys
 import time
 from contextlib import suppress
+from pathlib import Path
 
-from aiochainscan import (
+# Allow running directly from the repo without installation
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if (_REPO_ROOT / 'aiochainscan').exists():  # first-party
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from aiochainscan import (  # noqa: E402  (import after sys.path tweak)
     AiohttpClient,
     ExponentialBackoffRetry,
     SimpleRateLimiter,
@@ -18,7 +25,7 @@ from aiochainscan import (
 
 
 async def fetch_all_transactions_optimized_demo(*, address: str) -> list[dict]:
-    """Вызов фасада fetch-all (services path, Blockscout)."""
+    """Call fetch-all facade (services layer, Blockscout)."""
     api_kind = 'blockscout_eth'
     network = 'eth'
     api_key = ''
@@ -27,7 +34,7 @@ async def fetch_all_transactions_optimized_demo(*, address: str) -> list[dict]:
     http = AiohttpClient()
     endpoint = UrlBuilderEndpoint()
     telemetry = StructlogTelemetry()
-    # Blockscout ~10 rps → минимальный интервал 0.1s
+    # Blockscout ~10 rps → minimal interval 0.1s
     rate_limiter = SimpleRateLimiter(min_interval_seconds=0.1)
     retry = ExponentialBackoffRetry(max_attempts=3, base_delay_seconds=0.3)
 
@@ -71,7 +78,7 @@ async def fetch_all_transactions_optimized_demo(*, address: str) -> list[dict]:
 
 
 async def analyze_all_transactions(transactions):
-    """Минимальная техническая сводка по полученным транзакциям."""
+    """Minimal technical summary over fetched transactions."""
     if not transactions:
         return
 
@@ -83,23 +90,23 @@ async def analyze_all_transactions(transactions):
     simple_transfers = 0
 
     for tx in transactions:
-        # Анализ значений
+        # Values
         if 'value' in tx:
             with suppress(ValueError, TypeError):
                 total_value += int(tx['value'])
 
-        # Анализ газа
+        # Gas
         if 'gasUsed' in tx:
             with suppress(ValueError, TypeError):
                 total_gas += int(tx['gasUsed'])
 
-        # Уникальные адреса
+        # Unique addresses
         if 'from' in tx:
             unique_from.add(tx['from'])
         if 'to' in tx:
             unique_to.add(tx['to'])
 
-        # Тип транзакции
+        # Transaction type
         if 'input' in tx:
             if tx['input'] == '0x' or tx['input'] == '':
                 simple_transfers += 1
@@ -136,7 +143,7 @@ async def analyze_all_transactions(transactions):
 
 
 async def main():
-    """Главная функция."""
+    """Main entrypoint."""
     # Address
     address = '0x8236a87084f8B84306f72007F36F2618A5634494'
     print(f'start: provider=blockscout_eth network=eth address={address}')
