@@ -46,5 +46,3 @@ class AiohttpGraphQLClient(GraphQLClient):
             message = first.get('message') if isinstance(first, dict) else str(first)
             raise ChainscanClientError(f'GraphQL error: {message}')
         return data.get('data')
-
-

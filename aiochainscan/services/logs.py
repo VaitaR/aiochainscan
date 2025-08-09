@@ -202,8 +202,10 @@ async def get_logs_page(
             try:
                 data: Any
                 if _retry is not None:
+
                     async def _runner(url: str = _gql_url) -> Any:
                         return await _do_gql(url)
+
                     data = await _retry.run(_runner)
                 else:
                     data = await _do_gql(_gql_url)

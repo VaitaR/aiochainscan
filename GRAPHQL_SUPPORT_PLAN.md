@@ -48,7 +48,7 @@
 ### Pagination Unification Strategy
 - **Problem**: REST uses page/offset, GraphQL uses cursor-based pagination
 - **Solution**: Page[T] domain type with opaque cursor strings that work for both
-- **Implementation**: 
+- **Implementation**:
   - REST: encode page/offset as opaque string (`"page=2&offset=100"`)
   - GraphQL: use native endCursor from response
   - Conversion helpers in services/pagination.py
@@ -125,5 +125,3 @@
 - **Phase 1**: GraphQL for transaction by hash — DONE; logs kept on REST due to schema variance
 - **Phase 1.1**: Token transfers, address transactions via GraphQL — DONE
 - **Phase 1.2**: Federator health tracking — DONE; expand provider matrix — NEXT; docs sweep — NEXT
-
-

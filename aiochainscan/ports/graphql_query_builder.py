@@ -49,9 +49,7 @@ class GraphQLQueryBuilder(Protocol):
         depending on which parameters are provided.
         """
 
-    def map_token_transfers_response(
-        self, data: Any
-    ) -> tuple[list[dict[str, Any]], str | None]:
+    def map_token_transfers_response(self, data: Any) -> tuple[list[dict[str, Any]], str | None]:
         """Map GraphQL `data` into (items, next_cursor) using Etherscan-like field names."""
 
     # --- Address transactions (paginated) ---
@@ -68,5 +66,3 @@ class GraphQLQueryBuilder(Protocol):
         self, data: Any
     ) -> tuple[list[dict[str, Any]], str | None]:
         """Map GraphQL `data` into (items, next_cursor) using Etherscan normal-tx field names."""
-
-

@@ -81,7 +81,9 @@ class BlockscoutGraphQLBuilder(GraphQLQueryBuilder):
                     items.append(
                         {
                             'address': address,
-                            'blockNumber': _hex(int(block_number)) if block_number is not None else None,
+                            'blockNumber': _hex(int(block_number))
+                            if block_number is not None
+                            else None,
                             'transactionHash': tx_hash,
                             'data': data_field,
                             'topics': [str(t) for t in topics],
@@ -111,6 +113,7 @@ class BlockscoutGraphQLBuilder(GraphQLQueryBuilder):
             tx = {}
         if not isinstance(tx, dict):
             return {}
+
         # Convert numeric fields to hex-like strings to align with proxy format
         def to_hex(v: Any) -> str | None:
             try:
@@ -221,7 +224,9 @@ class BlockscoutGraphQLBuilder(GraphQLQueryBuilder):
         )
         return query, {'addr': address, 'after': after_cursor, 'first': first}
 
-    def map_address_transactions_response(self, data: Any) -> tuple[list[dict[str, Any]], str | None]:
+    def map_address_transactions_response(
+        self, data: Any
+    ) -> tuple[list[dict[str, Any]], str | None]:
         items: list[dict[str, Any]] = []
         next_cursor: str | None = None
         try:
@@ -260,5 +265,3 @@ class BlockscoutGraphQLBuilder(GraphQLQueryBuilder):
         except Exception:
             pass
         return items, next_cursor
-
-
