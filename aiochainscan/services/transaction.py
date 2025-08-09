@@ -46,7 +46,9 @@ async def get_transaction_by_hash(
         _federator is not None
         and _gql is not None
         and _gql_builder is not None
-        and _federator.should_use_graphql('transaction_by_hash', api_kind=api_kind, network=network)
+        and _federator.should_use_graphql(
+            'transaction_by_hash', api_kind=api_kind, network=network
+        )
     ):
         gql_base = endpoint.base_url.rstrip('/')
         candidate_urls = [
@@ -82,8 +84,10 @@ async def get_transaction_by_hash(
             try:
                 data: Any
                 if _retry is not None:
+
                     async def _runner(url: str = _gql_url) -> Any:
                         return await _do_gql(url)
+
                     data = await _retry.run(_runner)
                 else:
                     data = await _do_gql(_gql_url)
@@ -95,14 +99,18 @@ async def get_transaction_by_hash(
                             {'api_kind': api_kind, 'network': network, 'provider_type': 'graphql'},
                         )
                     if _federator is not None:
-                        _federator.report_success('transaction_by_hash', api_kind=api_kind, network=network)
+                        _federator.report_success(
+                            'transaction_by_hash', api_kind=api_kind, network=network
+                        )
                     if _cache is not None:
                         await _cache.set(cache_key, mapped, ttl_seconds=10)
                     return mapped
             except Exception as exc:  # noqa: BLE001
                 last_exc = exc
                 if _federator is not None:
-                    _federator.report_failure('transaction_by_hash', api_kind=api_kind, network=network)
+                    _federator.report_failure(
+                        'transaction_by_hash', api_kind=api_kind, network=network
+                    )
                 continue
         if last_exc is not None and _telemetry is not None:
             await _telemetry.record_error(

@@ -28,5 +28,3 @@ def decode_rest_cursor(cursor: str | None) -> tuple[int | None, int | None]:
     page = int(qs['page'][0]) if 'page' in qs and qs['page'] else None
     offset = int(qs['offset'][0]) if 'offset' in qs and qs['offset'] else None
     return page, offset
-
-

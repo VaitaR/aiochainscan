@@ -21,5 +21,3 @@ class ProviderFederator(Protocol):
 
     def report_failure(self, feature: str, *, api_kind: str, network: str) -> None:
         """Record a failed GraphQL attempt (for health gating)."""
-
-

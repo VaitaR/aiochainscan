@@ -20,5 +20,3 @@ class GraphQLClient(Protocol):
         Implementations must raise a provider-specific error when the GraphQL
         response contains an `errors` array or the transport layer fails.
         """
-
-

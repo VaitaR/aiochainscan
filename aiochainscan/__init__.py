@@ -603,20 +603,25 @@ async def get_token_transfers_page_typed(
         # GraphQL path when token_contract or address available
         items: list[dict[str, Any]] = []
         next_cursor: str | None = None
-        if federator.should_use_graphql(
-            'token_transfers', api_kind=api_kind, network=network
-        ):
-            base = endpoint.open(api_key=api_key, api_kind=api_kind, network=network).base_url.rstrip('/')
-            candidates = [f'{base}/api/v1/graphql', f'{base}/api/graphql', f'{base}/graphql', f'{base}/graphiql']
+        if federator.should_use_graphql('token_transfers', api_kind=api_kind, network=network):
+            base = endpoint.open(
+                api_key=api_key, api_kind=api_kind, network=network
+            ).base_url.rstrip('/')
+            candidates = [
+                f'{base}/api/v1/graphql',
+                f'{base}/api/graphql',
+                f'{base}/graphql',
+                f'{base}/graphiql',
+            ]
             query, variables = gql_builder.build_token_transfers_query(
                 address=address,
                 token_contract=token_contract,
                 after_cursor=after,
                 first=first,
             )
-            _, headers = endpoint.open(api_key=api_key, api_kind=api_kind, network=network).filter_and_sign(
-                params=None, headers=None
-            )
+            _, headers = endpoint.open(
+                api_key=api_key, api_kind=api_kind, network=network
+            ).filter_and_sign(params=None, headers=None)
             for u in candidates:
                 try:
                     data = await gql.execute(u, query, variables, headers)
@@ -674,15 +679,24 @@ async def get_address_transactions_page_typed(
     try:
         items: list[dict[str, Any]] = []
         next_cursor: str | None = None
-        if federator.should_use_graphql('address_transactions', api_kind=api_kind, network=network):
-            base = endpoint.open(api_key=api_key, api_kind=api_kind, network=network).base_url.rstrip('/')
-            candidates = [f'{base}/api/v1/graphql', f'{base}/api/graphql', f'{base}/graphql', f'{base}/graphiql']
+        if federator.should_use_graphql(
+            'address_transactions', api_kind=api_kind, network=network
+        ):
+            base = endpoint.open(
+                api_key=api_key, api_kind=api_kind, network=network
+            ).base_url.rstrip('/')
+            candidates = [
+                f'{base}/api/v1/graphql',
+                f'{base}/api/graphql',
+                f'{base}/graphql',
+                f'{base}/graphiql',
+            ]
             query, variables = gql_builder.build_address_transactions_query(
                 address=address, after_cursor=after, first=first
             )
-            _, headers = endpoint.open(api_key=api_key, api_kind=api_kind, network=network).filter_and_sign(
-                params=None, headers=None
-            )
+            _, headers = endpoint.open(
+                api_key=api_key, api_kind=api_kind, network=network
+            ).filter_and_sign(params=None, headers=None)
             for u in candidates:
                 try:
                     data = await gql.execute(u, query, variables, headers)
@@ -695,6 +709,7 @@ async def get_address_transactions_page_typed(
             from aiochainscan.services.account import (
                 get_normal_transactions as get_normal_transactions_service,
             )
+
             items = await get_normal_transactions_service(
                 address=address,
                 start_block=None,

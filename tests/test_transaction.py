@@ -79,7 +79,7 @@ async def test_get_transaction_by_hash_graphql(monkeypatch):
     )
 
     data = await get_tx_service(
-        txhash=TxHash('0x' + '0'*64),
+        txhash=TxHash('0x' + '0' * 64),
         api_kind='blockscout_sepolia',
         network='sepolia',
         api_key='',

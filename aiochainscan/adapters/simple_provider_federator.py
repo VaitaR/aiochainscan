@@ -31,5 +31,3 @@ class SimpleProviderFederator(ProviderFederator):
     def report_failure(self, feature: str, *, api_kind: str, network: str) -> None:
         key = (feature, api_kind, network)
         self._failures[key] = self._failures.get(key, 0) + 1
-
-
