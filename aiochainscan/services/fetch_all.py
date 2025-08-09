@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Callable
+from typing import Any
 
 from aiochainscan.ports.endpoint_builder import EndpointBuilder
 from aiochainscan.ports.http_client import HttpClient
@@ -9,14 +9,14 @@ from aiochainscan.ports.telemetry import Telemetry
 from aiochainscan.services.account import (
     get_internal_transactions,
     get_normal_transactions,
+    get_token_transfers,
 )
 from aiochainscan.services.logs import get_logs
 from aiochainscan.services.paging_engine import (
     FetchSpec,
-    ResolveEndBlock,
     ProviderPolicy,
+    ResolveEndBlock,
     fetch_all_generic,
-    fetch_all_sliding_bi,
     resolve_policy_for_provider,
 )
 
@@ -102,14 +102,17 @@ async def fetch_all_transactions_basic(
         key_fn=lambda it: it.get('hash') if isinstance(it.get('hash'), str) else None,
         order_fn=lambda it: (_to_int(it.get('blockNumber')), _to_int(it.get('transactionIndex'))),
         max_offset=max_offset,
-        resolve_end_block=_resolve_end_block_factory(
-            api_kind=api_kind,
-            network=network,
-            api_key=api_key,
-            http=http,
-            endpoint_builder=endpoint_builder,
-            rate_limiter=rate_limiter,
-            retry=retry,
+        resolve_end_block=(
+            None if (isinstance(api_kind, str) and api_kind.startswith('blockscout_'))
+            else _resolve_end_block_factory(
+                api_kind=api_kind,
+                network=network,
+                api_key=api_key,
+                http=http,
+                endpoint_builder=endpoint_builder,
+                rate_limiter=rate_limiter,
+                retry=retry,
+            )
         ),
     )
     policy = ProviderPolicy(mode='paged', prefetch=1, window_cap=None, rps_key=f'{api_kind}:{network}:paging')
@@ -168,14 +171,17 @@ async def fetch_all_transactions_fast(
         key_fn=lambda it: it.get('hash') if isinstance(it.get('hash'), str) else None,
         order_fn=lambda it: (_to_int(it.get('blockNumber')), _to_int(it.get('transactionIndex'))),
         max_offset=max_offset,
-        resolve_end_block=_resolve_end_block_factory(
-            api_kind=api_kind,
-            network=network,
-            api_key=api_key,
-            http=http,
-            endpoint_builder=endpoint_builder,
-            rate_limiter=rate_limiter,
-            retry=retry,
+        resolve_end_block=(
+            None if (isinstance(api_kind, str) and api_kind.startswith('blockscout_'))
+            else _resolve_end_block_factory(
+                api_kind=api_kind,
+                network=network,
+                api_key=api_key,
+                http=http,
+                endpoint_builder=endpoint_builder,
+                rate_limiter=rate_limiter,
+                retry=retry,
+            )
         ),
     )
     policy = resolve_policy_for_provider(api_kind=api_kind, network=network, max_concurrent=max_concurrent)
@@ -209,23 +215,37 @@ async def fetch_all_internal_basic(
     """Provider-agnostic paged fetch for internal transactions."""
 
     async def _fetch_page(*, page: int, start_block: int, end_block: int, offset: int) -> list[dict[str, Any]]:
-        return await get_internal_transactions(
-            address=address,
-            start_block=start_block,
-            end_block=end_block,
-            sort='asc',
-            page=page,
-            offset=offset,
-            txhash=None,
-            api_kind=api_kind,
-            network=network,
-            api_key=api_key,
-            http=http,
-            _endpoint_builder=endpoint_builder,
-            _rate_limiter=None,
-            _retry=None,
-            _telemetry=telemetry,
-        )
+        # Some Blockscout endpoints time out with very large offsets; adaptively reduce
+        current_offset = int(offset)
+        attempts_left = 3
+        while True:
+            try:
+                return await get_internal_transactions(
+                    address=address,
+                    start_block=start_block,
+                    end_block=end_block,
+                    sort='asc',
+                    page=page,
+                    offset=current_offset,
+                    txhash=None,
+                    api_kind=api_kind,
+                    network=network,
+                    api_key=api_key,
+                    http=http,
+                    _endpoint_builder=endpoint_builder,
+                    _rate_limiter=None,
+                    _retry=None,
+                    _telemetry=telemetry,
+                )
+            except Exception as exc:  # noqa: BLE001
+                # Retry with smaller payload on gateway/proxy timeouts typical for Blockscout
+                from aiohttp import ClientResponseError  # local import
+
+                if isinstance(exc, ClientResponseError) and exc.status in {502, 503, 504, 520, 524} and attempts_left > 0:
+                    attempts_left -= 1
+                    current_offset = max(1000, current_offset // 2)
+                    continue
+                raise
 
     spec = FetchSpec(
         name='account.internal',
@@ -233,14 +253,17 @@ async def fetch_all_internal_basic(
         key_fn=lambda it: it.get('hash') if isinstance(it.get('hash'), str) else None,
         order_fn=lambda it: (_to_int(it.get('blockNumber')), _to_int(it.get('transactionIndex'))),
         max_offset=max_offset,
-        resolve_end_block=_resolve_end_block_factory(
-            api_kind=api_kind,
-            network=network,
-            api_key=api_key,
-            http=http,
-            endpoint_builder=endpoint_builder,
-            rate_limiter=rate_limiter,
-            retry=retry,
+        resolve_end_block=(
+            None if (isinstance(api_kind, str) and api_kind.startswith('blockscout_'))
+            else _resolve_end_block_factory(
+                api_kind=api_kind,
+                network=network,
+                api_key=api_key,
+                http=http,
+                endpoint_builder=endpoint_builder,
+                rate_limiter=rate_limiter,
+                retry=retry,
+            )
         ),
     )
     policy = ProviderPolicy(mode='paged', prefetch=1, window_cap=None, rps_key=f'{api_kind}:{network}:paging')
@@ -322,6 +345,165 @@ async def fetch_all_internal_fast(
     )
 
 
+# --- ERC-20 token transfers (fast/basic) ---
+
+
+async def fetch_all_token_transfers_basic(
+    *,
+    address: str,
+    start_block: int | None,
+    end_block: int | None,
+    api_kind: str,
+    network: str,
+    api_key: str,
+    http: HttpClient,
+    endpoint_builder: EndpointBuilder,
+    rate_limiter: RateLimiter | None = None,
+    retry: RetryPolicy | None = None,
+    telemetry: Telemetry | None = None,
+    max_offset: int = 10_000,
+    token_standard: str = 'erc20',
+) -> list[dict[str, Any]]:
+    """Provider-agnostic paged fetch for ERC-20 token transfers (tokentx)."""
+
+    def _key_fn(it: dict[str, Any]) -> str | None:
+        h = it.get('hash')
+        log_idx = it.get('logIndex')
+        if isinstance(h, str) and isinstance(log_idx, str | int):
+            return f"{h}:{log_idx}"
+        if isinstance(h, str):
+            return f"{h}:{it.get('contractAddress')}:{it.get('from')}:{it.get('to')}:{it.get('value')}"
+        return None
+
+    async def _fetch_page(*, page: int, start_block: int, end_block: int, offset: int) -> list[dict[str, Any]]:
+        return await get_token_transfers(
+            address=address,
+            contract_address=None,
+            start_block=start_block,
+            end_block=end_block,
+            sort='asc',
+            page=page,
+            offset=offset,
+            token_standard=token_standard,
+            api_kind=api_kind,
+            network=network,
+            api_key=api_key,
+            http=http,
+            _endpoint_builder=endpoint_builder,
+            _rate_limiter=None,
+            _retry=None,
+            _telemetry=telemetry,
+        )
+
+    spec = FetchSpec(
+        name='account.erc20',
+        fetch_page=_fetch_page,
+        key_fn=_key_fn,
+        order_fn=lambda it: (_to_int(it.get('blockNumber')), _to_int(it.get('transactionIndex'))),
+        max_offset=max_offset,
+        resolve_end_block=(
+            None if (isinstance(api_kind, str) and api_kind.startswith('blockscout_'))
+            else _resolve_end_block_factory(
+                api_kind=api_kind,
+                network=network,
+                api_key=api_key,
+                http=http,
+                endpoint_builder=endpoint_builder,
+                rate_limiter=rate_limiter,
+                retry=retry,
+            )
+        ),
+    )
+    policy = ProviderPolicy(mode='paged', prefetch=1, window_cap=None, rps_key=f'{api_kind}:{network}:paging')
+    return await fetch_all_generic(
+        start_block=start_block,
+        end_block=end_block,
+        fetch_spec=spec,
+        policy=policy,
+        rate_limiter=rate_limiter,
+        retry=retry,
+        telemetry=telemetry,
+        max_concurrent=1,
+    )
+
+
+async def fetch_all_token_transfers_fast(
+    *,
+    address: str,
+    start_block: int | None,
+    end_block: int | None,
+    api_kind: str,
+    network: str,
+    api_key: str,
+    http: HttpClient,
+    endpoint_builder: EndpointBuilder,
+    rate_limiter: RateLimiter | None = None,
+    retry: RetryPolicy | None = None,
+    telemetry: Telemetry | None = None,
+    max_offset: int = 10_000,
+    max_concurrent: int = 8,
+    token_standard: str = 'erc20',
+) -> list[dict[str, Any]]:
+    """Provider-aware fast fetch for ERC-20 token transfers using the generic engine."""
+
+    def _key_fn(it: dict[str, Any]) -> str | None:
+        h = it.get('hash')
+        log_idx = it.get('logIndex')
+        if isinstance(h, str) and isinstance(log_idx, str | int):
+            return f"{h}:{log_idx}"
+        if isinstance(h, str):
+            return f"{h}:{it.get('contractAddress')}:{it.get('from')}:{it.get('to')}:{it.get('value')}"
+        return None
+
+    async def _fetch_page(*, page: int, start_block: int, end_block: int, offset: int) -> list[dict[str, Any]]:
+        return await get_token_transfers(
+            address=address,
+            contract_address=None,
+            start_block=start_block,
+            end_block=end_block,
+            sort='asc',
+            page=page,
+            offset=offset,
+            token_standard=token_standard,
+            api_kind=api_kind,
+            network=network,
+            api_key=api_key,
+            http=http,
+            _endpoint_builder=endpoint_builder,
+            _rate_limiter=None,
+            _retry=None,
+            _telemetry=telemetry,
+        )
+
+    spec = FetchSpec(
+        name='account.erc20',
+        fetch_page=_fetch_page,
+        key_fn=_key_fn,
+        order_fn=lambda it: (_to_int(it.get('blockNumber')), _to_int(it.get('transactionIndex'))),
+        max_offset=max_offset,
+        resolve_end_block=_resolve_end_block_factory(
+            api_kind=api_kind,
+            network=network,
+            api_key=api_key,
+            http=http,
+            endpoint_builder=endpoint_builder,
+            rate_limiter=rate_limiter,
+            retry=retry,
+        ),
+    )
+    policy = resolve_policy_for_provider(api_kind=api_kind, network=network, max_concurrent=max_concurrent)
+    return await fetch_all_generic(
+        start_block=start_block,
+        end_block=end_block,
+        fetch_spec=spec,
+        policy=policy,
+        rate_limiter=rate_limiter,
+        retry=retry,
+        telemetry=telemetry,
+        max_concurrent=max_concurrent,
+    )
+
+
 async def fetch_all_logs_basic(
     *,
     address: str,
@@ -369,19 +551,22 @@ async def fetch_all_logs_basic(
         key_fn=lambda it: (
             f"{it.get('transactionHash') or it.get('hash')}:{it.get('logIndex')}"
             if isinstance(it.get('transactionHash') or it.get('hash'), str)
-            and isinstance(it.get('logIndex'), (str, int))
+            and isinstance(it.get('logIndex'), str | int)
             else None
         ),
         order_fn=lambda it: (_to_int(it.get('blockNumber')), _to_int(it.get('logIndex'))),
         max_offset=max_offset,
-        resolve_end_block=_resolve_end_block_factory(
-            api_kind=api_kind,
-            network=network,
-            api_key=api_key,
-            http=http,
-            endpoint_builder=endpoint_builder,
-            rate_limiter=rate_limiter,
-            retry=retry,
+        resolve_end_block=(
+            None if (isinstance(api_kind, str) and api_kind.startswith('blockscout_'))
+            else _resolve_end_block_factory(
+                api_kind=api_kind,
+                network=network,
+                api_key=api_key,
+                http=http,
+                endpoint_builder=endpoint_builder,
+                rate_limiter=rate_limiter,
+                retry=retry,
+            )
         ),
     )
     policy = ProviderPolicy(mode='paged', prefetch=1, window_cap=None, rps_key=f'{api_kind}:{network}:paging')
@@ -445,7 +630,7 @@ async def fetch_all_logs_fast(
         key_fn=lambda it: (
             f"{it.get('transactionHash') or it.get('hash')}:{it.get('logIndex')}"
             if isinstance(it.get('transactionHash') or it.get('hash'), str)
-            and isinstance(it.get('logIndex'), (str, int))
+            and isinstance(it.get('logIndex'), str | int)
             else None
         ),
         order_fn=lambda it: (_to_int(it.get('blockNumber')), _to_int(it.get('logIndex'))),

@@ -468,6 +468,52 @@ async def get_all_transactions_optimized(
     for Blockscout. It respects provider rate limits via the supplied RateLimiter and
     limits concurrency via ``max_concurrent``.
     """
+    # New architecture: delegate to the universal paging engine wrappers.
+    # This path supersedes the legacy aggregator below while keeping signature stable.
+    try:
+        from aiochainscan.services.fetch_all import (
+            fetch_all_transactions_eth_sliding_fast,
+            fetch_all_transactions_fast,
+        )
+
+        if api_kind == 'eth':
+            result = await fetch_all_transactions_eth_sliding_fast(
+                address=address,
+                start_block=start_block,
+                end_block=end_block,
+                network=network,
+                api_key=api_key,
+                http=http,
+                endpoint_builder=_endpoint_builder,
+                rate_limiter=_rate_limiter,
+                retry=_retry,
+                telemetry=_telemetry,
+                max_offset=max_offset,
+            )
+        else:
+            result = await fetch_all_transactions_fast(
+                address=address,
+                start_block=start_block,
+                end_block=end_block,
+                api_kind=api_kind,
+                network=network,
+                api_key=api_key,
+                http=http,
+                endpoint_builder=_endpoint_builder,
+                rate_limiter=_rate_limiter,
+                retry=_retry,
+                telemetry=_telemetry,
+                max_offset=max_offset,
+                max_concurrent=max_concurrent,
+            )
+
+        if stats is not None:
+            stats.update({'items_total': len(result)})
+        return result
+    except Exception:
+        # Fall back to the legacy implementation below if the new engine path fails.
+        pass
+
     import asyncio
 
     # Resolve end_block if not provided (use proxy.eth_blockNumber contract via ports)
@@ -589,12 +635,10 @@ async def get_all_transactions_optimized(
                 except Exception:
                     latest_block = None
             # apply bounds if discovered
-            if earliest_block is not None:
-                if start_block is None or earliest_block > start_block:
-                    start_block = earliest_block
-            if latest_block is not None:
-                if end_block is None or latest_block < end_block:
-                    end_block = latest_block
+            if earliest_block is not None and (start_block is None or earliest_block > start_block):
+                start_block = earliest_block
+            if latest_block is not None and (end_block is None or latest_block < end_block):
+                end_block = latest_block
         except Exception:
             # Non-fatal: keep default 0..latest window
             pass
@@ -856,7 +900,7 @@ async def get_all_transactions_optimized(
                 _telemetry=_telemetry,
             )
 
-    return await fetch_all_ranges_optimized(
+    return await fetch_all_ranges_optimized(  # noqa: F821
         start_block=start_block,
         end_block=end_block,
         max_concurrent=max_concurrent,
@@ -897,7 +941,6 @@ async def get_all_internal_transactions_optimized(
     For Blockscout: iterate pages 1..N with offset=max_offset.
     """
     # Resolve latest block when needed (same as above)
-    import asyncio  # keep import for symmetry
 
     if end_block is None:
         endpoint = _endpoint_builder.open(api_key=api_key, api_kind=api_kind, network=network)

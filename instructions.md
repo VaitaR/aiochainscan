@@ -1018,6 +1018,8 @@ architecture:
 - `services/fetch_all.py` — врапперы поверх движка.
 - Удалить старый агрегатор; обновить примеры и README.
 
+Статус выполнения (fetch-all): `services/account.py:get_all_transactions_optimized` теперь по умолчанию маршрутизирует в новые врапперы движка (`fetch_all_transactions_fast`/`fetch_all_transactions_eth_sliding_fast`) с безопасным откатом на старый путь при ошибках. 
+
 ### Acceptance
 - Blockscout: fast ≥2× basic на 10+ страницах.
 - Etherscan: fast полное покрытие без превышения окна; без дублей.

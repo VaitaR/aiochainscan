@@ -18,98 +18,173 @@ from aiochainscan import (  # noqa: E402  (import after sys.path tweak)
     AiohttpClient,
     ExponentialBackoffRetry,
     SimpleRateLimiter,
+    StructlogTelemetry,
     UrlBuilderEndpoint,
 )
-from aiochainscan.services.fetch_all import (
-    fetch_all_transactions_basic,
-    fetch_all_transactions_fast,
+from aiochainscan.services.fetch_all import (  # noqa: E402
     fetch_all_transactions_eth_sliding_fast,
 )
 
 
 async def fetch_all_transactions_optimized_demo(*, address: str) -> list[dict]:
     """Run both strategies for Blockscout and Etherscan (ETH) and print timings."""
-    api_kind = 'blockscout_eth'
-    network = 'eth'
-    api_key = ''
+    # Blockscout demo calls are commented below; keep placeholders local if uncommented later
+    # api_kind = 'blockscout_eth'
+    # network = 'eth'
+    # api_key = ''
 
     # DI: default adapters
     # Use aggressive but bounded timeout to prevent long hangs
-    http = AiohttpClient(timeout=8.0)
+    http = AiohttpClient()
     endpoint = UrlBuilderEndpoint()
-    # Disable telemetry for maximal throughput in demo run
-    telemetry = None
-    # Blockscout ~10 rps → minimal interval 0.1s
-    rate_limiter = SimpleRateLimiter(min_interval_seconds=0.1)
-    # Keep retries short to fail fast on slow endpoints
+    telemetry = StructlogTelemetry()
+    # rate_limiter = SimpleRateLimiter(min_interval_seconds=0.0, burst=16)  # unthrottled for benchmark
     retry = ExponentialBackoffRetry(max_attempts=2, base_delay_seconds=0.2)
 
-    print('--- Blockscout (fast) ---')
-    started = time.time()
-    txs_bs_fast = await fetch_all_transactions_fast(
-        address=address,
-        start_block=None,
-        end_block=None,
-        api_kind=api_kind,
-        network=network,
-        api_key=api_key,
-        http=http,
-        endpoint_builder=endpoint,
-        rate_limiter=rate_limiter,
-        retry=retry,
-        telemetry=telemetry,
-        max_offset=10_000,
-        max_concurrent=8,
-    )
-    elapsed = time.time() - started
-    print(f'duration_s={elapsed:.2f} items={len(txs_bs_fast)} tps={len(txs_bs_fast)/elapsed:.1f}')
+    try:
+        txs_es_fast: list[dict] = []
+        # print('--- Blockscout (fast) ---')
+        # started = time.time()
+        # print('sending batch: provider=blockscout_eth max_concurrent=16 offset=10000')
+        # txs_bs_fast = await fetch_all_transactions_fast(
+        #     address=address,
+        #     start_block=None,
+        #     end_block=None,
+        #     api_kind=api_kind,
+        #     network=network,
+        #     api_key=api_key,
+        #     http=http,
+        #     endpoint_builder=endpoint,
+        #     rate_limiter=rate_limiter,
+        #     retry=retry,
+        #     telemetry=telemetry,
+        #     max_offset=10_000,
+        #     max_concurrent=16,
+        # )
+        # elapsed = time.time() - started
+        # print(f'duration_s={elapsed:.2f} items={len(txs_bs_fast)} tps={len(txs_bs_fast)/max(elapsed,1e-6):.1f}')
 
-    # print('--- Blockscout (basic) ---')
-    # started = time.time()
-    # txs_bs_basic = await fetch_all_transactions_basic(
-    #     address=address,
-    #     start_block=0,
-    #     end_block=99_999_999,
-    #     api_kind=api_kind,
-    #     network=network,
-    #     api_key=api_key,
-    #     http=http,
-    #     endpoint_builder=endpoint,
-    #     rate_limiter=rate_limiter,
-    #     retry=retry,
-    #     telemetry=telemetry,
-    #     max_offset=10_000,
-    # )
-    # elapsed = time.time() - started
-    # print(f'duration_s={elapsed:.2f} items={len(txs_bs_basic)} tps={len(txs_bs_basic)/elapsed:.1f}')
+        # # Internal transactions (Blockscout, fast)
+        # print('--- Blockscout internal (fast) ---')
+        # started = time.time()
+        # print('sending batch: internal fast (blockscout_eth)')
+        # internals_bs_fast = await fetch_all_internal_fast(
+        #     address=address,
+        #     start_block=None,
+        #     end_block=None,
+        #     api_kind=api_kind,
+        #     network=network,
+        #     api_key=api_key,
+        #     http=http,
+        #     endpoint_builder=endpoint,
+        #     rate_limiter=rate_limiter,
+        #     retry=retry,
+        #     telemetry=telemetry,
+        #     max_offset=10_000,
+        #     max_concurrent=8,
+        # )
+        # elapsed = time.time() - started
+        # print(f'duration_s={elapsed:.2f} items={len(internals_bs_fast)} tps={len(internals_bs_fast)/max(elapsed,1e-6):.1f}')
 
-    # Etherscan test (requires ETHERSCAN_KEY)
-    print('--- Etherscan (fast sliding bi-directional) ---')
-    import os
-    eth_key = os.getenv('ETHERSCAN_KEY', '')
-    if eth_key:
-        started = time.time()
-        txs_es_fast = await fetch_all_transactions_eth_sliding_fast(
-            address=address,
-            start_block=0,
-            end_block=None,
-            network='main',
-            api_key=eth_key,
-            http=http,
-            endpoint_builder=endpoint,
-            rate_limiter=SimpleRateLimiter(min_interval_seconds=0.2, burst=1),  # 5 rps
-            retry=retry,
-            telemetry=telemetry,
-            max_offset=10_000,
-        )
-        elapsed = time.time() - started
-        print(f'duration_s={elapsed:.2f} items={len(txs_es_fast)} tps={len(txs_es_fast)/max(elapsed,1e-6):.1f}')
-    else:
-        print('ETHERSCAN_KEY not set; skipping etherscan test')
+        # # ERC-20 transfers (Blockscout, fast)
+        # print('--- Blockscout ERC20 (fast) ---')
+        # started = time.time()
+        # print('sending batch: erc20 fast (blockscout_eth)')
+        # erc20_bs_fast = await fetch_all_token_transfers_fast(
+        #     address=address,
+        #     start_block=None,
+        #     end_block=None,
+        #     api_kind=api_kind,
+        #     network=network,
+        #     api_key=api_key,
+        #     http=http,
+        #     endpoint_builder=endpoint,
+        #     rate_limiter=rate_limiter,
+        #     retry=retry,
+        #     telemetry=telemetry,
+        #     max_offset=10_000,
+        #     max_concurrent=8,
+        #     token_standard='erc20',
+        # )
+        # elapsed = time.time() - started
+        # print(f'duration_s={elapsed:.2f} items={len(erc20_bs_fast)} tps={len(erc20_bs_fast)/max(elapsed,1e-6):.1f}')
 
-    await http.aclose()
-    # return latest blockscout fast result for downstream processing
-    return txs_bs_fast
+
+        # Etherscan test (requires ETHERSCAN_KEY)
+        print('--- Etherscan (fast sliding bi-directional) ---')
+        import os
+        eth_key = os.getenv('ETHERSCAN_KEY', '')
+        if eth_key:
+            started = time.time()
+            print('sending batch: etherscan sliding_bi (max_offset=10000, page=1)')
+            txs_es_fast = await fetch_all_transactions_eth_sliding_fast(
+                address=address,
+                start_block=0,
+                end_block=None,
+                network='main',
+                api_key=eth_key,
+                http=http,
+                endpoint_builder=endpoint,
+                rate_limiter=SimpleRateLimiter(min_interval_seconds=0.2, burst=1),  # 5 rps
+                retry=retry,
+                telemetry=telemetry,
+                max_offset=10_000,
+            )
+            elapsed = time.time() - started
+            print(f'duration_s={elapsed:.2f} items={len(txs_es_fast)} tps={len(txs_es_fast)/max(elapsed,1e-6):.1f}')
+
+        #     # Internal transactions (Etherscan-style sliding, using fast engine policy)
+        #     print('--- Etherscan internal (sliding fast) ---')
+        #     started = time.time()
+        #     print('sending batch: internal fast (eth) sliding window')
+        #     internals_es_fast = await fetch_all_internal_fast(
+        #         address=address,
+        #         start_block=0,
+        #         end_block=None,
+        #         api_kind='eth',
+        #         network='main',
+        #         api_key=eth_key,
+        #         http=http,
+        #         endpoint_builder=endpoint,
+        #         rate_limiter=SimpleRateLimiter(min_interval_seconds=0.2, burst=1),
+        #         retry=retry,
+        #         telemetry=telemetry,
+        #         max_offset=10_000,
+        #         max_concurrent=1,
+        #     )
+        #     elapsed = time.time() - started
+        #     print(f'duration_s={elapsed:.2f} items={len(internals_es_fast)} tps={len(internals_es_fast)/max(elapsed,1e-6):.1f}')
+
+        #     # ERC-20 transfers (Etherscan, fast engine policy)
+        #     print('--- Etherscan ERC20 (fast) ---')
+        #     started = time.time()
+        #     print('sending batch: erc20 fast (eth) sliding window')
+        #     erc20_es_fast = await fetch_all_token_transfers_fast(
+        #         address=address,
+        #         start_block=0,
+        #         end_block=None,
+        #         api_kind='eth',
+        #         network='main',
+        #         api_key=eth_key,
+        #         http=http,
+        #         endpoint_builder=endpoint,
+        #         rate_limiter=SimpleRateLimiter(min_interval_seconds=0.2, burst=1),
+        #         retry=retry,
+        #         telemetry=telemetry,
+        #         max_offset=10_000,
+        #         max_concurrent=1,
+        #         token_standard='erc20',
+        #     )
+        #     elapsed = time.time() - started
+        #     print(f'duration_s={elapsed:.2f} items={len(erc20_es_fast)} tps={len(erc20_es_fast)/max(elapsed,1e-6):.1f}')
+        # else:
+        #     print('ETHERSCAN_KEY not set; skipping etherscan test')
+
+        # Return latest etherscan fast result (Blockscout demo is commented above)
+        return txs_es_fast
+    finally:
+        # Always close the HTTP session even on errors
+        await http.aclose()
 
 
 async def analyze_all_transactions(transactions):
@@ -192,7 +267,7 @@ async def main():
 
         await analyze_all_transactions(all_transactions)
     except Exception as e:
-        print(f'error: {e}')
+        print(f'error: {type(e).__name__}: {e!r}')
 
 
 if __name__ == '__main__':
