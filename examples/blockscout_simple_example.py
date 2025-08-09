@@ -18,7 +18,6 @@ from aiochainscan import (  # noqa: E402  (import after sys.path tweak)
     AiohttpClient,
     ExponentialBackoffRetry,
     SimpleRateLimiter,
-    StructlogTelemetry,
     UrlBuilderEndpoint,
     get_all_transactions_optimized,
 )
@@ -33,7 +32,8 @@ async def fetch_all_transactions_optimized_demo(*, address: str) -> list[dict]:
     # DI: default adapters
     http = AiohttpClient()
     endpoint = UrlBuilderEndpoint()
-    telemetry = StructlogTelemetry()
+    # Disable telemetry for maximal throughput in demo run
+    telemetry = None
     # Blockscout ~10 rps → minimal interval 0.1s
     rate_limiter = SimpleRateLimiter(min_interval_seconds=0.1)
     retry = ExponentialBackoffRetry(max_attempts=3, base_delay_seconds=0.3)
