@@ -18,6 +18,7 @@ from aiochainscan.ports.endpoint_builder import EndpointBuilder
 from aiochainscan.ports.http_client import HttpClient
 from aiochainscan.ports.rate_limiter import RateLimiter, RetryPolicy
 from aiochainscan.ports.telemetry import Telemetry
+from aiochainscan.services.aggregator import fetch_all_ranges_optimized
 
 
 async def get_address_balance(
@@ -439,6 +440,296 @@ async def get_token_transfers(
             )
         return out
     return []
+
+
+async def get_all_transactions_optimized(
+    *,
+    address: str,
+    start_block: int | None,
+    end_block: int | None,
+    max_concurrent: int,
+    max_offset: int,
+    min_range_width: int = 1_000,
+    max_attempts_per_range: int = 3,
+    api_kind: str,
+    network: str,
+    api_key: str,
+    http: HttpClient,
+    _endpoint_builder: EndpointBuilder,
+    _rate_limiter: RateLimiter | None = None,
+    _retry: RetryPolicy | None = None,
+    _telemetry: Telemetry | None = None,
+    stats: dict[str, int] | None = None,
+) -> list[dict[str, Any]]:
+    """Fetch all normal transactions using dynamic range splitting and priority queue.
+
+    This aggregator operates purely on the services layer (ports + endpoint builder),
+    compatible with Blockscout/Etherscan-style providers without requiring an API key
+    for Blockscout. It respects provider rate limits via the supplied RateLimiter and
+    limits concurrency via ``max_concurrent``.
+    """
+    import asyncio
+
+    # Resolve end_block if not provided (use proxy.eth_blockNumber contract via ports)
+    if end_block is None:
+        endpoint = _endpoint_builder.open(api_key=api_key, api_kind=api_kind, network=network)
+        url: str = endpoint.api_url
+        # Attempt 1: proxy.eth_blockNumber
+        try:
+            params_proxy: dict[str, Any] = {'module': 'proxy', 'action': 'eth_blockNumber'}
+            signed_params, headers = endpoint.filter_and_sign(params_proxy, headers=None)
+
+            async def _get_latest_block() -> Any:
+                if _rate_limiter is not None:
+                    await _rate_limiter.acquire(key=f'{api_kind}:{network}:proxy.blockNumber')
+                return await http.get(url, params=signed_params, headers=headers)
+
+            response: Any = await (
+                _retry.run(_get_latest_block) if _retry is not None else _get_latest_block()
+            )
+            latest_hex: str | None = None
+            if isinstance(response, dict):
+                result = response.get('result', response)
+                if isinstance(result, str):
+                    latest_hex = result
+            if latest_hex:
+                end_block = int(latest_hex, 16) if latest_hex.startswith('0x') else int(latest_hex)
+            else:
+                raise ValueError('no result')
+        except Exception:
+            # Attempt 2: block.getblocknobytime (closest=before)
+            try:
+                import time as _t
+
+                params_block: dict[str, Any] = {
+                    'module': 'block',
+                    'action': 'getblocknobytime',
+                    'timestamp': int(_t.time()),
+                    'closest': 'before',
+                }
+                signed_params2, headers2 = endpoint.filter_and_sign(params_block, headers=None)
+
+                async def _get_block_by_time() -> Any:
+                    if _rate_limiter is not None:
+                        await _rate_limiter.acquire(
+                            key=f'{api_kind}:{network}:block.getblocknobytime'
+                        )
+                    return await http.get(url, params=signed_params2, headers=headers2)
+
+                resp2: Any = await (
+                    _retry.run(_get_block_by_time) if _retry is not None else _get_block_by_time()
+                )
+                if isinstance(resp2, dict):
+                    res2 = resp2.get('result', resp2)
+                    end_block = int(res2) if isinstance(res2, str | int) else None
+            except Exception:
+                end_block = None
+            if end_block is None:
+                # Attempt 3: sentinel latest
+                end_block = 99_999_999
+
+    if start_block is None:
+        start_block = 0
+
+    if end_block <= start_block:
+        return []
+
+    def _dedup_key(it: dict[str, Any]) -> str | None:
+        h = it.get('hash')
+        return h if isinstance(h, str) else None
+
+    def _to_int(v: Any) -> int:
+        try:
+            if isinstance(v, str):
+                s = v.strip()
+                if s.startswith('0x'):
+                    return int(s, 16)
+                return int(s)
+            return int(v)
+        except Exception:
+            return 0
+
+    def _sort_key(it: dict[str, Any]) -> tuple[int, int]:
+        return (_to_int(it.get('blockNumber')), _to_int(it.get('transactionIndex')))
+
+    semaphore = asyncio.Semaphore(max(1, max_concurrent))
+
+    async def _fetch_range_wrapped(s: int, e: int) -> list[dict[str, Any]]:
+        async with semaphore:
+            return await get_normal_transactions(
+                address=address,
+                start_block=s,
+                end_block=e,
+                sort='asc',
+                page=1,
+                offset=max_offset,
+                api_kind=api_kind,
+                network=network,
+                api_key=api_key,
+                http=http,
+                _endpoint_builder=_endpoint_builder,
+                _rate_limiter=_rate_limiter,
+                _retry=_retry,
+                _telemetry=_telemetry,
+            )
+
+    return await fetch_all_ranges_optimized(
+        start_block=start_block,
+        end_block=end_block,
+        max_concurrent=max_concurrent,
+        max_offset=max_offset,
+        min_range_width=min_range_width,
+        max_attempts_per_range=max_attempts_per_range,
+        fetch_range=_fetch_range_wrapped,
+        dedup_key=_dedup_key,
+        sort_key=_sort_key,
+        telemetry=_telemetry,
+        telemetry_prefix='account.get_all_transactions_optimized',
+        stats=stats,
+    )
+
+
+async def get_all_internal_transactions_optimized(
+    *,
+    address: str,
+    start_block: int | None,
+    end_block: int | None,
+    max_concurrent: int,
+    max_offset: int,
+    min_range_width: int = 1_000,
+    max_attempts_per_range: int = 3,
+    api_kind: str,
+    network: str,
+    api_key: str,
+    http: HttpClient,
+    _endpoint_builder: EndpointBuilder,
+    _rate_limiter: RateLimiter | None = None,
+    _retry: RetryPolicy | None = None,
+    _telemetry: Telemetry | None = None,
+    stats: dict[str, int] | None = None,
+) -> list[dict[str, Any]]:
+    """Fetch all internal transactions using the generic aggregator.
+
+    Splits the block range dynamically and calls `get_internal_transactions` under the hood.
+    """
+    import asyncio
+
+    # Resolve latest block when needed
+    if end_block is None:
+        endpoint = _endpoint_builder.open(api_key=api_key, api_kind=api_kind, network=network)
+        url: str = endpoint.api_url
+        # Attempt 1: proxy.eth_blockNumber
+        try:
+            params_proxy: dict[str, Any] = {'module': 'proxy', 'action': 'eth_blockNumber'}
+            signed_params, headers = endpoint.filter_and_sign(params_proxy, headers=None)
+
+            async def _get_latest_block() -> Any:
+                if _rate_limiter is not None:
+                    await _rate_limiter.acquire(key=f'{api_kind}:{network}:proxy.blockNumber')
+                return await http.get(url, params=signed_params, headers=headers)
+
+            response: Any = await (
+                _retry.run(_get_latest_block) if _retry is not None else _get_latest_block()
+            )
+            latest_hex: str | None = None
+            if isinstance(response, dict):
+                result = response.get('result', response)
+                if isinstance(result, str):
+                    latest_hex = result
+            if latest_hex:
+                end_block = int(latest_hex, 16) if latest_hex.startswith('0x') else int(latest_hex)
+            else:
+                raise ValueError('no result')
+        except Exception:
+            # Attempt 2: block.getblocknobytime (closest=before)
+            try:
+                import time as _t
+
+                params_block: dict[str, Any] = {
+                    'module': 'block',
+                    'action': 'getblocknobytime',
+                    'timestamp': int(_t.time()),
+                    'closest': 'before',
+                }
+                signed_params2, headers2 = endpoint.filter_and_sign(params_block, headers=None)
+
+                async def _get_block_by_time() -> Any:
+                    if _rate_limiter is not None:
+                        await _rate_limiter.acquire(
+                            key=f'{api_kind}:{network}:block.getblocknobytime'
+                        )
+                    return await http.get(url, params=signed_params2, headers=headers2)
+
+                resp2: Any = await (
+                    _retry.run(_get_block_by_time) if _retry is not None else _get_block_by_time()
+                )
+                if isinstance(resp2, dict):
+                    res2 = resp2.get('result', resp2)
+                    end_block = int(res2) if isinstance(res2, str | int) else None
+            except Exception:
+                end_block = None
+            if end_block is None:
+                end_block = 99_999_999
+
+    if start_block is None:
+        start_block = 0
+    if end_block <= start_block:
+        return []
+
+    def _dedup_key(it: dict[str, Any]) -> str | None:
+        h = it.get('hash')
+        return h if isinstance(h, str) else None
+
+    def _to_int(v: Any) -> int:
+        try:
+            if isinstance(v, str):
+                s = v.strip()
+                if s.startswith('0x'):
+                    return int(s, 16)
+                return int(s)
+            return int(v)
+        except Exception:
+            return 0
+
+    def _sort_key(it: dict[str, Any]) -> tuple[int, int]:
+        return (_to_int(it.get('blockNumber')), _to_int(it.get('transactionIndex')))
+
+    semaphore = asyncio.Semaphore(max(1, max_concurrent))
+
+    async def _fetch_range_wrapped(s: int, e: int) -> list[dict[str, Any]]:
+        async with semaphore:
+            return await get_internal_transactions(
+                address=address,
+                start_block=s,
+                end_block=e,
+                sort='asc',
+                page=1,
+                offset=max_offset,
+                txhash=None,
+                api_kind=api_kind,
+                network=network,
+                api_key=api_key,
+                http=http,
+                _endpoint_builder=_endpoint_builder,
+                _rate_limiter=_rate_limiter,
+                _retry=_retry,
+                _telemetry=_telemetry,
+            )
+
+    return await fetch_all_ranges_optimized(
+        start_block=start_block,
+        end_block=end_block,
+        max_concurrent=max_concurrent,
+        max_offset=max_offset,
+        min_range_width=min_range_width,
+        max_attempts_per_range=max_attempts_per_range,
+        fetch_range=_fetch_range_wrapped,
+        dedup_key=_dedup_key,
+        sort_key=_sort_key,
+        telemetry=_telemetry,
+        telemetry_prefix='account.get_all_internal_transactions_optimized',
+        stats=stats,
+    )
 
 
 async def get_mined_blocks(
