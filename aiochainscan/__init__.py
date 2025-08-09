@@ -3,6 +3,8 @@ from typing import Any
 
 from aiochainscan.adapters.aiohttp_client import AiohttpClient
 from aiochainscan.adapters.endpoint_builder_urlbuilder import UrlBuilderEndpoint
+from aiochainscan.adapters.retry_exponential import ExponentialBackoffRetry
+from aiochainscan.adapters.simple_rate_limiter import SimpleRateLimiter
 from aiochainscan.adapters.structlog_telemetry import StructlogTelemetry
 from aiochainscan.capabilities import (
     FEATURE_SUPPORT as _FEATURE_SUPPORT_SRC,
@@ -54,6 +56,12 @@ from aiochainscan.services.account import (
     get_address_balances as get_address_balances_service,
 )
 from aiochainscan.services.account import (
+    get_all_internal_transactions_optimized as get_all_internal_transactions_optimized_service,
+)
+from aiochainscan.services.account import (
+    get_all_transactions_optimized as get_all_transactions_optimized_service,
+)
+from aiochainscan.services.account import (
     get_beacon_chain_withdrawals as get_beacon_chain_withdrawals_service,
 )
 from aiochainscan.services.account import (
@@ -100,6 +108,9 @@ from aiochainscan.services.gas import (
 )
 from aiochainscan.services.gas import (
     normalize_gas_oracle,
+)
+from aiochainscan.services.logs import (
+    get_all_logs_optimized as get_all_logs_optimized_service,
 )
 from aiochainscan.services.logs import normalize_log_entry, normalize_logs
 from aiochainscan.services.proxy import (
@@ -185,6 +196,10 @@ __all__ = [
     'get_address_balance',
     'get_address_balances',
     'get_normal_transactions',
+    'get_all_transactions_optimized',
+    'get_all_transactions_optimized_typed',
+    'get_all_internal_transactions_optimized',
+    'get_all_logs_optimized',
     'get_internal_transactions',
     'get_token_transfers',
     'get_mined_blocks',
@@ -224,6 +239,12 @@ __all__ = [
     'BlockDTO',
     'TransactionDTO',
     'GasOracleDTO',
+    # Adapters (public DI helpers)
+    'AiohttpClient',
+    'UrlBuilderEndpoint',
+    'StructlogTelemetry',
+    'SimpleRateLimiter',
+    'ExponentialBackoffRetry',
     # New facade helpers
     'get_daily_average_block_size',
     'get_daily_block_rewards',
@@ -711,6 +732,188 @@ async def get_normal_transactions(
             _rate_limiter=rate_limiter,
             _retry=retry,
             _telemetry=telemetry,
+        )
+    finally:
+        await http.aclose()
+
+
+async def get_all_transactions_optimized(
+    *,
+    address: str,
+    start_block: int | None = None,
+    end_block: int | None = None,
+    max_concurrent: int = 5,
+    max_offset: int = 10_000,
+    api_kind: str,
+    network: str,
+    api_key: str,
+    http: HttpClient | None = None,
+    endpoint_builder: EndpointBuilder | None = None,
+    rate_limiter: RateLimiter | None = None,
+    retry: RetryPolicy | None = None,
+    telemetry: Telemetry | None = None,
+    min_range_width: int = 1_000,
+    max_attempts_per_range: int = 3,
+    stats: dict[str, int] | None = None,
+) -> list[dict[str, Any]]:
+    """Optimized fetch of all normal transactions via services layer.
+
+    Uses range splitting + priority queue under the hood, respects rate limits
+    and works with Blockscout without API key.
+    """
+    http = http or AiohttpClient()
+    endpoint = endpoint_builder or UrlBuilderEndpoint()
+    telemetry = telemetry or StructlogTelemetry()
+    try:
+        return await get_all_transactions_optimized_service(
+            address=address,
+            start_block=start_block,
+            end_block=end_block,
+            max_concurrent=max_concurrent,
+            max_offset=max_offset,
+            api_kind=api_kind,
+            network=network,
+            api_key=api_key,
+            http=http,
+            _endpoint_builder=endpoint,
+            _rate_limiter=rate_limiter,
+            _retry=retry,
+            _telemetry=telemetry,
+            min_range_width=min_range_width,
+            max_attempts_per_range=max_attempts_per_range,
+            stats=stats,
+        )
+    finally:
+        await http.aclose()
+
+
+async def get_all_transactions_optimized_typed(
+    *,
+    address: str,
+    start_block: int | None = None,
+    end_block: int | None = None,
+    max_concurrent: int = 5,
+    max_offset: int = 10_000,
+    api_kind: str,
+    network: str,
+    api_key: str,
+    http: HttpClient | None = None,
+    endpoint_builder: EndpointBuilder | None = None,
+    rate_limiter: RateLimiter | None = None,
+    retry: RetryPolicy | None = None,
+    telemetry: Telemetry | None = None,
+    min_range_width: int = 1_000,
+    max_attempts_per_range: int = 3,
+) -> list[NormalTxDTO]:
+    items = await get_all_transactions_optimized(
+        address=address,
+        start_block=start_block,
+        end_block=end_block,
+        max_concurrent=max_concurrent,
+        max_offset=max_offset,
+        api_kind=api_kind,
+        network=network,
+        api_key=api_key,
+        http=http,
+        endpoint_builder=endpoint_builder,
+        rate_limiter=rate_limiter,
+        retry=retry,
+        telemetry=telemetry,
+        min_range_width=min_range_width,
+        max_attempts_per_range=max_attempts_per_range,
+    )
+    return normalize_normal_txs(items)
+
+
+async def get_all_internal_transactions_optimized(
+    *,
+    address: str,
+    start_block: int | None = None,
+    end_block: int | None = None,
+    max_concurrent: int = 5,
+    max_offset: int = 10_000,
+    api_kind: str,
+    network: str,
+    api_key: str,
+    http: HttpClient | None = None,
+    endpoint_builder: EndpointBuilder | None = None,
+    rate_limiter: RateLimiter | None = None,
+    retry: RetryPolicy | None = None,
+    telemetry: Telemetry | None = None,
+    min_range_width: int = 1_000,
+    max_attempts_per_range: int = 3,
+    stats: dict[str, int] | None = None,
+) -> list[dict[str, Any]]:
+    http = http or AiohttpClient()
+    endpoint = endpoint_builder or UrlBuilderEndpoint()
+    telemetry = telemetry or StructlogTelemetry()
+    try:
+        return await get_all_internal_transactions_optimized_service(
+            address=address,
+            start_block=start_block,
+            end_block=end_block,
+            max_concurrent=max_concurrent,
+            max_offset=max_offset,
+            api_kind=api_kind,
+            network=network,
+            api_key=api_key,
+            http=http,
+            _endpoint_builder=endpoint,
+            _rate_limiter=rate_limiter,
+            _retry=retry,
+            _telemetry=telemetry,
+            min_range_width=min_range_width,
+            max_attempts_per_range=max_attempts_per_range,
+            stats=stats,
+        )
+    finally:
+        await http.aclose()
+
+
+async def get_all_logs_optimized(
+    *,
+    address: str,
+    start_block: int | None = None,
+    end_block: int | None = None,
+    max_concurrent: int = 3,
+    max_offset: int = 1_000,
+    api_kind: str,
+    network: str,
+    api_key: str,
+    topics: list[str] | None = None,
+    topic_operators: list[str] | None = None,
+    http: HttpClient | None = None,
+    endpoint_builder: EndpointBuilder | None = None,
+    rate_limiter: RateLimiter | None = None,
+    retry: RetryPolicy | None = None,
+    telemetry: Telemetry | None = None,
+    min_range_width: int = 1_000,
+    max_attempts_per_range: int = 3,
+    stats: dict[str, int] | None = None,
+) -> list[dict[str, Any]]:
+    http = http or AiohttpClient()
+    endpoint = endpoint_builder or UrlBuilderEndpoint()
+    telemetry = telemetry or StructlogTelemetry()
+    try:
+        return await get_all_logs_optimized_service(
+            address=address,
+            start_block=start_block,
+            end_block=end_block,
+            max_concurrent=max_concurrent,
+            max_offset=max_offset,
+            api_kind=api_kind,
+            network=network,
+            api_key=api_key,
+            http=http,
+            _endpoint_builder=endpoint,
+            topics=topics,
+            topic_operators=topic_operators,
+            _rate_limiter=rate_limiter,
+            _retry=retry,
+            _telemetry=telemetry,
+            min_range_width=min_range_width,
+            max_attempts_per_range=max_attempts_per_range,
+            stats=stats,
         )
     finally:
         await http.aclose()

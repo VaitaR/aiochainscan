@@ -765,6 +765,7 @@ The hexagonal skeleton is in place and already useful. Next focus: broaden servi
 - Standardize telemetry events/fields (api_kind, network, duration_ms, items) across services.
   - Implemented across high-traffic services (account, logs, stats, token, block, transaction, proxy, gas). Events now emit `duration_ms` for request timing and `items` for list-returning endpoints.
 - Update README with short sections: “Facades + DI”, “Normalizers/DTO”.
+  - Add: “Optimized fetch-all (range-splitting aggregator)” docs; generic aggregator at `services/aggregator.py` used by: `get_all_transactions_optimized` (+ typed), `get_all_internal_transactions_optimized`, `get_all_logs_optimized`.
  - Introduce typed DTO facades in parallel (non-breaking): `get_block_typed`, `get_transaction_typed`, `get_logs_typed`, `get_token_balance_typed`, `get_gas_oracle_typed`, and typed daily stats helpers. Keep legacy facades intact; typed versions are opt-in.
 
 #### Phase 1.5 preparation: DTO typing plan

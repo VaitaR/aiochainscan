@@ -268,6 +268,61 @@ async def main():
 asyncio.run(main())
 ```
 
+### Optimized fetch-all (range-splitting aggregator)
+
+For high-volume endpoints that support block ranges (e.g., normal transactions, internal transactions, logs), the library provides optimized facades powered by a generic aggregator that performs dynamic range splitting, concurrency control, retries, and deduplication.
+
+- Normal transactions:
+  ```python
+  from aiochainscan import get_all_transactions_optimized
+
+  txs = await get_all_transactions_optimized(
+      address="0x...",
+      api_kind="blockscout_eth",  # works for etherscan-family incl. Blockscout (no API key)
+      network="eth",
+      api_key="",
+      max_concurrent=5,
+      max_offset=10_000,
+      # tuning (optional)
+      min_range_width=1_000,
+      max_attempts_per_range=3,
+  )
+  ```
+
+- Internal transactions:
+  ```python
+  from aiochainscan import get_all_internal_transactions_optimized
+
+  internals = await get_all_internal_transactions_optimized(
+      address="0x...",
+      api_kind="eth",
+      network="main",
+      api_key="YOUR_API_KEY",
+      max_concurrent=5,
+      max_offset=10_000,
+  )
+  ```
+
+- Logs (with topics):
+  ```python
+  from aiochainscan import get_all_logs_optimized
+
+  logs = await get_all_logs_optimized(
+      address="0x...",
+      api_kind="eth",
+      network="main",
+      api_key="YOUR_API_KEY",
+      topics=["0xddf252ad..."],
+      max_concurrent=3,
+      max_offset=1_000,
+  )
+  ```
+
+Notes:
+- The aggregator respects rate limits via the RateLimiter port and supports retries via RetryPolicy.
+- You can pass an optional `stats` dict to collect execution metrics (ranges processed/split/retries, item counts).
+- Typed variant for normal transactions is available as `get_all_transactions_optimized_typed`.
+
 ### Normalizers/DTO
 
 For many responses, helpers are provided to normalize provider-shaped payloads into light DTOs, e.g. `normalize_block`, `normalize_transaction`, `normalize_token_balance`, `normalize_gas_oracle`, and stats daily series (e.g. `normalize_daily_transaction_count`). These are pure helpers and can be composed with your own caching or telemetry.
