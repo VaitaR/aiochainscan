@@ -138,7 +138,7 @@ class GasTracker(BaseModule):
 
     async def daily_total_gas_used(
         self, start_date: date, end_date: date, sort: str | None = None
-    ) -> dict[str, Any]:
+    ) -> Any:
         """Get Ethereum Daily Total Gas Used"""
         http, endpoint = _facade_injection(self._client)
         from aiochainscan.services.stats import (
@@ -162,7 +162,7 @@ class GasTracker(BaseModule):
 
     async def daily_average_gas_price(
         self, start_date: date, end_date: date, sort: str | None = None
-    ) -> dict[str, Any]:
+    ) -> Any:
         """Get Daily Average Gas Price"""
         http, endpoint = _facade_injection(self._client)
         from aiochainscan.services.stats import (

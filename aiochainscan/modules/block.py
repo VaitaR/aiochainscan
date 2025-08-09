@@ -125,7 +125,7 @@ class Block(BaseModule):
 
     async def daily_average_block_size(
         self, start_date: date, end_date: date, sort: str | None = None
-    ) -> dict[str, Any]:
+    ) -> Any:
         """Get Daily Average Block Size"""
         if sort is not None:
             sort = check_sort_direction(sort)
@@ -184,7 +184,7 @@ class Block(BaseModule):
 
     async def daily_block_rewards(
         self, start_date: date, end_date: date, sort: str | None = None
-    ) -> dict[str, Any]:
+    ) -> Any:
         """Get Daily Block Rewards"""
         if sort is not None:
             sort = check_sort_direction(sort)
@@ -209,7 +209,7 @@ class Block(BaseModule):
 
     async def daily_average_time_for_a_block(
         self, start_date: date, end_date: date, sort: str | None = None
-    ) -> dict[str, Any]:
+    ) -> Any:
         """Get Daily Average Time for A Block to be Included in the Ethereum Blockchain"""
         if sort is not None:
             sort = check_sort_direction(sort)
@@ -234,7 +234,7 @@ class Block(BaseModule):
 
     async def daily_uncle_block_count(
         self, start_date: date, end_date: date, sort: str | None = None
-    ) -> dict[str, Any]:
+    ) -> Any:
         """Get Daily Uncle Block Count and Rewards"""
         if sort is not None:
             sort = check_sort_direction(sort)

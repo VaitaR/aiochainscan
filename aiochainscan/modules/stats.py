@@ -210,7 +210,7 @@ class Stats(BaseModule):
 
     async def daily_network_tx_fee(
         self, start_date: date, end_date: date, sort: str | None = None
-    ) -> dict[str, Any]:
+    ) -> Any:
         """Get Daily Network Transaction Fee"""
         from aiochainscan.common import check_sort_direction
         from aiochainscan.modules.base import _facade_injection, _resolve_api_context
@@ -237,7 +237,7 @@ class Stats(BaseModule):
 
     async def daily_new_address_count(
         self, start_date: date, end_date: date, sort: str | None = None
-    ) -> dict[str, Any]:
+    ) -> Any:
         """Get Daily New Address Count"""
         from aiochainscan.common import check_sort_direction
         from aiochainscan.modules.base import _facade_injection, _resolve_api_context
@@ -263,7 +263,7 @@ class Stats(BaseModule):
 
     async def daily_network_utilization(
         self, start_date: date, end_date: date, sort: str | None = None
-    ) -> dict[str, Any]:
+    ) -> Any:
         """Get Daily Network Utilization"""
         from aiochainscan.common import check_sort_direction
         from aiochainscan.modules.base import _facade_injection, _resolve_api_context
@@ -289,7 +289,7 @@ class Stats(BaseModule):
 
     async def daily_average_network_hash_rate(
         self, start_date: date, end_date: date, sort: str | None = None
-    ) -> dict[str, Any]:
+    ) -> Any:
         """Get Daily Average Network Hash Rate"""
         from aiochainscan.modules.base import _facade_injection, _resolve_api_context
         from aiochainscan.services.stats import (
@@ -316,7 +316,7 @@ class Stats(BaseModule):
 
     async def daily_transaction_count(
         self, start_date: date, end_date: date, sort: str | None = None
-    ) -> dict[str, Any]:
+    ) -> Any:
         """Get Daily Transaction Count"""
         from aiochainscan.common import check_sort_direction
         from aiochainscan.modules.base import _facade_injection, _resolve_api_context
@@ -342,7 +342,7 @@ class Stats(BaseModule):
 
     async def daily_average_network_difficulty(
         self, start_date: date, end_date: date, sort: str | None = None
-    ) -> dict[str, Any]:
+    ) -> Any:
         """Get Daily Average Network Difficulty"""
         from aiochainscan.modules.base import _facade_injection, _resolve_api_context
         from aiochainscan.services.stats import (
@@ -369,7 +369,7 @@ class Stats(BaseModule):
 
     async def ether_historical_daily_market_cap(
         self, start_date: date, end_date: date, sort: str | None = None
-    ) -> dict[str, Any]:
+    ) -> Any:
         """Get Ether Historical Daily Market Cap"""
         from aiochainscan.modules.base import _facade_injection, _resolve_api_context
         from aiochainscan.services.stats import (
@@ -396,7 +396,7 @@ class Stats(BaseModule):
 
     async def ether_historical_price(
         self, start_date: date, end_date: date, sort: str | None = None
-    ) -> dict[str, Any]:
+    ) -> Any:
         """Get Ether Historical Price"""
         from aiochainscan.modules.base import _facade_injection, _resolve_api_context
         from aiochainscan.services.stats import (
