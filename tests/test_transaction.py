@@ -4,6 +4,12 @@ import pytest
 import pytest_asyncio
 
 from aiochainscan import Client
+from aiochainscan.adapters.aiohttp_graphql_client import AiohttpGraphQLClient
+from aiochainscan.adapters.blockscout_graphql_builder import BlockscoutGraphQLBuilder
+from aiochainscan.adapters.endpoint_builder_urlbuilder import UrlBuilderEndpoint
+from aiochainscan.adapters.simple_provider_federator import SimpleProviderFederator
+from aiochainscan.domain.models import TxHash
+from aiochainscan.services.transaction import get_transaction_by_hash as get_tx_service
 
 
 @pytest_asyncio.fixture
@@ -49,3 +55,38 @@ async def test_check_tx_status(transaction):
         result = await transaction.check_tx_status('0x987654321')
         mock_tx_receipt.assert_called_once_with('0x987654321')
         assert result == {'status': '0'}
+
+
+@pytest.mark.asyncio
+async def test_get_transaction_by_hash_graphql(monkeypatch):
+    # Mock GraphQL execute to return a minimal but valid payload
+    async def fake_execute(self, url, query, variables=None, headers=None):  # noqa: ARG001
+        return {
+            'transaction': {
+                'hash': '0xabc',
+                'blockNumber': 123,
+                'fromAddressHash': '0xfrom',
+                'toAddressHash': '0xto',
+                'gas': '21000',
+                'gasPrice': '100',
+                'input': '0x',
+            }
+        }
+
+    monkeypatch.setattr(
+        'aiochainscan.adapters.aiohttp_graphql_client.AiohttpGraphQLClient.execute',
+        fake_execute,
+    )
+
+    data = await get_tx_service(
+        txhash=TxHash('0x' + '0'*64),
+        api_kind='blockscout_sepolia',
+        network='sepolia',
+        api_key='',
+        http=None,  # type: ignore[arg-type]
+        _endpoint_builder=UrlBuilderEndpoint(),
+        _gql=AiohttpGraphQLClient(),
+        _gql_builder=BlockscoutGraphQLBuilder(),
+        _federator=SimpleProviderFederator(),
+    )
+    assert data.get('hash') == '0xabc'

@@ -99,7 +99,11 @@ class UrlBuilder:
             ('optimism', True): 'optimistic',
             ('optimism', False): f'{network}-optimism',
         }
-        default_prefix: str | None = None if self._is_main else network
+        # Blockscout instances use direct hostnames per network; no subdomain prefix.
+        if self._api_kind.startswith('blockscout_'):
+            default_prefix = None
+        else:
+            default_prefix = None if self._is_main else network
         prefix = prefix_exceptions.get((self._api_kind, self._is_main), default_prefix)
         return self._build_url(prefix)
 
