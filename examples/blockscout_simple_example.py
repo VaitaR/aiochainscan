@@ -19,29 +19,36 @@ from aiochainscan import (  # noqa: E402  (import after sys.path tweak)
     ExponentialBackoffRetry,
     SimpleRateLimiter,
     UrlBuilderEndpoint,
-    get_all_transactions_optimized,
+)
+from aiochainscan.services.fetch_all import (
+    fetch_all_transactions_basic,
+    fetch_all_transactions_fast,
 )
 
 
 async def fetch_all_transactions_optimized_demo(*, address: str) -> list[dict]:
-    """Call fetch-all facade (services layer, Blockscout)."""
+    """Run both strategies for Blockscout and Etherscan (ETH) and print timings."""
     api_kind = 'blockscout_eth'
     network = 'eth'
     api_key = ''
 
     # DI: default adapters
-    http = AiohttpClient()
+    # Use aggressive but bounded timeout to prevent long hangs
+    http = AiohttpClient(timeout=8.0)
     endpoint = UrlBuilderEndpoint()
     # Disable telemetry for maximal throughput in demo run
     telemetry = None
     # Blockscout ~10 rps → minimal interval 0.1s
     rate_limiter = SimpleRateLimiter(min_interval_seconds=0.1)
-    retry = ExponentialBackoffRetry(max_attempts=3, base_delay_seconds=0.3)
+    # Keep retries short to fail fast on slow endpoints
+    retry = ExponentialBackoffRetry(max_attempts=2, base_delay_seconds=0.2)
 
-    stats: dict[str, int] = {}
+    print('--- Blockscout (fast) ---')
     started = time.time()
-    txs = await get_all_transactions_optimized(
+    txs_bs_fast = await fetch_all_transactions_fast(
         address=address,
+        start_block=None,
+        end_block=None,
         api_kind=api_kind,
         network=network,
         api_key=api_key,
@@ -50,31 +57,60 @@ async def fetch_all_transactions_optimized_demo(*, address: str) -> list[dict]:
         rate_limiter=rate_limiter,
         retry=retry,
         telemetry=telemetry,
-        max_concurrent=5,
         max_offset=10_000,
-        min_range_width=1_000,
-        max_attempts_per_range=3,
-        stats=stats,
+        max_concurrent=8,
     )
     elapsed = time.time() - started
+    print(f'duration_s={elapsed:.2f} items={len(txs_bs_fast)} tps={len(txs_bs_fast)/elapsed:.1f}')
 
-    # Derived metrics
-    rps = len(txs) / elapsed if elapsed > 0 and txs else 0.0
-    print('\nPerformance summary')
-    print(f'duration_s={elapsed:.2f}')
-    print(f'items={len(txs)}')
-    print(f'throughput_tps={rps:.1f}')
-    if stats:
-        print('ranges:')
-        print(f'  seeded={stats.get("ranges_seeded", 0)}')
-        print(f'  processed={stats.get("ranges_processed", 0)}')
-        print(f'  split={stats.get("ranges_split", 0)}')
-        print(f'  retries={stats.get("retries", 0)}')
-        print(f'  errors={stats.get("errors", 0)}')
-        print(f'  failed={stats.get("ranges_failed", 0)}')
-        print(f'  items_total={stats.get("items_total", 0)}')
+    print('--- Blockscout (basic) ---')
+    started = time.time()
+    txs_bs_basic = await fetch_all_transactions_basic(
+        address=address,
+        start_block=0,
+        end_block=99_999_999,
+        api_kind=api_kind,
+        network=network,
+        api_key=api_key,
+        http=http,
+        endpoint_builder=endpoint,
+        rate_limiter=rate_limiter,
+        retry=retry,
+        telemetry=telemetry,
+        max_offset=10_000,
+    )
+    elapsed = time.time() - started
+    print(f'duration_s={elapsed:.2f} items={len(txs_bs_basic)} tps={len(txs_bs_basic)/elapsed:.1f}')
+
+    # Etherscan test (requires ETHERSCAN_KEY)
+    print('--- Etherscan (fast sliding window) ---')
+    import os
+    eth_key = os.getenv('ETHERSCAN_KEY', '')
+    if eth_key:
+        started = time.time()
+        txs_es_fast = await fetch_all_transactions_fast(
+            address=address,
+            start_block=0,
+            end_block=None,
+            api_kind='eth',
+            network='main',
+            api_key=eth_key,
+            http=http,
+            endpoint_builder=endpoint,
+            rate_limiter=SimpleRateLimiter(min_interval_seconds=0.25, burst=1),
+            retry=retry,
+            telemetry=telemetry,
+            max_offset=10_000,
+            max_concurrent=4,
+        )
+        elapsed = time.time() - started
+        print(f'duration_s={elapsed:.2f} items={len(txs_es_fast)} tps={len(txs_es_fast)/max(elapsed,1e-6):.1f}')
+    else:
+        print('ETHERSCAN_KEY not set; skipping etherscan test')
+
     await http.aclose()
-    return txs
+    # return latest blockscout fast result for downstream processing
+    return txs_bs_fast
 
 
 async def analyze_all_transactions(transactions):

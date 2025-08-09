@@ -10,7 +10,6 @@ from aiochainscan.ports.endpoint_builder import EndpointBuilder
 from aiochainscan.ports.http_client import HttpClient
 from aiochainscan.ports.rate_limiter import RateLimiter, RetryPolicy
 from aiochainscan.ports.telemetry import Telemetry
-from aiochainscan.services.aggregator import fetch_all_ranges_optimized
 
 
 async def get_logs(
@@ -161,100 +160,38 @@ async def get_all_logs_optimized(
     _telemetry: Telemetry | None = None,
     stats: dict[str, int] | None = None,
 ) -> list[dict[str, Any]]:
-    """Fetch all logs using the generic aggregator with Etherscan-style getLogs."""
-    import asyncio
-
-    # Resolve latest block when needed
+    """Fetch all logs using page-based strategy (provider-aware)."""
+    # Determine latest end_block
     if end_block is None:
         endpoint = _endpoint_builder.open(api_key=api_key, api_kind=api_kind, network=network)
         url: str = endpoint.api_url
-        # Try proxy first
         try:
             params_proxy: dict[str, Any] = {'module': 'proxy', 'action': 'eth_blockNumber'}
             signed_params, headers = endpoint.filter_and_sign(params_proxy, headers=None)
-
-            async def _get_latest_block() -> Any:
-                if _rate_limiter is not None:
-                    await _rate_limiter.acquire(key=f'{api_kind}:{network}:proxy.blockNumber')
-                return await http.get(url, params=signed_params, headers=headers)
-
             response: Any = await (
-                _retry.run(_get_latest_block) if _retry is not None else _get_latest_block()
+                _retry.run(lambda: http.get(url, params=signed_params, headers=headers))
+                if _retry is not None
+                else http.get(url, params=signed_params, headers=headers)
             )
-            latest_hex: str | None = None
-            if isinstance(response, dict):
-                result = response.get('result', response)
-                if isinstance(result, str):
-                    latest_hex = result
-            if latest_hex:
-                end_block = int(latest_hex, 16) if latest_hex.startswith('0x') else int(latest_hex)
-            else:
-                raise ValueError('no result')
+            latest_hex = response.get('result') if isinstance(response, dict) else None
+            end_block = int(latest_hex, 16) if isinstance(latest_hex, str) and latest_hex.startswith('0x') else int(latest_hex)
         except Exception:
-            # Fallback: block.getblocknobytime
-            try:
-                import time as _t
-
-                params_block: dict[str, Any] = {
-                    'module': 'block',
-                    'action': 'getblocknobytime',
-                    'timestamp': int(_t.time()),
-                    'closest': 'before',
-                }
-                signed_params2, headers2 = endpoint.filter_and_sign(params_block, headers=None)
-
-                async def _get_block_by_time() -> Any:
-                    if _rate_limiter is not None:
-                        await _rate_limiter.acquire(
-                            key=f'{api_kind}:{network}:block.getblocknobytime'
-                        )
-                    return await http.get(url, params=signed_params2, headers=headers2)
-
-                resp2: Any = await (
-                    _retry.run(_get_block_by_time) if _retry is not None else _get_block_by_time()
-                )
-                if isinstance(resp2, dict):
-                    res2 = resp2.get('result', resp2)
-                    end_block = int(res2) if isinstance(res2, str | int) else None
-            except Exception:
-                end_block = None
-            if end_block is None:
-                end_block = 99_999_999
+            end_block = 99_999_999
 
     if start_block is None:
         start_block = 0
     if end_block <= start_block:
         return []
 
-    def _dedup_key(it: dict[str, Any]) -> str | None:
-        # combine tx hash and log index to deduplicate
-        txh = it.get('transactionHash') or it.get('hash')
-        idx = it.get('logIndex')
-        if isinstance(txh, str) and isinstance(idx, str | int):
-            return f'{txh}:{idx}'
-        return None
+    all_items: list[dict[str, Any]] = []
+    pages_processed = 0
 
-    def _to_int(v: Any) -> int:
-        try:
-            if isinstance(v, str):
-                s = v.strip()
-                if s.startswith('0x'):
-                    return int(s, 16)
-                return int(s)
-            return int(v)
-        except Exception:
-            return 0
-
-    def _sort_key(it: dict[str, Any]) -> tuple[int, int]:
-        return (_to_int(it.get('blockNumber')), _to_int(it.get('logIndex')))
-
-    semaphore = asyncio.Semaphore(max(1, max_concurrent))
-
-    async def _fetch_range_wrapped(s: int, e: int) -> list[dict[str, Any]]:
-        async with semaphore:
-            return await get_logs(
-                start_block=s,
-                end_block=e,
+    if api_kind == 'eth':
+        current_start = start_block
+        while True:
+            items = await get_logs(
+                start_block=current_start,
+                end_block=end_block,
                 address=address,
                 api_kind=api_kind,
                 network=network,
@@ -269,18 +206,69 @@ async def get_all_logs_optimized(
                 _retry=_retry,
                 _telemetry=_telemetry,
             )
+            pages_processed += 1
+            if not items:
+                break
+            all_items.extend(items)
+            if len(items) < max_offset:
+                break
+            try:
+                last_block_str = items[-1].get('blockNumber')
+                last_block = int(last_block_str, 16) if isinstance(last_block_str, str) and last_block_str.startswith('0x') else int(str(last_block_str))
+            except Exception:
+                break
+            current_start = max(current_start, last_block + 1)
+    else:
+        page = 1
+        while True:
+            items = await get_logs(
+                start_block=start_block,
+                end_block=end_block,
+                address=address,
+                api_kind=api_kind,
+                network=network,
+                api_key=api_key,
+                http=http,
+                _endpoint_builder=_endpoint_builder,
+                topics=topics,
+                topic_operators=topic_operators,
+                page=page,
+                offset=max_offset,
+                _rate_limiter=_rate_limiter,
+                _retry=_retry,
+                _telemetry=_telemetry,
+            )
+            pages_processed += 1
+            if not items:
+                break
+            all_items.extend(items)
+            if len(items) < max_offset:
+                break
+            page += 1
 
-    return await fetch_all_ranges_optimized(
-        start_block=start_block,
-        end_block=end_block,
-        max_concurrent=max_concurrent,
-        max_offset=max_offset,
-        min_range_width=min_range_width,
-        max_attempts_per_range=max_attempts_per_range,
-        fetch_range=_fetch_range_wrapped,
-        dedup_key=_dedup_key,
-        sort_key=_sort_key,
-        telemetry=_telemetry,
-        telemetry_prefix='logs.get_all_logs_optimized',
-        stats=stats,
-    )
+    # Dedup by (txHash, logIndex) and sort
+    seen: set[str] = set()
+    unique: list[dict[str, Any]] = []
+    for it in all_items:
+        if not isinstance(it, dict):
+            continue
+        txh = it.get('transactionHash') or it.get('hash')
+        idx = it.get('logIndex')
+        key = f'{txh}:{idx}' if isinstance(txh, str) and isinstance(idx, (str, int)) else None
+        if key is None or key in seen:
+            continue
+        seen.add(key)
+        unique.append(it)
+
+    def to_int(v: Any) -> int:
+        try:
+            if isinstance(v, str) and v.startswith('0x'):
+                return int(v, 16)
+            return int(v)
+        except Exception:
+            return 0
+
+    unique.sort(key=lambda it: (to_int(it.get('blockNumber')), to_int(it.get('logIndex'))))
+    if stats is not None:
+        stats.update({'pages_processed': pages_processed, 'items_total': len(all_items), 'paging_used': 1})
+    return unique

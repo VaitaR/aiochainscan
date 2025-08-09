@@ -754,6 +754,7 @@ async def get_all_transactions_optimized(
     telemetry: Telemetry | None = None,
     min_range_width: int = 1_000,
     max_attempts_per_range: int = 3,
+    prefer_paging: bool | None = None,
     stats: dict[str, int] | None = None,
 ) -> list[dict[str, Any]]:
     """Optimized fetch of all normal transactions via services layer.
@@ -781,6 +782,7 @@ async def get_all_transactions_optimized(
             _telemetry=telemetry,
             min_range_width=min_range_width,
             max_attempts_per_range=max_attempts_per_range,
+            prefer_paging=prefer_paging,
             stats=stats,
         )
     finally:
