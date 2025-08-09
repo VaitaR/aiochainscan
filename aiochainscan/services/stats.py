@@ -61,6 +61,7 @@ async def get_eth_price(
         retry_policy=_retry,
     )
 
+    result: Any = response
     if isinstance(response, dict):
         result = response.get('result', response)
     if isinstance(result, dict):
