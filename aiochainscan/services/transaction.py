@@ -105,3 +105,77 @@ def normalize_transaction(raw: dict[str, Any]) -> TransactionDTO:
         'nonce': hex_to_int(raw.get('nonce')),
         'input': raw.get('input'),
     }
+
+
+async def get_tx_receipt_status(
+    *,
+    txhash: TxHash,
+    api_kind: str,
+    network: str,
+    api_key: str,
+    http: HttpClient,
+    _endpoint_builder: EndpointBuilder,
+    extra_params: Mapping[str, Any] | None = None,
+    _rate_limiter: RateLimiter | None = None,
+    _retry: RetryPolicy | None = None,
+    _telemetry: Telemetry | None = None,
+) -> dict[str, Any]:
+    """[BETA] Check Transaction Receipt Status (post-Byzantium)."""
+    endpoint = _endpoint_builder.open(api_key=api_key, api_kind=api_kind, network=network)
+    url: str = endpoint.api_url
+    params: dict[str, Any] = {
+        'module': 'transaction',
+        'action': 'gettxreceiptstatus',
+        'txhash': str(txhash),
+    }
+    if extra_params:
+        params.update({k: v for k, v in extra_params.items() if v is not None})
+    signed_params, headers = endpoint.filter_and_sign(params, headers=None)
+    response: Any = await run_with_policies(
+        do_call=lambda: http.get(url, params=signed_params, headers=headers),
+        telemetry=_telemetry,
+        telemetry_name='transaction.get_tx_receipt_status',
+        api_kind=api_kind,
+        network=network,
+        rate_limiter=_rate_limiter,
+        rate_limiter_key=f'{api_kind}:{network}:gettxreceiptstatus',
+        retry_policy=_retry,
+    )
+    return response if isinstance(response, dict) else {'result': response}
+
+
+async def get_contract_execution_status(
+    *,
+    txhash: TxHash,
+    api_kind: str,
+    network: str,
+    api_key: str,
+    http: HttpClient,
+    _endpoint_builder: EndpointBuilder,
+    extra_params: Mapping[str, Any] | None = None,
+    _rate_limiter: RateLimiter | None = None,
+    _retry: RetryPolicy | None = None,
+    _telemetry: Telemetry | None = None,
+) -> dict[str, Any]:
+    """[BETA] Check Contract Execution Status (provider-shaped)."""
+    endpoint = _endpoint_builder.open(api_key=api_key, api_kind=api_kind, network=network)
+    url: str = endpoint.api_url
+    params: dict[str, Any] = {
+        'module': 'transaction',
+        'action': 'getstatus',
+        'txhash': str(txhash),
+    }
+    if extra_params:
+        params.update({k: v for k, v in extra_params.items() if v is not None})
+    signed_params, headers = endpoint.filter_and_sign(params, headers=None)
+    response: Any = await run_with_policies(
+        do_call=lambda: http.get(url, params=signed_params, headers=headers),
+        telemetry=_telemetry,
+        telemetry_name='transaction.get_contract_execution_status',
+        api_kind=api_kind,
+        network=network,
+        rate_limiter=_rate_limiter,
+        rate_limiter_key=f'{api_kind}:{network}:getstatus',
+        retry_policy=_retry,
+    )
+    return response if isinstance(response, dict) else {'result': response}

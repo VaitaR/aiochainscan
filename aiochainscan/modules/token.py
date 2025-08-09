@@ -1,6 +1,6 @@
 from typing import Any
 
-from aiochainscan.common import ChainFeatures, check_tag, require_feature_support
+from aiochainscan.common import ChainFeatures, require_feature_support
 from aiochainscan.modules.base import BaseModule
 
 
@@ -30,23 +30,39 @@ class Token(BaseModule):
             FeatureNotSupportedError: If block_no is specified but not supported by the scanner
         """
         if block_no is None:
-            # Use stats module for current supply
-            result = await self._get(
-                module='stats',
-                action='tokensupply',
-                contractaddress=contract,
+            from aiochainscan.modules.base import _facade_injection, _resolve_api_context
+            from aiochainscan.services.token import (
+                get_token_total_supply as _svc_token_total_supply,
             )
-            return str(result)
+
+            http, endpoint = _facade_injection(self._client)
+            api_kind, network, api_key = _resolve_api_context(self._client)
+            return await _svc_token_total_supply(
+                contract=contract,
+                api_kind=api_kind,
+                network=network,
+                api_key=api_key,
+                http=http,
+                _endpoint_builder=endpoint,
+            )
         else:
-            # Use tokensupplyhistory for historical data
             require_feature_support(self._client, ChainFeatures.TOKEN_SUPPLY_BY_BLOCK)
-            result = await self._get(
-                module='stats',
-                action='tokensupplyhistory',
-                contractaddress=contract,
-                blockno=block_no,
+            from aiochainscan.modules.base import _facade_injection, _resolve_api_context
+            from aiochainscan.services.token import (
+                get_token_total_supply_by_block as _svc_token_total_supply_by_block,
             )
-            return str(result)
+
+            http, endpoint = _facade_injection(self._client)
+            api_kind, network, api_key = _resolve_api_context(self._client)
+            return await _svc_token_total_supply_by_block(
+                contract=contract,
+                block_no=block_no,
+                api_kind=api_kind,
+                network=network,
+                api_key=api_key,
+                http=http,
+                _endpoint_builder=endpoint,
+            )
 
     async def token_balance(self, contract: str, address: str, block_no: int | None = None) -> str:
         """Get ERC20-Token Account Balance for TokenContractAddress.
@@ -81,16 +97,25 @@ class Token(BaseModule):
             )
             return str(value)
         else:
-            # Use historical balance endpoint
+            # Use historical balance endpoint via service
             require_feature_support(self._client, ChainFeatures.TOKEN_BALANCE_BY_BLOCK)
-            result = await self._get(
-                module='account',
-                action='tokenbalancehistory',
-                address=address,
-                contractaddress=contract,
-                blockno=block_no,
+            from aiochainscan.modules.base import _facade_injection, _resolve_api_context
+            from aiochainscan.services.token import (
+                get_token_balance_history as _svc_token_balance_history,
             )
-            return str(result)
+
+            http, endpoint = _facade_injection(self._client)
+            api_kind, network, api_key = _resolve_api_context(self._client)
+            return await _svc_token_balance_history(
+                contract=contract,
+                address=address,
+                block_no=block_no,
+                api_kind=api_kind,
+                network=network,
+                api_key=api_key,
+                http=http,
+                _endpoint_builder=endpoint,
+            )
 
     # Keep existing methods for backwards compatibility
     async def total_supply(self, contract_address: str) -> str:
@@ -114,14 +139,21 @@ class Token(BaseModule):
             except ValueError:
                 pass
 
-        result = await self._get(
-            module='account',
-            action='tokenbalance',
-            address=address,
-            contractaddress=contract_address,
-            tag=check_tag(tag),
+        from aiochainscan.modules.base import _facade_injection, _resolve_api_context
+        from aiochainscan.services.token import get_token_balance as _svc_get_token_balance
+
+        http, endpoint = _facade_injection(self._client)
+        api_kind, network, api_key = _resolve_api_context(self._client)
+        value: int = await _svc_get_token_balance(
+            holder=address,
+            token_contract=contract_address,
+            api_kind=api_kind,
+            network=network,
+            api_key=api_key,
+            http=http,
+            _endpoint_builder=endpoint,
         )
-        return str(result)
+        return str(value)
 
     async def total_supply_by_blockno(self, contract_address: str, blockno: int) -> str:
         """Get Historical ERC20-Token TotalSupply by ContractAddress & BlockNo"""
@@ -140,21 +172,44 @@ class Token(BaseModule):
         offset: int | None = None,
     ) -> list[dict[str, Any]]:
         """Get Token Holder List by Contract Address"""
-        result = await self._get(
-            action='tokenholderlist', contractaddress=contract_address, page=page, offset=offset
+        from aiochainscan.modules.base import _facade_injection, _resolve_api_context
+        from aiochainscan.services.token import (
+            get_token_holder_list as _svc_holder_list,
         )
-        return list(result)
+
+        http, endpoint = _facade_injection(self._client)
+        api_kind, network, api_key = _resolve_api_context(self._client)
+        data = await _svc_holder_list(
+            contract_address=contract_address,
+            page=page,
+            offset=offset,
+            api_kind=api_kind,
+            network=network,
+            api_key=api_key,
+            http=http,
+            _endpoint_builder=endpoint,
+        )
+        return list(data)
 
     async def token_info(
         self,
         contract_address: str | None = None,
     ) -> list[dict[str, Any]]:
         """Get Token Info by ContractAddress"""
-        result = await self._get(
-            action='tokeninfo',
-            contractaddress=contract_address,
+        from aiochainscan.modules.base import _facade_injection, _resolve_api_context
+        from aiochainscan.services.token import get_token_info as _svc_token_info
+
+        http, endpoint = _facade_injection(self._client)
+        api_kind, network, api_key = _resolve_api_context(self._client)
+        data = await _svc_token_info(
+            contract_address=contract_address,
+            api_kind=api_kind,
+            network=network,
+            api_key=api_key,
+            http=http,
+            _endpoint_builder=endpoint,
         )
-        return list(result)
+        return list(data)
 
     async def token_holding_erc20(
         self,
@@ -163,14 +218,24 @@ class Token(BaseModule):
         offset: int | None = None,
     ) -> list[dict[str, Any]]:
         """Get Address ERC20 Token Holding"""
-        result = await self._get(
-            module='account',
-            action='addresstokenbalance',
+        from aiochainscan.modules.base import _facade_injection, _resolve_api_context
+        from aiochainscan.services.token import (
+            get_address_token_balance as _svc_address_token_balance,
+        )
+
+        http, endpoint = _facade_injection(self._client)
+        api_kind, network, api_key = _resolve_api_context(self._client)
+        data = await _svc_address_token_balance(
             address=address,
             page=page,
             offset=offset,
+            api_kind=api_kind,
+            network=network,
+            api_key=api_key,
+            http=http,
+            _endpoint_builder=endpoint,
         )
-        return list(result)
+        return list(data)
 
     async def token_holding_erc721(
         self,
@@ -179,14 +244,24 @@ class Token(BaseModule):
         offset: int | None = None,
     ) -> list[dict[str, Any]]:
         """Get Address ERC721 Token Holding"""
-        result = await self._get(
-            module='account',
-            action='addresstokennftbalance',
+        from aiochainscan.modules.base import _facade_injection, _resolve_api_context
+        from aiochainscan.services.token import (
+            get_address_token_nft_balance as _svc_address_token_nft_balance,
+        )
+
+        http, endpoint = _facade_injection(self._client)
+        api_kind, network, api_key = _resolve_api_context(self._client)
+        data = await _svc_address_token_nft_balance(
             address=address,
             page=page,
             offset=offset,
+            api_kind=api_kind,
+            network=network,
+            api_key=api_key,
+            http=http,
+            _endpoint_builder=endpoint,
         )
-        return list(result)
+        return list(data)
 
     async def token_inventory(
         self,
@@ -196,12 +271,22 @@ class Token(BaseModule):
         offset: int | None = None,
     ) -> list[dict[str, Any]]:
         """Get Address ERC721 Token Inventory By Contract Address"""
-        result = await self._get(
-            module='account',
-            action='addresstokennftinventory',
+        from aiochainscan.modules.base import _facade_injection, _resolve_api_context
+        from aiochainscan.services.token import (
+            get_address_token_nft_inventory as _svc_address_token_nft_inventory,
+        )
+
+        http, endpoint = _facade_injection(self._client)
+        api_kind, network, api_key = _resolve_api_context(self._client)
+        data = await _svc_address_token_nft_inventory(
             address=address,
-            contractaddress=contract_address,
+            contract_address=contract_address,
             page=page,
             offset=offset,
+            api_kind=api_kind,
+            network=network,
+            api_key=api_key,
+            http=http,
+            _endpoint_builder=endpoint,
         )
-        return list(result)
+        return list(data)
