@@ -1,3 +1,4 @@
+from aiochainscan import get_capabilities_overview
 from aiochainscan.capabilities import (
     FEATURE_SUPPORT,
     get_supported_features,
@@ -95,3 +96,23 @@ def test_get_supported_scanners_returns_copy():
     # Original should be unchanged
     assert original_scanners != modified_scanners
     assert ('fake', 'network') not in original_scanners
+
+
+def test_capabilities_overview_facade_structure():
+    overview = get_capabilities_overview()
+    assert isinstance(overview, dict)
+    assert 'features' in overview and 'scanners' in overview
+
+    # features is a mapping of feature -> set of (scanner, network)
+    features = overview['features']
+    assert isinstance(features, dict)
+    # must include at least the known features
+    assert 'gas_oracle' in features
+    assert isinstance(features['gas_oracle'], set)
+
+    # scanners is configuration metadata
+    scanners = overview['scanners']
+    assert isinstance(scanners, dict)
+    assert 'eth' in scanners
+    eth_meta = scanners['eth']
+    assert 'name' in eth_meta and 'domain' in eth_meta and 'networks' in eth_meta
