@@ -74,6 +74,45 @@ async def get_gas_oracle(
     return {}
 
 
+async def get_gas_estimate(
+    *,
+    gasprice_wei: int,
+    api_kind: str,
+    network: str,
+    api_key: str,
+    http: HttpClient,
+    _endpoint_builder: EndpointBuilder,
+    extra_params: Mapping[str, Any] | None = None,
+    _rate_limiter: RateLimiter | None = None,
+    _retry: RetryPolicy | None = None,
+    _telemetry: Telemetry | None = None,
+) -> dict[str, Any]:
+    """Get gas estimate via gastracker.gasestimate (provider-shaped)."""
+    endpoint = _endpoint_builder.open(api_key=api_key, api_kind=api_kind, network=network)
+    url: str = endpoint.api_url
+
+    params: dict[str, Any] = {
+        'module': 'gastracker',
+        'action': 'gasestimate',
+        'gasprice': gasprice_wei,
+    }
+    if extra_params:
+        params.update({k: v for k, v in extra_params.items() if v is not None})
+    signed_params, headers = endpoint.filter_and_sign(params, headers=None)
+
+    response: Any = await run_with_policies(
+        do_call=lambda: http.get(url, params=signed_params, headers=headers),
+        telemetry=_telemetry,
+        telemetry_name='gas.get_gas_estimate',
+        api_kind=api_kind,
+        network=network,
+        rate_limiter=_rate_limiter,
+        rate_limiter_key=f'{api_kind}:{network}:gasestimate',
+        retry_policy=_retry,
+    )
+    return response if isinstance(response, dict) else {'result': response}
+
+
 def normalize_gas_oracle(raw: dict[str, Any]) -> GasOracleDTO:
     """Normalize provider-shaped gas oracle payload to `GasOracleDTO`.
 

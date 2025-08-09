@@ -449,7 +449,9 @@ class Utils:
         # Results storage
         all_elements: list[dict[str, Any]] = []
         completed_ranges: set[int] = set()
-        semaphore = asyncio.Semaphore(max_concurrent)
+        # Avoid oversubscription by clamping concurrency to available ranges
+        effective_concurrency = max(1, min(max_concurrent, len(range_queue)))
+        semaphore = asyncio.Semaphore(effective_concurrency)
 
         async def worker(range_info: RangeInfo) -> RangeResult:
             """Worker function to process a single block range."""
