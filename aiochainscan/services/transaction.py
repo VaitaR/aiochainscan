@@ -58,7 +58,7 @@ async def get_transaction_by_hash(
             if _telemetry is not None:
                 duration_ms = int((monotonic() - start) * 1000)
                 await _telemetry.record_event(
-                    'transaction.get_by_hash.duration',
+                    'transaction.get_transaction_by_hash.duration',
                     {'api_kind': api_kind, 'network': network, 'duration_ms': duration_ms},
                 )
 
@@ -70,7 +70,7 @@ async def get_transaction_by_hash(
     except Exception as exc:  # noqa: BLE001
         if _telemetry is not None:
             await _telemetry.record_error(
-                'get_transaction_by_hash.error',
+                'transaction.get_transaction_by_hash.error',
                 exc,
                 {
                     'api_kind': api_kind,
@@ -87,7 +87,7 @@ async def get_transaction_by_hash(
 
     if _telemetry is not None:
         await _telemetry.record_event(
-            'get_transaction_by_hash.ok',
+            'transaction.get_transaction_by_hash.ok',
             {
                 'api_kind': api_kind,
                 'network': network,

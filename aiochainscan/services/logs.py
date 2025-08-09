@@ -86,7 +86,7 @@ async def get_logs(
     except Exception as exc:  # noqa: BLE001
         if _telemetry is not None:
             await _telemetry.record_error(
-                'get_logs.error',
+                'logs.get_logs.error',
                 exc,
                 {'api_kind': api_kind, 'network': network},
             )
@@ -100,7 +100,7 @@ async def get_logs(
 
     if _telemetry is not None:
         await _telemetry.record_event(
-            'get_logs.ok',
+            'logs.get_logs.ok',
             {'api_kind': api_kind, 'network': network, 'items': len(out)},
         )
 

@@ -71,7 +71,7 @@ async def get_block_by_number(
             if _telemetry is not None:
                 duration_ms = int((monotonic() - start) * 1000)
                 await _telemetry.record_event(
-                    'block.get_by_number.duration',
+                    'block.get_block_by_number.duration',
                     {'api_kind': api_kind, 'network': network, 'duration_ms': duration_ms},
                 )
 
@@ -83,7 +83,7 @@ async def get_block_by_number(
     except Exception as exc:  # noqa: BLE001
         if _telemetry is not None:
             await _telemetry.record_error(
-                'get_block_by_number.error',
+                'block.get_block_by_number.error',
                 exc,
                 {
                     'api_kind': api_kind,
@@ -104,7 +104,7 @@ async def get_block_by_number(
 
     if _telemetry is not None:
         await _telemetry.record_event(
-            'get_block_by_number.ok',
+            'block.get_block_by_number.ok',
             {
                 'api_kind': api_kind,
                 'network': network,
