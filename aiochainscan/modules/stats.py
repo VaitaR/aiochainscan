@@ -4,7 +4,7 @@ import logging
 from datetime import date
 from typing import Any, cast
 
-from aiochainscan.common import check_client_type, check_sync_mode, get_daily_stats_params
+from aiochainscan.common import check_client_type, check_sync_mode
 from aiochainscan.modules.base import BaseModule
 from aiochainscan.modules.extra.utils import _default_date_range
 
@@ -25,12 +25,34 @@ class Stats(BaseModule):
 
     async def eth_supply(self) -> str:
         """Get Total Supply of Ether"""
-        result = await self._get(action='ethsupply')
+        from aiochainscan.modules.base import _facade_injection, _resolve_api_context
+        from aiochainscan.services.stats import get_eth_supply as _svc_eth_supply
+
+        http, endpoint = _facade_injection(self._client)
+        api_kind, network, api_key = _resolve_api_context(self._client)
+        result = await _svc_eth_supply(
+            api_kind=api_kind,
+            network=network,
+            api_key=api_key,
+            http=http,
+            _endpoint_builder=endpoint,
+        )
         return str(result)
 
     async def eth2_supply(self) -> str:
         """Get Total Supply of Ether"""
-        result = await self._get(action='ethsupply2')
+        from aiochainscan.modules.base import _facade_injection, _resolve_api_context
+        from aiochainscan.services.stats import get_eth2_supply as _svc_eth2_supply
+
+        http, endpoint = _facade_injection(self._client)
+        api_kind, network, api_key = _resolve_api_context(self._client)
+        result = await _svc_eth2_supply(
+            api_kind=api_kind,
+            network=network,
+            api_key=api_key,
+            http=http,
+            _endpoint_builder=endpoint,
+        )
         return str(result)
 
     async def eth_price(self) -> dict[str, Any]:
@@ -58,17 +80,29 @@ class Stats(BaseModule):
     ) -> dict[str, Any] | None:
         """Get Chain Size"""
         try:
-            result = await self._get(
-                **get_daily_stats_params('chainsize', start_date, end_date, sort),
-                clienttype=check_client_type(client_type),
-                syncmode=check_sync_mode(sync_mode),
+            from aiochainscan.modules.base import _facade_injection, _resolve_api_context
+            from aiochainscan.services.stats import get_chain_size as _svc_chain_size
+
+            http, endpoint = _facade_injection(self._client)
+            api_kind, network, api_key = _resolve_api_context(self._client)
+            if sort is not None:
+                from aiochainscan.common import check_sort_direction
+
+                sort = check_sort_direction(sort)
+            data = await _svc_chain_size(
+                start_date=start_date,
+                end_date=end_date,
+                client_type=check_client_type(client_type),
+                sync_mode=check_sync_mode(sync_mode),
+                api_kind=api_kind,
+                network=network,
+                api_key=api_key,
+                http=http,
+                _endpoint_builder=endpoint,
+                sort=sort,
             )
-            # Return None if result is empty array
-            if isinstance(result, list) and len(result) == 0:
-                return None
-            return cast(dict[str, Any], result)
+            return cast(dict[str, Any] | None, data)
         except ValueError:
-            # Re-raise validation errors from check functions
             raise
         except Exception as e:
             logger.debug(
@@ -97,40 +131,29 @@ class Stats(BaseModule):
         client: str = 'geth',
         sync: str = 'default',
     ) -> dict[str, Any] | None:
-        """Get Node Size
-
-        Args:
-            start: Start date (default: today - 30 days)
-            end: End date (default: today)
-            client: Client type (default: 'geth')
-            sync: Sync mode (default: 'default')
-
-        Returns:
-            Node size data or None if no data available
-        """
+        """Get Node Size"""
         if start is None or end is None:
             start, end = _default_date_range(days=30)
 
-        try:
-            result = await self._get(
-                action='chainsize',
-                startdate=start.isoformat(),
-                enddate=end.isoformat(),
-                clienttype=check_client_type(client),
-                syncmode=check_sync_mode(sync),
-            )
-            # Return None if result is empty array
-            if isinstance(result, list) and len(result) == 0:
-                return None
-            return cast(dict[str, Any], result)
-        except ValueError:
-            # Re-raise validation errors from check functions
-            raise
-        except Exception as e:
-            logger.debug(
-                f'Nodes size action not supported for {self._client._url_builder._api_kind}: {e}'
-            )
+        from aiochainscan.modules.base import _facade_injection, _resolve_api_context
+        from aiochainscan.services.stats import get_chain_size as _svc_chain_size
+
+        http, endpoint = _facade_injection(self._client)
+        api_kind, network, api_key = _resolve_api_context(self._client)
+        data = await _svc_chain_size(
+            start_date=start,
+            end_date=end,
+            client_type=check_client_type(client),
+            sync_mode=check_sync_mode(sync),
+            api_kind=api_kind,
+            network=network,
+            api_key=api_key,
+            http=http,
+            _endpoint_builder=endpoint,
+        )
+        if isinstance(data, list) and len(data) == 0:
             return None
+        return cast(dict[str, Any] | None, data)
 
     async def daily_block_count(
         self, start: date, end: date, sort: str = 'asc'
@@ -145,26 +168,44 @@ class Stats(BaseModule):
         Returns:
             Daily block count data or None if no data available
         """
-        try:
-            result = await self._get(
-                action='dailyblkcount',
-                startdate=start.isoformat(),
-                enddate=end.isoformat(),
-                sort=sort,
-            )
-            # Return None if result is empty array
-            if isinstance(result, list) and len(result) == 0:
-                return None
-            return cast(list[dict[str, Any]], result)
-        except Exception as e:
-            logger.debug(
-                f'Daily block count action not supported for {self._client._url_builder._api_kind}: {e}'
-            )
+        from aiochainscan.modules.base import _facade_injection, _resolve_api_context
+        from aiochainscan.services.stats import (
+            get_daily_block_count as _svc_get_daily_block_count,
+        )
+
+        http, endpoint = _facade_injection(self._client)
+        api_kind, network, api_key = _resolve_api_context(self._client)
+        data = await _svc_get_daily_block_count(
+            start_date=start,
+            end_date=end,
+            api_kind=api_kind,
+            network=network,
+            api_key=api_key,
+            sort=sort,
+            http=http,
+            _endpoint_builder=endpoint,
+        )
+        # Return None if empty list
+        if isinstance(data, list) and len(data) == 0:
             return None
+        return cast(list[dict[str, Any]], data)
 
     async def total_nodes_count(self) -> dict[str, Any]:
         """Get Total Nodes Count"""
-        result = await self._get(action='nodecount')
+        from aiochainscan.modules.base import _facade_injection, _resolve_api_context
+        from aiochainscan.services.stats import (
+            get_total_nodes_count as _svc_nodes_count,
+        )
+
+        http, endpoint = _facade_injection(self._client)
+        api_kind, network, api_key = _resolve_api_context(self._client)
+        result = await _svc_nodes_count(
+            api_kind=api_kind,
+            network=network,
+            api_key=api_key,
+            http=http,
+            _endpoint_builder=endpoint,
+        )
         return cast(dict[str, Any], result)
 
     async def daily_network_tx_fee(
@@ -250,10 +291,28 @@ class Stats(BaseModule):
         self, start_date: date, end_date: date, sort: str | None = None
     ) -> dict[str, Any]:
         """Get Daily Average Network Hash Rate"""
-        result = await self._get(
-            **get_daily_stats_params('dailyavghashrate', start_date, end_date, sort)
+        from aiochainscan.modules.base import _facade_injection, _resolve_api_context
+        from aiochainscan.services.stats import (
+            get_daily_average_network_hash_rate as _svc_hash_rate,
         )
-        return cast(dict[str, Any], result)
+
+        http, endpoint = _facade_injection(self._client)
+        api_kind, network, api_key = _resolve_api_context(self._client)
+        if sort is not None:
+            from aiochainscan.common import check_sort_direction
+
+            sort = check_sort_direction(sort)
+        data = await _svc_hash_rate(
+            start_date=start_date,
+            end_date=end_date,
+            api_kind=api_kind,
+            network=network,
+            api_key=api_key,
+            sort=sort,
+            http=http,
+            _endpoint_builder=endpoint,
+        )
+        return cast(dict[str, Any], data)
 
     async def daily_transaction_count(
         self, start_date: date, end_date: date, sort: str | None = None
@@ -285,25 +344,79 @@ class Stats(BaseModule):
         self, start_date: date, end_date: date, sort: str | None = None
     ) -> dict[str, Any]:
         """Get Daily Average Network Difficulty"""
-        result = await self._get(
-            **get_daily_stats_params('dailyavgnetdifficulty', start_date, end_date, sort)
+        from aiochainscan.modules.base import _facade_injection, _resolve_api_context
+        from aiochainscan.services.stats import (
+            get_daily_average_network_difficulty as _svc_difficulty,
         )
-        return cast(dict[str, Any], result)
+
+        http, endpoint = _facade_injection(self._client)
+        api_kind, network, api_key = _resolve_api_context(self._client)
+        if sort is not None:
+            from aiochainscan.common import check_sort_direction
+
+            sort = check_sort_direction(sort)
+        data = await _svc_difficulty(
+            start_date=start_date,
+            end_date=end_date,
+            api_kind=api_kind,
+            network=network,
+            api_key=api_key,
+            sort=sort,
+            http=http,
+            _endpoint_builder=endpoint,
+        )
+        return cast(dict[str, Any], data)
 
     async def ether_historical_daily_market_cap(
         self, start_date: date, end_date: date, sort: str | None = None
     ) -> dict[str, Any]:
         """Get Ether Historical Daily Market Cap"""
-        result = await self._get(
-            **get_daily_stats_params('ethdailymarketcap', start_date, end_date, sort)
+        from aiochainscan.modules.base import _facade_injection, _resolve_api_context
+        from aiochainscan.services.stats import (
+            get_ether_historical_daily_market_cap as _svc_mc,
         )
-        return cast(dict[str, Any], result)
+
+        http, endpoint = _facade_injection(self._client)
+        api_kind, network, api_key = _resolve_api_context(self._client)
+        if sort is not None:
+            from aiochainscan.common import check_sort_direction
+
+            sort = check_sort_direction(sort)
+        data = await _svc_mc(
+            start_date=start_date,
+            end_date=end_date,
+            api_kind=api_kind,
+            network=network,
+            api_key=api_key,
+            sort=sort,
+            http=http,
+            _endpoint_builder=endpoint,
+        )
+        return cast(dict[str, Any], data)
 
     async def ether_historical_price(
         self, start_date: date, end_date: date, sort: str | None = None
     ) -> dict[str, Any]:
         """Get Ether Historical Price"""
-        result = await self._get(
-            **get_daily_stats_params('ethdailyprice', start_date, end_date, sort)
+        from aiochainscan.modules.base import _facade_injection, _resolve_api_context
+        from aiochainscan.services.stats import (
+            get_ether_historical_price as _svc_price,
         )
-        return cast(dict[str, Any], result)
+
+        http, endpoint = _facade_injection(self._client)
+        api_kind, network, api_key = _resolve_api_context(self._client)
+        if sort is not None:
+            from aiochainscan.common import check_sort_direction
+
+            sort = check_sort_direction(sort)
+        data = await _svc_price(
+            start_date=start_date,
+            end_date=end_date,
+            api_kind=api_kind,
+            network=network,
+            api_key=api_key,
+            sort=sort,
+            http=http,
+            _endpoint_builder=endpoint,
+        )
+        return cast(dict[str, Any], data)

@@ -25,6 +25,7 @@ import os
 from unittest.mock import patch
 
 import pytest
+from curl_cffi.requests.exceptions import Timeout as CffiTimeout
 
 from aiochainscan import Client
 from aiochainscan.config import config_manager
@@ -202,6 +203,8 @@ class TestBasicAPIFunctionality:
                     )
                 else:
                     raise
+            except CffiTimeout as e:
+                pytest.skip(f'⏱️ Network timeout retrieving latest block: {e}')
 
             # Small delay to respect rate limits
             await asyncio.sleep(1.0)
@@ -258,12 +261,15 @@ class TestBasicAPIFunctionality:
             await asyncio.sleep(1.0)
 
             # Test 2: Get latest block number
-            block_number = await client.proxy.block_number()
-            assert block_number is not None
-            assert block_number.startswith('0x')
-            block_num = int(block_number, 16)
-            assert block_num > 0
-            print(f'✅ Latest Block: {block_num}')
+            try:
+                block_number = await client.proxy.block_number()
+                assert block_number is not None
+                assert block_number.startswith('0x')
+                block_num = int(block_number, 16)
+                assert block_num > 0
+                print(f'✅ Latest Block: {block_num}')
+            except CffiTimeout as e:
+                pytest.skip(f'⏱️ Network timeout retrieving latest block: {e}')
 
             # Small delay to respect rate limits
             await asyncio.sleep(1.0)
@@ -294,11 +300,14 @@ class TestBasicAPIFunctionality:
 
         try:
             # Test 1: Get latest block number
-            block_number = await client.proxy.block_number()
-            assert block_number is not None
-            block_num = int(block_number, 16)
-            assert block_num > 0
-            print(f'✅ BSC Latest Block: {block_num}')
+            try:
+                block_number = await client.proxy.block_number()
+                assert block_number is not None
+                block_num = int(block_number, 16)
+                assert block_num > 0
+                print(f'✅ BSC Latest Block: {block_num}')
+            except CffiTimeout as e:
+                pytest.skip(f'⏱️ BSC network timeout retrieving latest block: {e}')
 
             # Small delay to respect rate limits
             await asyncio.sleep(1.0)
@@ -357,10 +366,13 @@ class TestAPIKeyOptionalFunctionality:
 
         try:
             # This should work with API key, may fail without
-            block_number = await client.proxy.block_number()
-            assert block_number is not None
-            block_num = int(block_number, 16)
-            assert block_num > 0
+            try:
+                block_number = await client.proxy.block_number()
+                assert block_number is not None
+                block_num = int(block_number, 16)
+                assert block_num > 0
+            except CffiTimeout as e:
+                pytest.skip(f'⏱️ Network timeout retrieving latest block: {e}')
 
             key_status = 'with API key' if has_api_key else 'without API key'
             print(f'✅ ETH Latest Block ({key_status}): {block_num}')

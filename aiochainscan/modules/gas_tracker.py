@@ -43,19 +43,40 @@ class GasTracker(BaseModule):
         if not is_feature_supported('gas_estimate', scanner_id, network):
             raise FeatureNotSupportedError('gas_estimate', f'{scanner_id}:{network}')
 
-        # Make API call and check status
-        response = await self._get(action='gasestimate', gasprice=gasprice_wei)
+        # Route via service
+        from aiochainscan.modules.base import _facade_injection, _resolve_api_context
+        from aiochainscan.services.gas import get_gas_estimate as _svc_gas_estimate
 
-        # Check if API returned error status
-        if isinstance(response, dict) and response.get('status') != '1':
+        http, endpoint = _facade_injection(self._client)
+        api_kind, network, api_key = _resolve_api_context(self._client)
+        response = await _svc_gas_estimate(
+            gasprice_wei=gasprice_wei,
+            api_kind=api_kind,
+            network=network,
+            api_key=api_key,
+            http=http,
+            _endpoint_builder=endpoint,
+        )
+        if isinstance(response, dict) and response.get('status') not in (None, '1'):
             raise FeatureNotSupportedError('gas_estimate', f'{scanner_id}:{network}')
-
         return cast(dict[str, Any], response)
 
     async def estimation_of_confirmation_time(self, gas_price: int) -> str:
         """Get Estimation of Confirmation Time"""
-        result = await self._get(action='gasestimate', gasprice=gas_price)
-        return cast(str, result)
+        from aiochainscan.modules.base import _facade_injection, _resolve_api_context
+        from aiochainscan.services.gas import get_gas_estimate as _svc_gas_estimate
+
+        http, endpoint = _facade_injection(self._client)
+        api_kind, network, api_key = _resolve_api_context(self._client)
+        resp = await _svc_gas_estimate(
+            gasprice_wei=gas_price,
+            api_kind=api_kind,
+            network=network,
+            api_key=api_key,
+            http=http,
+            _endpoint_builder=endpoint,
+        )
+        return cast(str, resp.get('result') if isinstance(resp, dict) else str(resp))
 
     async def gas_oracle(self) -> dict[str, Any]:
         """Get Gas Oracle
