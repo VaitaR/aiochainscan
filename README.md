@@ -115,59 +115,43 @@ BSCSCAN_KEY=your_bscscan_api_key
 POLYGONSCAN_KEY=your_polygonscan_api_key
 ```
 
-### 2. Basic Usage
+### 2. Basic Usage (Typed facades – recommended)
 
 ```python
 import asyncio
-from aiochainscan import Client
+from aiochainscan import (
+  get_block_typed,
+  get_transaction_typed,
+  get_logs_typed,
+  get_token_balance_typed,
+  get_gas_oracle_typed,
+  get_eth_price_typed,
+)
 
 async def main():
-    # Create client using configuration system
-    client = Client.from_config('eth', 'main')  # Uses ETHERSCAN_KEY
-
-    try:
-        # Get ETH price
-        price = await client.stats.eth_price()
-        print(f"ETH price: ${price}")
-
-        # Get block information
-        block = await client.block.block_reward(12345678)
-        print(f"Block reward: {block}")
-
-        # Get account balance
-        balance = await client.account.balance('0x123...')
-        print(f"Balance: {balance}")
-
-    finally:
-        await client.close()
+    block = await get_block_typed(tag=17000000, full=False, api_kind='eth', network='main', api_key='YOUR_API_KEY')
+    tx = await get_transaction_typed(txhash='0x...', api_kind='eth', network='main', api_key='YOUR_API_KEY')
+    logs = await get_logs_typed(start_block=17000000, end_block=17000100, address='0x...', api_kind='eth', network='main', api_key='YOUR_API_KEY')
+    tb = await get_token_balance_typed(holder='0x...', token_contract='0x...', api_kind='eth', network='main', api_key='YOUR_API_KEY')
+    gas = await get_gas_oracle_typed(api_kind='eth', network='main', api_key='YOUR_API_KEY')
+    price = await get_eth_price_typed(api_kind='eth', network='main', api_key='YOUR_API_KEY')
+    print(block['block_number'], tb['balance_wei'], gas['propose_gas_price_wei'], price['eth_usd'])
 
 if __name__ == '__main__':
     asyncio.run(main())
 ```
 
-### 3. Multiple Blockchains
+### 3. Multiple Blockchains (typed)
 
 ```python
 import asyncio
-from aiochainscan import Client
+from aiochainscan import get_eth_price_typed
 
 async def check_prices():
-    """Check ETH price on multiple networks."""
-
-    networks = [
-        ('eth', 'main'),
-        ('bsc', 'main'),
-        ('polygon', 'main'),
-    ]
-
+    networks = [('eth','main'), ('bsc','main'), ('polygon','main')]
     for scanner, network in networks:
-        try:
-            client = Client.from_config(scanner, network)
-            price = await client.stats.eth_price()
-            print(f"{scanner.upper()} ETH price: {price}")
-            await client.close()
-        except ValueError as e:
-            print(f"Skipping {scanner}: {e}")
+        price = await get_eth_price_typed(api_kind=scanner, network=network, api_key='YOUR_API_KEY')
+        print(f"{scanner.upper()} ETH price: {price}")
 
 asyncio.run(check_prices())
 ```

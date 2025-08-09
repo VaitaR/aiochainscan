@@ -832,3 +832,121 @@ The hexagonal skeleton is in place and already useful. Next focus: broaden servi
 ### Rollout notes
 - Default behavior stays backward compatible; forcing facades in CI catches regressions early without breaking consumers.
 - Actual removal of `modules/*` and `network.py` is reserved for Phase 2.0 with thin shims and a documented deprecation window.
+
+## C4 Architecture Views (Concise)
+
+The following views summarize the system using a simplified C4 style. They are optimized for both humans and LLMs (clear labels, stable identifiers).
+
+### C1 – System Context
+
+```mermaid
+graph TB
+  user["Consumer App (your code)"] -- async calls --> lib["aiochainscan Library [System]"]
+  lib --> apis["Blockchain Explorer APIs [External System]\nEtherscan, BaseScan, Blockscout, RoutScan, Moralis"]
+  lib --> internet["Internet / HTTP"]
+  dev["Developer / Operator"] -. env/config .-> lib
+  ci["CI: ruff, mypy --strict, pytest, import-linter"] -. quality gates .-> lib
+```
+
+### C2 – Container View (internal runtime containers)
+
+```mermaid
+graph LR
+  subgraph Facade
+    facade["Facade [Container]\n`aiochainscan.__init__`\n(re-exports, DI helpers)"]
+  end
+
+  subgraph Hexagonal
+    services["Services [Container]\nUse-cases (account, block, logs, token, gas, stats, proxy)"]
+    ports["Ports [Container]\nProtocols: HttpClient, EndpointBuilder, Cache, RateLimiter, RetryPolicy, Telemetry"]
+    adapters["Adapters [Container]\nAiohttpClient, UrlBuilderEndpoint, InMemoryCache, SimpleRateLimiter, ExponentialBackoffRetry, StructlogTelemetry"]
+    domain["Domain [Container]\nVOs/DTOs: Address, TxHash, BlockNumber, DTO TypedDicts"]
+  end
+
+  subgraph UnifiedCore
+    core["Core [Container]\nChainscanClient, Method, EndpointSpec"]
+    scanners["Scanners [Container]\netherscan_v1/v2, basescan_v1, blockscout_v1, routscan_v1, moralis_v1"]
+    urlb["UrlBuilder [Container]"]
+    net["Network [Container]\n(aiohttp / curl_cffi)"]
+    fastabi["FastABI [Container]\nRust/PyO3"]
+  end
+
+  userApp["Consumer App"] --> facade
+  facade --> services
+  facade --> core
+  services --> ports
+  ports --> adapters
+  services --> domain
+  core --> scanners
+  scanners --> urlb
+  core --> urlb
+  core --> net
+  services -. optional decode .-> fastabi
+  adapters --> internet
+  net --> internet
+```
+
+Notes:
+- Two valid runtime paths coexist: Facade→Services (hexagonal) and Core→Scanners (unified client). Public API keeps both available.
+- Import boundaries are enforced by import-linter.
+
+### C3 – Component View (example: Logs service request path)
+
+```mermaid
+graph TD
+  Facade["Facade: get_logs()"] --> SVC["Service: services.logs.get_logs"]
+  SVC --> EB["Port: EndpointBuilder.open(api_key, api_kind, network)"]
+  EB --> URL["Compose URL + sign params"]
+  SVC --> RL["Port: RateLimiter.acquire(key)"]
+  SVC --> RETRY["Port: RetryPolicy.run(func)"]
+  SVC --> TEL["Port: Telemetry.record_event/error"]
+  SVC --> CACHE_GET["Port: Cache.get(cache_key)"]
+  RETRY --> HTTP["Port: HttpClient.get(url, params, headers)"]
+  HTTP --> RESP["JSON/Text response"]
+  SVC --> PARSE["Parse Etherscan-style result → list[dict]"]
+  SVC --> CACHE_SET["Port: Cache.set(cache_key, ttl=15s)"]
+  PARSE --> FacadeOut["Return list[dict] | DTO-typed variant"]
+```
+
+### LLM-readable boundaries (authoritative summary)
+
+```yaml
+architecture:
+  layers:
+    - name: domain
+      rule: "Pure data types (VOs/DTOs). No I/O, no env, no logging."
+    - name: ports
+      rule: "Protocols/ABCs for external deps (HttpClient, EndpointBuilder, Cache, RateLimiter, RetryPolicy, Telemetry)."
+    - name: services
+      rule: "Use-cases; orchestrate ports; no imports from adapters/core/network/scanners."
+    - name: adapters
+      rule: "Implement ports (aiohttp client, in-memory cache, etc.). No imports from services/domain."
+    - name: facade
+      rule: "Composition boundary and public API re-exports."
+    - name: unified_core
+      rule: "Alternative path: ChainscanClient + Scanners + EndpointSpec; parallel to services."
+  dependency_direction: [domain, ports, services, adapters, facade]
+  forbidden_imports:
+    - "services -> adapters | core | network | scanners"
+    - "domain -> ports | services | adapters | core | modules | scanners"
+    - "ports -> adapters | services | core | modules | scanners"
+    - "internal (domain/services/adapters/ports) -> modules"
+  runtime_paths:
+    - "facade -> services -> ports -> adapters -> HTTP"
+    - "core -> scanners -> (url_builder, network) -> HTTP"
+```
+
+## Telemetry and Observability Conventions
+
+- Event naming: module.action.phase
+  - module: one of account, block, transaction, logs, gas, proxy, stats
+  - action: the public service function name (e.g., get_address_balance)
+  - phase: duration | ok | error
+- Attributes: always include api_kind, network; add duration_ms for duration events; add items for list outputs; include error_type and error_message for error events (adapter responsibility).
+- Example: stats.get_eth_price.duration { api_kind, network, duration_ms }
+
+## Capabilities Model (Source of Truth)
+
+- `aiochainscan/capabilities.py`: feature→(scanner,network) gating used by tests; treat as authoritative for feature toggles (e.g., gas_estimate, gas_oracle).
+- `aiochainscan/config.py:ScannerCapabilities`: per‑scanner descriptive flags intended for documentation/UX; do not drive gating. Keep in sync conceptually but prefer `capabilities.py` for runtime checks.
+- Future: if consolidation is desired, expose a single read‑only facade that merges both views while keeping `capabilities.py` as the backing store to preserve test stability.
