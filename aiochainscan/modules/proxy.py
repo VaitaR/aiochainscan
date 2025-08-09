@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import Any
 
 from aiochainscan.common import check_hex, check_tag
 from aiochainscan.modules.base import BaseModule
@@ -112,7 +112,7 @@ class Proxy(BaseModule):
             http=http,
             _endpoint_builder=endpoint,
         )
-        return cast(dict[str, Any], result)
+        return result
 
     async def uncle_block_by_number_and_index(
         self, index: int | str, tag: int | str = 'latest'
@@ -135,7 +135,7 @@ class Proxy(BaseModule):
             http=http,
             _endpoint_builder=endpoint,
         )
-        return cast(dict[str, Any], result)
+        return result
 
     async def block_tx_count_by_number(self, tag: int | str = 'latest') -> str:
         """Returns the number of transactions in a block from a block matching the given block number."""
@@ -171,7 +171,7 @@ class Proxy(BaseModule):
             http=http,
             _endpoint_builder=endpoint,
         )
-        return cast(dict[str, Any], result)
+        return result
 
     async def tx_by_number_and_index(
         self, index: int | str, tag: int | str = 'latest'
@@ -194,7 +194,7 @@ class Proxy(BaseModule):
             http=http,
             _endpoint_builder=endpoint,
         )
-        return cast(dict[str, Any], result)
+        return result
 
     async def tx_count(self, address: str, tag: int | str = 'latest') -> str:
         """Returns the number of transactions sent from an address."""
@@ -230,7 +230,7 @@ class Proxy(BaseModule):
             http=http,
             _endpoint_builder=endpoint,
         )
-        return cast(dict[str, Any], result)
+        return result
 
     async def tx_receipt(self, txhash: str) -> dict[str, Any]:
         """Returns the receipt of a transaction by transaction hash."""
@@ -247,7 +247,7 @@ class Proxy(BaseModule):
             http=http,
             _endpoint_builder=endpoint,
         )
-        return cast(dict[str, Any], result)
+        return result
 
     async def call(self, to: str, data: str, tag: int | str = 'latest') -> str:
         """Executes a new message call immediately without creating a transaction on the block chain."""

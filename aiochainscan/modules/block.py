@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import Any, cast
+from typing import Any
 
 from aiochainscan.common import (
     check_closest_value,
@@ -43,7 +43,7 @@ class Block(BaseModule):
             http=http,
             _endpoint_builder=endpoint,
         )
-        return cast(dict[str, Any] | None, data)
+        return data
 
     async def get_by_number(self, number: int, *, full: bool = False) -> dict[str, Any]:
         """Fetch block by number via facade when available."""
@@ -94,7 +94,7 @@ class Block(BaseModule):
             _endpoint_builder=endpoint,
         )
         # Service returns None for "No transactions found"
-        return cast(dict[str, Any] | None, response)
+        return response
 
     async def est_block_countdown_time(self, blockno: int) -> dict[str, Any] | None:
         """Get Estimated Block Countdown Time by BlockNo
@@ -121,7 +121,7 @@ class Block(BaseModule):
             http=http,
             _endpoint_builder=endpoint,
         )
-        return cast(dict[str, Any], result)
+        return result
 
     async def daily_average_block_size(
         self, start_date: date, end_date: date, sort: str | None = None
@@ -146,7 +146,7 @@ class Block(BaseModule):
             http=http,
             _endpoint_builder=endpoint,
         )
-        return cast(dict[str, Any], data)
+        return data
 
     async def daily_block_count(
         self,
@@ -180,7 +180,7 @@ class Block(BaseModule):
             if len(data) == 0:
                 return None
             return {'result': data}
-        return cast(dict[str, Any] | None, data)
+        return data
 
     async def daily_block_rewards(
         self, start_date: date, end_date: date, sort: str | None = None
@@ -205,7 +205,7 @@ class Block(BaseModule):
             http=http,
             _endpoint_builder=endpoint,
         )
-        return cast(dict[str, Any], data)
+        return data
 
     async def daily_average_time_for_a_block(
         self, start_date: date, end_date: date, sort: str | None = None
@@ -230,7 +230,7 @@ class Block(BaseModule):
             http=http,
             _endpoint_builder=endpoint,
         )
-        return cast(dict[str, Any], data)
+        return data
 
     async def daily_uncle_block_count(
         self, start_date: date, end_date: date, sort: str | None = None
@@ -255,4 +255,4 @@ class Block(BaseModule):
             http=http,
             _endpoint_builder=endpoint,
         )
-        return cast(dict[str, Any], data)
+        return data
