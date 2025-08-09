@@ -111,7 +111,7 @@ def test_currency(api_kind, expected):
 @pytest.mark.parametrize(
     'api_kind,network,expected_base_contains,expected_api_contains',
     [
-        ('base', 'main', 'basescan.org', 'api.basescan.org'),
+        ('base', 'main', 'basescan.org', 'https://api.basescan.org'),
         (
             'routscan_mode',
             'main',
