@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from datetime import date
-from typing import Any, cast
+from typing import Any
 
 from aiochainscan.capabilities import is_feature_supported
 from aiochainscan.common import check_sort_direction
@@ -59,7 +59,7 @@ class GasTracker(BaseModule):
         )
         if isinstance(response, dict) and response.get('status') not in (None, '1'):
             raise FeatureNotSupportedError('gas_estimate', f'{scanner_id}:{network}')
-        return cast(dict[str, Any], response)
+        return response
 
     async def estimation_of_confirmation_time(self, gas_price: int) -> str:
         """Get Estimation of Confirmation Time"""
@@ -76,7 +76,7 @@ class GasTracker(BaseModule):
             http=http,
             _endpoint_builder=endpoint,
         )
-        return cast(str, resp.get('result') if isinstance(resp, dict) else str(resp))
+        return str(resp.get('result')) if isinstance(resp, dict) else str(resp)
 
     async def gas_oracle(self) -> dict[str, Any]:
         """Get Gas Oracle
@@ -158,7 +158,7 @@ class GasTracker(BaseModule):
             http=http,
             _endpoint_builder=endpoint,
         )
-        return cast(dict[str, Any], data)
+        return data
 
     async def daily_average_gas_price(
         self, start_date: date, end_date: date, sort: str | None = None
@@ -182,4 +182,4 @@ class GasTracker(BaseModule):
             http=http,
             _endpoint_builder=endpoint,
         )
-        return cast(dict[str, Any], data)
+        return data

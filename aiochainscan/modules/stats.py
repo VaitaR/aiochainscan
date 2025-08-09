@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from datetime import date
-from typing import Any, cast
+from typing import Any
 
 from aiochainscan.common import check_client_type, check_sync_mode
 from aiochainscan.modules.base import BaseModule
@@ -101,7 +101,7 @@ class Stats(BaseModule):
                 _endpoint_builder=endpoint,
                 sort=sort,
             )
-            return cast(dict[str, Any] | None, data)
+            return data
         except ValueError:
             raise
         except Exception as e:
@@ -153,7 +153,7 @@ class Stats(BaseModule):
         )
         if isinstance(data, list) and len(data) == 0:
             return None
-        return cast(dict[str, Any] | None, data)
+        return data
 
     async def daily_block_count(
         self, start: date, end: date, sort: str = 'asc'
@@ -188,7 +188,7 @@ class Stats(BaseModule):
         # Return None if empty list
         if isinstance(data, list) and len(data) == 0:
             return None
-        return cast(list[dict[str, Any]], data)
+        return data
 
     async def total_nodes_count(self) -> dict[str, Any]:
         """Get Total Nodes Count"""
@@ -206,7 +206,7 @@ class Stats(BaseModule):
             http=http,
             _endpoint_builder=endpoint,
         )
-        return cast(dict[str, Any], result)
+        return result
 
     async def daily_network_tx_fee(
         self, start_date: date, end_date: date, sort: str | None = None
@@ -233,7 +233,7 @@ class Stats(BaseModule):
             http=http,
             _endpoint_builder=endpoint,
         )
-        return cast(dict[str, Any], data)
+        return data
 
     async def daily_new_address_count(
         self, start_date: date, end_date: date, sort: str | None = None
@@ -259,7 +259,7 @@ class Stats(BaseModule):
             http=http,
             _endpoint_builder=endpoint,
         )
-        return cast(dict[str, Any], data)
+        return data
 
     async def daily_network_utilization(
         self, start_date: date, end_date: date, sort: str | None = None
@@ -285,7 +285,7 @@ class Stats(BaseModule):
             http=http,
             _endpoint_builder=endpoint,
         )
-        return cast(dict[str, Any], data)
+        return data
 
     async def daily_average_network_hash_rate(
         self, start_date: date, end_date: date, sort: str | None = None
@@ -312,7 +312,7 @@ class Stats(BaseModule):
             http=http,
             _endpoint_builder=endpoint,
         )
-        return cast(dict[str, Any], data)
+        return data
 
     async def daily_transaction_count(
         self, start_date: date, end_date: date, sort: str | None = None
@@ -338,7 +338,7 @@ class Stats(BaseModule):
             http=http,
             _endpoint_builder=endpoint,
         )
-        return cast(dict[str, Any], data)
+        return data
 
     async def daily_average_network_difficulty(
         self, start_date: date, end_date: date, sort: str | None = None
@@ -365,7 +365,7 @@ class Stats(BaseModule):
             http=http,
             _endpoint_builder=endpoint,
         )
-        return cast(dict[str, Any], data)
+        return data
 
     async def ether_historical_daily_market_cap(
         self, start_date: date, end_date: date, sort: str | None = None
@@ -392,7 +392,7 @@ class Stats(BaseModule):
             http=http,
             _endpoint_builder=endpoint,
         )
-        return cast(dict[str, Any], data)
+        return data
 
     async def ether_historical_price(
         self, start_date: date, end_date: date, sort: str | None = None
@@ -419,4 +419,4 @@ class Stats(BaseModule):
             http=http,
             _endpoint_builder=endpoint,
         )
-        return cast(dict[str, Any], data)
+        return data
