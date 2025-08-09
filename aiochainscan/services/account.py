@@ -371,6 +371,651 @@ async def get_token_transfers(
     return []
 
 
+async def get_all_transactions_optimized(
+    *,
+    address: str,
+    start_block: int | None,
+    end_block: int | None,
+    max_concurrent: int,
+    max_offset: int,
+    min_range_width: int = 1_000,
+    max_attempts_per_range: int = 3,
+    prefer_paging: bool | None = None,
+    api_kind: str,
+    network: str,
+    api_key: str,
+    http: HttpClient,
+    _endpoint_builder: EndpointBuilder,
+    _rate_limiter: RateLimiter | None = None,
+    _retry: RetryPolicy | None = None,
+    _telemetry: Telemetry | None = None,
+    stats: dict[str, int] | None = None,
+) -> list[dict[str, Any]]:
+    """Fetch all normal transactions using dynamic range splitting and priority queue.
+
+    This aggregator operates purely on the services layer (ports + endpoint builder),
+    compatible with Blockscout/Etherscan-style providers without requiring an API key
+    for Blockscout. It respects provider rate limits via the supplied RateLimiter and
+    limits concurrency via ``max_concurrent``.
+    """
+    # New architecture: delegate to the universal paging engine wrappers.
+    # This path supersedes the legacy aggregator below while keeping signature stable.
+    try:
+        from aiochainscan.services.fetch_all import (
+            fetch_all_transactions_eth_sliding_fast,
+            fetch_all_transactions_fast,
+        )
+
+        if api_kind == 'eth':
+            result = await fetch_all_transactions_eth_sliding_fast(
+                address=address,
+                start_block=start_block,
+                end_block=end_block,
+                network=network,
+                api_key=api_key,
+                http=http,
+                endpoint_builder=_endpoint_builder,
+                rate_limiter=_rate_limiter,
+                retry=_retry,
+                telemetry=_telemetry,
+                max_offset=max_offset,
+            )
+        else:
+            result = await fetch_all_transactions_fast(
+                address=address,
+                start_block=start_block,
+                end_block=end_block,
+                api_kind=api_kind,
+                network=network,
+                api_key=api_key,
+                http=http,
+                endpoint_builder=_endpoint_builder,
+                rate_limiter=_rate_limiter,
+                retry=_retry,
+                telemetry=_telemetry,
+                max_offset=max_offset,
+                max_concurrent=max_concurrent,
+            )
+
+        if stats is not None:
+            stats.update({'items_total': len(result)})
+        return result
+    except Exception:
+        # Fall back to the legacy implementation below if the new engine path fails.
+        pass
+
+    import asyncio
+
+    # Resolve end_block if not provided (use proxy.eth_blockNumber contract via ports)
+    if end_block is None:
+        endpoint = _endpoint_builder.open(api_key=api_key, api_kind=api_kind, network=network)
+        url: str = endpoint.api_url
+        # Attempt 1: proxy.eth_blockNumber
+        try:
+            params_proxy: dict[str, Any] = {'module': 'proxy', 'action': 'eth_blockNumber'}
+            signed_params, headers = endpoint.filter_and_sign(params_proxy, headers=None)
+
+            async def _get_latest_block() -> Any:
+                if _rate_limiter is not None:
+                    await _rate_limiter.acquire(key=f'{api_kind}:{network}:proxy.blockNumber')
+                return await http.get(url, params=signed_params, headers=headers)
+
+            response: Any = await (
+                _retry.run(_get_latest_block) if _retry is not None else _get_latest_block()
+            )
+            latest_hex: str | None = None
+            if isinstance(response, dict):
+                result = response.get('result', response)
+                if isinstance(result, str):
+                    latest_hex = result
+            if latest_hex:
+                end_block = int(latest_hex, 16) if latest_hex.startswith('0x') else int(latest_hex)
+            else:
+                raise ValueError('no result')
+        except Exception:
+            # Attempt 2: block.getblocknobytime (closest=before)
+            try:
+                import time as _t
+
+                params_block: dict[str, Any] = {
+                    'module': 'block',
+                    'action': 'getblocknobytime',
+                    'timestamp': int(_t.time()),
+                    'closest': 'before',
+                }
+                signed_params2, headers2 = endpoint.filter_and_sign(params_block, headers=None)
+
+                async def _get_block_by_time() -> Any:
+                    if _rate_limiter is not None:
+                        await _rate_limiter.acquire(
+                            key=f'{api_kind}:{network}:block.getblocknobytime'
+                        )
+                    return await http.get(url, params=signed_params2, headers=headers2)
+
+                resp2: Any = await (
+                    _retry.run(_get_block_by_time) if _retry is not None else _get_block_by_time()
+                )
+                if isinstance(resp2, dict):
+                    res2 = resp2.get('result', resp2)
+                    end_block = int(res2) if isinstance(res2, str | int) else None
+            except Exception:
+                end_block = None
+            if end_block is None:
+                # Attempt 3: sentinel latest
+                end_block = 99_999_999
+
+    # Auto-select strategy by provider when prefer_paging is None
+    if prefer_paging is None:
+        prefer_paging = bool(
+            api_kind == 'eth' or (isinstance(api_kind, str) and api_kind.startswith('blockscout_'))
+        )
+
+    # Tighten scan window by probing earliest/latest only when not using paging.
+    # Пагинация уже идет от раннего к позднему; отдельный earliest-зонд не нужен.
+    if not prefer_paging:
+        try:
+            probe_http = http
+            probe_endpoint = _endpoint_builder
+            # earliest (asc, page=1, offset=1)
+            earliest_items = await get_normal_transactions(
+                address=address,
+                start_block=None,
+                end_block=None,
+                sort='asc',
+                page=1,
+                offset=1,
+                api_kind=api_kind,
+                network=network,
+                api_key=api_key,
+                http=probe_http,
+                _endpoint_builder=probe_endpoint,
+                _rate_limiter=_rate_limiter,
+                _retry=None,
+                _telemetry=_telemetry,
+            )
+            earliest_block: int | None = None
+            if earliest_items:
+                try:
+                    b = earliest_items[0].get('blockNumber')
+                    earliest_block = int(str(b), 16) if isinstance(b, str) and str(b).startswith('0x') else int(str(b))
+                except Exception:
+                    earliest_block = None
+            # latest (desc, page=1, offset=1)
+            latest_items = await get_normal_transactions(
+                address=address,
+                start_block=None,
+                end_block=None,
+                sort='desc',
+                page=1,
+                offset=1,
+                api_kind=api_kind,
+                network=network,
+                api_key=api_key,
+                http=probe_http,
+                _endpoint_builder=probe_endpoint,
+                _rate_limiter=_rate_limiter,
+                _retry=None,
+                _telemetry=_telemetry,
+            )
+            latest_block: int | None = None
+            if latest_items:
+                try:
+                    b = latest_items[0].get('blockNumber')
+                    latest_block = int(str(b), 16) if isinstance(b, str) and str(b).startswith('0x') else int(str(b))
+                except Exception:
+                    latest_block = None
+            # apply bounds if discovered
+            if earliest_block is not None and (start_block is None or earliest_block > start_block):
+                start_block = earliest_block
+            if latest_block is not None and (end_block is None or latest_block < end_block):
+                end_block = latest_block
+        except Exception:
+            # Non-fatal: keep default 0..latest window
+            pass
+
+    if start_block is None:
+        start_block = 0
+
+    if end_block <= start_block:
+        return []
+
+    # Fast path: provider supports stable pagination by page/offset; use minimal requests
+    if prefer_paging:
+        all_items: list[dict[str, Any]] = []
+        pages_processed: int = 0
+        from contextlib import suppress as _suppress
+        start_ts = __import__('time').monotonic() if _telemetry is not None else 0.0
+
+        # Etherscan window rule: page * offset <= 10000.
+        # To fetch >10k efficiently, slide by start_block and always request page=1.
+        if api_kind == 'eth':
+            current_start = start_block
+            while True:
+                items = await get_normal_transactions(
+                    address=address,
+                    start_block=current_start,
+                    end_block=end_block,
+                    sort='asc',
+                    page=1,
+                    offset=max_offset,
+                    api_kind=api_kind,
+                    network=network,
+                    api_key=api_key,
+                    http=http,
+                    _endpoint_builder=_endpoint_builder,
+                    _rate_limiter=_rate_limiter,
+                    _retry=_retry,
+                    _telemetry=_telemetry,
+                )
+                pages_processed += 1
+                if _telemetry is not None:
+                    await _telemetry.record_event(
+                        'account.get_all_transactions_optimized.page_ok',
+                        {'page': 1, 'items': len(items) if isinstance(items, list) else 0},
+                    )
+                if not items:
+                    break
+                all_items.extend(items)
+                if len(items) < max_offset:
+                    break
+                # advance window to next block after the last item
+                try:
+                    last_block_str = items[-1].get('blockNumber')  # type: ignore[index]
+                    last_block = int(last_block_str, 16) if isinstance(last_block_str, str) and last_block_str.startswith('0x') else int(str(last_block_str))
+                except Exception:
+                    break
+                current_start = max(current_start, last_block + 1)
+        else:
+            # small parallel window to accelerate paging while respecting rate limit
+            parallelism: int = max(1, min(max_concurrent, 2))
+            next_page: int = 1
+            stop: bool = False
+            while not stop:
+                batch_pages = [next_page + i for i in range(parallelism)]
+
+                async def _fetch_page(p: int) -> tuple[int, list[dict[str, Any]]]:
+                    items = await get_normal_transactions(
+                        address=address,
+                        start_block=start_block,
+                        end_block=end_block,
+                        sort='asc',
+                        page=p,
+                        offset=max_offset,
+                        api_kind=api_kind,
+                        network=network,
+                        api_key=api_key,
+                        http=http,
+                        _endpoint_builder=_endpoint_builder,
+                        _rate_limiter=_rate_limiter,
+                        _retry=_retry,
+                        _telemetry=_telemetry,
+                    )
+                    return p, items
+
+                results = await asyncio.gather(*[_fetch_page(p) for p in batch_pages])
+                # sort by page index to maintain deterministic handling
+                results.sort(key=lambda t: t[0])
+                for p, items in results:
+                    pages_processed += 1
+                    if _telemetry is not None:
+                        await _telemetry.record_event(
+                            'account.get_all_transactions_optimized.page_ok',
+                            {'page': p, 'items': len(items) if isinstance(items, list) else 0},
+                        )
+                    if not items:
+                        stop = True
+                        break
+                    all_items.extend(items)
+                    if len(items) < max_offset:
+                        stop = True
+                        break
+                next_page += parallelism
+        # Dedup + sort
+        seen: set[str] = set()
+        unique: list[dict[str, Any]] = []
+        for it in all_items:
+            if not isinstance(it, dict):
+                continue
+            h = it.get('hash')
+            if not isinstance(h, str):
+                continue
+            if h in seen:
+                continue
+            seen.add(h)
+            unique.append(it)
+        # stable sort
+        def _to_int(v: Any) -> int:
+            with _suppress(Exception):
+                if isinstance(v, str):
+                    s = v.strip()
+                    if s.startswith('0x'):
+                        return int(s, 16)
+                    return int(s)
+                return int(v)
+            return 0
+
+        with _suppress(Exception):
+            unique.sort(key=lambda it: (_to_int(it.get('blockNumber')), _to_int(it.get('transactionIndex'))))
+
+        if _telemetry is not None:
+            end_ts = __import__('time').monotonic()
+            await _telemetry.record_event(
+                'account.get_all_transactions_optimized.duration',
+                {'duration_ms': int((end_ts - start_ts) * 1000)},
+            )
+            await _telemetry.record_event(
+                'account.get_all_transactions_optimized.ok',
+                {'items': len(unique)},
+            )
+        if stats is not None:
+            stats.update(
+                {
+                    'pages_processed': int(pages_processed),
+                    'items_total': len(all_items),
+                    'paging_used': 1,
+                }
+            )
+        return unique
+
+    # Fallback: generic page loop (provider-agnostic)
+    all_items: list[dict[str, Any]] = []
+    pages_processed = 0
+    start_ts = __import__('time').monotonic() if _telemetry is not None else 0.0
+    page = 1
+    while True:
+        items = await get_normal_transactions(
+            address=address,
+            start_block=start_block,
+            end_block=end_block,
+            sort='asc',
+            page=page,
+            offset=max_offset,
+            api_kind=api_kind,
+            network=network,
+            api_key=api_key,
+            http=http,
+            _endpoint_builder=_endpoint_builder,
+            _rate_limiter=_rate_limiter,
+            _retry=_retry,
+            _telemetry=_telemetry,
+        )
+        pages_processed += 1
+        if _telemetry is not None:
+            await _telemetry.record_event(
+                'account.get_all_transactions_optimized.page_ok',
+                {'page': page, 'items': len(items) if isinstance(items, list) else 0},
+            )
+        if not items:
+            break
+        all_items.extend(items)
+        if len(items) < max_offset:
+            break
+        page += 1
+
+    # Dedup + sort
+    seen: set[str] = set()
+    unique: list[dict[str, Any]] = []
+    for it in all_items:
+        if not isinstance(it, dict):
+            continue
+        h = it.get('hash')
+        if not isinstance(h, str) or h in seen:
+            continue
+        seen.add(h)
+        unique.append(it)
+
+    def _to_int(v: Any) -> int:
+        try:
+            if isinstance(v, str):
+                s = v.strip()
+                if s.startswith('0x'):
+                    return int(s, 16)
+                return int(s)
+            return int(v)
+        except Exception:
+            return 0
+
+    unique.sort(key=lambda it: (_to_int(it.get('blockNumber')), _to_int(it.get('transactionIndex'))))
+
+    if _telemetry is not None:
+        end_ts = __import__('time').monotonic()
+        await _telemetry.record_event(
+            'account.get_all_transactions_optimized.duration',
+            {'duration_ms': int((end_ts - start_ts) * 1000)},
+        )
+        await _telemetry.record_event(
+            'account.get_all_transactions_optimized.ok',
+            {'items': len(unique)},
+        )
+    if stats is not None:
+        stats.update({'pages_processed': pages_processed, 'items_total': len(all_items), 'paging_used': 1})
+    return unique
+
+    def _dedup_key(it: dict[str, Any]) -> str | None:
+        h = it.get('hash')
+        return h if isinstance(h, str) else None
+
+    def _to_int(v: Any) -> int:
+        try:
+            if isinstance(v, str):
+                s = v.strip()
+                if s.startswith('0x'):
+                    return int(s, 16)
+                return int(s)
+            return int(v)
+        except Exception:
+            return 0
+
+    def _sort_key(it: dict[str, Any]) -> tuple[int, int]:
+        return (_to_int(it.get('blockNumber')), _to_int(it.get('transactionIndex')))
+
+    semaphore = asyncio.Semaphore(max(1, max_concurrent))
+
+    async def _fetch_range_wrapped(s: int, e: int) -> list[dict[str, Any]]:
+        async with semaphore:
+            return await get_normal_transactions(
+                address=address,
+                start_block=s,
+                end_block=e,
+                sort='asc',
+                page=1,
+                offset=max_offset,
+                api_kind=api_kind,
+                network=network,
+                api_key=api_key,
+                http=http,
+                _endpoint_builder=_endpoint_builder,
+                _rate_limiter=_rate_limiter,
+                _retry=_retry,
+                _telemetry=_telemetry,
+            )
+
+    return await fetch_all_ranges_optimized(  # noqa: F821
+        start_block=start_block,
+        end_block=end_block,
+        max_concurrent=max_concurrent,
+        max_offset=max_offset,
+        min_range_width=min_range_width,
+        max_attempts_per_range=max_attempts_per_range,
+        fetch_range=_fetch_range_wrapped,
+        dedup_key=_dedup_key,
+        sort_key=_sort_key,
+        telemetry=_telemetry,
+        telemetry_prefix='account.get_all_transactions_optimized',
+        stats=stats,
+    )
+
+
+async def get_all_internal_transactions_optimized(
+    *,
+    address: str,
+    start_block: int | None,
+    end_block: int | None,
+    max_concurrent: int,
+    max_offset: int,
+    min_range_width: int = 1_000,
+    max_attempts_per_range: int = 3,
+    api_kind: str,
+    network: str,
+    api_key: str,
+    http: HttpClient,
+    _endpoint_builder: EndpointBuilder,
+    _rate_limiter: RateLimiter | None = None,
+    _retry: RetryPolicy | None = None,
+    _telemetry: Telemetry | None = None,
+    stats: dict[str, int] | None = None,
+) -> list[dict[str, Any]]:
+    """Fetch all internal transactions using page-based strategy.
+
+    For Etherscan: slide start_block with page=1, offset=max_offset to avoid 10k window.
+    For Blockscout: iterate pages 1..N with offset=max_offset.
+    """
+    # Resolve latest block when needed (same as above)
+
+    if end_block is None:
+        endpoint = _endpoint_builder.open(api_key=api_key, api_kind=api_kind, network=network)
+        url: str = endpoint.api_url
+        try:
+            params_proxy: dict[str, Any] = {'module': 'proxy', 'action': 'eth_blockNumber'}
+            signed_params, headers = endpoint.filter_and_sign(params_proxy, headers=None)
+
+            async def _get_latest_block() -> Any:
+                if _rate_limiter is not None:
+                    await _rate_limiter.acquire(key=f'{api_kind}:{network}:proxy.blockNumber')
+                return await http.get(url, params=signed_params, headers=headers)
+
+            response: Any = await (
+                _retry.run(_get_latest_block) if _retry is not None else _get_latest_block()
+            )
+            latest_hex: str | None = None
+            if isinstance(response, dict):
+                result = response.get('result', response)
+                if isinstance(result, str):
+                    latest_hex = result
+            if latest_hex:
+                end_block = int(latest_hex, 16) if latest_hex.startswith('0x') else int(latest_hex)
+            else:
+                raise ValueError('no result')
+        except Exception:
+            import time as _t
+
+            params_block: dict[str, Any] = {
+                'module': 'block',
+                'action': 'getblocknobytime',
+                'timestamp': int(_t.time()),
+                'closest': 'before',
+            }
+            signed_params2, headers2 = endpoint.filter_and_sign(params_block, headers=None)
+
+            async def _get_block_by_time() -> Any:
+                if _rate_limiter is not None:
+                    await _rate_limiter.acquire(key=f'{api_kind}:{network}:block.getblocknobytime')
+                return await http.get(url, params=signed_params2, headers=headers2)
+
+            resp2: Any = await (
+                _retry.run(_get_block_by_time) if _retry is not None else _get_block_by_time()
+            )
+            if isinstance(resp2, dict):
+                res2 = resp2.get('result', resp2)
+                end_block = int(res2) if isinstance(res2, str | int) else 99_999_999
+
+    if start_block is None:
+        start_block = 0
+    if end_block <= start_block:
+        return []
+
+    all_items: list[dict[str, Any]] = []
+    pages_processed = 0
+
+    if api_kind == 'eth':
+        current_start = start_block
+        while True:
+            items = await get_internal_transactions(
+                address=address,
+                start_block=current_start,
+                end_block=end_block,
+                sort='asc',
+                page=1,
+                offset=max_offset,
+                txhash=None,
+                api_kind=api_kind,
+                network=network,
+                api_key=api_key,
+                http=http,
+                _endpoint_builder=_endpoint_builder,
+                _rate_limiter=_rate_limiter,
+                _retry=_retry,
+                _telemetry=_telemetry,
+            )
+            pages_processed += 1
+            if not items:
+                break
+            all_items.extend(items)
+            if len(items) < max_offset:
+                break
+            try:
+                last_block_str = items[-1].get('blockNumber')
+                last_block = int(last_block_str, 16) if isinstance(last_block_str, str) and last_block_str.startswith('0x') else int(str(last_block_str))
+            except Exception:
+                break
+            current_start = max(current_start, last_block + 1)
+    else:
+        page = 1
+        while True:
+            items = await get_internal_transactions(
+                address=address,
+                start_block=start_block,
+                end_block=end_block,
+                sort='asc',
+                page=page,
+                offset=max_offset,
+                txhash=None,
+                api_kind=api_kind,
+                network=network,
+                api_key=api_key,
+                http=http,
+                _endpoint_builder=_endpoint_builder,
+                _rate_limiter=_rate_limiter,
+                _retry=_retry,
+                _telemetry=_telemetry,
+            )
+            pages_processed += 1
+            if not items:
+                break
+            all_items.extend(items)
+            if len(items) < max_offset:
+                break
+            page += 1
+
+    # Dedup + sort
+    seen: set[str] = set()
+    unique: list[dict[str, Any]] = []
+    for it in all_items:
+        if not isinstance(it, dict):
+            continue
+        h = it.get('hash')
+        if not isinstance(h, str) or h in seen:
+            continue
+        seen.add(h)
+        unique.append(it)
+
+    def _to_int2(v: Any) -> int:
+        try:
+            if isinstance(v, str):
+                s = v.strip()
+                if s.startswith('0x'):
+                    return int(s, 16)
+                return int(s)
+            return int(v)
+        except Exception:
+            return 0
+
+    unique.sort(key=lambda it: (_to_int2(it.get('blockNumber')), _to_int2(it.get('transactionIndex'))))
+    if stats is not None:
+        stats.update({'pages_processed': pages_processed, 'items_total': len(all_items), 'paging_used': 1})
+    return unique
+
+
 async def get_mined_blocks(
     *,
     address: str,

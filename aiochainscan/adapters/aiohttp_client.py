@@ -11,13 +11,24 @@ from aiochainscan.ports.http_client import HttpClient
 class AiohttpClient(HttpClient):
     """HttpClient implementation backed by aiohttp."""
 
-    def __init__(self, *, timeout: float = 10.0) -> None:
-        self._timeout = aiohttp.ClientTimeout(total=timeout)
+    def __init__(self, *, timeout: float | None = None) -> None:
+        """Create aiohttp-based client.
+
+        timeout: when None, do not enforce a client-level total timeout.
+        """
+        self._timeout: aiohttp.ClientTimeout | None
+        if timeout is None:
+            self._timeout = None
+        else:
+            self._timeout = aiohttp.ClientTimeout(total=timeout)
         self._session: aiohttp.ClientSession | None = None
 
     async def _ensure_session(self) -> aiohttp.ClientSession:
         if self._session is None:
-            self._session = aiohttp.ClientSession(timeout=self._timeout)
+            if self._timeout is None:
+                self._session = aiohttp.ClientSession()
+            else:
+                self._session = aiohttp.ClientSession(timeout=self._timeout)
         return self._session
 
     async def aclose(self) -> None:
