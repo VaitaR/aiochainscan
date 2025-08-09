@@ -951,3 +951,74 @@ architecture:
 - `aiochainscan/capabilities.py`: feature→(scanner,network) gating used by tests; treat as authoritative for feature toggles (e.g., gas_estimate, gas_oracle).
 - `aiochainscan/config.py:ScannerCapabilities`: per‑scanner descriptive flags intended for documentation/UX; do not drive gating. Keep in sync conceptually but prefer `capabilities.py` for runtime checks.
 - Future: if consolidation is desired, expose a single read‑only facade that merges both views while keeping `capabilities.py` as the backing store to preserve test stability.
+
+---
+
+## Fetch‑All Paging Engine – Task Statement
+
+### Objective
+- Build a universal fetch‑all engine to retrieve full datasets (transactions, internal transactions, logs, etc.) with correctness (no duplicates/misses) and optimal speed under provider limits.
+
+### Scope
+- Providers: Etherscan family (`eth`, …), Blockscout (`blockscout_*`).
+- Types (initial): normal transactions, internal transactions, logs. Extensible (tokens, mined blocks, beacon withdrawals, …).
+
+### Non‑Functional Requirements
+- Correctness: no duplicates, no gaps; stable ordering.
+- Performance: respect provider RPS and page windows; parallel where safe.
+- Extensibility: new types/providers via configuration/specs.
+- Observability: telemetry and minimal stats.
+
+### High‑level Design
+- FetchSpec (what/how):
+  - `fetch_page` (asc), optional `fetch_page_desc` (desc for bi‑sliding).
+  - `key_fn` (dedup), `order_fn` (stable sort), `max_offset`, `resolve_end_block` (snapshot).
+- ProviderPolicy (how):
+  - `mode`: `paged` | `sliding` | `sliding_bi`; `prefetch` (paged); `window_cap`; `rps_key`.
+- Engine (control loop):
+  - Drives paging per policy; uses RateLimiter/RetryPolicy/Telemetry ports; applies dedup/sort.
+
+### Provider Policies
+- Etherscan (`api_kind='eth'`):
+  - Basic: `sliding`, `window_cap=10000`, `prefetch=1`, `rps≈5 (0.2s)`.
+  - Fast: `sliding_bi` (asc/desc чередование) при тех же ограничениях окна.
+- Blockscout (`blockscout_*`): `paged`, `prefetch=max_concurrent`, `window_cap=None`, `rps≈10 (0.1s)`.
+- Fallback: `paged`, `prefetch=1`.
+
+### Engine Behavior
+- Snapshot end_block: `proxy.eth_blockNumber`, fallback `99_999_999` (желательно TTL‑кэш 1–5 c).
+- `paged`: пакет страниц, останов на пустой/короткой.
+- `sliding`: `page=1`, `start_block ← last_block+1`.
+- `sliding_bi`: чередовать asc/desc в окне `[low..up]` до пересечения или короткой страницы.
+- Окно Etherscan: `offset<=10000`; защитить `paged` от `page*offset>10000`.
+
+### Dedup/Sort
+- tx/internal: key=`hash`, order=`(blockNumber, transactionIndex)`.
+- logs: key=`txHash:logIndex`, order=`(blockNumber, logIndex)`.
+- Безопасная конверсия hex/str→int; стабильная сортировка.
+
+### Telemetry/Stats
+- События: `paging.duration`, `paging.page_ok`, `paging.ok`, `paging.error`.
+- Статистика: `pages_processed`, `items_total`, `mode`, `prefetch`, `start_block`, `end_block`.
+
+### Errors/Retries
+- Ретраи только вокруг сетевого `fetch_page`. Фатальные — наверх.
+
+### Performance
+- `prefetch` для `paged`; `sliding_bi` утилизирует две стороны окна.
+- RPS через RateLimiter; bursts через токен‑бакет.
+
+### Testing
+- Unit: дедуп/сорт; `sliding`/`paged` стоп‑условия; окно Etherscan.
+- Integration (моки): таймауты, ретраи, лимитер; параметризация по типам.
+- Gates: `mypy --strict`, `ruff`, `pytest -q`.
+
+### Migration
+- `services/paging_engine.py` — новый движок.
+- `services/fetch_all.py` — врапперы поверх движка.
+- Удалить старый агрегатор; обновить примеры и README.
+
+### Acceptance
+- Blockscout: fast ≥2× basic на 10+ страницах.
+- Etherscan: fast полное покрытие без превышения окна; без дублей.
+- Все тесты зелёные; линтер/тайпчекер чисты.
