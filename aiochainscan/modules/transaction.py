@@ -17,12 +17,40 @@ class Transaction(BaseModule):
 
     async def contract_execution_status(self, txhash: str) -> dict[str, Any]:
         """[BETA] Check Contract Execution Status (if there was an error during contract execution)"""
-        result = await self._get(action='getstatus', txhash=txhash)
+        from aiochainscan.modules.base import _facade_injection, _resolve_api_context
+        from aiochainscan.services.transaction import (
+            get_contract_execution_status as _svc_get_status,
+        )
+
+        http, endpoint = _facade_injection(self._client)
+        api_kind, network, api_key = _resolve_api_context(self._client)
+        result = await _svc_get_status(
+            txhash=txhash,
+            api_kind=api_kind,
+            network=network,
+            api_key=api_key,
+            http=http,
+            _endpoint_builder=endpoint,
+        )
         return cast(dict[str, Any], result)
 
     async def tx_receipt_status(self, txhash: str) -> dict[str, Any]:
         """[BETA] Check Transaction Receipt Status (Only applicable for Post Byzantium fork transactions)"""
-        result = await self._get(action='gettxreceiptstatus', txhash=txhash)
+        from aiochainscan.modules.base import _facade_injection, _resolve_api_context
+        from aiochainscan.services.transaction import (
+            get_tx_receipt_status as _svc_tx_receipt_status,
+        )
+
+        http, endpoint = _facade_injection(self._client)
+        api_kind, network, api_key = _resolve_api_context(self._client)
+        result = await _svc_tx_receipt_status(
+            txhash=txhash,
+            api_kind=api_kind,
+            network=network,
+            api_key=api_key,
+            http=http,
+            _endpoint_builder=endpoint,
+        )
         return cast(dict[str, Any], result)
 
     async def check_tx_status(self, txhash: str) -> dict[str, Any]:

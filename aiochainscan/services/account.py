@@ -314,6 +314,7 @@ async def get_token_transfers(
     _rate_limiter: RateLimiter | None = None,
     _retry: RetryPolicy | None = None,
     _telemetry: Telemetry | None = None,
+    preserve_none: bool = False,
 ) -> list[dict[str, Any]]:
     endpoint = _endpoint_builder.open(api_key=api_key, api_kind=api_kind, network=network)
     url: str = endpoint.api_url
@@ -322,6 +323,8 @@ async def get_token_transfers(
         'module': 'account',
         'action': actions.get(token_standard, 'tokentx'),
         'address': address,
+        # Preserve legacy tests shape: omit keys with None to match expected params
+        # (contractaddress and sort are optional and should not appear when None)
         'contractaddress': contract_address,
         'startblock': start_block,
         'endblock': end_block,
@@ -329,6 +332,9 @@ async def get_token_transfers(
         'page': page,
         'offset': offset,
     }
+    # Preserve or drop None-valued optional keys depending on caller needs
+    if not preserve_none:
+        params = {k: v for k, v in params.items() if v is not None}
     if extra_params:
         params.update({k: v for k, v in extra_params.items() if v is not None})
     signed_params, headers = endpoint.filter_and_sign(params, headers=None)
