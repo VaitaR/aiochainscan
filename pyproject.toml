@@ -1,6 +1,6 @@
 [project]
 name = "aiochainscan"
-version = "0.2.0"
+version = "0.2.1"
 description = "Chainscan API async Python wrapper"
 authors = [
     { name = "VaitaR", email = "andrey.shivalin@gmail.com" }
@@ -190,6 +190,16 @@ forbidden_modules = [
   "aiochainscan.modules",
 ]
 
+[[tool.importlinter.contracts]]
+name = "Facade does not import modules (no back-edges)"
+type = "forbidden"
+source_modules = [
+  "aiochainscan",
+]
+forbidden_modules = [
+  "aiochainscan.modules",
+]
+
 [[tool.mypy.overrides]]
 module = [
   "aiochainscan.modules.extra.*",
@@ -221,5 +231,6 @@ module = [
   "aiochainscan_fastabi",
   "eth_abi.*",
   "requests",
+  "structlog",
 ]
 ignore_missing_imports = true
