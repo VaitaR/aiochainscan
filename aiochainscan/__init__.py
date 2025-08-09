@@ -1,12 +1,11 @@
+from collections.abc import Mapping
 from datetime import date
 from typing import Any
 
 from aiochainscan.adapters.aiohttp_client import AiohttpClient
 from aiochainscan.adapters.endpoint_builder_urlbuilder import UrlBuilderEndpoint
 from aiochainscan.adapters.structlog_telemetry import StructlogTelemetry
-from aiochainscan.capabilities import (
-    FEATURE_SUPPORT as _FEATURE_SUPPORT_SRC,
-)
+from aiochainscan.capabilities import FEATURE_SUPPORT as _FEATURE_SUPPORT_SRC
 from aiochainscan.capabilities import (
     get_supported_features as _caps_get_supported_features,
 )
@@ -34,7 +33,7 @@ from aiochainscan.domain.dto import (
     TokenTransferDTO,
     TransactionDTO,
 )
-from aiochainscan.domain.models import Address, BlockNumber, TxHash  # re-export domain VOs
+from aiochainscan.domain.models import Address, BlockNumber, Page, TxHash  # re-export domain VOs
 from aiochainscan.ports.cache import Cache
 from aiochainscan.ports.endpoint_builder import EndpointBuilder
 from aiochainscan.ports.http_client import HttpClient
@@ -81,12 +80,8 @@ from aiochainscan.services.contract import (
 from aiochainscan.services.contract import (
     check_verification_status as check_verification_status_service,
 )
-from aiochainscan.services.contract import (
-    get_contract_abi as get_contract_abi_service,
-)
-from aiochainscan.services.contract import (
-    get_contract_creation as get_contract_creation_service,
-)
+from aiochainscan.services.contract import get_contract_abi as get_contract_abi_service
+from aiochainscan.services.contract import get_contract_creation as get_contract_creation_service
 from aiochainscan.services.contract import (
     get_contract_source_code as get_contract_source_code_service,
 )
@@ -96,50 +91,29 @@ from aiochainscan.services.contract import (
 from aiochainscan.services.contract import (
     verify_proxy_contract as verify_proxy_contract_service,
 )
-from aiochainscan.services.gas import (
-    get_gas_oracle as get_gas_oracle_service,
-)
-from aiochainscan.services.gas import (
-    normalize_gas_oracle,
-)
+from aiochainscan.services.gas import get_gas_oracle as get_gas_oracle_service
+from aiochainscan.services.gas import normalize_gas_oracle
+from aiochainscan.services.logs import get_logs_page as get_logs_page_service
 from aiochainscan.services.logs import normalize_log_entry, normalize_logs
-from aiochainscan.services.proxy import (
-    estimate_gas as estimate_gas_service,
-)
-from aiochainscan.services.proxy import (
-    eth_call as eth_call_service,
-)
+from aiochainscan.services.proxy import estimate_gas as estimate_gas_service
+from aiochainscan.services.proxy import eth_call as eth_call_service
 from aiochainscan.services.proxy import get_block_number as get_block_number_service
 from aiochainscan.services.proxy import (
     get_block_tx_count_by_number as get_block_tx_count_by_number_service,
 )
-from aiochainscan.services.proxy import (
-    get_code as get_code_service,
-)
-from aiochainscan.services.proxy import (
-    get_gas_price as get_gas_price_service,
-)
-from aiochainscan.services.proxy import (
-    get_storage_at as get_storage_at_service,
-)
+from aiochainscan.services.proxy import get_code as get_code_service
+from aiochainscan.services.proxy import get_gas_price as get_gas_price_service
+from aiochainscan.services.proxy import get_storage_at as get_storage_at_service
 from aiochainscan.services.proxy import (
     get_tx_by_block_number_and_index as get_tx_by_block_number_and_index_service,
 )
-from aiochainscan.services.proxy import (
-    get_tx_count as get_tx_count_service,
-)
-from aiochainscan.services.proxy import (
-    get_tx_receipt as get_tx_receipt_service,
-)
+from aiochainscan.services.proxy import get_tx_count as get_tx_count_service
+from aiochainscan.services.proxy import get_tx_receipt as get_tx_receipt_service
 from aiochainscan.services.proxy import (
     get_uncle_by_block_number_and_index as get_uncle_by_block_number_and_index_service,
 )
-from aiochainscan.services.proxy import (
-    normalize_proxy_tx,
-)
-from aiochainscan.services.proxy import (
-    send_raw_tx as send_raw_tx_service,
-)
+from aiochainscan.services.proxy import normalize_proxy_tx
+from aiochainscan.services.proxy import send_raw_tx as send_raw_tx_service
 from aiochainscan.services.stats import (
     normalize_daily_average_block_size,
     normalize_daily_average_block_time,
@@ -159,15 +133,10 @@ from aiochainscan.services.stats import (
     normalize_ether_historical_daily_market_cap,
     normalize_ether_historical_price,
 )
-from aiochainscan.services.token import (
-    TokenBalanceDTO,
-    normalize_token_balance,
-)
+from aiochainscan.services.token import TokenBalanceDTO, normalize_token_balance
 
 # service functions
-from aiochainscan.services.token import (
-    get_token_balance as get_token_balance_service,
-)
+from aiochainscan.services.token import get_token_balance as get_token_balance_service
 from aiochainscan.services.transaction import (
     get_transaction_by_hash,  # facade use-case
     normalize_transaction,
@@ -182,6 +151,7 @@ __all__ = [
     'Address',
     'BlockNumber',
     'TxHash',
+    'Page',
     # Services (facade)
     'get_address_balance',
     'get_address_balances',
@@ -278,6 +248,8 @@ __all__ = [
     'get_block_typed',
     'get_transaction_typed',
     'get_logs_typed',
+    'get_token_transfers_page_typed',
+    'get_address_transactions_page_typed',
     'get_token_balance_typed',
     'get_gas_oracle_typed',
     'get_daily_transaction_count_typed',
@@ -302,6 +274,7 @@ __all__ = [
     'is_feature_supported',
     'get_supported_scanners_for_feature',
     'get_supported_features_for',
+    'get_logs_page_typed',
     'get_capabilities_overview',
 ]
 
@@ -547,6 +520,231 @@ async def get_logs_typed(
         telemetry=telemetry,
     )
     return normalize_logs(items)
+
+
+async def get_logs_page_typed(
+    *,
+    start_block: int | str,
+    end_block: int | str,
+    address: str,
+    api_kind: str,
+    network: str,
+    api_key: str,
+    topics: list[str] | None = None,
+    topic_operators: list[str] | None = None,
+    page: int | str | None = None,
+    offset: int | str | None = None,
+    cursor: str | None = None,
+    page_size: int | None = None,
+    http: HttpClient | None = None,
+    endpoint_builder: EndpointBuilder | None = None,
+    rate_limiter: RateLimiter | None = None,
+    retry: RetryPolicy | None = None,
+    telemetry: Telemetry | None = None,
+    gql_headers: Mapping[str, str] | None = None,
+) -> Page[LogEntryDTO]:
+    """GraphQL-capable typed facade returning Page[LogEntryDTO].
+
+    Uses GraphQL when available and configured via a simple federator; falls back
+    to REST and encodes pagination state into an opaque cursor.
+    """
+    from aiochainscan.adapters.aiohttp_graphql_client import AiohttpGraphQLClient
+    from aiochainscan.adapters.blockscout_graphql_builder import (
+        BlockscoutGraphQLBuilder,
+    )
+    from aiochainscan.adapters.simple_provider_federator import SimpleProviderFederator
+
+    http = http or AiohttpClient()
+    endpoint = endpoint_builder or UrlBuilderEndpoint()
+    telemetry = telemetry or StructlogTelemetry()
+    gql = AiohttpGraphQLClient()
+    gql_builder = BlockscoutGraphQLBuilder()
+    federator = SimpleProviderFederator()
+    try:
+        items, next_cursor = await get_logs_page_service(
+            start_block=start_block,
+            end_block=end_block,
+            address=address,
+            api_kind=api_kind,
+            network=network,
+            api_key=api_key,
+            http=http,
+            _endpoint_builder=endpoint,
+            topics=topics,
+            topic_operators=topic_operators,
+            page=page,
+            offset=offset,
+            cursor=cursor,
+            page_size=page_size,
+            _rate_limiter=rate_limiter,
+            _retry=retry,
+            _telemetry=telemetry,
+            _gql=gql,
+            _gql_builder=gql_builder,
+            _federator=federator,
+            gql_headers=gql_headers,
+        )
+        return Page(items=normalize_logs(items), next_cursor=next_cursor)
+    finally:
+        await http.aclose()
+
+
+async def get_token_transfers_page_typed(
+    *,
+    address: str | None = None,
+    token_contract: str | None = None,
+    api_kind: str,
+    network: str,
+    api_key: str,
+    first: int | None = None,
+    after: str | None = None,
+    http: HttpClient | None = None,
+    endpoint_builder: EndpointBuilder | None = None,
+    rate_limiter: RateLimiter | None = None,
+    retry: RetryPolicy | None = None,
+    telemetry: Telemetry | None = None,
+) -> Page[TokenTransferDTO]:
+    """GraphQL-capable typed facade returning Page[TokenTransferDTO]."""
+    from aiochainscan.adapters.aiohttp_graphql_client import AiohttpGraphQLClient
+    from aiochainscan.adapters.blockscout_graphql_builder import (
+        BlockscoutGraphQLBuilder,
+    )
+    from aiochainscan.adapters.simple_provider_federator import SimpleProviderFederator
+    from aiochainscan.services.account import normalize_token_transfers
+
+    http = http or AiohttpClient()
+    endpoint = endpoint_builder or UrlBuilderEndpoint()
+    telemetry = telemetry or StructlogTelemetry()
+    gql = AiohttpGraphQLClient()
+    gql_builder = BlockscoutGraphQLBuilder()
+    federator = SimpleProviderFederator()
+    try:
+        # GraphQL path when token_contract or address available
+        items: list[dict[str, Any]] = []
+        next_cursor: str | None = None
+        if federator.should_use_graphql('token_transfers', api_kind=api_kind, network=network):
+            base = endpoint.open(
+                api_key=api_key, api_kind=api_kind, network=network
+            ).base_url.rstrip('/')
+            candidates = [
+                f'{base}/api/v1/graphql',
+                f'{base}/api/graphql',
+                f'{base}/graphql',
+                f'{base}/graphiql',
+            ]
+            query, variables = gql_builder.build_token_transfers_query(
+                address=address,
+                token_contract=token_contract,
+                after_cursor=after,
+                first=first,
+            )
+            _, headers = endpoint.open(
+                api_key=api_key, api_kind=api_kind, network=network
+            ).filter_and_sign(params=None, headers=None)
+            for u in candidates:
+                try:
+                    data = await gql.execute(u, query, variables, headers)
+                    items, next_cursor = gql_builder.map_token_transfers_response(data)
+                    break
+                except Exception:
+                    continue
+        if not items:
+            # Fallback: REST page (page/offset → not cursor). Return opaque cursors as None.
+            items = await get_token_transfers_service(
+                address=address,
+                contract_address=token_contract,
+                start_block=None,
+                end_block=None,
+                sort=None,
+                page=None,
+                offset=None,
+                token_standard='erc20',
+                api_kind=api_kind,
+                network=network,
+                api_key=api_key,
+                http=http,
+                _endpoint_builder=endpoint,
+            )
+        return Page(items=normalize_token_transfers(items), next_cursor=next_cursor)
+    finally:
+        await http.aclose()
+
+
+async def get_address_transactions_page_typed(
+    *,
+    address: str,
+    api_kind: str,
+    network: str,
+    api_key: str,
+    first: int | None = None,
+    after: str | None = None,
+    http: HttpClient | None = None,
+    endpoint_builder: EndpointBuilder | None = None,
+    rate_limiter: RateLimiter | None = None,
+    retry: RetryPolicy | None = None,
+    telemetry: Telemetry | None = None,
+) -> Page[NormalTxDTO]:
+    from aiochainscan.adapters.aiohttp_graphql_client import AiohttpGraphQLClient
+    from aiochainscan.adapters.blockscout_graphql_builder import BlockscoutGraphQLBuilder
+    from aiochainscan.adapters.simple_provider_federator import SimpleProviderFederator
+    from aiochainscan.services.account import normalize_normal_txs
+
+    http = http or AiohttpClient()
+    endpoint = endpoint_builder or UrlBuilderEndpoint()
+    telemetry = telemetry or StructlogTelemetry()
+    gql = AiohttpGraphQLClient()
+    gql_builder = BlockscoutGraphQLBuilder()
+    federator = SimpleProviderFederator()
+    try:
+        items: list[dict[str, Any]] = []
+        next_cursor: str | None = None
+        if federator.should_use_graphql(
+            'address_transactions', api_kind=api_kind, network=network
+        ):
+            base = endpoint.open(
+                api_key=api_key, api_kind=api_kind, network=network
+            ).base_url.rstrip('/')
+            candidates = [
+                f'{base}/api/v1/graphql',
+                f'{base}/api/graphql',
+                f'{base}/graphql',
+                f'{base}/graphiql',
+            ]
+            query, variables = gql_builder.build_address_transactions_query(
+                address=address, after_cursor=after, first=first
+            )
+            _, headers = endpoint.open(
+                api_key=api_key, api_kind=api_kind, network=network
+            ).filter_and_sign(params=None, headers=None)
+            for u in candidates:
+                try:
+                    data = await gql.execute(u, query, variables, headers)
+                    items, next_cursor = gql_builder.map_address_transactions_response(data)
+                    break
+                except Exception:
+                    continue
+        if not items:
+            # fallback: REST txlist page; opaque cursor=N/A
+            from aiochainscan.services.account import (
+                get_normal_transactions as get_normal_transactions_service,
+            )
+
+            items = await get_normal_transactions_service(
+                address=address,
+                start_block=None,
+                end_block=None,
+                sort=None,
+                page=None,
+                offset=None,
+                api_kind=api_kind,
+                network=network,
+                api_key=api_key,
+                http=http,
+                _endpoint_builder=endpoint,
+            )
+        return Page(items=normalize_normal_txs(items), next_cursor=next_cursor)
+    finally:
+        await http.aclose()
 
 
 async def get_token_balance_typed(

@@ -1,5 +1,7 @@
 # aiochainscan Project Overview
 
+Note: For GraphQL provider support under the hexagonal architecture, see the concise implementation plan in `GRAPHQL_SUPPORT_PLAN.md`. This file remains the authoritative overview; the plan file is a focused addendum. Current GraphQL status: Blockscout GraphQL is wired via ports/adapters; transaction-by-hash, token transfers, and address transactions support GraphQL with REST fallback. Logs remain REST-first due to schema variance across instances.
+
 ## Project Purpose
 Async Python wrapper for blockchain explorer APIs (Etherscan, BSCScan, PolygonScan, etc.). Provides unified interface for querying blockchain data across multiple networks with both legacy and modern unified architectures.
 
