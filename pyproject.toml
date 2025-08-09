@@ -1,6 +1,6 @@
 [project]
 name = "aiochainscan"
-version = "0.2.0"
+version = "0.2.1"
 description = "Chainscan API async Python wrapper"
 authors = [
     { name = "VaitaR", email = "andrey.shivalin@gmail.com" }
@@ -221,5 +221,6 @@ module = [
   "aiochainscan_fastabi",
   "eth_abi.*",
   "requests",
+  "structlog",
 ]
 ignore_missing_imports = true

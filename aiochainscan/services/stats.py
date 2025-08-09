@@ -11,6 +11,7 @@ from aiochainscan.ports.endpoint_builder import EndpointBuilder
 from aiochainscan.ports.http_client import HttpClient
 from aiochainscan.ports.rate_limiter import RateLimiter, RetryPolicy
 from aiochainscan.ports.telemetry import Telemetry
+from aiochainscan.services._executor import run_with_policies
 
 
 async def get_eth_price(
@@ -49,45 +50,30 @@ async def get_eth_price(
         if isinstance(cached, dict):
             return cached
 
-    async def _do_request() -> Any:
-        if _rate_limiter is not None:
-            await _rate_limiter.acquire(key=f'{api_kind}:{network}:ethprice')
-        start = monotonic()
-        try:
-            return await http.get(url, params=signed_params, headers=headers)
-        finally:
-            if _telemetry is not None:
-                duration_ms = int((monotonic() - start) * 1000)
-                await _telemetry.record_event(
-                    'stats.get_eth_price.duration',
-                    {'api_kind': api_kind, 'network': network, 'duration_ms': duration_ms},
-                )
-
-    try:
-        if _retry is not None:
-            response: Any = await _retry.run(_do_request)
-        else:
-            response = await _do_request()
-    except Exception as exc:  # noqa: BLE001
-        if _telemetry is not None:
-            await _telemetry.record_error(
-                'stats.get_eth_price.error',
-                exc,
-                {'api_kind': api_kind, 'network': network},
-            )
-        raise
+    response: Any = await run_with_policies(
+        do_call=lambda: http.get(url, params=signed_params, headers=headers),
+        telemetry=_telemetry,
+        telemetry_name='stats.get_eth_price',
+        api_kind=api_kind,
+        network=network,
+        rate_limiter=_rate_limiter,
+        rate_limiter_key=f'{api_kind}:{network}:ethprice',
+        retry_policy=_retry,
+    )
 
     if isinstance(response, dict):
         result = response.get('result', response)
-        if isinstance(result, dict):
-            if _cache is not None:
-                await _cache.set(cache_key, result, ttl_seconds=30)
-            if _telemetry is not None:
-                await _telemetry.record_event(
-                    'stats.get_eth_price.ok',
-                    {'api_kind': api_kind, 'network': network},
-                )
-            return result
+    if isinstance(result, dict):
+        if _cache is not None:
+            # TTL constant for ETH price (conservative default)
+            cache_ttl_seconds_eth_price: int = 30
+            await _cache.set(cache_key, result, ttl_seconds=cache_ttl_seconds_eth_price)
+        if _telemetry is not None:
+            await _telemetry.record_event(
+                'stats.get_eth_price.ok',
+                {'api_kind': api_kind, 'network': network},
+            )
+        return result
     return {}
 
 
