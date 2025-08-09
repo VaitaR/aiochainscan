@@ -24,6 +24,30 @@ FEATURE_SUPPORT: dict[FeatureName, set[ScannerNetwork]] = {
         ('base', 'main'),
         ('optimism', 'main'),
     },
+    # GraphQL logs support (initial rollout: Blockscout networks)
+    'logs_gql': {
+        ('blockscout_sepolia', 'sepolia'),
+        ('blockscout_gnosis', 'main'),
+        ('blockscout_polygon', 'main'),
+    },
+    'transaction_by_hash_gql': {
+        ('blockscout_sepolia', 'sepolia'),
+        ('blockscout_gnosis', 'main'),
+        ('blockscout_polygon', 'main'),
+        ('base', 'main'),
+    },
+    'token_transfers_gql': {
+        ('blockscout_sepolia', 'sepolia'),
+        ('blockscout_gnosis', 'main'),
+        ('blockscout_polygon', 'main'),
+        ('base', 'main'),
+    },
+    'address_transactions_gql': {
+        ('blockscout_sepolia', 'sepolia'),
+        ('blockscout_gnosis', 'main'),
+        ('blockscout_polygon', 'main'),
+        ('base', 'main'),
+    },
 }
 
 
