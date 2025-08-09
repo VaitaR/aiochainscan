@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from time import monotonic
 from typing import Any
 
 from aiochainscan.domain.dto import GasOracleDTO
@@ -10,6 +9,8 @@ from aiochainscan.ports.endpoint_builder import EndpointBuilder
 from aiochainscan.ports.http_client import HttpClient
 from aiochainscan.ports.rate_limiter import RateLimiter, RetryPolicy
 from aiochainscan.ports.telemetry import Telemetry
+from aiochainscan.services._executor import run_with_policies
+from aiochainscan.services.constants import CACHE_TTL_GAS_SECONDS as CACHE_TTL_SECONDS
 
 
 async def get_gas_oracle(
@@ -48,39 +49,22 @@ async def get_gas_oracle(
         if isinstance(cached, dict):
             return cached
 
-    async def _do_request() -> Any:
-        if _rate_limiter is not None:
-            await _rate_limiter.acquire(key=f'{api_kind}:{network}:gas_oracle')
-        start = monotonic()
-        try:
-            return await http.get(url, params=signed_params, headers=headers)
-        finally:
-            if _telemetry is not None:
-                duration_ms = int((monotonic() - start) * 1000)
-                await _telemetry.record_event(
-                    'gas.get_gas_oracle.duration',
-                    {'api_kind': api_kind, 'network': network, 'duration_ms': duration_ms},
-                )
-
-    try:
-        if _retry is not None:
-            response: Any = await _retry.run(_do_request)
-        else:
-            response = await _do_request()
-    except Exception as exc:  # noqa: BLE001
-        if _telemetry is not None:
-            await _telemetry.record_error(
-                'gas.get_gas_oracle.error',
-                exc,
-                {'api_kind': api_kind, 'network': network},
-            )
-        raise
+    response: Any = await run_with_policies(
+        do_call=lambda: http.get(url, params=signed_params, headers=headers),
+        telemetry=_telemetry,
+        telemetry_name='gas.get_gas_oracle',
+        api_kind=api_kind,
+        network=network,
+        rate_limiter=_rate_limiter,
+        rate_limiter_key=f'{api_kind}:{network}:gas_oracle',
+        retry_policy=_retry,
+    )
 
     if isinstance(response, dict):
         result = response.get('result', response)
         if isinstance(result, dict):
             if _cache is not None:
-                await _cache.set(cache_key, result, ttl_seconds=5)
+                await _cache.set(cache_key, result, ttl_seconds=CACHE_TTL_SECONDS)
             if _telemetry is not None:
                 await _telemetry.record_event(
                     'gas.get_gas_oracle.ok',
