@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, Mock, call, patch
 import pytest
 import pytest_asyncio
 
-from aiochainscan import Client
+from aiochainscan import Client, Page, get_logs_page_typed, get_token_transfers_page_typed
 
 
 @pytest_asyncio.fixture
@@ -160,3 +160,100 @@ def test_check_topics(logs):
         logs._check_topics(['top1'], ['or'])
 
     assert logs._check_topics(['top1', 'top2'], ['or']) is None
+
+
+@pytest.mark.asyncio
+async def test_get_logs_page_typed_graphql(monkeypatch):
+    """Ensure GraphQL path is used and mapped to Page[LogEntryDTO]."""
+
+    # Stub response matching BlockscoutGraphQLBuilder expectations
+    gql_data = {
+        'logs': {
+            'pageInfo': {'endCursor': 'cursor123', 'hasNextPage': True},
+            'edges': [
+                {
+                    'node': {
+                        'addressHash': '0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef',
+                        'blockNumber': 12345678,
+                        'transactionHash': '0xabc',
+                        'data': '0x',
+                        'topics': ['0xfeed'],
+                    }
+                }
+            ],
+        }
+    }
+
+    called = {'count': 0}
+
+    async def fake_execute(self, url, query, variables=None, headers=None):  # noqa: ARG001
+        called['count'] += 1
+        return gql_data
+
+    # Patch the GraphQL client execute method
+    monkeypatch.setattr(
+        'aiochainscan.adapters.aiohttp_graphql_client.AiohttpGraphQLClient.execute',
+        fake_execute,
+    )
+
+    page = await get_logs_page_typed(
+        start_block=1,
+        end_block=2,
+        address='0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef',
+        api_kind='blockscout_sepolia',
+        network='sepolia',
+        api_key='TEST_KEY',
+        page_size=10,
+    )
+
+    assert isinstance(page, Page)
+    assert page.next_cursor == 'cursor123'
+    assert len(page.items) == 1
+    item = page.items[0]
+    assert item['address'].lower().startswith('0xdeadbeef')
+    assert item['block_number'] == 12345678
+    assert called['count'] == 1
+
+
+@pytest.mark.asyncio
+async def test_get_token_transfers_page_typed_graphql(monkeypatch):
+    # Fake GraphQL response for Address.tokenTransfers
+    gql_data = {
+        'address': {
+            'tokenTransfers': {
+                'pageInfo': {'endCursor': 'tok_cursor', 'hasNextPage': True},
+                'edges': [
+                    {
+                        'node': {
+                            'transactionHash': '0xth',
+                            'tokenContractAddressHash': '0xcontract',
+                            'fromAddressHash': '0xfrom',
+                            'toAddressHash': '0xto',
+                            'amount': '1',
+                            'logIndex': 1,
+                            'blockNumber': 123,
+                        }
+                    }
+                ],
+            }
+        }
+    }
+
+    async def fake_execute(self, url, query, variables=None, headers=None):  # noqa: ARG001
+        return gql_data
+
+    monkeypatch.setattr(
+        'aiochainscan.adapters.aiohttp_graphql_client.AiohttpGraphQLClient.execute',
+        fake_execute,
+    )
+
+    page = await get_token_transfers_page_typed(
+        address='0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef',
+        api_kind='blockscout_sepolia',
+        network='sepolia',
+        api_key='',
+        first=10,
+    )
+    assert isinstance(page, Page)
+    assert page.next_cursor == 'tok_cursor'
+    assert len(page.items) == 1
