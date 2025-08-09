@@ -254,7 +254,7 @@ async def get_all_logs_optimized(
             continue
         txh = it.get('transactionHash') or it.get('hash')
         idx = it.get('logIndex')
-        key = f'{txh}:{idx}' if isinstance(txh, str) and isinstance(idx, (str, int)) else None
+        key = f'{txh}:{idx}' if isinstance(txh, str) and isinstance(idx, str | int) else None
         if key is None or key in seen:
             continue
         seen.add(key)
