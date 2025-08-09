@@ -175,6 +175,7 @@ class Account(BaseModule):
             api_key=api_key,
             http=http,
             _endpoint_builder=endpoint,
+            preserve_none=True,
         )
 
     async def mined_blocks(
@@ -277,13 +278,28 @@ class Account(BaseModule):
             FeatureNotSupportedError: If the scanner doesn't support ERC-20 transfers
         """
         require_feature_support(self._client, ChainFeatures.ERC20_TRANSFERS)
-        # Keep legacy call shape to match tests (no contractaddress/sort in params)
-        result = await self._get(
-            action='tokentx',
+        # Route via service to unify behavior; preserve legacy param mapping
+        from aiochainscan.modules.base import _facade_injection, _resolve_api_context
+        from aiochainscan.services.account import (
+            get_token_transfers as _svc_get_token_transfers,
+        )
+
+        http, endpoint = _facade_injection(self._client)
+        api_kind, network, api_key = _resolve_api_context(self._client)
+        data = await _svc_get_token_transfers(
             address=address,
-            startblock=startblock,
-            endblock=endblock,
+            contract_address=None,
+            start_block=startblock,
+            end_block=endblock,
+            sort=None,
             page=page,
             offset=offset,
+            token_standard='erc20',
+            api_kind=api_kind,
+            network=network,
+            api_key=api_key,
+            http=http,
+            _endpoint_builder=endpoint,
+            preserve_none=False,
         )
-        return list(result)
+        return list(data)

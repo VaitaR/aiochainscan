@@ -57,12 +57,6 @@ class Contract(BaseModule):
             raise SourceNotVerifiedError(address)
         return result if isinstance(result, str) or result is None else str(result)
 
-        # Check for unverified contract responses
-        if isinstance(result, str) and result.startswith('Contract source code not verified'):
-            raise SourceNotVerifiedError(address)
-
-        return result if isinstance(result, str) or result is None else str(result)
-
     async def contract_source_code(self, address: str) -> list[dict[str, Any]]:
         """Get Contract Source Code for Verified Contract Source Codes
 
@@ -104,17 +98,6 @@ class Contract(BaseModule):
             and result[0].get('ABI') == 'Contract source code not verified'
         ):
             raise SourceNotVerifiedError(address)
-        return list(result)
-
-        # Check for unverified contract in the result list
-        if (
-            isinstance(result, list)
-            and len(result) > 0
-            and isinstance(result[0], dict)
-            and result[0].get('ABI') == 'Contract source code not verified'
-        ):
-            raise SourceNotVerifiedError(address)
-
         return list(result)
 
     async def contract_source(self, address: str) -> list[dict[str, Any]]:

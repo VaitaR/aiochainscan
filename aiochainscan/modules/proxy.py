@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import Any
 
 from aiochainscan.common import check_hex, check_tag
 from aiochainscan.modules.base import BaseModule
@@ -44,19 +44,25 @@ class Proxy(BaseModule):
             return int(result)
         except Exception as e:
             account_exc = e
-            # Fallback to proxy endpoint for ETH-clones
+            # Fallback to proxy endpoint for ETH-clones via service
             try:
-                result = await self._get(
-                    action='eth_getBalance',
+                from aiochainscan.modules.base import _facade_injection, _resolve_api_context
+                from aiochainscan.services.proxy import get_balance as _svc_get_balance
+
+                http, endpoint = _facade_injection(self._client)
+                api_kind, network, api_key = _resolve_api_context(self._client)
+                hex_balance = await _svc_get_balance(
                     address=address,
                     tag=check_tag(tag),
+                    api_kind=api_kind,
+                    network=network,
+                    api_key=api_key,
+                    http=http,
+                    _endpoint_builder=endpoint,
                 )
-                # Convert hex string to int
-                return (
-                    int(result, 16)
-                    if isinstance(result, str) and result.startswith('0x')
-                    else int(result)
-                )
+                if isinstance(hex_balance, str) and hex_balance.startswith('0x'):
+                    return int(hex_balance, 16)
+                return int(hex_balance)
             except Exception:
                 # If both fail, re-raise the original account error
                 raise account_exc from None
@@ -92,202 +98,246 @@ class Proxy(BaseModule):
 
     async def block_by_number(self, full: bool, tag: int | str = 'latest') -> dict[str, Any]:
         """Returns information about a block by block number."""
-        result = await self._get(
-            action='eth_getBlockByNumber',
-            boolean=full,
+        from aiochainscan.modules.base import _facade_injection, _resolve_api_context
+        from aiochainscan.services.block import get_block_by_number as _svc_get_block
+
+        http, endpoint = _facade_injection(self._client)
+        api_kind, network, api_key = _resolve_api_context(self._client)
+        result = await _svc_get_block(
             tag=check_tag(tag),
+            full=full,
+            api_kind=api_kind,
+            network=network,
+            api_key=api_key,
+            http=http,
+            _endpoint_builder=endpoint,
         )
-        return cast(dict[str, Any], result)
+        return result
 
     async def uncle_block_by_number_and_index(
         self, index: int | str, tag: int | str = 'latest'
     ) -> dict[str, Any]:
         """Returns information about a uncle by block number."""
-        result = await self._get(
-            action='eth_getUncleByBlockNumberAndIndex',
-            index=check_hex(index),
-            tag=check_tag(tag),
+        from aiochainscan.modules.base import _facade_injection, _resolve_api_context
+        from aiochainscan.services.proxy import (
+            get_uncle_by_block_number_and_index as _svc_uncle_by_bn_idx,
         )
-        return cast(dict[str, Any], result)
+
+        http, endpoint = _facade_injection(self._client)
+        api_kind, network, api_key = _resolve_api_context(self._client)
+        _ = check_tag(tag)
+        result = await _svc_uncle_by_bn_idx(
+            tag=tag,
+            index=check_hex(index),
+            api_kind=api_kind,
+            network=network,
+            api_key=api_key,
+            http=http,
+            _endpoint_builder=endpoint,
+        )
+        return result
 
     async def block_tx_count_by_number(self, tag: int | str = 'latest') -> str:
         """Returns the number of transactions in a block from a block matching the given block number."""
-        try:
-            # NOTE: Proxy tx_count endpoint expects address-based count; for block tx count keep legacy
-            raise ImportError()
-        except Exception:
-            result = await self._get(
-                action='eth_getBlockTransactionCountByNumber',
-                tag=check_tag(tag),
-            )
-            return str(result)
+        from aiochainscan.modules.base import _facade_injection, _resolve_api_context
+        from aiochainscan.services.proxy import (
+            get_block_tx_count_by_number as _svc_block_tx_count,
+        )
+
+        http, endpoint = _facade_injection(self._client)
+        api_kind, network, api_key = _resolve_api_context(self._client)
+        _ = check_tag(tag)
+        return await _svc_block_tx_count(
+            tag=tag,
+            api_kind=api_kind,
+            network=network,
+            api_key=api_key,
+            http=http,
+            _endpoint_builder=endpoint,
+        )
 
     async def tx_by_hash(self, txhash: int | str) -> dict[str, Any]:
         """Returns the information about a transaction requested by transaction hash."""
-        result = await self._get(
-            action='eth_getTransactionByHash',
+        from aiochainscan.modules.base import _facade_injection, _resolve_api_context
+        from aiochainscan.services.proxy import get_tx_by_hash as _svc_get_tx_by_hash
+
+        http, endpoint = _facade_injection(self._client)
+        api_kind, network, api_key = _resolve_api_context(self._client)
+        result = await _svc_get_tx_by_hash(
             txhash=check_hex(txhash),
+            api_kind=api_kind,
+            network=network,
+            api_key=api_key,
+            http=http,
+            _endpoint_builder=endpoint,
         )
-        return cast(dict[str, Any], result)
+        return result
 
     async def tx_by_number_and_index(
         self, index: int | str, tag: int | str = 'latest'
     ) -> dict[str, Any]:
         """Returns information about a transaction by block number and transaction index position."""
-        result = await self._get(
-            action='eth_getTransactionByBlockNumberAndIndex',
-            index=check_hex(index),
-            tag=check_tag(tag),
+        from aiochainscan.modules.base import _facade_injection, _resolve_api_context
+        from aiochainscan.services.proxy import (
+            get_tx_by_block_number_and_index as _svc_tx_by_bn_idx,
         )
-        return cast(dict[str, Any], result)
+
+        http, endpoint = _facade_injection(self._client)
+        api_kind, network, api_key = _resolve_api_context(self._client)
+        _ = check_tag(tag)
+        result = await _svc_tx_by_bn_idx(
+            tag=tag,
+            index=check_hex(index),
+            api_kind=api_kind,
+            network=network,
+            api_key=api_key,
+            http=http,
+            _endpoint_builder=endpoint,
+        )
+        return result
 
     async def tx_count(self, address: str, tag: int | str = 'latest') -> str:
         """Returns the number of transactions sent from an address."""
-        try:
-            from aiochainscan.modules.base import _facade_injection
-            from aiochainscan.services.proxy import get_tx_count as _svc_get_tx_count
+        from aiochainscan.modules.base import _facade_injection, _resolve_api_context
+        from aiochainscan.services.proxy import get_tx_count as _svc_get_tx_count
 
-            http, endpoint = _facade_injection(self._client)
-            from aiochainscan.modules.base import _resolve_api_context
-
-            api_kind, network, api_key = _resolve_api_context(self._client)
-            # Preserve legacy tag validation call in tests
-            _ = check_tag(tag)
-            return await _svc_get_tx_count(
-                address=address,
-                tag=tag,
-                api_kind=api_kind,
-                network=network,
-                api_key=api_key,
-                http=http,
-                _endpoint_builder=endpoint,
-            )
-        except Exception:
-            result = await self._get(
-                action='eth_getTransactionCount',
-                address=address,
-                tag=check_tag(tag),
-            )
-            return cast(str, result)
+        http, endpoint = _facade_injection(self._client)
+        api_kind, network, api_key = _resolve_api_context(self._client)
+        # Preserve legacy tag validation call in tests
+        _ = check_tag(tag)
+        return await _svc_get_tx_count(
+            address=address,
+            tag=tag,
+            api_kind=api_kind,
+            network=network,
+            api_key=api_key,
+            http=http,
+            _endpoint_builder=endpoint,
+        )
 
     async def send_raw_tx(self, raw_hex: str) -> dict[str, Any]:
         """Creates new message call transaction or a contract creation for signed transactions."""
-        result = await self._post(module='proxy', action='eth_sendRawTransaction', hex=raw_hex)
-        return cast(dict[str, Any], result)
+        from aiochainscan.modules.base import _facade_injection, _resolve_api_context
+        from aiochainscan.services.proxy import send_raw_tx as _svc_send_raw_tx
+
+        http, endpoint = _facade_injection(self._client)
+        api_kind, network, api_key = _resolve_api_context(self._client)
+        result = await _svc_send_raw_tx(
+            raw_hex=raw_hex,
+            api_kind=api_kind,
+            network=network,
+            api_key=api_key,
+            http=http,
+            _endpoint_builder=endpoint,
+        )
+        return result
 
     async def tx_receipt(self, txhash: str) -> dict[str, Any]:
         """Returns the receipt of a transaction by transaction hash."""
-        result = await self._get(
-            action='eth_getTransactionReceipt',
+        from aiochainscan.modules.base import _facade_injection, _resolve_api_context
+        from aiochainscan.services.proxy import get_tx_receipt as _svc_get_tx_receipt
+
+        http, endpoint = _facade_injection(self._client)
+        api_kind, network, api_key = _resolve_api_context(self._client)
+        result = await _svc_get_tx_receipt(
             txhash=check_hex(txhash),
+            api_kind=api_kind,
+            network=network,
+            api_key=api_key,
+            http=http,
+            _endpoint_builder=endpoint,
         )
-        return cast(dict[str, Any], result)
+        return result
 
     async def call(self, to: str, data: str, tag: int | str = 'latest') -> str:
         """Executes a new message call immediately without creating a transaction on the block chain."""
-        try:
-            from aiochainscan.modules.base import _facade_injection
-            from aiochainscan.services.proxy import eth_call as _svc_eth_call
+        from aiochainscan.modules.base import _facade_injection, _resolve_api_context
+        from aiochainscan.services.proxy import eth_call as _svc_eth_call
 
-            http, endpoint = _facade_injection(self._client)
-            from aiochainscan.modules.base import _resolve_api_context
-
-            api_kind, network, api_key = _resolve_api_context(self._client)
-            _ = check_tag(tag)
-            return await _svc_eth_call(
-                to=check_hex(to),
-                data=check_hex(data),
-                tag=tag,  # let service handle tag formatting; avoid double validation in tests
-                api_kind=api_kind,
-                network=network,
-                api_key=api_key,
-                http=http,
-                _endpoint_builder=endpoint,
-            )
-        except Exception:
-            result = await self._get(
-                action='eth_call',
-                to=check_hex(to),
-                data=check_hex(data),
-                tag=check_tag(tag),
-            )
-            return str(result)
+        http, endpoint = _facade_injection(self._client)
+        api_kind, network, api_key = _resolve_api_context(self._client)
+        _ = check_tag(tag)
+        return await _svc_eth_call(
+            to=check_hex(to),
+            data=check_hex(data),
+            tag=tag,  # let service handle tag formatting; avoid double validation in tests
+            api_kind=api_kind,
+            network=network,
+            api_key=api_key,
+            http=http,
+            _endpoint_builder=endpoint,
+        )
 
     async def code(self, address: str, tag: int | str = 'latest') -> str:
         """Returns code at a given address."""
-        try:
-            from aiochainscan.modules.base import _facade_injection
-            from aiochainscan.services.proxy import get_code as _svc_get_code
+        from aiochainscan.modules.base import _facade_injection, _resolve_api_context
+        from aiochainscan.services.proxy import get_code as _svc_get_code
 
-            http, endpoint = _facade_injection(self._client)
-            from aiochainscan.modules.base import _resolve_api_context
-
-            api_kind, network, api_key = _resolve_api_context(self._client)
-            _ = check_tag(tag)
-            return await _svc_get_code(
-                address=address,
-                tag=tag,  # avoid double validation; service will sanitize
-                api_kind=api_kind,
-                network=network,
-                api_key=api_key,
-                http=http,
-                _endpoint_builder=endpoint,
-            )
-        except Exception:
-            result = await self._get(
-                action='eth_getCode',
-                address=address,
-                tag=check_tag(tag),
-            )
-            return str(result)
+        http, endpoint = _facade_injection(self._client)
+        api_kind, network, api_key = _resolve_api_context(self._client)
+        _ = check_tag(tag)
+        return await _svc_get_code(
+            address=address,
+            tag=tag,  # avoid double validation; service will sanitize
+            api_kind=api_kind,
+            network=network,
+            api_key=api_key,
+            http=http,
+            _endpoint_builder=endpoint,
+        )
 
     async def storage_at(self, address: str, position: str, tag: int | str = 'latest') -> str:
         """Returns the value from a storage position at a given address."""
-        try:
-            from aiochainscan.modules.base import _facade_injection
-            from aiochainscan.services.proxy import get_storage_at as _svc_get_storage_at
+        from aiochainscan.modules.base import _facade_injection, _resolve_api_context
+        from aiochainscan.services.proxy import get_storage_at as _svc_get_storage_at
 
-            http, endpoint = _facade_injection(self._client)
-            from aiochainscan.modules.base import _resolve_api_context
-
-            api_kind, network, api_key = _resolve_api_context(self._client)
-            _ = check_tag(tag)
-            return await _svc_get_storage_at(
-                address=address,
-                position=position,
-                tag=tag,  # avoid double validation; service will sanitize
-                api_kind=api_kind,
-                network=network,
-                api_key=api_key,
-                http=http,
-                _endpoint_builder=endpoint,
-            )
-        except Exception:
-            result = await self._get(
-                action='eth_getStorageAt',
-                address=address,
-                position=position,
-                tag=check_tag(tag),
-            )
-            return str(result)
+        http, endpoint = _facade_injection(self._client)
+        api_kind, network, api_key = _resolve_api_context(self._client)
+        _ = check_tag(tag)
+        return await _svc_get_storage_at(
+            address=address,
+            position=position,
+            tag=tag,  # avoid double validation; service will sanitize
+            api_kind=api_kind,
+            network=network,
+            api_key=api_key,
+            http=http,
+            _endpoint_builder=endpoint,
+        )
 
     async def gas_price(self) -> str:
         """Returns the current price per gas in wei."""
-        result = await self._get(
-            action='eth_gasPrice',
+        from aiochainscan.modules.base import _facade_injection, _resolve_api_context
+        from aiochainscan.services.proxy import get_gas_price as _svc_get_gas_price
+
+        http, endpoint = _facade_injection(self._client)
+        api_kind, network, api_key = _resolve_api_context(self._client)
+        return await _svc_get_gas_price(
+            api_kind=api_kind,
+            network=network,
+            api_key=api_key,
+            http=http,
+            _endpoint_builder=endpoint,
         )
-        return str(result)
 
     async def estimate_gas(self, to: str, value: str, gas_price: str, gas: str) -> str:
         """Makes a call or transaction, which won't be added to the blockchain and returns the used gas.
 
         Can be used for estimating the used gas.
         """
-        result = await self._get(
-            action='eth_estimateGas',
+        from aiochainscan.modules.base import _facade_injection, _resolve_api_context
+        from aiochainscan.services.proxy import estimate_gas as _svc_estimate_gas
+
+        http, endpoint = _facade_injection(self._client)
+        api_kind, network, api_key = _resolve_api_context(self._client)
+        return await _svc_estimate_gas(
             to=check_hex(to),
             value=value,
-            gasPrice=gas_price,
+            gas_price=gas_price,
             gas=gas,
+            api_kind=api_kind,
+            network=network,
+            api_key=api_key,
+            http=http,
+            _endpoint_builder=endpoint,
         )
-        return str(result)

@@ -6,6 +6,7 @@ Only pure, dependency-free data types live here. No I/O, no logging, no env acce
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Generic, TypeVar
 
 
 @dataclass(slots=True, frozen=True)
@@ -58,3 +59,19 @@ class BlockNumber:
 
     def __str__(self) -> str:
         return str(self.value)
+
+
+T = TypeVar('T')
+
+
+@dataclass(slots=True, frozen=True)
+class Page(Generic[T]):
+    """Typed page container for cursor-based pagination.
+
+    Items are strongly typed via the generic parameter. The `next_cursor`
+    is an opaque string that callers should treat as a black box. Its
+    contents may encode REST page/offset parameters or a GraphQL endCursor.
+    """
+
+    items: list[T]
+    next_cursor: str | None

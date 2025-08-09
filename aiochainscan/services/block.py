@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from time import monotonic
 from typing import Any
 
 from aiochainscan.domain.dto import BlockDTO
@@ -10,6 +9,9 @@ from aiochainscan.ports.endpoint_builder import EndpointBuilder
 from aiochainscan.ports.http_client import HttpClient
 from aiochainscan.ports.rate_limiter import RateLimiter, RetryPolicy
 from aiochainscan.ports.telemetry import Telemetry
+from aiochainscan.services._executor import run_with_policies
+
+CACHE_TTL_SECONDS: int = 5
 
 
 def _to_tag(value: int | str) -> str:
@@ -61,36 +63,16 @@ async def get_block_by_number(
         if isinstance(cached, dict):
             return cached
 
-    async def _do_request() -> Any:
-        if _rate_limiter is not None:
-            await _rate_limiter.acquire(key=f'{api_kind}:{network}:block')
-        start = monotonic()
-        try:
-            return await http.get(url, params=signed_params, headers=headers)
-        finally:
-            if _telemetry is not None:
-                duration_ms = int((monotonic() - start) * 1000)
-                await _telemetry.record_event(
-                    'block.get_block_by_number.duration',
-                    {'api_kind': api_kind, 'network': network, 'duration_ms': duration_ms},
-                )
-
-    try:
-        if _retry is not None:
-            response: Any = await _retry.run(_do_request)
-        else:
-            response = await _do_request()
-    except Exception as exc:  # noqa: BLE001
-        if _telemetry is not None:
-            await _telemetry.record_error(
-                'block.get_block_by_number.error',
-                exc,
-                {
-                    'api_kind': api_kind,
-                    'network': network,
-                },
-            )
-        raise
+    response: Any = await run_with_policies(
+        do_call=lambda: http.get(url, params=signed_params, headers=headers),
+        telemetry=_telemetry,
+        telemetry_name='block.get_block_by_number',
+        api_kind=api_kind,
+        network=network,
+        rate_limiter=_rate_limiter,
+        rate_limiter_key=f'{api_kind}:{network}:block',
+        retry_policy=_retry,
+    )
 
     out: dict[str, Any]
     if isinstance(response, dict):
@@ -112,9 +94,170 @@ async def get_block_by_number(
         )
 
     if _cache is not None:
-        await _cache.set(cache_key, out, ttl_seconds=5)
+        await _cache.set(cache_key, out, ttl_seconds=CACHE_TTL_SECONDS)
 
     return out
+
+
+async def get_block_countdown(
+    *,
+    block_no: int,
+    api_kind: str,
+    network: str,
+    api_key: str,
+    http: HttpClient,
+    _endpoint_builder: EndpointBuilder,
+    extra_params: Mapping[str, Any] | None = None,
+    _cache: Cache | None = None,
+    _rate_limiter: RateLimiter | None = None,
+    _retry: RetryPolicy | None = None,
+    _telemetry: Telemetry | None = None,
+) -> dict[str, Any] | None:
+    """Get Estimated Block Countdown Time by BlockNo via provider endpoint.
+
+    Returns provider-shaped dict or None when provider reports no data
+    (e.g., "No transactions found").
+    """
+
+    endpoint = _endpoint_builder.open(api_key=api_key, api_kind=api_kind, network=network)
+    url: str = endpoint.api_url
+
+    params: dict[str, Any] = {
+        'module': 'block',
+        'action': 'getblockcountdown',
+        'blockno': block_no,
+    }
+    if extra_params:
+        params.update({k: v for k, v in extra_params.items() if v is not None})
+
+    signed_params, headers = endpoint.filter_and_sign(params, headers=None)
+
+    response: Any = await run_with_policies(
+        do_call=lambda: http.get(url, params=signed_params, headers=headers),
+        telemetry=_telemetry,
+        telemetry_name='block.get_block_countdown',
+        api_kind=api_kind,
+        network=network,
+        rate_limiter=_rate_limiter,
+        rate_limiter_key=f'{api_kind}:{network}:getblockcountdown',
+        retry_policy=_retry,
+    )
+
+    # Handle API responses
+    if isinstance(response, dict) and response.get('status') == '0':
+        message_raw = str(response.get('message', ''))
+        message = message_raw.lower()
+        if message.startswith('no transactions found'):
+            return None
+        # Raise ValueError for provider error messages to match tests semantics
+        raise ValueError(message_raw)
+
+    # Normalize to dict-like
+    out: dict[str, Any]
+    if isinstance(response, dict):
+        result = response.get('result', response)
+        out = result if isinstance(result, dict) else dict(response)
+    else:
+        out = {'result': response}
+
+    if _telemetry is not None:
+        await _telemetry.record_event(
+            'block.get_block_countdown.ok', {'api_kind': api_kind, 'network': network}
+        )
+
+    return out
+
+
+async def get_block_reward(
+    *,
+    block_no: int,
+    api_kind: str,
+    network: str,
+    api_key: str,
+    http: HttpClient,
+    _endpoint_builder: EndpointBuilder,
+    extra_params: Mapping[str, Any] | None = None,
+    _rate_limiter: RateLimiter | None = None,
+    _retry: RetryPolicy | None = None,
+    _telemetry: Telemetry | None = None,
+) -> dict[str, Any] | None:
+    """Get Block And Uncle Rewards by BlockNo.
+
+    Returns provider-shaped dict or None when provider reports no reward/status=0.
+    """
+
+    endpoint = _endpoint_builder.open(api_key=api_key, api_kind=api_kind, network=network)
+    url: str = endpoint.api_url
+    params: dict[str, Any] = {
+        'module': 'block',
+        'action': 'getblockreward',
+        'blockno': block_no,
+    }
+    if extra_params:
+        params.update({k: v for k, v in extra_params.items() if v is not None})
+    signed_params, headers = endpoint.filter_and_sign(params, headers=None)
+
+    response: Any = await run_with_policies(
+        do_call=lambda: http.get(url, params=signed_params, headers=headers),
+        telemetry=_telemetry,
+        telemetry_name='block.get_block_reward',
+        api_kind=api_kind,
+        network=network,
+        rate_limiter=_rate_limiter,
+        rate_limiter_key=f'{api_kind}:{network}:getblockreward',
+        retry_policy=_retry,
+    )
+
+    if isinstance(response, dict) and response.get('status') == '0':
+        return None
+    if isinstance(response, dict):
+        result = response.get('result', response)
+        return result if isinstance(result, dict) else dict(response)
+    return {'result': response}
+
+
+async def get_block_number_by_timestamp(
+    *,
+    ts: int,
+    closest: str,
+    api_kind: str,
+    network: str,
+    api_key: str,
+    http: HttpClient,
+    _endpoint_builder: EndpointBuilder,
+    extra_params: Mapping[str, Any] | None = None,
+    _rate_limiter: RateLimiter | None = None,
+    _retry: RetryPolicy | None = None,
+    _telemetry: Telemetry | None = None,
+) -> dict[str, Any]:
+    """Get Block Number by Timestamp (Etherscan-compatible)."""
+    endpoint = _endpoint_builder.open(api_key=api_key, api_kind=api_kind, network=network)
+    url: str = endpoint.api_url
+    params: dict[str, Any] = {
+        'module': 'block',
+        'action': 'getblocknobytime',
+        'timestamp': ts,
+        'closest': closest,
+    }
+    if extra_params:
+        params.update({k: v for k, v in extra_params.items() if v is not None})
+    signed_params, headers = endpoint.filter_and_sign(params, headers=None)
+
+    response: Any = await run_with_policies(
+        do_call=lambda: http.get(url, params=signed_params, headers=headers),
+        telemetry=_telemetry,
+        telemetry_name='block.get_block_number_by_timestamp',
+        api_kind=api_kind,
+        network=network,
+        rate_limiter=_rate_limiter,
+        rate_limiter_key=f'{api_kind}:{network}:getblocknobytime',
+        retry_policy=_retry,
+    )
+
+    if isinstance(response, dict):
+        result = response.get('result', response)
+        return result if isinstance(result, dict) else dict(response)
+    return {'result': response}
 
 
 def normalize_block(raw: dict[str, Any]) -> BlockDTO:
