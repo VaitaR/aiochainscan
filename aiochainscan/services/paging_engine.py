@@ -16,8 +16,7 @@ Item = dict[str, Any]
 class FetchPage(Protocol):
     async def __call__(
         self, *, page: int, start_block: int, end_block: int, offset: int
-    ) -> list[Item]:
-        ...
+    ) -> list[Item]: ...
 
 
 ResolveEndBlock = Callable[[], Awaitable[int]]
@@ -65,7 +64,9 @@ class ProviderPolicy:
     rps_key: str | None
 
 
-def resolve_policy_for_provider(*, api_kind: str, network: str, max_concurrent: int) -> ProviderPolicy:
+def resolve_policy_for_provider(
+    *, api_kind: str, network: str, max_concurrent: int
+) -> ProviderPolicy:
     """Return a reasonable default paging policy for a given provider string.
 
     - Etherscan family ('eth'): sliding window, window_cap=10_000, prefetch=1
@@ -74,11 +75,17 @@ def resolve_policy_for_provider(*, api_kind: str, network: str, max_concurrent: 
     """
 
     if api_kind == 'eth':
-        return ProviderPolicy(mode='sliding', prefetch=1, window_cap=10_000, rps_key=f'{api_kind}:{network}:fetch')
+        return ProviderPolicy(
+            mode='sliding', prefetch=1, window_cap=10_000, rps_key=f'{api_kind}:{network}:fetch'
+        )
     if isinstance(api_kind, str) and api_kind.startswith('blockscout_'):
         prefetch = max(1, int(max_concurrent))
-        return ProviderPolicy(mode='paged', prefetch=prefetch, window_cap=None, rps_key=f'{api_kind}:{network}:fetch')
-    return ProviderPolicy(mode='paged', prefetch=1, window_cap=None, rps_key=f'{api_kind}:{network}:fetch')
+        return ProviderPolicy(
+            mode='paged', prefetch=prefetch, window_cap=None, rps_key=f'{api_kind}:{network}:fetch'
+        )
+    return ProviderPolicy(
+        mode='paged', prefetch=1, window_cap=None, rps_key=f'{api_kind}:{network}:fetch'
+    )
 
 
 async def fetch_all_generic(
@@ -148,7 +155,12 @@ async def fetch_all_generic(
             # Bidirectional sliding requires a descending fetcher
             if fetch_spec.fetch_page_desc is None:
                 # Fallback to simple sliding
-                policy = ProviderPolicy(mode='sliding', prefetch=1, window_cap=policy.window_cap, rps_key=policy.rps_key)
+                policy = ProviderPolicy(
+                    mode='sliding',
+                    prefetch=1,
+                    window_cap=policy.window_cap,
+                    rps_key=policy.rps_key,
+                )
             else:
                 low: int = effective_start_block
                 up: int = effective_end_block
@@ -157,8 +169,11 @@ async def fetch_all_generic(
                     async def _inner_desc() -> list[Item]:
                         if rate_limiter is not None and policy.rps_key is not None:
                             await rate_limiter.acquire(policy.rps_key)
-                        return await fetch_spec.fetch_page_desc(  # type: ignore[func-returns-value]
-                            page=1, start_block=s, end_block=e, offset=effective_offset_for_provider
+                        return await fetch_spec.fetch_page_desc(
+                            page=1,
+                            start_block=s,
+                            end_block=e,
+                            offset=effective_offset_for_provider,
                         )
 
                     return await (retry.run(_inner_desc) if retry is not None else _inner_desc())
@@ -173,7 +188,10 @@ async def fetch_all_generic(
                     # ASC bookkeeping
                     pages_processed += 1
                     if telemetry is not None:
-                        await telemetry.record_event('paging.page_ok', {'mode': 'sliding_bi_asc', 'page': 1, 'items': len(items_asc)})
+                        await telemetry.record_event(
+                            'paging.page_ok',
+                            {'mode': 'sliding_bi_asc', 'page': 1, 'items': len(items_asc)},
+                        )
                     asc_short = False
                     if items_asc:
                         all_items.extend(items_asc)
@@ -191,7 +209,10 @@ async def fetch_all_generic(
                     # DESC bookkeeping
                     pages_processed += 1
                     if telemetry is not None:
-                        await telemetry.record_event('paging.page_ok', {'mode': 'sliding_bi_desc', 'page': 1, 'items': len(items_desc)})
+                        await telemetry.record_event(
+                            'paging.page_ok',
+                            {'mode': 'sliding_bi_desc', 'page': 1, 'items': len(items_desc)},
+                        )
                     desc_short = False
                     if items_desc:
                         all_items.extend(items_desc)
@@ -239,7 +260,10 @@ async def fetch_all_generic(
                 batch_pages = [next_page + i for i in range(prefetch)]
                 # Fire in parallel; RPS limiter will provide backpressure
                 results = await _gather_pages(
-                    [_call_fetch_page(page=p, s=effective_start_block, e=effective_end_block) for p in batch_pages]
+                    [
+                        _call_fetch_page(page=p, s=effective_start_block, e=effective_end_block)
+                        for p in batch_pages
+                    ]
                 )
                 # Maintain order by page
                 for page_index, items in zip(batch_pages, results, strict=False):
@@ -346,7 +370,9 @@ async def fetch_all_sliding_bi(
             start_block=start_block,
             end_block=end_block,
             fetch_spec=fetch_spec,
-            policy=ProviderPolicy(mode='sliding', prefetch=1, window_cap=policy.window_cap, rps_key=policy.rps_key),
+            policy=ProviderPolicy(
+                mode='sliding', prefetch=1, window_cap=policy.window_cap, rps_key=policy.rps_key
+            ),
             rate_limiter=rate_limiter,
             retry=retry,
             telemetry=telemetry,
@@ -372,7 +398,9 @@ async def fetch_all_sliding_bi(
 
     # Offset clamp by provider window cap
     base_offset: int = max(1, int(fetch_spec.max_offset))
-    effective_offset: int = min(base_offset, int(policy.window_cap)) if policy.window_cap is not None else base_offset
+    effective_offset: int = (
+        min(base_offset, int(policy.window_cap)) if policy.window_cap is not None else base_offset
+    )
 
     async def _call(fetcher: FetchPage, *, s: int, e: int) -> list[Item]:
         async def _inner() -> list[Item]:
@@ -390,7 +418,9 @@ async def fetch_all_sliding_bi(
         asc_items = await _call(fetch_spec.fetch_page, s=low, e=up)
         pages_processed += 1
         if telemetry is not None:
-            await telemetry.record_event('paging.page_ok', {'mode': 'sliding_bi_asc', 'page': 1, 'items': len(asc_items)})
+            await telemetry.record_event(
+                'paging.page_ok', {'mode': 'sliding_bi_asc', 'page': 1, 'items': len(asc_items)}
+            )
         if not asc_items:
             break
         all_items.extend(asc_items)
@@ -408,7 +438,9 @@ async def fetch_all_sliding_bi(
         desc_items = await _call(fetch_spec.fetch_page_desc, s=low, e=up)  # type: ignore[arg-type]
         pages_processed += 1
         if telemetry is not None:
-            await telemetry.record_event('paging.page_ok', {'mode': 'sliding_bi_desc', 'page': 1, 'items': len(desc_items)})
+            await telemetry.record_event(
+                'paging.page_ok', {'mode': 'sliding_bi_desc', 'page': 1, 'items': len(desc_items)}
+            )
         if not desc_items:
             break
         all_items.extend(desc_items)
@@ -448,7 +480,12 @@ async def fetch_all_sliding_bi(
     if telemetry is not None:
         await telemetry.record_event('paging.ok', {'mode': 'sliding_bi', 'items': len(unique)})
     if stats is not None:
-        stats.update({'pages_processed': pages_processed, 'items_total': len(all_items), 'mode': 3, 'prefetch': 1})
+        stats.update(
+            {
+                'pages_processed': pages_processed,
+                'items_total': len(all_items),
+                'mode': 3,
+                'prefetch': 1,
+            }
+        )
     return unique
-
-
