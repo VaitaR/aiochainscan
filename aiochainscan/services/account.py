@@ -759,9 +759,9 @@ async def get_all_transactions_optimized(
         return unique
 
     # Fallback: generic page loop (provider-agnostic)
-    all_items: list[dict[str, Any]] = []
-    pages_processed = 0
-    start_ts = __import__('time').monotonic() if _telemetry is not None else 0.0
+    all_items2: list[dict[str, Any]] = []
+    pages_processed2 = 0
+    start_ts2 = __import__('time').monotonic() if _telemetry is not None else 0.0
     page = 1
     while True:
         items = await get_normal_transactions(
@@ -780,7 +780,7 @@ async def get_all_transactions_optimized(
             _retry=_retry,
             _telemetry=_telemetry,
         )
-        pages_processed += 1
+        pages_processed2 += 1
         if _telemetry is not None:
             await _telemetry.record_event(
                 'account.get_all_transactions_optimized.page_ok',
@@ -788,24 +788,24 @@ async def get_all_transactions_optimized(
             )
         if not items:
             break
-        all_items.extend(items)
+        all_items2.extend(items)
         if len(items) < max_offset:
             break
         page += 1
 
     # Dedup + sort
-    seen: set[str] = set()
-    unique: list[dict[str, Any]] = []
-    for it in all_items:
+    seen2: set[str] = set()
+    unique2: list[dict[str, Any]] = []
+    for it in all_items2:
         if not isinstance(it, dict):
             continue
         h = it.get('hash')
-        if not isinstance(h, str) or h in seen:
+        if not isinstance(h, str) or h in seen2:
             continue
-        seen.add(h)
-        unique.append(it)
+        seen2.add(h)
+        unique2.append(it)
 
-    def _to_int(v: Any) -> int:
+    def _to_int2(v: Any) -> int:
         try:
             if isinstance(v, str):
                 s = v.strip()
@@ -816,25 +816,25 @@ async def get_all_transactions_optimized(
         except Exception:
             return 0
 
-    unique.sort(
-        key=lambda it: (_to_int(it.get('blockNumber')), _to_int(it.get('transactionIndex')))
+    unique2.sort(
+        key=lambda it: (_to_int2(it.get('blockNumber')), _to_int2(it.get('transactionIndex')))
     )
 
     if _telemetry is not None:
-        end_ts = __import__('time').monotonic()
+        end_ts2 = __import__('time').monotonic()
         await _telemetry.record_event(
             'account.get_all_transactions_optimized.duration',
-            {'duration_ms': int((end_ts - start_ts) * 1000)},
+            {'duration_ms': int((end_ts2 - start_ts2) * 1000)},
         )
         await _telemetry.record_event(
             'account.get_all_transactions_optimized.ok',
-            {'items': len(unique)},
+            {'items': len(unique2)},
         )
     if stats is not None:
         stats.update(
-            {'pages_processed': pages_processed, 'items_total': len(all_items), 'paging_used': 1}
+            {'pages_processed': pages_processed2, 'items_total': len(all_items2), 'paging_used': 1}
         )
-    return unique
+    return unique2
 
     # Fallback path removed (legacy range-splitting). Use the generic page loop result above.
     return unique
