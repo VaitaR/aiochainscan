@@ -438,9 +438,8 @@ async def fetch_all_sliding_bi(
             break
 
         # mypy: fetch_page_desc is not None here due to earlier check
-        from typing import cast
-
-        desc_fetcher = cast(FetchPage, fetch_spec.fetch_page_desc)
+        desc_fetcher = fetch_spec.fetch_page_desc
+        assert desc_fetcher is not None
         desc_items = await _call(desc_fetcher, s=low, e=up)
         pages_processed += 1
         if telemetry is not None:
