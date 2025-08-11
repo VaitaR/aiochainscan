@@ -915,7 +915,7 @@ async def get_all_internal_transactions_optimized(
 
     if start_block is None:
         start_block = 0
-    if end_block <= start_block:
+    if end_block is not None and start_block is not None and end_block <= start_block:
         return []
 
     all_items: list[dict[str, Any]] = []
