@@ -437,7 +437,8 @@ async def fetch_all_sliding_bi(
         if low > up:
             break
 
-        desc_items = await _call(fetch_spec.fetch_page_desc, s=low, e=up)  # type: ignore[arg-type]
+        # mypy: fetch_page_desc is not None here due to earlier check
+        desc_items = await _call(fetch_spec.fetch_page_desc, s=low, e=up)  # type: ignore[union-attr]
         pages_processed += 1
         if telemetry is not None:
             await telemetry.record_event(
