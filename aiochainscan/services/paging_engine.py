@@ -165,11 +165,13 @@ async def fetch_all_generic(
                 low: int = effective_start_block
                 up: int = effective_end_block
 
+                fetch_page_desc: FetchPage = fetch_spec.fetch_page_desc
+
                 async def _call_desc(s: int, e: int) -> list[Item]:
                     async def _inner_desc() -> list[Item]:
                         if rate_limiter is not None and policy.rps_key is not None:
                             await rate_limiter.acquire(policy.rps_key)
-                        return await fetch_spec.fetch_page_desc(
+                        return await fetch_page_desc(
                             page=1,
                             start_block=s,
                             end_block=e,

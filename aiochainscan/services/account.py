@@ -606,7 +606,7 @@ async def get_all_transactions_optimized(
     if start_block is None:
         start_block = 0
 
-    if end_block <= start_block:
+    if end_block is not None and start_block is not None and end_block <= start_block:
         return []
 
     # Fast path: provider supports stable pagination by page/offset; use minimal requests
@@ -759,7 +759,7 @@ async def get_all_transactions_optimized(
         return unique
 
     # Fallback: generic page loop (provider-agnostic)
-    all_items: list[dict[str, Any]] = []  # type: ignore[no-redef]
+    all_items: list[dict[str, Any]] = []
     pages_processed = 0
     start_ts = __import__('time').monotonic() if _telemetry is not None else 0.0
     page = 1
@@ -794,8 +794,8 @@ async def get_all_transactions_optimized(
         page += 1
 
     # Dedup + sort
-    seen: set[str] = set()  # type: ignore[no-redef]
-    unique: list[dict[str, Any]] = []  # type: ignore[no-redef]
+    seen: set[str] = set()
+    unique: list[dict[str, Any]] = []
     for it in all_items:
         if not isinstance(it, dict):
             continue
@@ -805,7 +805,7 @@ async def get_all_transactions_optimized(
         seen.add(h)
         unique.append(it)
 
-    def _to_int(v: Any) -> int:  # type: ignore[no-redef]
+    def _to_int(v: Any) -> int:
         try:
             if isinstance(v, str):
                 s = v.strip()
@@ -834,7 +834,7 @@ async def get_all_transactions_optimized(
         stats.update(
             {'pages_processed': pages_processed, 'items_total': len(all_items), 'paging_used': 1}
         )
-    return unique  # type: ignore[no-redef]
+    return unique
 
     def _dedup_key(it: dict[str, Any]) -> str | None:
         h = it.get('hash')
@@ -875,20 +875,8 @@ async def get_all_transactions_optimized(
                 _telemetry=_telemetry,
             )
 
-    return await fetch_all_ranges_optimized(  # noqa: F821
-        start_block=start_block,
-        end_block=end_block,
-        max_concurrent=max_concurrent,
-        max_offset=max_offset,
-        min_range_width=min_range_width,
-        max_attempts_per_range=max_attempts_per_range,
-        fetch_range=_fetch_range_wrapped,
-        dedup_key=_dedup_key,
-        sort_key=_sort_key,
-        telemetry=_telemetry,
-        telemetry_prefix='account.get_all_transactions_optimized',
-        stats=stats,
-    )
+    # fallback path removed (legacy range-splitting). Use the generic page loop result above.
+    return unique
 
 
 async def get_all_internal_transactions_optimized(
