@@ -398,30 +398,13 @@ async def get_all_transactions_optimized(
     for Blockscout. It respects provider rate limits via the supplied RateLimiter and
     limits concurrency via ``max_concurrent``.
     """
-    # New architecture: delegate to the universal paging engine wrappers.
-    # This path supersedes the legacy aggregator below while keeping signature stable.
+    # New architecture: prefer unified facade; fallback to legacy wrappers, then to local implementation.
     try:
-        from aiochainscan.services.fetch_all import (
-            fetch_all_transactions_eth_sliding_fast,
-            fetch_all_transactions_fast,
-        )
+        try:
+            from aiochainscan.services.unified_fetch import fetch_all as _fetch_all_unified
 
-        if api_kind == 'eth':
-            result = await fetch_all_transactions_eth_sliding_fast(
-                address=address,
-                start_block=start_block,
-                end_block=end_block,
-                network=network,
-                api_key=api_key,
-                http=http,
-                endpoint_builder=_endpoint_builder,
-                rate_limiter=_rate_limiter,
-                retry=_retry,
-                telemetry=_telemetry,
-                max_offset=max_offset,
-            )
-        else:
-            result = await fetch_all_transactions_fast(
+            result = await _fetch_all_unified(
+                data_type='transactions',
                 address=address,
                 start_block=start_block,
                 end_block=end_block,
@@ -433,9 +416,46 @@ async def get_all_transactions_optimized(
                 rate_limiter=_rate_limiter,
                 retry=_retry,
                 telemetry=_telemetry,
+                strategy='fast',
                 max_offset=max_offset,
                 max_concurrent=max_concurrent,
             )
+        except Exception:
+            from aiochainscan.services.fetch_all import (
+                fetch_all_transactions_eth_sliding_fast,
+                fetch_all_transactions_fast,
+            )
+
+            if api_kind == 'eth':
+                result = await fetch_all_transactions_eth_sliding_fast(
+                    address=address,
+                    start_block=start_block,
+                    end_block=end_block,
+                    network=network,
+                    api_key=api_key,
+                    http=http,
+                    endpoint_builder=_endpoint_builder,
+                    rate_limiter=_rate_limiter,
+                    retry=_retry,
+                    telemetry=_telemetry,
+                    max_offset=max_offset,
+                )
+            else:
+                result = await fetch_all_transactions_fast(
+                    address=address,
+                    start_block=start_block,
+                    end_block=end_block,
+                    api_kind=api_kind,
+                    network=network,
+                    api_key=api_key,
+                    http=http,
+                    endpoint_builder=_endpoint_builder,
+                    rate_limiter=_rate_limiter,
+                    retry=_retry,
+                    telemetry=_telemetry,
+                    max_offset=max_offset,
+                    max_concurrent=max_concurrent,
+                )
 
         if stats is not None:
             stats.update({'items_total': len(result)})
@@ -537,7 +557,11 @@ async def get_all_transactions_optimized(
             if earliest_items:
                 try:
                     b = earliest_items[0].get('blockNumber')
-                    earliest_block = int(str(b), 16) if isinstance(b, str) and str(b).startswith('0x') else int(str(b))
+                    earliest_block = (
+                        int(str(b), 16)
+                        if isinstance(b, str) and str(b).startswith('0x')
+                        else int(str(b))
+                    )
                 except Exception:
                     earliest_block = None
             # latest (desc, page=1, offset=1)
@@ -561,11 +585,17 @@ async def get_all_transactions_optimized(
             if latest_items:
                 try:
                     b = latest_items[0].get('blockNumber')
-                    latest_block = int(str(b), 16) if isinstance(b, str) and str(b).startswith('0x') else int(str(b))
+                    latest_block = (
+                        int(str(b), 16)
+                        if isinstance(b, str) and str(b).startswith('0x')
+                        else int(str(b))
+                    )
                 except Exception:
                     latest_block = None
             # apply bounds if discovered
-            if earliest_block is not None and (start_block is None or earliest_block > start_block):
+            if earliest_block is not None and (
+                start_block is None or earliest_block > start_block
+            ):
                 start_block = earliest_block
             if latest_block is not None and (end_block is None or latest_block < end_block):
                 end_block = latest_block
@@ -584,6 +614,7 @@ async def get_all_transactions_optimized(
         all_items: list[dict[str, Any]] = []
         pages_processed: int = 0
         from contextlib import suppress as _suppress
+
         start_ts = __import__('time').monotonic() if _telemetry is not None else 0.0
 
         # Etherscan window rule: page * offset <= 10000.
@@ -621,7 +652,11 @@ async def get_all_transactions_optimized(
                 # advance window to next block after the last item
                 try:
                     last_block_str = items[-1].get('blockNumber')  # type: ignore[index]
-                    last_block = int(last_block_str, 16) if isinstance(last_block_str, str) and last_block_str.startswith('0x') else int(str(last_block_str))
+                    last_block = (
+                        int(last_block_str, 16)
+                        if isinstance(last_block_str, str) and last_block_str.startswith('0x')
+                        else int(str(last_block_str))
+                    )
                 except Exception:
                     break
                 current_start = max(current_start, last_block + 1)
@@ -683,6 +718,7 @@ async def get_all_transactions_optimized(
                 continue
             seen.add(h)
             unique.append(it)
+
         # stable sort
         def _to_int(v: Any) -> int:
             with _suppress(Exception):
@@ -695,7 +731,12 @@ async def get_all_transactions_optimized(
             return 0
 
         with _suppress(Exception):
-            unique.sort(key=lambda it: (_to_int(it.get('blockNumber')), _to_int(it.get('transactionIndex'))))
+            unique.sort(
+                key=lambda it: (
+                    _to_int(it.get('blockNumber')),
+                    _to_int(it.get('transactionIndex')),
+                )
+            )
 
         if _telemetry is not None:
             end_ts = __import__('time').monotonic()
@@ -775,7 +816,9 @@ async def get_all_transactions_optimized(
         except Exception:
             return 0
 
-    unique.sort(key=lambda it: (_to_int(it.get('blockNumber')), _to_int(it.get('transactionIndex'))))
+    unique.sort(
+        key=lambda it: (_to_int(it.get('blockNumber')), _to_int(it.get('transactionIndex')))
+    )
 
     if _telemetry is not None:
         end_ts = __import__('time').monotonic()
@@ -788,7 +831,9 @@ async def get_all_transactions_optimized(
             {'items': len(unique)},
         )
     if stats is not None:
-        stats.update({'pages_processed': pages_processed, 'items_total': len(all_items), 'paging_used': 1})
+        stats.update(
+            {'pages_processed': pages_processed, 'items_total': len(all_items), 'paging_used': 1}
+        )
     return unique
 
     def _dedup_key(it: dict[str, Any]) -> str | None:
@@ -955,7 +1000,11 @@ async def get_all_internal_transactions_optimized(
                 break
             try:
                 last_block_str = items[-1].get('blockNumber')
-                last_block = int(last_block_str, 16) if isinstance(last_block_str, str) and last_block_str.startswith('0x') else int(str(last_block_str))
+                last_block = (
+                    int(last_block_str, 16)
+                    if isinstance(last_block_str, str) and last_block_str.startswith('0x')
+                    else int(str(last_block_str))
+                )
             except Exception:
                 break
             current_start = max(current_start, last_block + 1)
@@ -1010,9 +1059,13 @@ async def get_all_internal_transactions_optimized(
         except Exception:
             return 0
 
-    unique.sort(key=lambda it: (_to_int2(it.get('blockNumber')), _to_int2(it.get('transactionIndex'))))
+    unique.sort(
+        key=lambda it: (_to_int2(it.get('blockNumber')), _to_int2(it.get('transactionIndex')))
+    )
     if stats is not None:
-        stats.update({'pages_processed': pages_processed, 'items_total': len(all_items), 'paging_used': 1})
+        stats.update(
+            {'pages_processed': pages_processed, 'items_total': len(all_items), 'paging_used': 1}
+        )
     return unique
 
 
