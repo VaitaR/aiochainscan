@@ -836,46 +836,7 @@ async def get_all_transactions_optimized(
         )
     return unique
 
-    def _dedup_key(it: dict[str, Any]) -> str | None:
-        h = it.get('hash')
-        return h if isinstance(h, str) else None
-
-    def _to_int(v: Any) -> int:
-        try:
-            if isinstance(v, str):
-                s = v.strip()
-                if s.startswith('0x'):
-                    return int(s, 16)
-                return int(s)
-            return int(v)
-        except Exception:
-            return 0
-
-    def _sort_key(it: dict[str, Any]) -> tuple[int, int]:
-        return (_to_int(it.get('blockNumber')), _to_int(it.get('transactionIndex')))
-
-    semaphore = asyncio.Semaphore(max(1, max_concurrent))
-
-    async def _fetch_range_wrapped(s: int, e: int) -> list[dict[str, Any]]:
-        async with semaphore:
-            return await get_normal_transactions(
-                address=address,
-                start_block=s,
-                end_block=e,
-                sort='asc',
-                page=1,
-                offset=max_offset,
-                api_kind=api_kind,
-                network=network,
-                api_key=api_key,
-                http=http,
-                _endpoint_builder=_endpoint_builder,
-                _rate_limiter=_rate_limiter,
-                _retry=_retry,
-                _telemetry=_telemetry,
-            )
-
-    # fallback path removed (legacy range-splitting). Use the generic page loop result above.
+    # Fallback path removed (legacy range-splitting). Use the generic page loop result above.
     return unique
 
 
