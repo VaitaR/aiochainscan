@@ -325,7 +325,15 @@ async def get_all_logs_optimized(
                 else http.get(url, params=signed_params, headers=headers)
             )
             latest_hex = response.get('result') if isinstance(response, dict) else None
-            end_block = int(latest_hex, 16) if isinstance(latest_hex, str) and latest_hex.startswith('0x') else int(latest_hex)
+            if isinstance(latest_hex, str):
+                if latest_hex.startswith('0x'):
+                    end_block = int(latest_hex, 16)
+                elif latest_hex.isdigit():
+                    end_block = int(latest_hex)
+                else:
+                    end_block = 99_999_999
+            else:
+                end_block = 99_999_999
         except Exception:
             end_block = 99_999_999
 
@@ -365,7 +373,11 @@ async def get_all_logs_optimized(
                 break
             try:
                 last_block_str = items[-1].get('blockNumber')
-                last_block = int(last_block_str, 16) if isinstance(last_block_str, str) and last_block_str.startswith('0x') else int(str(last_block_str))
+                last_block = (
+                    int(last_block_str, 16)
+                    if isinstance(last_block_str, str) and last_block_str.startswith('0x')
+                    else int(str(last_block_str))
+                )
             except Exception:
                 break
             current_start = max(current_start, last_block + 1)
@@ -421,5 +433,7 @@ async def get_all_logs_optimized(
 
     unique.sort(key=lambda it: (to_int(it.get('blockNumber')), to_int(it.get('logIndex'))))
     if stats is not None:
-        stats.update({'pages_processed': pages_processed, 'items_total': len(all_items), 'paging_used': 1})
+        stats.update(
+            {'pages_processed': pages_processed, 'items_total': len(all_items), 'paging_used': 1}
+        )
     return unique

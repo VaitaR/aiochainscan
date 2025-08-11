@@ -25,6 +25,7 @@ from .transaction import (
     get_transaction_by_hash,
     get_tx_receipt_status,
 )
+from .unified_fetch import fetch_all
 
 __all__ = [
     'get_address_balance',
@@ -48,4 +49,5 @@ __all__ = [
     'get_eth_supply',
     'get_eth2_supply',
     'get_total_nodes_count',
+    'fetch_all',
 ]

@@ -21,9 +21,7 @@ from aiochainscan import (  # noqa: E402  (import after sys.path tweak)
     StructlogTelemetry,
     UrlBuilderEndpoint,
 )
-from aiochainscan.services.fetch_all import (  # noqa: E402
-    fetch_all_transactions_eth_sliding_fast,
-)
+from aiochainscan.services.unified_fetch import fetch_all  # noqa: E402
 
 
 async def fetch_all_transactions_optimized_demo(*, address: str) -> list[dict]:
@@ -109,18 +107,20 @@ async def fetch_all_transactions_optimized_demo(*, address: str) -> list[dict]:
         # elapsed = time.time() - started
         # print(f'duration_s={elapsed:.2f} items={len(erc20_bs_fast)} tps={len(erc20_bs_fast)/max(elapsed,1e-6):.1f}')
 
-
         # Etherscan test (requires ETHERSCAN_KEY)
         print('--- Etherscan (fast sliding bi-directional) ---')
         import os
+
         eth_key = os.getenv('ETHERSCAN_KEY', '')
         if eth_key:
             started = time.time()
             print('sending batch: etherscan sliding_bi (max_offset=10000, page=1)')
-            txs_es_fast = await fetch_all_transactions_eth_sliding_fast(
+            txs_es_fast = await fetch_all(
+                data_type='transactions',
                 address=address,
                 start_block=0,
                 end_block=None,
+                api_kind='eth',
                 network='main',
                 api_key=eth_key,
                 http=http,
@@ -128,10 +128,14 @@ async def fetch_all_transactions_optimized_demo(*, address: str) -> list[dict]:
                 rate_limiter=SimpleRateLimiter(min_interval_seconds=0.2, burst=1),  # 5 rps
                 retry=retry,
                 telemetry=telemetry,
+                strategy='fast',
                 max_offset=10_000,
+                max_concurrent=1,
             )
             elapsed = time.time() - started
-            print(f'duration_s={elapsed:.2f} items={len(txs_es_fast)} tps={len(txs_es_fast)/max(elapsed,1e-6):.1f}')
+            print(
+                f'duration_s={elapsed:.2f} items={len(txs_es_fast)} tps={len(txs_es_fast)/max(elapsed,1e-6):.1f}'
+            )
 
         #     # Internal transactions (Etherscan-style sliding, using fast engine policy)
         #     print('--- Etherscan internal (sliding fast) ---')
