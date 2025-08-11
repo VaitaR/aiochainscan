@@ -276,9 +276,9 @@ class TestPerformanceBenchmarks:
 
         # fastabi should be significantly faster (at least 10x)
         improvement_ratio = python_time / fastabi_time
-        assert improvement_ratio >= 10.0, (
-            f'Expected 10x+ improvement, got {improvement_ratio:.2f}x'
-        )
+        assert (
+            improvement_ratio >= 10.0
+        ), f'Expected 10x+ improvement, got {improvement_ratio:.2f}x'
 
 
 class TestCompatibility:

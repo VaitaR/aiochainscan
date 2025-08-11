@@ -56,7 +56,12 @@ def _resolve_end_block_factory(
 
         response: Any = await (retry.run(_do) if retry is not None else _do())
         latest_hex = response.get('result') if isinstance(response, dict) else None
-        return int(latest_hex, 16) if isinstance(latest_hex, str) and latest_hex.startswith('0x') else int(latest_hex)  # type: ignore[arg-type]
+        if isinstance(latest_hex, str):
+            if latest_hex.startswith('0x'):
+                return int(latest_hex, 16)
+            if latest_hex.isdigit():
+                return int(latest_hex)
+        return 99_999_999
 
     return _resolve
 
@@ -78,7 +83,9 @@ async def fetch_all_transactions_basic(
 ) -> list[dict[str, Any]]:
     """Provider-agnostic paged fetch. Deduplicated and stably sorted."""
 
-    async def _fetch_page(*, page: int, start_block: int, end_block: int, offset: int) -> list[dict[str, Any]]:
+    async def _fetch_page(
+        *, page: int, start_block: int, end_block: int, offset: int
+    ) -> list[dict[str, Any]]:
         return await get_normal_transactions(
             address=address,
             start_block=start_block,
@@ -103,7 +110,8 @@ async def fetch_all_transactions_basic(
         order_fn=lambda it: (_to_int(it.get('blockNumber')), _to_int(it.get('transactionIndex'))),
         max_offset=max_offset,
         resolve_end_block=(
-            None if (isinstance(api_kind, str) and api_kind.startswith('blockscout_'))
+            None
+            if (isinstance(api_kind, str) and api_kind.startswith('blockscout_'))
             else _resolve_end_block_factory(
                 api_kind=api_kind,
                 network=network,
@@ -115,7 +123,9 @@ async def fetch_all_transactions_basic(
             )
         ),
     )
-    policy = ProviderPolicy(mode='paged', prefetch=1, window_cap=None, rps_key=f'{api_kind}:{network}:paging')
+    policy = ProviderPolicy(
+        mode='paged', prefetch=1, window_cap=None, rps_key=f'{api_kind}:{network}:paging'
+    )
     return await fetch_all_generic(
         start_block=start_block,
         end_block=end_block,
@@ -146,7 +156,9 @@ async def fetch_all_transactions_fast(
 ) -> list[dict[str, Any]]:
     """Provider-aware fast fetch using the generic paging engine."""
 
-    async def _fetch_page(*, page: int, start_block: int, end_block: int, offset: int) -> list[dict[str, Any]]:
+    async def _fetch_page(
+        *, page: int, start_block: int, end_block: int, offset: int
+    ) -> list[dict[str, Any]]:
         # For sliding mode, the engine will keep page=1; for paged, engine supplies page numbers
         return await get_normal_transactions(
             address=address,
@@ -172,7 +184,8 @@ async def fetch_all_transactions_fast(
         order_fn=lambda it: (_to_int(it.get('blockNumber')), _to_int(it.get('transactionIndex'))),
         max_offset=max_offset,
         resolve_end_block=(
-            None if (isinstance(api_kind, str) and api_kind.startswith('blockscout_'))
+            None
+            if (isinstance(api_kind, str) and api_kind.startswith('blockscout_'))
             else _resolve_end_block_factory(
                 api_kind=api_kind,
                 network=network,
@@ -184,7 +197,9 @@ async def fetch_all_transactions_fast(
             )
         ),
     )
-    policy = resolve_policy_for_provider(api_kind=api_kind, network=network, max_concurrent=max_concurrent)
+    policy = resolve_policy_for_provider(
+        api_kind=api_kind, network=network, max_concurrent=max_concurrent
+    )
     return await fetch_all_generic(
         start_block=start_block,
         end_block=end_block,
@@ -214,7 +229,9 @@ async def fetch_all_internal_basic(
 ) -> list[dict[str, Any]]:
     """Provider-agnostic paged fetch for internal transactions."""
 
-    async def _fetch_page(*, page: int, start_block: int, end_block: int, offset: int) -> list[dict[str, Any]]:
+    async def _fetch_page(
+        *, page: int, start_block: int, end_block: int, offset: int
+    ) -> list[dict[str, Any]]:
         # Some Blockscout endpoints time out with very large offsets; adaptively reduce
         current_offset = int(offset)
         attempts_left = 3
@@ -241,7 +258,11 @@ async def fetch_all_internal_basic(
                 # Retry with smaller payload on gateway/proxy timeouts typical for Blockscout
                 from aiohttp import ClientResponseError  # local import
 
-                if isinstance(exc, ClientResponseError) and exc.status in {502, 503, 504, 520, 524} and attempts_left > 0:
+                if (
+                    isinstance(exc, ClientResponseError)
+                    and exc.status in {502, 503, 504, 520, 524}
+                    and attempts_left > 0
+                ):
                     attempts_left -= 1
                     current_offset = max(1000, current_offset // 2)
                     continue
@@ -254,7 +275,8 @@ async def fetch_all_internal_basic(
         order_fn=lambda it: (_to_int(it.get('blockNumber')), _to_int(it.get('transactionIndex'))),
         max_offset=max_offset,
         resolve_end_block=(
-            None if (isinstance(api_kind, str) and api_kind.startswith('blockscout_'))
+            None
+            if (isinstance(api_kind, str) and api_kind.startswith('blockscout_'))
             else _resolve_end_block_factory(
                 api_kind=api_kind,
                 network=network,
@@ -266,7 +288,9 @@ async def fetch_all_internal_basic(
             )
         ),
     )
-    policy = ProviderPolicy(mode='paged', prefetch=1, window_cap=None, rps_key=f'{api_kind}:{network}:paging')
+    policy = ProviderPolicy(
+        mode='paged', prefetch=1, window_cap=None, rps_key=f'{api_kind}:{network}:paging'
+    )
     return await fetch_all_generic(
         start_block=start_block,
         end_block=end_block,
@@ -297,7 +321,9 @@ async def fetch_all_internal_fast(
 ) -> list[dict[str, Any]]:
     """Provider-aware fast fetch for internal transactions using the generic engine."""
 
-    async def _fetch_page(*, page: int, start_block: int, end_block: int, offset: int) -> list[dict[str, Any]]:
+    async def _fetch_page(
+        *, page: int, start_block: int, end_block: int, offset: int
+    ) -> list[dict[str, Any]]:
         return await get_internal_transactions(
             address=address,
             start_block=start_block,
@@ -332,7 +358,9 @@ async def fetch_all_internal_fast(
             retry=retry,
         ),
     )
-    policy = resolve_policy_for_provider(api_kind=api_kind, network=network, max_concurrent=max_concurrent)
+    policy = resolve_policy_for_provider(
+        api_kind=api_kind, network=network, max_concurrent=max_concurrent
+    )
     return await fetch_all_generic(
         start_block=start_block,
         end_block=end_block,
@@ -370,12 +398,14 @@ async def fetch_all_token_transfers_basic(
         h = it.get('hash')
         log_idx = it.get('logIndex')
         if isinstance(h, str) and isinstance(log_idx, str | int):
-            return f"{h}:{log_idx}"
+            return f'{h}:{log_idx}'
         if isinstance(h, str):
             return f"{h}:{it.get('contractAddress')}:{it.get('from')}:{it.get('to')}:{it.get('value')}"
         return None
 
-    async def _fetch_page(*, page: int, start_block: int, end_block: int, offset: int) -> list[dict[str, Any]]:
+    async def _fetch_page(
+        *, page: int, start_block: int, end_block: int, offset: int
+    ) -> list[dict[str, Any]]:
         return await get_token_transfers(
             address=address,
             contract_address=None,
@@ -402,7 +432,8 @@ async def fetch_all_token_transfers_basic(
         order_fn=lambda it: (_to_int(it.get('blockNumber')), _to_int(it.get('transactionIndex'))),
         max_offset=max_offset,
         resolve_end_block=(
-            None if (isinstance(api_kind, str) and api_kind.startswith('blockscout_'))
+            None
+            if (isinstance(api_kind, str) and api_kind.startswith('blockscout_'))
             else _resolve_end_block_factory(
                 api_kind=api_kind,
                 network=network,
@@ -414,7 +445,9 @@ async def fetch_all_token_transfers_basic(
             )
         ),
     )
-    policy = ProviderPolicy(mode='paged', prefetch=1, window_cap=None, rps_key=f'{api_kind}:{network}:paging')
+    policy = ProviderPolicy(
+        mode='paged', prefetch=1, window_cap=None, rps_key=f'{api_kind}:{network}:paging'
+    )
     return await fetch_all_generic(
         start_block=start_block,
         end_block=end_block,
@@ -450,12 +483,14 @@ async def fetch_all_token_transfers_fast(
         h = it.get('hash')
         log_idx = it.get('logIndex')
         if isinstance(h, str) and isinstance(log_idx, str | int):
-            return f"{h}:{log_idx}"
+            return f'{h}:{log_idx}'
         if isinstance(h, str):
             return f"{h}:{it.get('contractAddress')}:{it.get('from')}:{it.get('to')}:{it.get('value')}"
         return None
 
-    async def _fetch_page(*, page: int, start_block: int, end_block: int, offset: int) -> list[dict[str, Any]]:
+    async def _fetch_page(
+        *, page: int, start_block: int, end_block: int, offset: int
+    ) -> list[dict[str, Any]]:
         return await get_token_transfers(
             address=address,
             contract_address=None,
@@ -491,7 +526,9 @@ async def fetch_all_token_transfers_fast(
             retry=retry,
         ),
     )
-    policy = resolve_policy_for_provider(api_kind=api_kind, network=network, max_concurrent=max_concurrent)
+    policy = resolve_policy_for_provider(
+        api_kind=api_kind, network=network, max_concurrent=max_concurrent
+    )
     return await fetch_all_generic(
         start_block=start_block,
         end_block=end_block,
@@ -526,7 +563,9 @@ async def fetch_all_logs_basic(
     topics = topics or None
     topic_operators = topic_operators or None
 
-    async def _fetch_page(*, page: int, start_block: int, end_block: int, offset: int) -> list[dict[str, Any]]:
+    async def _fetch_page(
+        *, page: int, start_block: int, end_block: int, offset: int
+    ) -> list[dict[str, Any]]:
         return await get_logs(
             start_block=start_block or 0,
             end_block=end_block or 99_999_999,
@@ -557,7 +596,8 @@ async def fetch_all_logs_basic(
         order_fn=lambda it: (_to_int(it.get('blockNumber')), _to_int(it.get('logIndex'))),
         max_offset=max_offset,
         resolve_end_block=(
-            None if (isinstance(api_kind, str) and api_kind.startswith('blockscout_'))
+            None
+            if (isinstance(api_kind, str) and api_kind.startswith('blockscout_'))
             else _resolve_end_block_factory(
                 api_kind=api_kind,
                 network=network,
@@ -569,7 +609,9 @@ async def fetch_all_logs_basic(
             )
         ),
     )
-    policy = ProviderPolicy(mode='paged', prefetch=1, window_cap=None, rps_key=f'{api_kind}:{network}:paging')
+    policy = ProviderPolicy(
+        mode='paged', prefetch=1, window_cap=None, rps_key=f'{api_kind}:{network}:paging'
+    )
     return await fetch_all_generic(
         start_block=start_block,
         end_block=end_block,
@@ -605,7 +647,9 @@ async def fetch_all_logs_fast(
     topics = topics or None
     topic_operators = topic_operators or None
 
-    async def _fetch_page(*, page: int, start_block: int, end_block: int, offset: int) -> list[dict[str, Any]]:
+    async def _fetch_page(
+        *, page: int, start_block: int, end_block: int, offset: int
+    ) -> list[dict[str, Any]]:
         return await get_logs(
             start_block=start_block,
             end_block=end_block,
@@ -645,7 +689,9 @@ async def fetch_all_logs_fast(
             retry=retry,
         ),
     )
-    policy = resolve_policy_for_provider(api_kind=api_kind, network=network, max_concurrent=max_concurrent)
+    policy = resolve_policy_for_provider(
+        api_kind=api_kind, network=network, max_concurrent=max_concurrent
+    )
     return await fetch_all_generic(
         start_block=start_block,
         end_block=end_block,
@@ -729,7 +775,9 @@ async def fetch_all_transactions_eth_sliding(
             retry=retry,
         ),
     )
-    policy = ProviderPolicy(mode='sliding', prefetch=1, window_cap=10_000, rps_key=f'{api_kind}:{network}:txlist')
+    policy = ProviderPolicy(
+        mode='sliding', prefetch=1, window_cap=10_000, rps_key=f'{api_kind}:{network}:txlist'
+    )
     return await fetch_all_generic(
         start_block=start_block,
         end_block=end_block,
@@ -755,7 +803,7 @@ async def fetch_all_transactions_eth_sliding_fast(
     retry: RetryPolicy | None = None,
     telemetry: Telemetry | None = None,
     max_offset: int = 10_000,
-    ) -> list[dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Etherscan sliding fast: alternate asc/desc pages to utilize window from both ends.
 
     - Always page=1 with offset<=10_000; adjust [low..up] after each page
@@ -810,7 +858,9 @@ async def fetch_all_transactions_eth_sliding_fast(
             retry=retry,
         ),
     )
-    policy = ProviderPolicy(mode='sliding_bi', prefetch=1, window_cap=10_000, rps_key=f'{api_kind}:{network}:txlist')
+    policy = ProviderPolicy(
+        mode='sliding_bi', prefetch=1, window_cap=10_000, rps_key=f'{api_kind}:{network}:txlist'
+    )
     return await fetch_all_generic(
         start_block=start_block,
         end_block=end_block,
@@ -821,4 +871,3 @@ async def fetch_all_transactions_eth_sliding_fast(
         telemetry=telemetry,
         max_concurrent=1,
     )
-
