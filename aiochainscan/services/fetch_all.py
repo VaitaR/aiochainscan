@@ -56,11 +56,12 @@ def _resolve_end_block_factory(
 
         response: Any = await (retry.run(_do) if retry is not None else _do())
         latest_hex = response.get('result') if isinstance(response, dict) else None
-        return (
-            int(latest_hex, 16)
-            if isinstance(latest_hex, str) and latest_hex.startswith('0x')
-            else int(latest_hex)
-        )  # type: ignore[arg-type]
+        if isinstance(latest_hex, str):
+            if latest_hex.startswith('0x'):
+                return int(latest_hex, 16)
+            if latest_hex.isdigit():
+                return int(latest_hex)
+        return 99_999_999
 
     return _resolve
 
