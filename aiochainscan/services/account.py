@@ -651,7 +651,7 @@ async def get_all_transactions_optimized(
                     break
                 # advance window to next block after the last item
                 try:
-                    last_block_str = items[-1].get('blockNumber')  # type: ignore[index]
+                    last_block_str = items[-1].get('blockNumber')
                     last_block = (
                         int(last_block_str, 16)
                         if isinstance(last_block_str, str) and last_block_str.startswith('0x')
@@ -759,7 +759,7 @@ async def get_all_transactions_optimized(
         return unique
 
     # Fallback: generic page loop (provider-agnostic)
-    all_items: list[dict[str, Any]] = []
+    all_items: list[dict[str, Any]] = []  # type: ignore[no-redef]
     pages_processed = 0
     start_ts = __import__('time').monotonic() if _telemetry is not None else 0.0
     page = 1
@@ -794,8 +794,8 @@ async def get_all_transactions_optimized(
         page += 1
 
     # Dedup + sort
-    seen: set[str] = set()
-    unique: list[dict[str, Any]] = []
+    seen: set[str] = set()  # type: ignore[no-redef]
+    unique: list[dict[str, Any]] = []  # type: ignore[no-redef]
     for it in all_items:
         if not isinstance(it, dict):
             continue
@@ -805,7 +805,7 @@ async def get_all_transactions_optimized(
         seen.add(h)
         unique.append(it)
 
-    def _to_int(v: Any) -> int:
+    def _to_int(v: Any) -> int:  # type: ignore[no-redef]
         try:
             if isinstance(v, str):
                 s = v.strip()
@@ -834,7 +834,7 @@ async def get_all_transactions_optimized(
         stats.update(
             {'pages_processed': pages_processed, 'items_total': len(all_items), 'paging_used': 1}
         )
-    return unique
+    return unique  # type: ignore[no-redef]
 
     def _dedup_key(it: dict[str, Any]) -> str | None:
         h = it.get('hash')

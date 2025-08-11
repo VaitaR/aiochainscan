@@ -99,7 +99,6 @@ from aiochainscan.services.contract import (
 from aiochainscan.services.contract import (
     verify_proxy_contract as verify_proxy_contract_service,
 )
-
 from aiochainscan.services.gas import get_gas_oracle as get_gas_oracle_service
 from aiochainscan.services.gas import normalize_gas_oracle
 from aiochainscan.services.logs import get_logs_page as get_logs_page_service
@@ -1142,6 +1141,10 @@ async def get_all_logs_optimized(
     endpoint = endpoint_builder or UrlBuilderEndpoint()
     telemetry = telemetry or StructlogTelemetry()
     try:
+        from aiochainscan.services.logs import (
+            get_all_logs_optimized as get_all_logs_optimized_service,
+        )
+
         return await get_all_logs_optimized_service(
             address=address,
             start_block=start_block,
