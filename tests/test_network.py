@@ -76,9 +76,8 @@ def test_init(ub):
 
 
 def test_no_loop(ub):
-    with pytest.raises(RuntimeError) as e:
-        Network(ub, None, None, None, None, None)
-    assert str(e.value) == 'no running event loop'
+    network = Network(ub, None, None, None, None, None)
+    assert network._loop is not None
 
 
 @pytest.mark.asyncio
@@ -86,7 +85,9 @@ async def test_get(nw):
     with patch('aiochainscan.network.Network._request', new=AsyncMock()) as mock:
         await nw.get()
         mock.assert_called_once_with(
-            METH_GET, params={'apikey': nw._url_builder._API_KEY}, headers={}
+            METH_GET,
+            params={'chainid': '1'},
+            headers={'X-API-Key': nw._url_builder._API_KEY},
         )
 
 
@@ -95,19 +96,25 @@ async def test_post(nw):
     with patch('aiochainscan.network.Network._request', new=AsyncMock()) as mock:
         await nw.post()
         mock.assert_called_once_with(
-            METH_POST, data={'apikey': nw._url_builder._API_KEY}, headers={}
+            METH_POST,
+            data={'chainid': '1'},
+            headers={'X-API-Key': nw._url_builder._API_KEY},
         )
 
     with patch('aiochainscan.network.Network._request', new=AsyncMock()) as mock:
         await nw.post({'some': 'data'})
         mock.assert_called_once_with(
-            METH_POST, data={'apikey': nw._url_builder._API_KEY, 'some': 'data'}, headers={}
+            METH_POST,
+            data={'chainid': '1', 'some': 'data'},
+            headers={'X-API-Key': nw._url_builder._API_KEY},
         )
 
     with patch('aiochainscan.network.Network._request', new=AsyncMock()) as mock:
         await nw.post({'some': 'data', 'null': None})
         mock.assert_called_once_with(
-            METH_POST, data={'apikey': nw._url_builder._API_KEY, 'some': 'data'}, headers={}
+            METH_POST,
+            data={'chainid': '1', 'some': 'data'},
+            headers={'X-API-Key': nw._url_builder._API_KEY},
         )
 
 

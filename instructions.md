@@ -18,7 +18,7 @@ Async Python wrapper for blockchain explorer APIs (Etherscan, BSCScan, PolygonSc
 - **Method Enum**: Type-safe logical operations (ACCOUNT_BALANCE, TX_BY_HASH, etc.)
 - **Scanner Registry**: Plugin system for different blockchain explorer implementations
 - **EndpointSpec**: Declarative endpoint configuration with parameter mapping and response parsing
-- **5 Working Scanner Implementations**: EtherscanV1, EtherscanV2, BaseScanV1, BlockScoutV1, RoutScanV1
+- **5 Working Scanner Implementations**: EtherscanV2, BaseScanV1, BlockScoutV1, RoutScanV1, MoralisV1
 
 ### Key Classes
 - `Client`: Main client class with module instances (legacy - maintained for backward compatibility)
@@ -31,32 +31,27 @@ Async Python wrapper for blockchain explorer APIs (Etherscan, BSCScan, PolygonSc
 ## Supported Scanners & Networks
 
 ### Production Ready Scanners (6 implementations):
-1. **EtherscanV1** - Standard Etherscan API format
-   - Networks: Ethereum (main, goerli, sepolia), BSC, Polygon, etc.
-   - Methods: 17 (full feature set)
-   - Auth: API key via query parameter
-
-2. **EtherscanV2** - Multichain Etherscan format
-   - Networks: Ethereum, BSC, Polygon, Arbitrum, Optimism, etc.
+1. **EtherscanV2** - Multichain Etherscan format
+   - Networks: Ethereum mainnet + testnets, BSC, Polygon, Arbitrum, Optimism, Base
    - Methods: 7 (core methods)
-   - Auth: API key via query parameter
+   - Auth: API key via `X-API-Key` header
 
-3. **BaseScanV1** - Base network scanner (inherits from EtherscanV1)
+2. **BaseScanV1** - Base network scanner (inherits from the shared Etherscan-like base)
    - Networks: Base (main, goerli, sepolia)
    - Methods: 17 (inherited)
    - Auth: API key via query parameter
 
-4. **BlockScoutV1** - Public blockchain explorer (inherits from EtherscanV1)
+3. **BlockScoutV1** - Public blockchain explorer (inherits from the shared Etherscan-like base)
    - Networks: Sepolia, Gnosis, Polygon, and many others
    - Methods: 17 (inherited)
    - Auth: Optional API key (works without)
 
-5. **RoutScanV1** - Mode network explorer
+4. **RoutScanV1** - Mode network explorer
    - Networks: Mode (chain ID 34443)
    - Methods: 7 (core methods)
    - Auth: Optional API key (works without)
 
-6. **MoralisV1** - Moralis Web3 Data API (NEW)
+5. **MoralisV1** - Moralis Web3 Data API (NEW)
    - Networks: Ethereum, BSC, Polygon, Arbitrum, Base, Optimism, Avalanche
    - Methods: 7 (core Web3 methods)
    - Auth: API key via X-API-Key header (required)
@@ -79,10 +74,10 @@ aiochainscan/
 │   └── __init__.py
 ├── scanners/          # ✅ Scanner implementations (5 working)
 │   ├── base.py        # Scanner abstract base class
-│   ├── etherscan_v1.py # Etherscan API v1 (17 methods)
+│   ├── _etherscan_like.py # Shared Etherscan-style implementation for partner scanners
 │   ├── etherscan_v2.py # Etherscan API v2 (7 methods)
-│   ├── basescan_v1.py  # BaseScan (inherits EtherscanV1)
-│   ├── blockscout_v1.py # BlockScout (public API)
+│   ├── basescan_v1.py  # BaseScan (inherits shared Etherscan-style base)
+│   ├── blockscout_v1.py # BlockScout (inherits shared Etherscan-style base)
 │   ├── routscan_v1.py  # RoutScan (Mode network)
 │   └── __init__.py    # Scanner registry system
 ├── network.py         # HTTP client with throttling
@@ -106,7 +101,7 @@ from aiochainscan.core.client import ChainscanClient
 from aiochainscan.core.method import Method
 
 # Etherscan
-client = ChainscanClient.from_config('etherscan', 'v1', 'eth', 'main')
+client = ChainscanClient.from_config('etherscan', 'v2', 'eth', 'main')
 balance = await client.call(Method.ACCOUNT_BALANCE, address='0x...')
 
 # BlockScout (no API key needed)
@@ -197,11 +192,11 @@ This guide is based on successful implementation of 5 different scanner types du
 ```python
 # ✅ BaseScan implementation (successful)
 @register_scanner
-class BaseScanV1(EtherscanV1):
+class BaseScanV1(EtherscanLikeScanner):
     name = "basescan"
     version = "v1"
     supported_networks = {"main", "goerli", "sepolia"}
-    # All SPECS and logic inherited from EtherscanV1
+    # All SPECS and logic inherited from the shared Etherscan-like base
 ```
 
 #### **Approach 2: Custom URL Handling (for similar APIs with different URL structure)**
@@ -214,7 +209,7 @@ class BaseScanV1(EtherscanV1):
 ```python
 # ✅ BlockScout implementation (successful)
 @register_scanner
-class BlockScoutV1(EtherscanV1):
+class BlockScoutV1(EtherscanLikeScanner):
     name = "blockscout"
     supported_networks = {"sepolia", "gnosis", "polygon", ...}
 
@@ -252,7 +247,7 @@ class RoutScanV1(Scanner):
 
 #### **Step 1: Research & Planning**
 1. **API Documentation**: Study target API structure thoroughly
-2. **Compare with Existing**: Identify similarity to EtherscanV1/V2
+2. **Compare with Existing**: Identify similarity to the shared Etherscan-like base or EtherscanV2
 3. **Choose Approach**: Inheritance → Custom URL → Complete Custom
 4. **Network Mapping**: Document supported networks and their identifiers
 
@@ -288,7 +283,7 @@ Create `aiochainscan/scanners/new_scanner_v1.py`:
 
 ```python
 @register_scanner
-class NewScannerV1(Scanner):  # or inherit from EtherscanV1
+class NewScannerV1(Scanner):  # or inherit from EtherscanLikeScanner when compatible
     name = "new_scanner"
     version = "v1"
     supported_networks = {"main", "testnet"}
@@ -468,13 +463,13 @@ python3 test_new_scanner.py
 
 | Scanner | Status | Methods | Networks | Complexity | Maintenance |
 |---------|--------|---------|----------|------------|-------------|
-| **EtherscanV1** | ✅ Production | 17 | 4+ | Medium | Low |
 | **EtherscanV2** | ✅ Production | 7 | 8+ | Medium | Low |
 | **BaseScanV1** | ✅ Production | 17 | 3 | Very Low | Minimal |
 | **BlockScoutV1** | ✅ Production | 17 | 8+ | Medium | Low |
 | **RoutScanV1** | ✅ Production | 7 | 1 | High | Medium |
+| **MoralisV1** | ✅ Production | 7 | 7 | High | Medium |
 
-**Total: 6 working scanner implementations supporting 40+ networks with 80+ unified methods.**
+**Total: 5 working scanner implementations supporting 35+ networks with 70+ unified methods.**
 
 ---
 
@@ -556,7 +551,7 @@ for network in networks:
 - **Error Handling**: Enhanced error messages with chain context
 
 ### Lessons Applied from Project Guidelines
-1. **Inheritance Strategy**: Used direct `Scanner` inheritance (not `EtherscanV1`) due to API differences
+1. **Inheritance Strategy**: Used direct `Scanner` inheritance (not the shared Etherscan-like base) due to API differences
 2. **URL Handling**: Custom `call()` method following `RoutScanV1` pattern
 3. **Authentication**: Proper header-based auth implementation
 4. **Error Handling**: Chain-specific error context
@@ -868,7 +863,7 @@ graph LR
 
   subgraph UnifiedCore
     core["Core [Container]\nChainscanClient, Method, EndpointSpec"]
-    scanners["Scanners [Container]\netherscan_v1/v2, basescan_v1, blockscout_v1, routscan_v1, moralis_v1"]
+    scanners["Scanners [Container]\netherscan_v2, basescan_v1, blockscout_v1, routscan_v1, moralis_v1"]
     urlb["UrlBuilder [Container]"]
     net["Network [Container]\n(aiohttp / curl_cffi)"]
     fastabi["FastABI [Container]\nRust/PyO3"]
