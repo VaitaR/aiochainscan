@@ -27,10 +27,10 @@ class ChainscanClient:
     Example:
         ```python
         # Using configuration system
-        client = ChainscanClient.from_config('etherscan', 'v1', 'eth', 'main')
+        client = ChainscanClient.from_config('etherscan', 'v2', 'eth', 'main')
 
         # Direct instantiation
-        client = ChainscanClient('etherscan', 'v1', 'eth', 'main', 'your_api_key')
+        client = ChainscanClient('etherscan', 'v2', 'eth', 'main', 'your_api_key')
 
         # Make unified API calls
         balance = await client.call(Method.ACCOUNT_BALANCE, address='0x...')
@@ -117,8 +117,8 @@ class ChainscanClient:
 
         Example:
             ```python
-            # Etherscan v1 for Ethereum mainnet
-            client = ChainscanClient.from_config('etherscan', 'v1', 'eth', 'main')
+            # Etherscan v2 for Ethereum mainnet
+            client = ChainscanClient.from_config('etherscan', 'v2', 'eth', 'main')
 
             # OKLink v1 for XLayer
             client = ChainscanClient.from_config('oklink', 'v1', 'xlayer', 'main')

@@ -2,8 +2,8 @@
 """
 BaseScan Demo - Demonstration of inherited scanner functionality.
 
-Shows how BaseScanV1 inherits all functionality from EtherscanV1
-while working with Base network endpoints.
+Shows how BaseScanV1 inherits functionality from the shared Etherscan-style
+base while working with Base network endpoints.
 """
 
 import asyncio
@@ -41,9 +41,9 @@ async def main():
 
     # Method 1: Traditional Etherscan (for comparison)
     if etherscan_key:
-        print('\n1️⃣ Etherscan (Ethereum mainnet - for comparison):')
+        print('\n1️⃣ Etherscan v2 (Ethereum mainnet - for comparison):')
         try:
-            client_eth = ChainscanClient.from_config('etherscan', 'v1', 'eth', 'main')
+            client_eth = ChainscanClient.from_config('etherscan', 'v2', 'eth', 'main')
             balance_eth = await client_eth.call(Method.ACCOUNT_BALANCE, address=address)
             print(f'   ✅ ETH Balance: {balance_eth} wei ({int(balance_eth) / 10**18:.6f} ETH)')
             results.append(('Etherscan (ETH)', balance_eth))
@@ -70,7 +70,7 @@ async def main():
     print(f'   📦 Scanner: {base_scanner.name} v{base_scanner.version}')
     print(f'   🌐 Networks: {", ".join(sorted(base_scanner.supported_networks))}')
     print(f'   🔐 Auth: {base_scanner.auth_mode} ({base_scanner.auth_field})')
-    print(f'   ⚙️  Methods: {len(base_scanner.SPECS)} inherited from EtherscanV1')
+    print(f'   ⚙️  Methods: {len(base_scanner.SPECS)} inherited from the shared Etherscan-style base')
 
     print('\n📋 Inherited Methods:')
     methods = list(base_scanner.SPECS.keys())
@@ -83,9 +83,9 @@ async def main():
     print('🏗️  Architecture Benefits Demonstrated:')
 
     print('\n✨ Code Reuse:')
-    print('   • BaseScan inherits ALL 17 methods from EtherscanV1')
+    print('   • BaseScan inherits ALL 17 methods from the shared Etherscan-style base')
     print('   • Zero code duplication - just change name and networks')
-    print('   • Automatic updates when EtherscanV1 gets new features')
+    print('   • Automatic updates when the shared base gets new features')
 
     print('\n🔌 Easy Configuration:')
     print('   • Same ChainscanClient.from_config() pattern')
@@ -105,7 +105,7 @@ async def main():
     # Show class hierarchy
     print('\n🧬 Class Hierarchy:')
     print('   Scanner (ABC)')
-    print('   └── EtherscanV1')
+    print('   └── EtherscanLikeScanner')
     print('       └── BaseScanV1  ← Inherits all SPECS and functionality')
 
     if len(results) >= 2:
