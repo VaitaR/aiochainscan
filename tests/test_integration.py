@@ -25,7 +25,6 @@ import os
 from unittest.mock import patch
 
 import pytest
-from curl_cffi.requests.exceptions import Timeout as CffiTimeout
 
 from aiochainscan import Client
 from aiochainscan.config import config_manager
@@ -203,7 +202,7 @@ class TestBasicAPIFunctionality:
                     )
                 else:
                     raise
-            except CffiTimeout as e:
+            except asyncio.TimeoutError as e:
                 pytest.skip(f'⏱️ Network timeout retrieving latest block: {e}')
 
             # Small delay to respect rate limits
@@ -268,7 +267,7 @@ class TestBasicAPIFunctionality:
                 block_num = int(block_number, 16)
                 assert block_num > 0
                 print(f'✅ Latest Block: {block_num}')
-            except CffiTimeout as e:
+            except asyncio.TimeoutError as e:
                 pytest.skip(f'⏱️ Network timeout retrieving latest block: {e}')
 
             # Small delay to respect rate limits
@@ -306,7 +305,7 @@ class TestBasicAPIFunctionality:
                 block_num = int(block_number, 16)
                 assert block_num > 0
                 print(f'✅ BSC Latest Block: {block_num}')
-            except CffiTimeout as e:
+            except asyncio.TimeoutError as e:
                 pytest.skip(f'⏱️ BSC network timeout retrieving latest block: {e}')
 
             # Small delay to respect rate limits
@@ -371,7 +370,7 @@ class TestAPIKeyOptionalFunctionality:
                 assert block_number is not None
                 block_num = int(block_number, 16)
                 assert block_num > 0
-            except CffiTimeout as e:
+            except asyncio.TimeoutError as e:
                 pytest.skip(f'⏱️ Network timeout retrieving latest block: {e}')
 
             key_status = 'with API key' if has_api_key else 'without API key'
