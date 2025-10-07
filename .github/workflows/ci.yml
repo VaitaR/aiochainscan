@@ -24,23 +24,29 @@ jobs:
         with:
           version: "latest"
 
+      - name: Cache uv packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/uv
+            ~/.local/share/uv
+          key: ${{ runner.os }}-uv-${{ env.PYTHON_VERSION }}-${{ hashFiles('uv.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-uv-${{ env.PYTHON_VERSION }}-
+
       - name: Set up Python
         run: uv python install ${{ env.PYTHON_VERSION }}
 
       - name: Install dependencies
-        run: uv sync --extra dev
+        run: uv sync --extra dev --frozen
 
       - name: Run pre-commit (all files)
         run: uv run pre-commit run --all-files --show-diff-on-failure
 
       - name: Typecheck (mypy)
-        run: |
-          uv pip install mypy
-          uv run mypy --strict aiochainscan
+        run: uv run mypy --strict aiochainscan
       - name: Import Linter
-        run: |
-          uv pip install import-linter
-          uv run lint-imports --config .importlinter | cat
+        run: uv run lint-imports --config .importlinter | cat
 
   test:
     name: Test
@@ -58,11 +64,21 @@ jobs:
         with:
           version: "latest"
 
+      - name: Cache uv packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/uv
+            ~/.local/share/uv
+          key: ${{ runner.os }}-uv-${{ matrix.python-version }}-${{ hashFiles('uv.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-uv-${{ matrix.python-version }}-
+
       - name: Set up Python ${{ matrix.python-version }}
         run: uv python install ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: uv sync --extra dev
+        run: uv sync --extra dev --frozen
 
       - name: Run tests
         run: uv run pytest --cov=aiochainscan --cov-report=xml --cov-report=term-missing
@@ -82,11 +98,21 @@ jobs:
         with:
           version: "latest"
 
+      - name: Cache uv packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/uv
+            ~/.local/share/uv
+          key: ${{ runner.os }}-uv-${{ env.PYTHON_VERSION }}-${{ hashFiles('uv.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-uv-${{ env.PYTHON_VERSION }}-
+
       - name: Set up Python
         run: uv python install ${{ env.PYTHON_VERSION }}
 
       - name: Install dependencies
-        run: uv sync --extra dev
+        run: uv sync --extra dev --frozen
 
       - name: Build package
         run: uv build
