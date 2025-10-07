@@ -47,7 +47,7 @@ class Network:
         self._throttler: AbstractAsyncContextManager[Any] = throttler or Throttler(
             rate_limit=5, period=1.0
         )
-        self._retry_client: Any | None = None
+        self._retry_client: RetryClient | None = None
         self._retry_options = retry_options
         self._logger = logging.getLogger(__name__)
 
@@ -62,6 +62,8 @@ class Network:
     async def close(self) -> None:
         if self._retry_client is not None:
             await self._retry_client.close()
+            self._retry_client = None
+        self._loop = None
 
     async def get(
         self, params: dict[str, Any] | None = None, headers: dict[str, str] | None = None
@@ -75,18 +77,43 @@ class Network:
         data, headers = self._url_builder.filter_and_sign(data, headers)
         return await self._request(METH_POST, data=data, headers=headers)
 
-    def _get_retry_client(self) -> Any:
+    def _ensure_loop(self) -> AbstractEventLoop:
         try:
             loop = asyncio.get_running_loop()
-        except RuntimeError:
+        except RuntimeError as exc:
+            if self._loop is None:
+                raise RuntimeError(
+                    'Network requests must be awaited from within a running event loop. '
+                    'Instantiate the client inside the loop or pass an explicit loop instance.'
+                ) from exc
+
             loop = self._loop
-            if loop is None:
-                raise
+            if not loop.is_running():
+                raise RuntimeError(
+                    'The stored event loop is not running; create the Network inside an active loop.'
+                ) from exc
         else:
             self._loop = loop
 
-        session = ClientSession(loop=loop, timeout=self._timeout)
-        return RetryClient(client_session=session, retry_options=self._retry_options)
+        return loop
+
+    async def _get_retry_client(self) -> RetryClient:
+        previous_loop = self._loop
+        loop = self._ensure_loop()
+
+        if self._retry_client is not None and previous_loop is not loop:
+            # Re-bind the transport if the active loop changed between requests.
+            await self._retry_client.close()
+            self._retry_client = None
+
+        if self._retry_client is None:
+            session = ClientSession(timeout=self._timeout)
+            self._retry_client = RetryClient(
+                client_session=session, retry_options=self._retry_options
+            )
+            self._loop = loop
+
+        return self._retry_client
 
     async def _request(
         self,
@@ -95,21 +122,23 @@ class Network:
         params: dict[str, Any] | None = None,
         headers: dict[str, str] | None = None,
     ) -> dict[str, Any] | list[Any] | str:
-        if self._retry_client is None:
-            self._retry_client = self._get_retry_client()
+        retry_client = await self._get_retry_client()
 
         async with self._throttler:
-            response = await self._aiohttp_request(method, data, params, headers)
+            response = await self._aiohttp_request(
+                retry_client, method, data, params, headers
+            )
             return await self._handle_response(response)
 
     async def _aiohttp_request(
         self,
+        client: RetryClient,
         method: str,
         data: dict[str, Any] | None = None,
         params: dict[str, Any] | None = None,
         headers: dict[str, str] | None = None,
     ) -> aiohttp.ClientResponse:
-        session_method = getattr(self._retry_client, method.lower())
+        session_method = getattr(client, method.lower())
         async with session_method(
             self._url_builder.API_URL, params=params, data=data, headers=headers, proxy=self._proxy
         ) as response:
