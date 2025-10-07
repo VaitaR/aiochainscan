@@ -33,15 +33,15 @@ class Network:
         retry_options: RetryOptionsBase | None = None,
     ) -> None:
         self._url_builder = url_builder
+        self._loop: AbstractEventLoop | None
         if loop is not None:
             self._loop = loop
         else:
             try:
                 self._loop = asyncio.get_running_loop()
             except RuntimeError:
-                # Allow constructing the client in a thread without an active loop; the
-                # actual loop will be picked up when the first request is awaited.
-                self._loop = asyncio.get_event_loop()
+                # Defer binding to an event loop until the first awaited request.
+                self._loop = None
         self._timeout = self._prepare_timeout(timeout)
         self._proxy = proxy
         self._throttler: AbstractAsyncContextManager[Any] = throttler or Throttler(
@@ -76,7 +76,16 @@ class Network:
         return await self._request(METH_POST, data=data, headers=headers)
 
     def _get_retry_client(self) -> Any:
-        session = ClientSession(loop=self._loop, timeout=self._timeout)
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = self._loop
+            if loop is None:
+                raise
+        else:
+            self._loop = loop
+
+        session = ClientSession(loop=loop, timeout=self._timeout)
         return RetryClient(client_session=session, retry_options=self._retry_options)
 
     async def _request(

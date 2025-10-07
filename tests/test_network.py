@@ -76,9 +76,8 @@ def test_init(ub):
 
 
 def test_no_loop(ub):
-    with pytest.raises(RuntimeError) as e:
-        Network(ub, None, None, None, None, None)
-    assert str(e.value) == 'no running event loop'
+    network = Network(ub, None, None, None, None, None)
+    assert network._loop is None
 
 
 @pytest.mark.asyncio
