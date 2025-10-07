@@ -15,13 +15,18 @@ async def ub():
 
 
 def test_sign(ub):
-    params, headers = ub._sign({}, {})
-    assert params == {'apikey': ub._API_KEY}
-    assert headers == {}
+    params, headers = ub.filter_and_sign({}, {})
+    assert params == {'chainid': '1'}
+    assert headers == {'X-API-Key': ub._API_KEY}
 
-    params, headers = ub._sign({'something': 'something'}, {})
-    assert params == {'something': 'something', 'apikey': ub._API_KEY}
-    assert headers == {}
+    params, headers = ub.filter_and_sign({'something': 'something'}, {})
+    assert params == {'something': 'something', 'chainid': '1'}
+    assert headers == {'X-API-Key': ub._API_KEY}
+
+    # Legacy helper still proxies to the new implementation
+    legacy_params, legacy_headers = ub._sign({}, {})
+    assert legacy_params == {'chainid': '1'}
+    assert legacy_headers == {'X-API-Key': ub._API_KEY}
 
 
 def test_filter_params(ub):
@@ -31,26 +36,34 @@ def test_filter_params(ub):
     assert ub._filter_params({1: 2, 3: False}) == {1: 2, 3: False}
 
 
+def test_query_param_auth():
+    ub = UrlBuilder(apikey(), 'fantom', 'main')
+    params, headers = ub.filter_and_sign({}, {})
+    assert params == {'chainid': '250', 'apikey': ub._API_KEY}
+    assert headers == {}
+
+
 @pytest.mark.parametrize(
     'api_kind,network_name,expected',
     [
-        ('eth', 'main', 'https://api.etherscan.io/api'),
-        ('eth', 'ropsten', 'https://api-ropsten.etherscan.io/api'),
-        ('eth', 'kovan', 'https://api-kovan.etherscan.io/api'),
-        ('eth', 'rinkeby', 'https://api-rinkeby.etherscan.io/api'),
-        ('eth', 'goerli', 'https://api-goerli.etherscan.io/api'),
-        ('eth', 'sepolia', 'https://api-sepolia.etherscan.io/api'),
-        ('bsc', 'main', 'https://api.bscscan.com/api'),
-        ('bsc', 'testnet', 'https://api-testnet.bscscan.com/api'),
-        ('polygon', 'main', 'https://api.polygonscan.com/api'),
-        ('polygon', 'testnet', 'https://api-testnet.polygonscan.com/api'),
-        ('optimism', 'main', 'https://api-optimistic.etherscan.io/api'),
-        ('optimism', 'goerli', 'https://api-goerli-optimistic.etherscan.io/api'),
-        ('arbitrum', 'main', 'https://api.arbiscan.io/api'),
-        ('arbitrum', 'nova', 'https://api-nova.arbiscan.io/api'),
-        ('arbitrum', 'goerli', 'https://api-goerli.arbiscan.io/api'),
+        ('eth', 'main', 'https://api.etherscan.io/v2/api'),
+        ('eth', 'ropsten', 'https://api-ropsten.etherscan.io/v2/api'),
+        ('eth', 'kovan', 'https://api-kovan.etherscan.io/v2/api'),
+        ('eth', 'rinkeby', 'https://api-rinkeby.etherscan.io/v2/api'),
+        ('eth', 'goerli', 'https://api-goerli.etherscan.io/v2/api'),
+        ('eth', 'sepolia', 'https://api-sepolia.etherscan.io/v2/api'),
+        ('bsc', 'main', 'https://api.bscscan.com/v2/api'),
+        ('bsc', 'testnet', 'https://api-testnet.bscscan.com/v2/api'),
+        ('polygon', 'main', 'https://api.polygonscan.com/v2/api'),
+        ('polygon', 'testnet', 'https://api-testnet.polygonscan.com/v2/api'),
+        ('optimism', 'main', 'https://api-optimistic.etherscan.io/v2/api'),
+        ('optimism', 'goerli', 'https://api-goerli-optimistic.etherscan.io/v2/api'),
+        ('arbitrum', 'main', 'https://api.arbiscan.io/v2/api'),
+        ('arbitrum', 'nova', 'https://api-nova.arbiscan.io/v2/api'),
+        ('arbitrum', 'goerli', 'https://api-goerli.arbiscan.io/v2/api'),
         ('fantom', 'main', 'https://api.ftmscan.com/api'),
         ('fantom', 'testnet', 'https://api-testnet.ftmscan.com/api'),
+        ('base', 'main', 'https://api.basescan.org/v2/api'),
     ],
 )
 def test_api_url(api_kind, network_name, expected):
@@ -111,7 +124,7 @@ def test_currency(api_kind, expected):
 @pytest.mark.parametrize(
     'api_kind,network,expected_base_contains,expected_api_contains',
     [
-        ('base', 'main', 'basescan.org', 'https://api.basescan.org'),
+        ('base', 'main', 'basescan.org', 'https://api.basescan.org/v2/api'),
         (
             'routscan_mode',
             'main',

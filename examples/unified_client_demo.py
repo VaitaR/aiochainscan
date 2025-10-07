@@ -40,7 +40,7 @@ async def demo_unified_client():
         print('✅ Creating Etherscan client...')
         try:
             eth_client = ChainscanClient.from_config(
-                scanner_name='etherscan', scanner_version='v1', scanner_id='eth', network='main'
+                scanner_name='etherscan', scanner_version='v2', scanner_id='eth', network='main'
             )
             print(f'   {eth_client}')
             print(f'   Currency: {eth_client.currency}')
@@ -78,23 +78,23 @@ async def demo_unified_client():
         Method.EVENT_LOGS,
     ]
 
-    print(f'{"Method":<25} {"Etherscan v1":<15} {"OKLink v1":<15}')
+    print(f'{"Method":<25} {"Etherscan v2":<15} {"BlockScout v1":<15}')
     print('-' * 55)
 
     for method in test_methods:
         etherscan_support = (
             '✅'
-            if method in capabilities.get('etherscan_v1', {}).get('supported_methods', [])
+            if method in capabilities.get('etherscan_v2', {}).get('supported_methods', [])
             else '❌'
         )
-        oklink_support = (
+        blockscout_support = (
             '✅'
-            if method in capabilities.get('oklink_v1', {}).get('supported_methods', [])
+            if method in capabilities.get('blockscout_v1', {}).get('supported_methods', [])
             else '❌'
         )
 
         method_name = str(method).replace('Method.', '')
-        print(f'{method_name:<25} {etherscan_support:<15} {oklink_support:<15}')
+        print(f'{method_name:<25} {etherscan_support:<15} {blockscout_support:<15}')
 
     # Demo 4: Direct client instantiation
     print('\n🔧 Direct Client Instantiation:')
@@ -102,7 +102,7 @@ async def demo_unified_client():
     print("""
     client = ChainscanClient(
         scanner_name='etherscan',
-        scanner_version='v1',
+        scanner_version='v2',
         api_kind='eth',
         network='main',
         api_key='your_api_key_here'
@@ -162,7 +162,7 @@ async def demo_error_handling():
         # Try to create Etherscan client with unsupported network
         ChainscanClient(
             scanner_name='etherscan',
-            scanner_version='v1',
+            scanner_version='v2',
             api_kind='eth',
             network='unsupported_network',
             api_key='fake_key',

@@ -1,25 +1,15 @@
-"""
-Etherscan API v1 scanner implementation.
-"""
+"""Utility base classes for scanners that follow the legacy Etherscan schema."""
+
+from __future__ import annotations
 
 from ..core.endpoint import PARSERS, EndpointSpec
 from ..core.method import Method
-from . import register_scanner
 from .base import Scanner
 
 
-@register_scanner
-class EtherscanV1(Scanner):
-    """
-    Etherscan API v1 implementation.
+class EtherscanLikeScanner(Scanner):
+    """Common implementation for scanners that expose the classic Etherscan layout."""
 
-    Supports the standard Etherscan API format used by most Ethereum-like
-    blockchain explorers (Etherscan, BscScan, PolygonScan, etc.).
-    """
-
-    name = 'etherscan'
-    version = 'v1'
-    supported_networks = {'main', 'test', 'goerli', 'sepolia'}
     auth_mode = 'query'
     auth_field = 'apikey'
 
@@ -134,7 +124,6 @@ class EtherscanV1(Scanner):
             http_method='GET',
             path='/api',
             query={'module': 'gastracker', 'action': 'gasoracle'},
-            param_map={},
             parser=PARSERS['etherscan'],
         ),
         Method.EVENT_LOGS: EndpointSpec(
@@ -156,14 +145,12 @@ class EtherscanV1(Scanner):
             http_method='GET',
             path='/api',
             query={'module': 'stats', 'action': 'ethsupply'},
-            param_map={},
             parser=PARSERS['etherscan'],
         ),
         Method.ETH_PRICE: EndpointSpec(
             http_method='GET',
             path='/api',
             query={'module': 'stats', 'action': 'ethprice'},
-            param_map={},
             parser=PARSERS['etherscan'],
         ),
         Method.PROXY_ETH_CALL: EndpointSpec(
@@ -174,3 +161,4 @@ class EtherscanV1(Scanner):
             parser=PARSERS['etherscan'],
         ),
     }
+

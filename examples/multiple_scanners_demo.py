@@ -4,10 +4,9 @@ Comprehensive Multi-Scanner Architecture Demo.
 
 Demonstrates the unified scanner architecture with different implementations:
 1. Legacy Client (Etherscan via existing config)
-2. Etherscan v1 (via unified client)
-3. Etherscan v2 (multichain via unified client)
-4. BaseScan (Base network)
-5. Available scanner overview
+2. Etherscan v2 (multichain via unified client)
+3. BaseScan (Base network via unified client)
+4. Available scanner overview
 
 Shows how the same logical operation works across different APIs.
 """
@@ -54,20 +53,8 @@ async def main():
     except Exception as e:
         print(f'   ❌ Error: {e}')
 
-    # Method 2: ChainscanClient + Etherscan v1
-    print('\n2️⃣ ChainscanClient + Etherscan v1:')
-    print('   Code: client.call(Method.ACCOUNT_BALANCE, address=address)')
-    try:
-        client_v1 = ChainscanClient.from_config('etherscan', 'v1', 'eth', 'main')
-        balance2 = await client_v1.call(Method.ACCOUNT_BALANCE, address=address)
-        print(f'   ✅ Result: {balance2} wei ({int(balance2) / 10**18:.6f} ETH)')
-        results.append(('Etherscan v1', balance2))
-        await client_v1.close()
-    except Exception as e:
-        print(f'   ❌ Error: {e}')
-
-    # Method 3: ChainscanClient + Etherscan v2 (multichain)
-    print('\n3️⃣ ChainscanClient + Etherscan v2 (multichain support):')
+    # Method 2: ChainscanClient + Etherscan v2 (multichain)
+    print('\n2️⃣ ChainscanClient + Etherscan v2 (multichain support):')
     print('   Code: client.call(Method.ACCOUNT_BALANCE, address=address)')
     try:
         client_v2 = ChainscanClient.from_config('etherscan', 'v2', 'eth', 'main')
@@ -77,6 +64,21 @@ async def main():
         await client_v2.close()
     except Exception as e:
         print(f'   ❌ Error: {e}')
+
+    # Method 3: ChainscanClient + BaseScan v1 (Base network)
+    if basescan_key:
+        print('\n3️⃣ ChainscanClient + BaseScan v1 (Base network):')
+        print('   Code: client.call(Method.ACCOUNT_BALANCE, address=address)')
+        try:
+            client_base = ChainscanClient.from_config('basescan', 'v1', 'base', 'main')
+            balance_base = await client_base.call(Method.ACCOUNT_BALANCE, address=address)
+            print(f'   ✅ Result: {balance_base} wei ({int(balance_base) / 10**18:.6f} ETH)')
+            results.append(('BaseScan v1', balance_base))
+            await client_base.close()
+        except Exception as e:
+            print(f'   ❌ Error: {e}')
+    else:
+        print('\n3️⃣ ChainscanClient + BaseScan v1 skipped (BASESCAN_KEY missing)')
 
     # Show available scanners
     print('\n' + '=' * 70)
@@ -100,7 +102,7 @@ async def main():
         if len(etherscan_results) >= 2:
             etherscan_balances = {r[1] for r in etherscan_results}
             if len(etherscan_balances) == 1:
-                print('✅ All Etherscan methods return identical results!')
+                print('✅ Legacy client and Etherscan v2 return identical results!')
                 print(f'   Consensus balance: {etherscan_results[0][1]} wei')
                 print(f'   Consensus balance: {int(etherscan_results[0][1]) / 10**18:.6f} ETH')
             else:
@@ -130,7 +132,7 @@ async def main():
     print('   • Type-safe operations with IDE autocomplete')
 
     print('\n🔌 Scanner Flexibility:')
-    print('   • Easy to switch between Etherscan v1 and v2')
+    print('   • Easy to switch between Etherscan v2 and BaseScan/BlockScout')
     print('   • Support for different authentication methods (query vs header)')
     print('   • Automatic parameter mapping (address vs wallet, etc.)')
 

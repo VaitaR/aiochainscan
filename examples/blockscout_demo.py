@@ -238,7 +238,7 @@ async def main():
         print(f'   📦 Scanner: {scanner.name} v{scanner.version}')
         print(f'   🌐 Networks: {", ".join(sorted(scanner.supported_networks))}')
         print(f'   🔐 Auth: {scanner.auth_mode} (API key optional)')
-        print(f'   ⚙️  Methods: {len(scanner.SPECS)} inherited from EtherscanV1')
+        print(f'   ⚙️  Methods: {len(scanner.SPECS)} inherited from the shared Etherscan-style base')
 
         await client.close()
 
