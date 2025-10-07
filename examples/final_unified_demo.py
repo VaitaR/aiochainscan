@@ -3,11 +3,11 @@
 Final Unified Scanner Architecture Demo.
 
 Demonstrates all working scanners in the unified architecture:
-- EtherscanV1 (17 methods)
 - EtherscanV2 (7 methods)
-- OklinkV1 (8 methods) - Updated with official API v5
+- BaseScanV1 (17 methods) - Inherited from shared Etherscan-style base
+- BlockScoutV1 (17 methods) - Inherited from shared Etherscan-style base
 - RoutScanV1 (5 methods)
-- BaseScanV1 (17 methods) - Inherited from EtherscanV1
+- MoralisV1 (7 methods)
 
 Shows the power and flexibility of the unified approach.
 """
@@ -54,11 +54,11 @@ async def main():
 
     # Test configurations: (scanner_name, version, api_kind, network, key_name, description)
     test_configs = [
-        ('etherscan', 'v1', 'eth', 'main', 'ETHERSCAN_KEY', 'Etherscan v1 (Ethereum)'),
-        ('etherscan', 'v2', 'eth', 'main', 'ETHERSCAN_KEY', 'Etherscan v2 (Multichain)'),
+        ('etherscan', 'v2', 'eth', 'main', 'ETHERSCAN_KEY', 'Etherscan v2 (Ethereum)'),
         ('basescan', 'v1', 'base', 'main', 'BASESCAN_KEY', 'BaseScan v1 (Base Network)'),
         ('blockscout', 'v1', 'blockscout_sepolia', 'sepolia', None, 'BlockScout v1 (Sepolia)'),
         ('routscan', 'v1', 'routscan_mode', 'mode', None, 'RoutScan v1 (Mode)'),
+        ('moralis', 'v1', 'moralis', 'eth', 'MORALIS_KEY', 'Moralis v1 (REST)'),
     ]
 
     results = []
@@ -141,14 +141,15 @@ async def main():
 
     print('\n🔧 Scanner Flexibility:')
     print('   • 5 different scanner implementations')
-    print('   • Support for 5+ different API structures')
-    print('   • Multiple auth methods (API key + public)')
+    print('   • Support for multiple API structures (query + REST)')
+    print('   • Multiple auth methods (header, query, public)')
     print('   • Consistent response formats')
 
     print('\n🚀 Easy Extensions:')
-    print('   • BaseScan: 25 lines of code (inherited from EtherscanV1)')
-    print('   • BlockScout: 150 lines with custom URL handling')
-    print('   • RoutScan: 180 lines with chain ID mapping')
+    print('   • BaseScan: inherits shared Etherscan-style implementation')
+    print('   • BlockScout: custom URL handling on top of shared base')
+    print('   • RoutScan: dedicated chain ID mapping')
+    print('   • Moralis: demonstrates REST-style integration')
     print('   • New networks: Just add to supported_networks')
     print('   • New methods: Add EndpointSpec to any scanner')
 

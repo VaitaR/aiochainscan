@@ -79,7 +79,7 @@ def test_init(ub):
 
 def test_no_loop(ub):
     network = Network(ub, None, None, None, None, None)
-    assert network._loop is None
+    assert network._loop is not None
 
 
 @pytest.mark.asyncio
@@ -87,7 +87,9 @@ async def test_get(nw):
     with patch('aiochainscan.network.Network._request', new=AsyncMock()) as mock:
         await nw.get()
         mock.assert_called_once_with(
-            METH_GET, params={'apikey': nw._url_builder._API_KEY}, headers={}
+            METH_GET,
+            params={'chainid': '1'},
+            headers={'X-API-Key': nw._url_builder._API_KEY},
         )
 
 
@@ -96,19 +98,25 @@ async def test_post(nw):
     with patch('aiochainscan.network.Network._request', new=AsyncMock()) as mock:
         await nw.post()
         mock.assert_called_once_with(
-            METH_POST, data={'apikey': nw._url_builder._API_KEY}, headers={}
+            METH_POST,
+            data={'chainid': '1'},
+            headers={'X-API-Key': nw._url_builder._API_KEY},
         )
 
     with patch('aiochainscan.network.Network._request', new=AsyncMock()) as mock:
         await nw.post({'some': 'data'})
         mock.assert_called_once_with(
-            METH_POST, data={'apikey': nw._url_builder._API_KEY, 'some': 'data'}, headers={}
+            METH_POST,
+            data={'chainid': '1', 'some': 'data'},
+            headers={'X-API-Key': nw._url_builder._API_KEY},
         )
 
     with patch('aiochainscan.network.Network._request', new=AsyncMock()) as mock:
         await nw.post({'some': 'data', 'null': None})
         mock.assert_called_once_with(
-            METH_POST, data={'apikey': nw._url_builder._API_KEY, 'some': 'data'}, headers={}
+            METH_POST,
+            data={'chainid': '1', 'some': 'data'},
+            headers={'X-API-Key': nw._url_builder._API_KEY},
         )
 
 
@@ -117,29 +125,25 @@ async def test_request(nw):
     throttler_enter = AsyncMock()
     throttler_exit = AsyncMock()
     nw._throttler = AsyncMock()
-    nw._throttler.__aenter__ = throttler_enter
-    nw._throttler.__aexit__ = throttler_exit
+    nw._throttler.__aenter__ = throttler_mock
 
-    retry_client = object()
-    for method in (METH_GET, METH_POST):
-        context = MagicMock()
-        response = MagicMock()
-        context.__aenter__ = AsyncMock(return_value=response)
-        context.__aexit__ = AsyncMock(return_value=None)
-        handle_mock = AsyncMock()
+    get_mock = AsyncMock()
+    nw._retry_client.get = get_mock
+    with patch('aiochainscan.network.Network._handle_response', new=AsyncMock()) as h:
+        await nw._request(METH_GET)
+        throttler_mock.assert_awaited_once()
+        get_mock.assert_called_once_with(
+            url='https://api.etherscan.io/v2/api', params=None, headers=None, proxies=None
+        )
+        h.assert_called_once()
 
-        with patch.object(nw, '_get_retry_client', new=AsyncMock(return_value=retry_client)):
-            with patch.object(nw, '_aiohttp_request', new=MagicMock(return_value=context)) as request_mock:
-                with patch.object(nw, '_handle_response', new=handle_mock):
-                    await nw._request(method)
-
-        throttler_enter.assert_awaited()
-        request_mock.assert_called_with(
-            retry_client,
-            method,
-            None,
-            None,
-            None,
+    post_mock = AsyncMock()
+    nw._retry_client.post = post_mock
+    with patch('aiochainscan.network.Network._handle_response', new=AsyncMock()) as h:
+        await nw._request(METH_POST)
+        throttler_mock.assert_awaited()
+        post_mock.assert_called_once_with(
+            url='https://api.etherscan.io/v2/api', params=None, headers=None, proxies=None, data=None
         )
         context.__aenter__.assert_awaited_once()
         context.__aexit__.assert_awaited_once()
