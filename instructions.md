@@ -9,7 +9,7 @@ Async Python wrapper for blockchain explorer APIs (Etherscan, BSCScan, PolygonSc
 
 ### Core Components
 - **Legacy Client**: Original module-based entry point for backward compatibility
-- **Network**: HTTP client with throttling, retries, and dual backend support (aiohttp/curl_cffi)
+- **Network**: HTTP client with throttling, retries, and aiohttp backend
 - **UrlBuilder**: Constructs API URLs for different blockchain networks
 - **Modules**: API endpoint implementations (account, block, contract, transaction, etc.)
 
@@ -870,7 +870,7 @@ graph LR
     core["Core [Container]\nChainscanClient, Method, EndpointSpec"]
     scanners["Scanners [Container]\netherscan_v1/v2, basescan_v1, blockscout_v1, routscan_v1, moralis_v1"]
     urlb["UrlBuilder [Container]"]
-    net["Network [Container]\n(aiohttp / curl_cffi)"]
+    net["Network [Container]\n(aiohttp)"]
     fastabi["FastABI [Container]\nRust/PyO3"]
   end
 
