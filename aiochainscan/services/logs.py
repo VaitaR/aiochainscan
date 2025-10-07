@@ -5,6 +5,7 @@ from time import monotonic
 from typing import Any
 
 from aiochainscan.domain.dto import LogEntryDTO
+from aiochainscan.exceptions import ChainscanClientApiError
 from aiochainscan.ports.cache import Cache
 from aiochainscan.ports.endpoint_builder import EndpointBuilder
 from aiochainscan.ports.graphql_client import GraphQLClient
@@ -82,16 +83,26 @@ async def get_logs(
         if isinstance(cached, list):
             return cached
 
-    response: Any = await run_with_policies(
-        do_call=lambda: http.get(url, params=signed_params, headers=headers),
-        telemetry=_telemetry,
-        telemetry_name='logs.get_logs',
-        api_kind=api_kind,
-        network=network,
-        rate_limiter=_rate_limiter,
-        rate_limiter_key=f'{api_kind}:{network}:logs',
-        retry_policy=_retry,
-    )
+    try:
+        response: Any = await run_with_policies(
+            do_call=lambda: http.get(url, params=signed_params, headers=headers),
+            telemetry=_telemetry,
+            telemetry_name='logs.get_logs',
+            api_kind=api_kind,
+            network=network,
+            rate_limiter=_rate_limiter,
+            rate_limiter_key=f'{api_kind}:{network}:logs',
+            retry_policy=_retry,
+        )
+    except ChainscanClientApiError as exc:
+        if _is_no_log_payload(exc):
+            if _telemetry is not None:
+                await _telemetry.record_event(
+                    'logs.get_logs.ok',
+                    {'api_kind': api_kind, 'network': network, 'items': 0},
+                )
+            return []
+        raise
 
     out: list[dict[str, Any]] = []
     if isinstance(response, dict):
@@ -109,6 +120,18 @@ async def get_logs(
         await _cache.set(cache_key, out, ttl_seconds=CACHE_TTL_SECONDS)
 
     return out
+
+
+def _is_no_log_payload(exc: ChainscanClientApiError) -> bool:
+    message = (exc.message or '').strip().lower()
+    if not message:
+        return False
+    no_data_markers = (
+        'no logs found',
+        'no records found',
+        'no transactions found',
+    )
+    return any(marker in message for marker in no_data_markers)
 
 
 async def get_logs_page(

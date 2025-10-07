@@ -4,15 +4,14 @@ import asyncio
 import logging
 from asyncio import AbstractEventLoop
 from contextlib import AbstractAsyncContextManager
-from typing import Any, cast
+from typing import Any, Awaitable, Callable, cast
 
 import aiohttp
 from aiohttp import ClientTimeout
-from aiohttp.client import ClientSession
+from aiohttp.client import ClientSession, _RequestContextManager
 from aiohttp.hdrs import METH_GET, METH_POST
 from aiohttp_retry import RetryClient, RetryOptionsBase
 from asyncio_throttle import Throttler  # type: ignore[attr-defined]
-from curl_cffi.requests import AsyncSession as cffiClientSession
 
 from aiochainscan.exceptions import (
     ChainscanClientApiError,
@@ -21,6 +20,15 @@ from aiochainscan.exceptions import (
     ChainscanClientProxyError,
 )
 from aiochainscan.url_builder import UrlBuilder
+
+
+async def _maybe_await(candidate: Any | Callable[[], Any]) -> Any:
+    """Return awaited result when the candidate is awaitable/callable."""
+
+    value = candidate() if callable(candidate) else candidate
+    if asyncio.iscoroutine(value) or asyncio.isfuture(value):
+        return await cast(Awaitable[Any], value)
+    return value
 
 
 class Network:
@@ -32,31 +40,38 @@ class Network:
         proxy: str | None = None,
         throttler: AbstractAsyncContextManager[Any] | None = None,
         retry_options: RetryOptionsBase | None = None,
-        use_cffi: bool = True,
     ) -> None:
         self._url_builder = url_builder
-        self._loop = loop or asyncio.get_running_loop()
+        # Store the loop hint supplied by the caller. When ``None`` we will bind lazily on the
+        # first awaited request in order to avoid capturing an inactive placeholder loop created
+        # by ``asyncio.get_event_loop`` when no loop is running yet.
+        self._loop: AbstractEventLoop | None = loop
+        # Track which loop the retry client is currently bound to so we can rebuild it if calls
+        # arrive from a different running loop (e.g. when using ``asyncio.run`` from multiple
+        # threads during tests).
+        self._bound_loop: AbstractEventLoop | None = None
         self._timeout = self._prepare_timeout(timeout)
         self._proxy = proxy
         self._throttler: AbstractAsyncContextManager[Any] = throttler or Throttler(
             rate_limit=5, period=1.0
         )
-        self._retry_client: Any | None = None
+        self._retry_client: RetryClient | None = None
         self._retry_options = retry_options
         self._logger = logging.getLogger(__name__)
-        self._use_cffi = use_cffi
 
     def _prepare_timeout(self, timeout: float | ClientTimeout | None) -> ClientTimeout:
         if isinstance(timeout, ClientTimeout):
             return timeout
-        elif isinstance(timeout, int | float):
-            return ClientTimeout(total=timeout)
+        elif isinstance(timeout, (int, float)):
+            return ClientTimeout(total=float(timeout))
         else:
             return ClientTimeout(total=10)  # Default timeout
 
     async def close(self) -> None:
         if self._retry_client is not None:
             await self._retry_client.close()
+            self._retry_client = None
+        self._bound_loop = None
 
     async def get(
         self, params: dict[str, Any] | None = None, headers: dict[str, str] | None = None
@@ -70,15 +85,42 @@ class Network:
         data, headers = self._url_builder.filter_and_sign(data, headers)
         return await self._request(METH_POST, data=data, headers=headers)
 
-    def _get_retry_client(self) -> Any:
-        if self._use_cffi:
-            total_timeout: float = (
-                float(self._timeout.total) if self._timeout.total is not None else 10.0
-            )
-            return cffiClientSession(timeout=total_timeout)
+    def _ensure_loop(self) -> AbstractEventLoop:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError as exc:
+            if self._loop is None:
+                raise RuntimeError(
+                    'Network requests must be awaited from within a running event loop. '
+                    'Instantiate the client inside the loop or pass an explicit loop instance.'
+                ) from exc
+
+            loop = self._loop
+            if not loop.is_running():
+                raise RuntimeError(
+                    'The stored event loop is not running; create the Network inside an active loop.'
+                ) from exc
         else:
-            session = ClientSession(loop=self._loop, timeout=self._timeout)
-            return RetryClient(client_session=session, retry_options=self._retry_options)
+            self._loop = loop
+
+        return loop
+
+    async def _get_retry_client(self) -> RetryClient:
+        loop = self._ensure_loop()
+
+        if self._retry_client is not None and self._bound_loop is not loop:
+            # Re-bind the transport if the active loop changed between requests.
+            await self._retry_client.close()
+            self._retry_client = None
+
+        if self._retry_client is None:
+            session = ClientSession(timeout=self._timeout)
+            self._retry_client = RetryClient(
+                client_session=session, retry_options=self._retry_options
+            )
+            self._bound_loop = loop
+
+        return self._retry_client
 
     async def _request(
         self,
@@ -87,76 +129,53 @@ class Network:
         params: dict[str, Any] | None = None,
         headers: dict[str, str] | None = None,
     ) -> dict[str, Any] | list[Any] | str:
-        if self._retry_client is None:
-            self._retry_client = self._get_retry_client()
+        retry_client = await self._get_retry_client()
 
         async with self._throttler:
-            if self._use_cffi:
-                response = await self._cffi_request(method, data, params, headers)
-            else:
-                response = await self._aiohttp_request(method, data, params, headers)
+            request_ctx = self._aiohttp_request(
+                retry_client, method, data, params, headers
+            )
+            async with request_ctx as response:
+                self._logger.debug(
+                    '[%s] %r %r %s',
+                    method,
+                    str(response.url),
+                    data,
+                    headers,
+                    response.status,
+                )
+                return await self._handle_response(cast(aiohttp.ClientResponse, response))
 
-            return await self._handle_response(response)
-
-    async def _cffi_request(
+    def _aiohttp_request(
         self,
+        client: RetryClient,
         method: str,
         data: dict[str, Any] | None = None,
         params: dict[str, Any] | None = None,
         headers: dict[str, str] | None = None,
-    ) -> Any:
-        kwargs = {
+    ) -> _RequestContextManager:
+        session_method = getattr(client, method.lower())
+        request_kwargs: dict[str, Any] = {
             'url': self._url_builder.API_URL,
             'params': params,
             'headers': headers,
-            'proxies': {'http': self._proxy, 'https': self._proxy} if self._proxy else None,
         }
-        if method.lower() == 'post':
-            kwargs['data'] = data
+        if data is not None:
+            request_kwargs['data'] = data
+        if self._proxy is not None:
+            request_kwargs['proxy'] = self._proxy
 
-        response = await getattr(self._retry_client, method.lower())(**kwargs)
-        self._logger.debug(
-            '[%s] %r %r %s', method, str(response.url), data, headers, response.status_code
-        )
-        return response
-
-    async def _aiohttp_request(
-        self,
-        method: str,
-        data: dict[str, Any] | None = None,
-        params: dict[str, Any] | None = None,
-        headers: dict[str, str] | None = None,
-    ) -> aiohttp.ClientResponse:
-        session_method = getattr(self._retry_client, method.lower())
-        async with session_method(
-            self._url_builder.API_URL, params=params, data=data, headers=headers, proxy=self._proxy
-        ) as response:
-            self._logger.debug(
-                '[%s] %r %r %s', method, str(response.url), data, headers, response.status
-            )
-            return cast(aiohttp.ClientResponse, response)
+        return session_method(**request_kwargs)
 
     async def _handle_response(
-        self, response: aiohttp.ClientResponse | Any
+        self, response: aiohttp.ClientResponse
     ) -> dict[str, Any] | list[Any] | str:
         try:
-            if isinstance(response, aiohttp.ClientResponse):
-                status = response.status
-                response_json: Any = await response.json()
-            else:  # cffiClientSession response
-                status = response.status_code
-                response_json = response.json()
+            status = response.status
+            response_json = await _maybe_await(response.json())
         except aiohttp.ContentTypeError:
-            status = (
-                response.status
-                if isinstance(response, aiohttp.ClientResponse)
-                else response.status_code
-            )
             raise ChainscanClientContentTypeError(
-                status,
-                await response.text()
-                if isinstance(response, aiohttp.ClientResponse)
-                else cast(str, response.text),
+                status, await _maybe_await(response.text)
             ) from None
         except Exception as e:
             raise ChainscanClientError(e) from e

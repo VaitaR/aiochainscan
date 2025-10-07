@@ -3,8 +3,10 @@ import json
 import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import aiohttp
 import pytest
+pytest.importorskip('aiohttp', reason='Network transport tests require aiohttp runtime')
+
+import aiohttp
 import pytest_asyncio
 from aiohttp import ClientTimeout
 from aiohttp.hdrs import METH_GET, METH_POST
@@ -76,9 +78,8 @@ def test_init(ub):
 
 
 def test_no_loop(ub):
-    with pytest.raises(RuntimeError) as e:
-        Network(ub, None, None, None, None, None)
-    assert str(e.value) == 'no running event loop'
+    network = Network(ub, None, None, None, None, None)
+    assert network._loop is None
 
 
 @pytest.mark.asyncio
@@ -113,39 +114,39 @@ async def test_post(nw):
 
 @pytest.mark.asyncio
 async def test_request(nw):
-    class MagicMockContext(MagicMock):
-        def __init__(self, *args, **kwargs):
-            super().__init__(*args, **kwargs)
-            type(self).__aenter__ = AsyncMock(return_value=MagicMock())
-            type(self).__aexit__ = AsyncMock(return_value=MagicMock())
-
-    nw._retry_client = AsyncMock()
-
-    throttler_mock = AsyncMock()
+    throttler_enter = AsyncMock()
+    throttler_exit = AsyncMock()
     nw._throttler = AsyncMock()
-    nw._throttler.__aenter__ = throttler_mock
+    nw._throttler.__aenter__ = throttler_enter
+    nw._throttler.__aexit__ = throttler_exit
 
-    get_mock = AsyncMock()
-    nw._retry_client.get = get_mock
-    with patch('aiochainscan.network.Network._handle_response', new=AsyncMock()) as h:
-        await nw._request(METH_GET)
-        throttler_mock.assert_awaited_once()
-        get_mock.assert_called_once_with(
-            url='https://api.etherscan.io/api', params=None, headers=None, proxies=None
+    retry_client = object()
+    for method in (METH_GET, METH_POST):
+        context = MagicMock()
+        response = MagicMock()
+        context.__aenter__ = AsyncMock(return_value=response)
+        context.__aexit__ = AsyncMock(return_value=None)
+        handle_mock = AsyncMock()
+
+        with patch.object(nw, '_get_retry_client', new=AsyncMock(return_value=retry_client)):
+            with patch.object(nw, '_aiohttp_request', new=MagicMock(return_value=context)) as request_mock:
+                with patch.object(nw, '_handle_response', new=handle_mock):
+                    await nw._request(method)
+
+        throttler_enter.assert_awaited()
+        request_mock.assert_called_with(
+            retry_client,
+            method,
+            None,
+            None,
+            None,
         )
-        h.assert_called_once()
+        context.__aenter__.assert_awaited_once()
+        context.__aexit__.assert_awaited_once()
+        handle_mock.assert_awaited_once_with(response)
 
-    post_mock = AsyncMock()
-    nw._retry_client.post = post_mock
-    with patch('aiochainscan.network.Network._handle_response', new=AsyncMock()) as h:
-        await nw._request(METH_POST)
-        throttler_mock.assert_awaited()
-        post_mock.assert_called_once_with(
-            url='https://api.etherscan.io/api', params=None, headers=None, proxies=None, data=None
-        )
-        h.assert_called_once()
-
-    assert throttler_mock.call_count == 2
+    assert throttler_enter.await_count == 2
+    assert throttler_exit.await_count == 2
 
 
 # noinspection PyTypeChecker
@@ -166,12 +167,18 @@ async def test_handle_response(nw):
 
         @property
         def text(self):
-            return 'some text'
+            async def _text():
+                return 'some text'
+
+            return _text
 
         def json(self):
             if self.raise_exc:
                 raise self.raise_exc
-            return json.loads(self.data)
+            async def _json():
+                return json.loads(self.data)
+
+            return _json()
 
     with pytest.raises(ChainscanClientContentTypeError) as e:
         await nw._handle_response(MockResponse('some', aiohttp.ContentTypeError('info', 'hist')))
