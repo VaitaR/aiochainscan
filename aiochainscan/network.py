@@ -35,7 +35,15 @@ class Network:
         use_cffi: bool = True,
     ) -> None:
         self._url_builder = url_builder
-        self._loop = loop or asyncio.get_running_loop()
+        if loop is not None:
+            self._loop = loop
+        else:
+            try:
+                self._loop = asyncio.get_running_loop()
+            except RuntimeError:
+                # Allow constructing the client in a thread without an active loop; the
+                # actual loop will be picked up when the first request is awaited.
+                self._loop = asyncio.get_event_loop()
         self._timeout = self._prepare_timeout(timeout)
         self._proxy = proxy
         self._throttler: AbstractAsyncContextManager[Any] = throttler or Throttler(
@@ -49,8 +57,8 @@ class Network:
     def _prepare_timeout(self, timeout: float | ClientTimeout | None) -> ClientTimeout:
         if isinstance(timeout, ClientTimeout):
             return timeout
-        elif isinstance(timeout, int | float):
-            return ClientTimeout(total=timeout)
+        elif isinstance(timeout, (int, float)):
+            return ClientTimeout(total=float(timeout))
         else:
             return ClientTimeout(total=10)  # Default timeout
 
