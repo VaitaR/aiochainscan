@@ -42,14 +42,15 @@ class Network:
         retry_options: RetryOptionsBase | None = None,
     ) -> None:
         self._url_builder = url_builder
-        # Store the loop hint supplied by the caller. When ``None`` we will bind lazily on the
-        # first awaited request in order to avoid capturing an inactive placeholder loop created
-        # by ``asyncio.get_event_loop`` when no loop is running yet.
-        self._loop: AbstractEventLoop | None = loop
-        # Track which loop the retry client is currently bound to so we can rebuild it if calls
-        # arrive from a different running loop (e.g. when using ``asyncio.run`` from multiple
-        # threads during tests).
-        self._bound_loop: AbstractEventLoop | None = None
+        if loop is not None:
+            self._loop = loop
+        else:
+            try:
+                self._loop = asyncio.get_running_loop()
+            except RuntimeError:
+                # Allow constructing the client in a thread without an active loop; the
+                # actual loop will be picked up when the first request is awaited.
+                self._loop = asyncio.get_event_loop()
         self._timeout = self._prepare_timeout(timeout)
         self._proxy = proxy
         self._throttler: AbstractAsyncContextManager[Any] = throttler or Throttler(
@@ -182,24 +183,25 @@ class Network:
         else:
             self._logger.debug('Response: %r', str(response_json)[0:200])
             self._raise_if_error(response_json)
-
             payload: Any
-            if 'result' in response_json:
-                payload = response_json['result']
+            if isinstance(response_json, dict):
+                if 'result' in response_json:
+                    payload = response_json['result']
+                elif 'data' in response_json:
+                    payload = response_json['data']
+                else:
+                    payload = response_json
             else:
                 payload = response_json
-
-            if isinstance(payload, dict) and 'items' in payload and isinstance(
-                payload['items'], list
-            ):
-                return cast(dict[str, Any] | list[Any] | str, payload['items'])
 
             return cast(dict[str, Any] | list[Any] | str, payload)
 
     @staticmethod
     def _raise_if_error(response_json: dict[str, Any]) -> None:
-        if 'status' in response_json and response_json['status'] != '1':
-            message, result = response_json.get('message'), response_json.get('result')
+        status = response_json.get('status') if isinstance(response_json, dict) else None
+        if status not in (None, '1', 1, 'OK', 'ok', 'Success', 'success'):
+            message = response_json.get('message') if isinstance(response_json, dict) else None
+            result = response_json.get('result') if isinstance(response_json, dict) else None
             raise ChainscanClientApiError(message, result)
 
         if 'error' in response_json:
