@@ -174,10 +174,10 @@ class TestChainscanClient:
         """Test client creation from config."""
         mock_global_config.create_client_config.return_value = mock_config
 
-        client = ChainscanClient.from_config('etherscan', 'v1', 'eth', 'main')
+        client = ChainscanClient.from_config('etherscan', 'v2', 'eth', 'main')
 
         assert client.scanner_name == 'etherscan'
-        assert client.scanner_version == 'v1'
+        assert client.scanner_version == 'v2'
         assert client.api_kind == 'eth'
         assert client.network == 'main'
         assert client.api_key == 'test_api_key'
@@ -188,14 +188,14 @@ class TestChainscanClient:
         """Test direct client initialization."""
         client = ChainscanClient(
             scanner_name='etherscan',
-            scanner_version='v1',
+            scanner_version='v2',
             api_kind='eth',
             network='main',
             api_key='test_key',
         )
 
         assert client.scanner_name == 'etherscan'
-        assert client.scanner_version == 'v1'
+        assert client.scanner_version == 'v2'
         assert client.api_kind == 'eth'
         assert client.network == 'main'
         assert client.api_key == 'test_key'
@@ -212,7 +212,7 @@ class TestChainscanClient:
             mock_scanner_class.return_value = mock_scanner
             mock_get_scanner.return_value = mock_scanner_class
 
-            client = ChainscanClient('etherscan', 'v1', 'eth', 'main', 'test_key')
+            client = ChainscanClient('etherscan', 'v2', 'eth', 'main', 'test_key')
 
             result = await client.call(Method.ACCOUNT_BALANCE, address='0x123')
 
@@ -229,7 +229,7 @@ class TestChainscanClient:
             mock_scanner_class.return_value = mock_scanner
             mock_get_scanner.return_value = mock_scanner_class
 
-            client = ChainscanClient('etherscan', 'v1', 'eth', 'main', 'test_key')
+            client = ChainscanClient('etherscan', 'v2', 'eth', 'main', 'test_key')
 
             assert client.supports_method(Method.ACCOUNT_BALANCE)
             mock_scanner.supports_method.assert_called_once_with(Method.ACCOUNT_BALANCE)
@@ -244,7 +244,7 @@ class TestChainscanClient:
             mock_scanner_class.return_value = mock_scanner
             mock_get_scanner.return_value = mock_scanner_class
 
-            client = ChainscanClient('etherscan', 'v1', 'eth', 'main', 'test_key')
+            client = ChainscanClient('etherscan', 'v2', 'eth', 'main', 'test_key')
 
             methods = client.get_supported_methods()
             assert methods == [Method.ACCOUNT_BALANCE]
@@ -252,42 +252,42 @@ class TestChainscanClient:
     def test_client_string_representation(self):
         """Test client string representations."""
         with patch('aiochainscan.core.client.get_scanner_class'):
-            client = ChainscanClient('etherscan', 'v1', 'eth', 'main', 'test_key')
+            client = ChainscanClient('etherscan', 'v2', 'eth', 'main', 'test_key')
 
-            assert str(client) == 'ChainscanClient(etherscan v1, eth main)'
+            assert str(client) == 'ChainscanClient(etherscan v2, eth main)'
             assert 'etherscan' in repr(client)
-            assert 'v1' in repr(client)
+            assert 'v2' in repr(client)
 
     def test_get_available_scanners(self):
         """Test getting available scanners."""
         with patch('aiochainscan.scanners.list_scanners') as mock_list:
-            mock_list.return_value = {('etherscan', 'v1'): Mock(), ('basescan', 'v1'): Mock()}
+            mock_list.return_value = {('etherscan', 'v2'): Mock(), ('basescan', 'v1'): Mock()}
 
             scanners = ChainscanClient.get_available_scanners()
-            assert ('etherscan', 'v1') in scanners
+            assert ('etherscan', 'v2') in scanners
             assert ('basescan', 'v1') in scanners
 
     def test_list_scanner_capabilities(self):
         """Test listing scanner capabilities."""
         mock_scanner_class = Mock()
         mock_scanner_class.name = 'etherscan'
-        mock_scanner_class.version = 'v1'
-        mock_scanner_class.supported_networks = {'main', 'test'}
-        mock_scanner_class.auth_mode = 'query'
-        mock_scanner_class.auth_field = 'apikey'
+        mock_scanner_class.version = 'v2'
+        mock_scanner_class.supported_networks = {'main', 'sepolia'}
+        mock_scanner_class.auth_mode = 'header'
+        mock_scanner_class.auth_field = 'X-API-Key'
         mock_scanner_class.SPECS = {Method.ACCOUNT_BALANCE: Mock()}
 
         with patch('aiochainscan.scanners.list_scanners') as mock_list:
-            mock_list.return_value = {('etherscan', 'v1'): mock_scanner_class}
+            mock_list.return_value = {('etherscan', 'v2'): mock_scanner_class}
 
             capabilities = ChainscanClient.list_scanner_capabilities()
 
-            assert 'etherscan_v1' in capabilities
-            scanner_info = capabilities['etherscan_v1']
+            assert 'etherscan_v2' in capabilities
+            scanner_info = capabilities['etherscan_v2']
             assert scanner_info['name'] == 'etherscan'
-            assert scanner_info['version'] == 'v1'
+            assert scanner_info['version'] == 'v2'
             assert 'main' in scanner_info['networks']
-            assert scanner_info['auth_mode'] == 'query'
+            assert scanner_info['auth_mode'] == 'header'
             assert scanner_info['method_count'] == 1
 
 
@@ -296,8 +296,8 @@ class TestIntegrationWithExistingConfig:
 
     def test_scanner_registry_integration(self):
         """Test that scanners are properly registered."""
-        # EtherscanV1 and BaseScanV1 should be registered
-        etherscan_class = get_scanner_class('etherscan', 'v1')
+        # EtherscanV2 and BaseScanV1 should be registered
+        etherscan_class = get_scanner_class('etherscan', 'v2')
         basescan_class = get_scanner_class('basescan', 'v1')
 
         assert etherscan_class is not None
@@ -327,7 +327,7 @@ async def test_end_to_end_workflow():
             mock_call.return_value = '1000000000000000000'
 
             # Create client and make call
-            client = ChainscanClient.from_config('etherscan', 'v1', 'eth', 'main')
+            client = ChainscanClient.from_config('etherscan', 'v2', 'eth', 'main')
 
             result = await client.call(
                 Method.ACCOUNT_BALANCE, address='0x742d35Cc6634C0532925a3b8D9Fa7a3D91'

@@ -1,21 +1,21 @@
 """
 BaseScan API v1 scanner implementation.
 
-BaseScan uses the exact same API structure as Etherscan v1,
-just with a different domain (basescan.org instead of etherscan.io).
+BaseScan uses the legacy Etherscan-style API structure
+with a different domain (basescan.org instead of etherscan.io).
 """
 
 from . import register_scanner
-from .etherscan_v1 import EtherscanV1
+from ._etherscan_like import EtherscanLikeScanner
 
 
 @register_scanner
-class BaseScanV1(EtherscanV1):
+class BaseScanV1(EtherscanLikeScanner):
     """
     BaseScan API v1 implementation.
 
-    Inherits all functionality from EtherscanV1 since BaseScan uses
-    the exact same API structure as Etherscan, just with basescan.org domain.
+    Inherits all functionality from the shared Etherscan-like base since BaseScan uses
+    the same endpoint layout, just with basescan.org domain.
 
     Supports Base network and its testnets:
     - main: Base mainnet
@@ -27,7 +27,7 @@ class BaseScanV1(EtherscanV1):
     version = 'v1'
     supported_networks = {'main', 'goerli', 'sepolia'}
 
-    # All SPECS are inherited from EtherscanV1 - no need to redefine!
+    # All SPECS are inherited from the shared Etherscan-like implementation.
     # Auth settings are also inherited:
     # - auth_mode = "query"
     # - auth_field = "apikey"
