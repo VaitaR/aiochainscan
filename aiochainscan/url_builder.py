@@ -36,14 +36,19 @@ class UrlBuilder:
         ('eth', 'sepolia'): '11155111',
         ('eth', 'holesky'): '17000',
         ('eth', 'test'): '5',
+        ('eth', 'ropsten'): '3',
+        ('eth', 'rinkeby'): '4',
+        ('eth', 'kovan'): '42',
         ('optimism', 'main'): '10',
         ('optimism', 'goerli'): '420',
         ('optimism', 'test'): '420',
         ('bsc', 'main'): '56',
         ('bsc', 'test'): '97',
+        ('bsc', 'testnet'): '97',
         ('polygon', 'main'): '137',
         ('polygon', 'mumbai'): '80001',
         ('polygon', 'test'): '80001',
+        ('polygon', 'testnet'): '80001',
         ('arbitrum', 'main'): '42161',
         ('arbitrum', 'nova'): '42170',
         ('arbitrum', 'goerli'): '421613',
@@ -53,6 +58,12 @@ class UrlBuilder:
         ('base', 'sepolia'): '84532',
         ('linea', 'main'): '59144',
         ('linea', 'test'): '59140',
+        ('gnosis', 'main'): '100',
+        ('gnosis', 'chiado'): '10200',
+        ('fantom', 'main'): '250',
+        ('fantom', 'test'): '4002',
+        ('fantom', 'testnet'): '4002',
+        ('mode', 'main'): '34443',
         ('blast', 'main'): '81457',
         ('blast', 'sepolia'): '168587773',
     }
@@ -173,3 +184,9 @@ class UrlBuilder:
             params.setdefault('apikey', self._API_KEY)
 
         return params, headers
+
+    # Legacy compatibility shim for code that still calls the old private helper.
+    def _sign(
+        self, params: dict[str, Any] | None, headers: dict[str, Any] | None
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        return self.filter_and_sign(params, headers)
