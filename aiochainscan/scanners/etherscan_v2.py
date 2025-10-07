@@ -21,16 +21,17 @@ class EtherscanV2(Scanner):
     version = 'v2'
     supported_networks = {
         'main',
-        'test',
         'goerli',
         'sepolia',
+        'holesky',
         'bsc',
         'polygon',
         'arbitrum',
         'optimism',
+        'base',
     }
-    auth_mode = 'query'
-    auth_field = 'apikey'
+    auth_mode = 'header'
+    auth_field = 'X-API-Key'
 
     SPECS = {
         Method.ACCOUNT_BALANCE: EndpointSpec(
@@ -93,7 +94,6 @@ class EtherscanV2(Scanner):
             http_method='GET',
             path='/api',
             query={'module': 'gastracker', 'action': 'gasoracle'},
-            param_map={},
             parser=PARSERS['etherscan'],
         ),
     }

@@ -171,12 +171,25 @@ class Network:
         else:
             self._logger.debug('Response: %r', str(response_json)[0:200])
             self._raise_if_error(response_json)
-            return cast(dict[str, Any] | list[Any] | str, response_json['result'])
+            payload: Any
+            if isinstance(response_json, dict):
+                if 'result' in response_json:
+                    payload = response_json['result']
+                elif 'data' in response_json:
+                    payload = response_json['data']
+                else:
+                    payload = response_json
+            else:
+                payload = response_json
+
+            return cast(dict[str, Any] | list[Any] | str, payload)
 
     @staticmethod
     def _raise_if_error(response_json: dict[str, Any]) -> None:
-        if 'status' in response_json and response_json['status'] != '1':
-            message, result = response_json.get('message'), response_json.get('result')
+        status = response_json.get('status') if isinstance(response_json, dict) else None
+        if status not in (None, '1', 1, 'OK', 'ok', 'Success', 'success'):
+            message = response_json.get('message') if isinstance(response_json, dict) else None
+            result = response_json.get('result') if isinstance(response_json, dict) else None
             raise ChainscanClientApiError(message, result)
 
         if 'error' in response_json:
