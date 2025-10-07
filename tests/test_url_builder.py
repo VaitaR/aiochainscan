@@ -15,13 +15,18 @@ async def ub():
 
 
 def test_sign(ub):
-    params, headers = ub._sign({}, {})
-    assert params == {'apikey': ub._API_KEY}
-    assert headers == {}
+    params, headers = ub.filter_and_sign({}, {})
+    assert params == {'chainid': '1'}
+    assert headers == {'X-API-Key': ub._API_KEY}
 
-    params, headers = ub._sign({'something': 'something'}, {})
-    assert params == {'something': 'something', 'apikey': ub._API_KEY}
-    assert headers == {}
+    params, headers = ub.filter_and_sign({'something': 'something'}, {})
+    assert params == {'something': 'something', 'chainid': '1'}
+    assert headers == {'X-API-Key': ub._API_KEY}
+
+    # Legacy helper still proxies to the new implementation
+    legacy_params, legacy_headers = ub._sign({}, {})
+    assert legacy_params == {'chainid': '1'}
+    assert legacy_headers == {'X-API-Key': ub._API_KEY}
 
 
 def test_filter_params(ub):
@@ -29,6 +34,13 @@ def test_filter_params(ub):
     assert ub._filter_params({1: 2, 3: None}) == {1: 2}
     assert ub._filter_params({1: 2, 3: 0}) == {1: 2, 3: 0}
     assert ub._filter_params({1: 2, 3: False}) == {1: 2, 3: False}
+
+
+def test_query_param_auth():
+    ub = UrlBuilder(apikey(), 'fantom', 'main')
+    params, headers = ub.filter_and_sign({}, {})
+    assert params == {'chainid': '250', 'apikey': ub._API_KEY}
+    assert headers == {}
 
 
 @pytest.mark.parametrize(
