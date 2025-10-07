@@ -76,9 +76,8 @@ def test_init(ub):
 
 
 def test_no_loop(ub):
-    with pytest.raises(RuntimeError) as e:
-        Network(ub, None, None, None, None, None)
-    assert str(e.value) == 'no running event loop'
+    network = Network(ub, None, None, None, None, None)
+    assert network._loop is not None
 
 
 @pytest.mark.asyncio
@@ -86,7 +85,9 @@ async def test_get(nw):
     with patch('aiochainscan.network.Network._request', new=AsyncMock()) as mock:
         await nw.get()
         mock.assert_called_once_with(
-            METH_GET, params={'apikey': nw._url_builder._API_KEY}, headers={}
+            METH_GET,
+            params={'chainid': '1'},
+            headers={'X-API-Key': nw._url_builder._API_KEY},
         )
 
 
@@ -95,19 +96,25 @@ async def test_post(nw):
     with patch('aiochainscan.network.Network._request', new=AsyncMock()) as mock:
         await nw.post()
         mock.assert_called_once_with(
-            METH_POST, data={'apikey': nw._url_builder._API_KEY}, headers={}
+            METH_POST,
+            data={'chainid': '1'},
+            headers={'X-API-Key': nw._url_builder._API_KEY},
         )
 
     with patch('aiochainscan.network.Network._request', new=AsyncMock()) as mock:
         await nw.post({'some': 'data'})
         mock.assert_called_once_with(
-            METH_POST, data={'apikey': nw._url_builder._API_KEY, 'some': 'data'}, headers={}
+            METH_POST,
+            data={'chainid': '1', 'some': 'data'},
+            headers={'X-API-Key': nw._url_builder._API_KEY},
         )
 
     with patch('aiochainscan.network.Network._request', new=AsyncMock()) as mock:
         await nw.post({'some': 'data', 'null': None})
         mock.assert_called_once_with(
-            METH_POST, data={'apikey': nw._url_builder._API_KEY, 'some': 'data'}, headers={}
+            METH_POST,
+            data={'chainid': '1', 'some': 'data'},
+            headers={'X-API-Key': nw._url_builder._API_KEY},
         )
 
 
@@ -131,7 +138,7 @@ async def test_request(nw):
         await nw._request(METH_GET)
         throttler_mock.assert_awaited_once()
         get_mock.assert_called_once_with(
-            url='https://api.etherscan.io/api', params=None, headers=None, proxies=None
+            url='https://api.etherscan.io/v2/api', params=None, headers=None, proxies=None
         )
         h.assert_called_once()
 
@@ -141,7 +148,7 @@ async def test_request(nw):
         await nw._request(METH_POST)
         throttler_mock.assert_awaited()
         post_mock.assert_called_once_with(
-            url='https://api.etherscan.io/api', params=None, headers=None, proxies=None, data=None
+            url='https://api.etherscan.io/v2/api', params=None, headers=None, proxies=None, data=None
         )
         h.assert_called_once()
 

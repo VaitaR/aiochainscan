@@ -4,9 +4,9 @@ Unified Scanner Architecture Demonstration.
 
 Shows how to get the same Ethereum balance using different scanner implementations:
 1. Legacy Client (existing API)
-2. ChainscanClient with Etherscan v1
+2. ChainscanClient facade helper
 3. ChainscanClient with Etherscan v2 (multichain)
-4. ChainscanClient with OKLink (if available)
+4. ChainscanClient with BlockScout (if available)
 
 All should return identical results for the same address.
 """
@@ -59,15 +59,15 @@ async def main():
     except Exception as e:
         print(f'   ❌ Error: {e}')
 
-    # Method 3: ChainscanClient with Etherscan v1 (legacy-unified)
-    print('\n3️⃣ ChainscanClient + Etherscan v1 (legacy-unified):')
+    # Method 3: ChainscanClient with Etherscan v2 (unified)
+    print('\n3️⃣ ChainscanClient + Etherscan v2 (unified):')
     try:
-        client_v1 = ChainscanClient.from_config('etherscan', 'v1', 'eth', 'main')
-        balance3 = await client_v1.call(Method.ACCOUNT_BALANCE, address=address)
+        client_v2 = ChainscanClient.from_config('etherscan', 'v2', 'eth', 'main')
+        balance3 = await client_v2.call(Method.ACCOUNT_BALANCE, address=address)
         print(f'   {balance3} wei')
         print(f'   {int(balance3) / 10**18:.6f} ETH')
-        results.append(('Etherscan v1', balance3))
-        await client_v1.close()
+        results.append(('Etherscan v2', balance3))
+        await client_v2.close()
     except Exception as e:
         print(f'   ❌ Error: {e}')
 
@@ -97,7 +97,7 @@ async def main():
     print('   balance = await client.account.balance(address)')
 
     print('\n🆕 Unified approach (cross-scanner):')
-    print("   client = ChainscanClient.from_config('etherscan', 'v1', 'eth', 'main')")
+    print("   client = ChainscanClient.from_config('etherscan', 'v2', 'eth', 'main')")
     print('   balance = await client.call(Method.ACCOUNT_BALANCE, address=address)')
 
     print('\n✨ Key benefits:')

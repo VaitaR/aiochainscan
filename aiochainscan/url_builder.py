@@ -28,6 +28,46 @@ class UrlBuilder:
         'moralis': ('deep-index.moralis.io', 'Multi-chain'),
     }
 
+    _HEADER_AUTH_API_KINDS = {'eth', 'optimism', 'arbitrum', 'bsc', 'polygon', 'base'}
+
+    _CHAIN_ID_MAP = {
+        ('eth', 'main'): '1',
+        ('eth', 'goerli'): '5',
+        ('eth', 'sepolia'): '11155111',
+        ('eth', 'holesky'): '17000',
+        ('eth', 'test'): '5',
+        ('eth', 'ropsten'): '3',
+        ('eth', 'rinkeby'): '4',
+        ('eth', 'kovan'): '42',
+        ('optimism', 'main'): '10',
+        ('optimism', 'goerli'): '420',
+        ('optimism', 'test'): '420',
+        ('bsc', 'main'): '56',
+        ('bsc', 'test'): '97',
+        ('bsc', 'testnet'): '97',
+        ('polygon', 'main'): '137',
+        ('polygon', 'mumbai'): '80001',
+        ('polygon', 'test'): '80001',
+        ('polygon', 'testnet'): '80001',
+        ('arbitrum', 'main'): '42161',
+        ('arbitrum', 'nova'): '42170',
+        ('arbitrum', 'goerli'): '421613',
+        ('arbitrum', 'test'): '421613',
+        ('base', 'main'): '8453',
+        ('base', 'goerli'): '84531',
+        ('base', 'sepolia'): '84532',
+        ('linea', 'main'): '59144',
+        ('linea', 'test'): '59140',
+        ('gnosis', 'main'): '100',
+        ('gnosis', 'chiado'): '10200',
+        ('fantom', 'main'): '250',
+        ('fantom', 'test'): '4002',
+        ('fantom', 'testnet'): '4002',
+        ('mode', 'main'): '34443',
+        ('blast', 'main'): '81457',
+        ('blast', 'sepolia'): '168587773',
+    }
+
     BASE_URL: str
     API_URL: str
 
@@ -89,7 +129,11 @@ class UrlBuilder:
         elif self._api_kind.startswith('blockscout_'):
             prefix = None  # BlockScout uses direct /api path
 
-        return self._build_url(prefix, 'api')
+        path = 'api'
+        if self._api_kind in self._HEADER_AUTH_API_KINDS:
+            path = 'v2/api'
+
+        return self._build_url(prefix, path)
 
     def _get_base_url(self) -> str:
         network_exceptions = {('polygon', 'testnet'): 'mumbai'}
@@ -110,20 +154,43 @@ class UrlBuilder:
     def filter_and_sign(
         self, params: dict[str, Any] | None, headers: dict[str, Any] | None
     ) -> tuple[dict[str, Any], dict[str, Any]]:
-        params_typed: dict[str, Any] = params or {}
-        headers_typed: dict[str, Any] = headers or {}
-        params_typed, headers_typed = self._sign(self._filter_params(params_typed), headers_typed)
-        return params_typed, headers_typed
+        filtered_params = self._filter_params(dict(params or {}))
+        filtered_headers = self._filter_headers(dict(headers or {}))
 
-    def _sign(
-        self, params: dict[str, Any], headers: dict[str, Any]
-    ) -> tuple[dict[str, Any], dict[str, Any]]:
-        # for scanners that don't require API key or have free tier without
-        if self._API_KEY != '':
-            params['apikey'] = self._API_KEY
-
-        return params, headers
+        params_with_chain = self._apply_chain_id(filtered_params)
+        signed_params, signed_headers = self._apply_auth(params_with_chain, filtered_headers)
+        return signed_params, signed_headers
 
     @staticmethod
     def _filter_params(params: dict[str, Any]) -> dict[str, Any]:
         return {k: v for k, v in params.items() if v is not None}
+
+    @staticmethod
+    def _filter_headers(headers: dict[str, Any]) -> dict[str, str]:
+        return {str(k): str(v) for k, v in headers.items() if v is not None}
+
+    def _apply_chain_id(self, params: dict[str, Any]) -> dict[str, Any]:
+        if (self._api_kind, self._network) in self._CHAIN_ID_MAP:
+            params.setdefault('chainid', self._CHAIN_ID_MAP[(self._api_kind, self._network)])
+        return params
+
+    def _apply_auth(
+        self, params: dict[str, Any], headers: dict[str, str]
+    ) -> tuple[dict[str, Any], dict[str, str]]:
+        if not self._API_KEY:
+            return params, headers
+
+        if self._api_kind in self._HEADER_AUTH_API_KINDS:
+            headers.setdefault('X-API-Key', self._API_KEY)
+        elif self._api_kind == 'moralis':
+            headers.setdefault('X-API-Key', self._API_KEY)
+        else:
+            params.setdefault('apikey', self._API_KEY)
+
+        return params, headers
+
+    # Legacy compatibility shim for code that still calls the old private helper.
+    def _sign(
+        self, params: dict[str, Any] | None, headers: dict[str, Any] | None
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        return self.filter_and_sign(params, headers)

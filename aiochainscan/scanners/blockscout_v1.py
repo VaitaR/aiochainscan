@@ -2,7 +2,7 @@
 BlockScout API v1 scanner implementation.
 
 BlockScout provides Etherscan-compatible API endpoints, making it easy
-to integrate by inheriting from EtherscanV1 with custom URL handling.
+to integrate by inheriting from the shared Etherscan-like base with custom URL handling.
 
 Supports multiple blockchain networks through different BlockScout instances:
 - Ethereum Sepolia: eth-sepolia.blockscout.com
@@ -17,15 +17,15 @@ from ..core.endpoint import EndpointSpec
 from ..core.method import Method
 from ..url_builder import UrlBuilder
 from . import register_scanner
-from .etherscan_v1 import EtherscanV1
+from ._etherscan_like import EtherscanLikeScanner
 
 
 @register_scanner
-class BlockScoutV1(EtherscanV1):
+class BlockScoutV1(EtherscanLikeScanner):
     """
     BlockScout API v1 implementation.
 
-    Inherits all functionality from EtherscanV1 since BlockScout provides
+    Inherits all functionality from the shared Etherscan-like base since BlockScout provides
     Etherscan-compatible API endpoints. The main difference is in URL structure:
     - Etherscan: api.etherscan.io/api
     - BlockScout: {instance}.blockscout.com/api
@@ -168,7 +168,7 @@ class BlockScoutV1(EtherscanV1):
             f'methods={len(self.SPECS)})'
         )
 
-    # All SPECS are inherited from EtherscanV1
+    # All SPECS are inherited from the shared Etherscan-like implementation.
     # BlockScout supports the same endpoints:
     # - ACCOUNT_BALANCE, ACCOUNT_TRANSACTIONS, ACCOUNT_INTERNAL_TXS
     # - ACCOUNT_ERC20_TRANSFERS, TX_BY_HASH, TX_RECEIPT_STATUS
