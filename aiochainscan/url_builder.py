@@ -129,7 +129,11 @@ class UrlBuilder:
         elif self._api_kind.startswith('blockscout_'):
             prefix = None  # BlockScout uses direct /api path
 
-        return self._build_url(prefix, 'api')
+        path = 'api'
+        if self._api_kind in self._HEADER_AUTH_API_KINDS:
+            path = 'v2/api'
+
+        return self._build_url(prefix, path)
 
     def _get_base_url(self) -> str:
         network_exceptions = {('polygon', 'testnet'): 'mumbai'}

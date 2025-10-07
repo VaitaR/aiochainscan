@@ -138,7 +138,7 @@ async def test_request(nw):
         await nw._request(METH_GET)
         throttler_mock.assert_awaited_once()
         get_mock.assert_called_once_with(
-            url='https://api.etherscan.io/api', params=None, headers=None, proxies=None
+            url='https://api.etherscan.io/v2/api', params=None, headers=None, proxies=None
         )
         h.assert_called_once()
 
@@ -148,7 +148,7 @@ async def test_request(nw):
         await nw._request(METH_POST)
         throttler_mock.assert_awaited()
         post_mock.assert_called_once_with(
-            url='https://api.etherscan.io/api', params=None, headers=None, proxies=None, data=None
+            url='https://api.etherscan.io/v2/api', params=None, headers=None, proxies=None, data=None
         )
         h.assert_called_once()
 
