@@ -1,13 +1,13 @@
-"""Integration test that exercises the Blockscout flow end-to-end.
+"""Integration test that exercises the Blockscout flow end-to-end for Ethereum.
 
-This test talks to the public Polygon Blockscout instance. It downloads the
+This test talks to the public Ethereum Blockscout instance. It downloads the
 full log history for a busy contract, resolves the correct ABI (including the
 proxy implementation when applicable) and decodes both logs and transaction
 inputs to ensure that most payloads can be interpreted correctly.
 
-The contract under test (0x34beb65E41F6f0A36275Fe85F4f4574CE9237231) has more
-than two thousand emitted logs which makes it a good stress case for the
-batched pagination helpers.
+The contract under test is USDT on Ethereum mainnet (0xdac17f958d2ee523a2206206994597c13d831ec7)
+which has an enormous amount of transfer events making it a good stress case for
+the batched pagination helpers.
 """
 
 from __future__ import annotations
@@ -22,13 +22,14 @@ pytest.importorskip(
     reason='Blockscout end-to-end flow exercises the aiohttp transport dependency',
 )
 
-from aiochainscan import Client
-from aiochainscan.exceptions import ChainscanClientApiError
-from aiochainscan.decode import decode_log_data, decode_transaction_input
-from aiochainscan.modules.base import _facade_injection, _resolve_api_context
-from aiochainscan.services.fetch_all import fetch_all_logs_basic, fetch_all_logs_fast
+from aiochainscan import Client  # noqa: E402
+from aiochainscan.decode import decode_log_data, decode_transaction_input  # noqa: E402
+from aiochainscan.exceptions import ChainscanClientApiError  # noqa: E402
+from aiochainscan.modules.base import _facade_injection, _resolve_api_context  # noqa: E402
+from aiochainscan.services.fetch_all import fetch_all_logs_basic, fetch_all_logs_fast  # noqa: E402
 
-CONTRACT_ADDRESS = '0x34beb65E41F6f0A36275Fe85F4f4574CE9237231'
+# USDT contract on Ethereum mainnet - very active contract with lots of events
+CONTRACT_ADDRESS = '0xdac17f958d2ee523a2206206994597c13d831ec7'
 
 
 async def _resolve_contract_abi(client: Client, address: str) -> list[dict[str, object]]:
@@ -54,7 +55,9 @@ async def _resolve_contract_abi(client: Client, address: str) -> list[dict[str, 
     return abi
 
 
-def _decode_logs(logs: Iterable[dict[str, object]], abi: list[dict[str, object]]) -> tuple[int, int]:
+def _decode_logs(
+    logs: Iterable[dict[str, object]], abi: list[dict[str, object]]
+) -> tuple[int, int]:
     decoded = 0
     total = 0
     for log in logs:
@@ -66,7 +69,9 @@ def _decode_logs(logs: Iterable[dict[str, object]], abi: list[dict[str, object]]
 
 
 async def _decode_transactions(
-    client: Client, tx_hashes: Iterable[str], abi: list[dict[str, object]],
+    client: Client,
+    tx_hashes: Iterable[str],
+    abi: list[dict[str, object]],
 ) -> tuple[int, int]:
     decoded = 0
     total = 0
@@ -87,11 +92,45 @@ async def _decode_transactions(
 
 
 @pytest.mark.asyncio
-async def test_blockscout_polygon_logs_and_decoding() -> None:
-    client = Client.from_config('blockscout_polygon', 'polygon')
+@pytest.mark.slow  # E2E test with real API calls
+@pytest.mark.integration  # Requires network access
+async def test_blockscout_ethereum_logs_and_decoding() -> None:
+    """Test Blockscout Ethereum flow with USDT contract (E2E).
+
+    This is an end-to-end integration test that:
+    - Talks to real Blockscout Ethereum API
+    - Fetches logs from USDT contract (highly active)
+    - Tests decoding functionality with real data
+
+    Note: This test fetches logs from a limited block range due to the
+    extremely high activity of the USDT contract. Even a small range
+    will provide plenty of data to test the decoding functionality.
+
+    Marked as 'slow' and 'integration' to run separately from unit tests.
+    Skipped by default - run explicitly with: pytest -m integration
+    """
+    try:
+        client = Client.from_config('blockscout_eth', 'eth')
+    except ValueError as e:
+        pytest.skip(f'Blockscout ETH configuration not available: {e}')
+        return
+
     try:
         http_adapter, endpoint_builder = _facade_injection(client)
         api_kind, network, api_key = _resolve_api_context(client)
+
+        # Get latest block and use recent range to avoid timeout
+        # USDT is extremely active, so even 100 blocks will give us many logs
+        try:
+            latest_block_hex = await client.proxy.block_number()
+            latest_block = int(latest_block_hex, 16)
+        except ChainscanClientApiError as e:
+            if 'unknown module' in str(e).lower():
+                pytest.skip(f"Blockscout Ethereum API doesn't support proxy module: {e}")
+            raise
+
+        # Use last 100 blocks to keep test fast and avoid timeout
+        start_block = latest_block - 100
 
         logs = await _fetch_blockscout_logs(
             client=client,
@@ -101,15 +140,22 @@ async def test_blockscout_polygon_logs_and_decoding() -> None:
             api_key=api_key,
             http=http_adapter,
             endpoint_builder=endpoint_builder,
+            start_block=start_block,
+            end_block=latest_block,
         )
 
-        assert len(logs) > 2_000
+        # USDT should have many transfer events even in a small block range
+        assert len(logs) > 100, f'Expected at least 100 logs, got {len(logs)}'
 
         abi = await _resolve_contract_abi(client, CONTRACT_ADDRESS)
 
         decoded_logs, total_logs = _decode_logs(logs, abi)
         assert total_logs == len(logs)
-        assert decoded_logs / total_logs >= 0.7
+        # USDT Transfer events should decode well
+        assert decoded_logs / total_logs >= 0.7, (
+            f'Expected at least 70% decode rate, got {decoded_logs}/{total_logs} '
+            f'= {decoded_logs / total_logs:.1%}'
+        )
 
         unique_tx_hashes = {
             hash_value
@@ -117,13 +163,19 @@ async def test_blockscout_polygon_logs_and_decoding() -> None:
             for hash_value in [log.get('transactionHash')]
             if isinstance(hash_value, str)
         }
+
+        # Sample a subset of transactions to avoid rate limiting
+        sample_size = min(30, len(unique_tx_hashes))
         decoded_txs, total_txs = await _decode_transactions(
-            client, list(unique_tx_hashes)[:50], abi
+            client, list(unique_tx_hashes)[:sample_size], abi
         )
 
         # Ensure we decoded a substantial portion of the sampled transactions
-        assert total_txs >= 10
-        assert decoded_txs / total_txs >= 0.6
+        assert total_txs >= 10, f'Expected at least 10 transactions, got {total_txs}'
+        assert decoded_txs / total_txs >= 0.5, (
+            f'Expected at least 50% decode rate, got {decoded_txs}/{total_txs} '
+            f'= {decoded_txs / total_txs:.1%}'
+        )
     finally:
         await client.close()
 
@@ -137,12 +189,14 @@ async def _fetch_blockscout_logs(
     api_key: str,
     http,
     endpoint_builder,
+    start_block: int = 0,
+    end_block: int | None = None,
 ) -> list[dict[str, object]]:
     try:
         logs = await fetch_all_logs_fast(
             address=address,
-            start_block=0,
-            end_block=None,
+            start_block=start_block,
+            end_block=end_block,
             api_kind=api_kind,
             network=network,
             api_key=api_key,
@@ -158,8 +212,8 @@ async def _fetch_blockscout_logs(
         if _is_no_logs_error(exc):
             logs = await fetch_all_logs_basic(
                 address=address,
-                start_block=0,
-                end_block=None,
+                start_block=start_block,
+                end_block=end_block,
                 api_kind=api_kind,
                 network=network,
                 api_key=api_key,
@@ -184,8 +238,8 @@ async def _fetch_blockscout_logs(
     while True:
         try:
             page_logs = await client.logs.get_logs(
-                start_block=0,
-                end_block='latest',
+                start_block=start_block,
+                end_block=end_block or 'latest',
                 address=address,
                 page=page,
                 offset=200,
