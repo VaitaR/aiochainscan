@@ -224,25 +224,69 @@ class TestChainscanClient:
         assert client.api_key == 'test_key'
 
     @pytest.mark.asyncio
-    async def test_client_call_method(self):
+    async def test_client_call_method(self, ethereum_chain_info):
         """Test calling a method through the client."""
-        # TODO: Update test to use ChainInfo instead of api_kind/network
-        pytest.skip('Test needs update for ChainInfo API')
+        from unittest.mock import AsyncMock
 
-    def test_client_supports_method(self):
+        # Create a mock scanner
+        mock_scanner = AsyncMock()
+        mock_scanner.call.return_value = '1000000000000000000'
+
+        with patch('aiochainscan.core.client.get_scanner_class') as mock_get_scanner:
+            mock_scanner_class = Mock()
+            mock_scanner_class.return_value = mock_scanner
+            mock_get_scanner.return_value = mock_scanner_class
+
+            client = ChainscanClient('etherscan', 'v2', ethereum_chain_info, 'test_key')
+
+            result = await client.call(Method.ACCOUNT_BALANCE, address='0x123')
+
+            assert result == '1000000000000000000'
+            mock_scanner.call.assert_called_once_with(Method.ACCOUNT_BALANCE, address='0x123')
+
+    def test_client_supports_method(self, ethereum_chain_info):
         """Test checking method support."""
-        # TODO: Update test to use ChainInfo instead of api_kind/network
-        pytest.skip('Test needs update for ChainInfo API')
+        mock_scanner = Mock()
+        mock_scanner.supports_method.return_value = True
 
-    def test_client_get_supported_methods(self):
+        with patch('aiochainscan.core.client.get_scanner_class') as mock_get_scanner:
+            mock_scanner_class = Mock()
+            mock_scanner_class.return_value = mock_scanner
+            mock_get_scanner.return_value = mock_scanner_class
+
+            client = ChainscanClient('etherscan', 'v2', ethereum_chain_info, 'test_key')
+
+            assert client.supports_method(Method.ACCOUNT_BALANCE)
+            mock_scanner.supports_method.assert_called_once_with(Method.ACCOUNT_BALANCE)
+
+    def test_client_get_supported_methods(self, ethereum_chain_info):
         """Test getting supported methods."""
-        # TODO: Update test to use ChainInfo instead of api_kind/network
-        pytest.skip('Test needs update for ChainInfo API')
+        mock_scanner = Mock()
+        mock_scanner.get_supported_methods.return_value = [Method.ACCOUNT_BALANCE]
 
-    def test_client_string_representation(self):
+        with patch('aiochainscan.core.client.get_scanner_class') as mock_get_scanner:
+            mock_scanner_class = Mock()
+            mock_scanner_class.return_value = mock_scanner
+            mock_get_scanner.return_value = mock_scanner_class
+
+            client = ChainscanClient('etherscan', 'v2', ethereum_chain_info, 'test_key')
+
+            methods = client.get_supported_methods()
+            assert methods == [Method.ACCOUNT_BALANCE]
+            mock_scanner.get_supported_methods.assert_called_once()
+
+    def test_client_string_representation(self, ethereum_chain_info):
         """Test client string representations."""
-        # TODO: Update test to use ChainInfo instead of api_kind/network
-        pytest.skip('Test needs update for ChainInfo API')
+        with patch('aiochainscan.core.client.get_scanner_class'):
+            client = ChainscanClient('etherscan', 'v2', ethereum_chain_info, 'test_key')
+
+            str_repr = str(client)
+            assert 'etherscan' in str_repr.lower()
+            assert 'v2' in str_repr
+
+            repr_repr = repr(client)
+            assert 'etherscan' in repr_repr.lower()
+            assert 'v2' in repr_repr
 
     def test_get_available_scanners(self):
         """Test getting available scanners."""
@@ -300,5 +344,35 @@ class TestIntegrationWithExistingConfig:
 @pytest.mark.asyncio
 async def test_end_to_end_workflow():
     """Test complete end-to-end workflow (mocked)."""
-    # TODO: Update test to use ChainInfo instead of legacy config system
-    pytest.skip('Test needs update for ChainInfo API')
+    from unittest.mock import AsyncMock
+
+    from aiochainscan.chains import ChainInfo
+
+    # Create test chain info
+    chain_info = ChainInfo(
+        chain_id=1,
+        name='ethereum',
+        display_name='Ethereum Mainnet',
+        etherscan_network_name='main',
+        etherscan_api_kind='eth',
+    )
+
+    # Mock the scanner's call method
+    with patch.object(ChainscanClient, 'call', new_callable=AsyncMock) as mock_call:
+        mock_call.return_value = '1000000000000000000'
+
+        # Create client with ChainInfo
+        with patch('aiochainscan.core.client.get_scanner_class'):
+            client = ChainscanClient('etherscan', 'v2', chain_info, 'test_key')
+
+            result = await client.call(
+                Method.ACCOUNT_BALANCE, address='0x742d35Cc6634C0532925a3b8D9Fa7a3D91'
+            )
+
+            # Should return parsed result
+            assert result == '1000000000000000000'
+
+            # Verify call was made with correct parameters
+            mock_call.assert_called_once_with(
+                Method.ACCOUNT_BALANCE, address='0x742d35Cc6634C0532925a3b8D9Fa7a3D91'
+            )
