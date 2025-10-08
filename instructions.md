@@ -831,6 +831,41 @@ The hexagonal skeleton is in place and already useful. Next focus: broaden servi
 - Default behavior stays backward compatible; forcing facades in CI catches regressions early without breaking consumers.
 - Actual removal of `modules/*` and `network.py` is reserved for Phase 2.0 with thin shims and a documented deprecation window.
 
+## ⚡ CI/CD Optimization (2025-10-08)
+
+### Problem
+CI "Install dependencies" step took 50+ seconds despite cache hit, caused by:
+- Only `~/.cache/uv` cached, not `.venv` itself
+- `uv sync` recreated environment every run
+- `docopt` compiled from source each time
+- `mypy` (12MB) downloaded repeatedly
+- `aiochainscan` (maturin) rebuilt every time
+
+### Solution Applied
+1. **Added `.venv` caching** with key `venv-{OS}-{python_version}-{uv.lock hash}`
+2. **Enabled built-in uv cache** via `enable-cache: true` in `setup-uv` action
+3. Applied to all jobs: `lint`, `test` (matrix), `build`
+
+### Expected Impact
+- ⚡ **5-10× faster** dependency installation (from ~50s to ~5-10s)
+- 💾 Reuses compiled wheels and built packages
+- 🔄 Only reinstalls when `uv.lock` changes
+- 📦 Separate cache per Python version (matrix-safe)
+
+### Technical Details
+```yaml
+- name: Install uv
+  uses: astral-sh/setup-uv@v4
+  with:
+    enable-cache: true  # Built-in uv cache
+
+- name: Cache virtual environment
+  uses: actions/cache@v4
+  with:
+    path: .venv
+    key: venv-${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('uv.lock') }}
+```
+
 ## ✅ Etherscan V2 API Migration (COMPLETED 2025-10-08)
 
 The library has been successfully migrated to use Etherscan V2 API for all supported networks according to the [official migration guide](https://docs.etherscan.io/v2-migration).
