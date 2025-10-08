@@ -31,7 +31,7 @@ class MoralisV1(Scanner):
     auth_mode = 'header'
     auth_field = 'X-API-Key'
 
-    def _validate_chain_support(self, chain_info: 'ChainInfo') -> None:  # type: ignore[override]
+    def _validate_chain_support(self, chain_info: 'ChainInfo') -> None:
         """Validate that Moralis supports this chain."""
         if not chain_info.moralis_chain_id:
             from ..chains import list_chains
@@ -43,7 +43,7 @@ class MoralisV1(Scanner):
                 f'Available chains: {", ".join(available)}'
             )
 
-    def __init__(self, api_key: str, chain_info: 'ChainInfo', url_builder: UrlBuilder) -> None:  # type: ignore[override]
+    def __init__(self, api_key: str, chain_info: 'ChainInfo', url_builder: UrlBuilder) -> None:
         """
         Initialize Moralis scanner with chain-specific configuration.
 

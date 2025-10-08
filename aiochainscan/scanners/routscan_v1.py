@@ -40,7 +40,8 @@ class RoutScanV1(Scanner):
             network: Network name (must be in supported_networks)
             url_builder: UrlBuilder instance
         """
-        super().__init__(api_key, network, url_builder)
+        # TODO: Update RoutScan scanner to use ChainInfo instead of network string
+        super().__init__(api_key, network, url_builder)  # type: ignore[arg-type]
 
         # Get chain ID for this network
         self.chain_id = self.NETWORK_CHAIN_IDS.get(network)

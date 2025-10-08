@@ -52,7 +52,7 @@ class EtherscanV2(Scanner):
     auth_mode = 'query'
     auth_field = 'apikey'
 
-    def _build_request(self, spec: EndpointSpec, **params: Any) -> dict[str, Any]:  # type: ignore[override]
+    def _build_request(self, spec: EndpointSpec, **params: Any) -> dict[str, Any]:
         """
         Override to add chainid parameter for Etherscan V2 API.
 
@@ -70,7 +70,7 @@ class EtherscanV2(Scanner):
 
         return request_data
 
-    async def call(self, method: 'Method', **params: Any) -> Any:  # type: ignore[override]
+    async def call(self, method: 'Method', **params: Any) -> Any:
         """
         Execute a method call using Etherscan V2 API.
 

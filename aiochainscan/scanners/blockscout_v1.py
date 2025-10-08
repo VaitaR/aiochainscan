@@ -73,7 +73,7 @@ class BlockScoutV1(EtherscanLikeScanner):
         'linea': 'linea.blockscout.com',
     }
 
-    def _validate_chain_support(self, chain_info: 'ChainInfo') -> None:  # type: ignore[override]
+    def _validate_chain_support(self, chain_info: 'ChainInfo') -> None:
         """Validate that BlockScout instance exists for this chain."""
         if not chain_info.blockscout_instance:
             from ..chains import list_chains
@@ -85,7 +85,7 @@ class BlockScoutV1(EtherscanLikeScanner):
                 f'Available chains: {", ".join(available)}'
             )
 
-    def __init__(self, api_key: str, chain_info: 'ChainInfo', url_builder: UrlBuilder) -> None:  # type: ignore[override]
+    def __init__(self, api_key: str, chain_info: 'ChainInfo', url_builder: UrlBuilder) -> None:
         """
         Initialize BlockScout scanner with chain-specific instance.
 
