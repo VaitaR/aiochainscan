@@ -831,6 +831,116 @@ The hexagonal skeleton is in place and already useful. Next focus: broaden servi
 - Default behavior stays backward compatible; forcing facades in CI catches regressions early without breaking consumers.
 - Actual removal of `modules/*` and `network.py` is reserved for Phase 2.0 with thin shims and a documented deprecation window.
 
+## ✅ Package Installation Fix (COMPLETED 2025-10-08)
+
+Fixed critical installation issues that prevented users from installing and using the package from GitHub.
+
+### Problem Identified
+The library was using `maturin` as the sole build backend, which is primarily designed for Rust extensions. This caused Python source files to not be included in the distribution:
+- `pip install git+https://github.com/...` appeared successful but only installed metadata
+- Python modules (`aiochainscan/*.py`) were not copied to site-packages
+- Users got `ModuleNotFoundError` when trying to import the package
+- Only the Rust extension (`aiochainscan_fastabi`) and metadata were installed
+
+### Root Cause
+```toml
+# OLD (broken):
+[build-system]
+requires = ["maturin>=1.6,<2.0"]
+build-backend = "maturin"
+
+[tool.maturin]
+python-source = "aiochainscan"  # This didn't work as expected
+```
+
+The `python-source` configuration in maturin doesn't properly package pure Python modules when maturin is the sole build backend.
+
+### Solution Implemented
+Switched to `setuptools` as the primary build backend with proper package discovery:
+
+```toml
+# NEW (working):
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["aiochainscan"]
+include-package-data = true
+```
+
+### Files Created/Modified
+1. **pyproject.toml**: Changed build-system from maturin to setuptools
+2. **setup.py**: Added explicit setup.py for backward compatibility
+3. **MANIFEST.in**: Created to specify which files to include in distributions
+4. **.github/workflows/test-install.yml**: New CI workflow to test installations
+
+### Testing Strategy
+The new CI workflow (`test-install.yml`) verifies:
+- Wheel installation in clean environments (Python 3.10-3.13)
+- Source distribution installation
+- Editable/development installation
+- Direct git installation (simulating user experience)
+- Package structure integrity
+- All dependencies are properly installed
+- CLI tool availability
+
+### Installation Methods Now Supported
+```sh
+# Method 1: Direct from GitHub
+pip install git+https://github.com/VaitaR/aiochainscan.git
+
+# Method 2: Clone and install
+git clone https://github.com/VaitaR/aiochainscan.git
+cd aiochainscan
+pip install .
+
+# Method 3: Editable install (development)
+pip install -e .
+
+# Method 4: From built wheel
+python -m build
+pip install dist/*.whl
+```
+
+### Rust Extension (Optional)
+The fast ABI decoder (Rust-based) is now truly optional:
+- Main package works without Rust toolchain
+- Users who want the fast decoder can build it separately:
+  ```sh
+  pip install maturin
+  maturin develop --manifest-path aiochainscan/fastabi/Cargo.toml
+  ```
+
+### Verification
+After installation, users can verify:
+```python
+import aiochainscan
+print(aiochainscan.__version__)  # Should print "0.2.1"
+
+from aiochainscan import Client, get_balance, get_block
+print("✓ Installation successful!")
+```
+
+### Migration Path to PyPI
+The package is now ready for PyPI publication:
+```sh
+python -m build
+twine upload dist/*
+```
+
+After PyPI publication, users will be able to simply:
+```sh
+pip install aiochainscan
+```
+
+### Related Documentation
+- README.md updated with correct installation instructions
+- Added troubleshooting section for common installation issues
+- CI now validates installation on every push
+
+---
+
 ## ✅ CFFI Removal and Network Retry Fix (COMPLETED 2025-10-08)
 
 Removed legacy `use_cffi` parameter from `Network` class and fixed retry/error handling logic. All network retry tests now pass correctly.
