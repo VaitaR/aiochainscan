@@ -1,14 +1,12 @@
-"""
-Import Linter configuration for aiochainscan.
-
-Initial contracts are intentionally permissive to avoid breaking existing code.
-We will tighten them iteratively during the migration.
-"""
+# Import Linter configuration for aiochainscan.
+#
+# Initial contracts are intentionally permissive to avoid breaking existing code.
+# We will tighten them iteratively during the migration.
 
 [importlinter]
 root_package = aiochainscan
 
-[[contract]]
+[importlinter:contract:1]
 name = Domain must be isolated
 type = forbidden
 source_modules =
@@ -21,7 +19,7 @@ forbidden_modules =
     aiochainscan.modules
     aiochainscan.scanners
 
-[[contract]]
+[importlinter:contract:2]
 name = Ports must not depend on upper layers
 type = forbidden
 source_modules =
@@ -33,7 +31,7 @@ forbidden_modules =
     aiochainscan.modules
     aiochainscan.scanners
 
-[[contract]]
+[importlinter:contract:3]
 name = Services should not depend on adapters (initial)
 type = forbidden
 source_modules =

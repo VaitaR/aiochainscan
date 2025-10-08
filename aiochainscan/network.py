@@ -3,8 +3,9 @@ from __future__ import annotations
 import asyncio
 import logging
 from asyncio import AbstractEventLoop
+from collections.abc import Awaitable, Callable
 from contextlib import AbstractAsyncContextManager
-from typing import Any, Awaitable, Callable, cast
+from typing import Any, cast
 
 import aiohttp
 from aiohttp import ClientTimeout
@@ -57,13 +58,14 @@ class Network:
             rate_limit=5, period=1.0
         )
         self._retry_client: RetryClient | None = None
+        self._bound_loop: AbstractEventLoop | None = None
         self._retry_options = retry_options
         self._logger = logging.getLogger(__name__)
 
     def _prepare_timeout(self, timeout: float | ClientTimeout | None) -> ClientTimeout:
         if isinstance(timeout, ClientTimeout):
             return timeout
-        elif isinstance(timeout, (int, float)):
+        elif isinstance(timeout, int | float):
             return ClientTimeout(total=float(timeout))
         else:
             return ClientTimeout(total=10)  # Default timeout
@@ -133,9 +135,7 @@ class Network:
         retry_client = await self._get_retry_client()
 
         async with self._throttler:
-            request_ctx = self._aiohttp_request(
-                retry_client, method, data, params, headers
-            )
+            request_ctx = self._aiohttp_request(retry_client, method, data, params, headers)
             async with request_ctx as response:
                 self._logger.debug(
                     '[%s %s] url=%r data=%r headers=%r',
@@ -145,7 +145,7 @@ class Network:
                     data,
                     headers,
                 )
-                return await self._handle_response(cast(aiohttp.ClientResponse, response))
+                return await self._handle_response(response)
 
     def _aiohttp_request(
         self,
@@ -166,7 +166,7 @@ class Network:
         if self._proxy is not None:
             request_kwargs['proxy'] = self._proxy
 
-        return session_method(**request_kwargs)
+        return session_method(**request_kwargs)  # type: ignore[no-any-return]
 
     async def _handle_response(
         self, response: aiohttp.ClientResponse
