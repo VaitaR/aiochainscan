@@ -95,6 +95,10 @@ class UrlBuilder:
 
     @property
     def _base_netloc(self) -> str:
+        # Etherscan V2 API Migration: All V2 APIs (header auth) use etherscan.io domain
+        # Reference: https://docs.etherscan.io/v2-migration
+        if self._api_kind in self._HEADER_AUTH_API_KINDS:
+            return 'etherscan.io'
         netloc, _ = self._API_KINDS[self._api_kind]
         return netloc
 
@@ -180,9 +184,7 @@ class UrlBuilder:
         if not self._API_KEY:
             return params, headers
 
-        if self._api_kind in self._HEADER_AUTH_API_KINDS:
-            headers.setdefault('X-API-Key', self._API_KEY)
-        elif self._api_kind == 'moralis':
+        if self._api_kind in self._HEADER_AUTH_API_KINDS or self._api_kind == 'moralis':
             headers.setdefault('X-API-Key', self._API_KEY)
         else:
             params.setdefault('apikey', self._API_KEY)

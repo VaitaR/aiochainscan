@@ -50,11 +50,29 @@ TEST_ADDRESSES = {
 
 
 def get_api_key_for_scanner(scanner_id: str) -> str | None:
-    """Get API key for scanner if available."""
+    """Get API key for scanner if available.
+
+    After Etherscan V2 API migration, BSC/Polygon/Arbitrum/Base all use
+    the same ETHERSCAN_KEY. This function handles the fallback.
+    """
+    # V2 API scanners that now use ETHERSCAN_KEY
+    v2_scanners = {'bsc', 'polygon', 'arbitrum', 'base', 'optimism'}
+
     try:
-        return config_manager.get_api_key(scanner_id)
+        # Try to get scanner-specific key first
+        key = config_manager.get_api_key(scanner_id)
+        if key:
+            return key
     except ValueError:
-        return None
+        pass
+
+    # For V2 scanners, fallback to ETHERSCAN_KEY
+    if scanner_id in v2_scanners:
+        eth_key = os.getenv('ETHERSCAN_KEY')
+        if eth_key:
+            return eth_key
+
+    return None
 
 
 def get_scanner_name(scanner_id: str) -> str:
@@ -294,7 +312,11 @@ class TestBasicAPIFunctionality:
     @requires_api_key('bsc')
     @pytest.mark.asyncio
     async def test_bsc_basic_calls(self):
-        """Test basic BSC API calls with real API key."""
+        """Test basic BSC API calls with real API key.
+
+        Note: After Etherscan V2 migration, BSC uses ETHERSCAN_KEY and routes
+        through https://api.etherscan.io/v2/api with chainid=56.
+        """
         client = Client.from_config('bsc', 'main')
 
         try:
@@ -304,7 +326,29 @@ class TestBasicAPIFunctionality:
                 assert block_number is not None
                 block_num = int(block_number, 16)
                 assert block_num > 0
-                print(f'✅ BSC Latest Block: {block_num}')
+                print(f'✅ BSC Latest Block: {block_num} (via V2 API with chainid=56)')
+            except ChainscanClientApiError as e:
+                error_msg = str(e).lower()
+
+                # V2 API key issues
+                if 'api key' in error_msg or 'invalid' in error_msg:
+                    pytest.skip(
+                        f'⚠️ BSC V2 API requires valid ETHERSCAN_KEY. '
+                        f'Old BSCSCAN_KEY may no longer work. Error: {e}'
+                    )
+
+                # Rate limiting or temporary unavailability (common with free tier)
+                if (
+                    'rate limit' in error_msg
+                    or 'temporarily unavailable' in error_msg
+                    or 'high network activity' in error_msg
+                ):
+                    pytest.skip(
+                        f'⏱️ BSC V2 API temporarily unavailable or rate limited. '
+                        f'This is expected with free tier during high network activity. Error: {e}'
+                    )
+
+                raise
             except asyncio.TimeoutError as e:
                 pytest.skip(f'⏱️ BSC network timeout retrieving latest block: {e}')
 

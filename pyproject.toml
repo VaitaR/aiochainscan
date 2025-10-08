@@ -64,7 +64,12 @@ pythonpath = [
 asyncio_mode = "auto"
 addopts = [
   "-m",
-  "not benchmark",
+  "not benchmark and not slow",
+]
+markers = [
+    "benchmark: marks tests as benchmarks (deselect with '-m \"not benchmark\"')",
+    "slow: marks tests as slow (e.g. E2E tests, deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests requiring network access",
 ]
 
 [tool.ruff]

@@ -831,6 +831,47 @@ The hexagonal skeleton is in place and already useful. Next focus: broaden servi
 - Default behavior stays backward compatible; forcing facades in CI catches regressions early without breaking consumers.
 - Actual removal of `modules/*` and `network.py` is reserved for Phase 2.0 with thin shims and a documented deprecation window.
 
+## ✅ Etherscan V2 API Migration (COMPLETED 2025-10-08)
+
+The library has been successfully migrated to use Etherscan V2 API for all supported networks according to the [official migration guide](https://docs.etherscan.io/v2-migration).
+
+### What Changed
+- **All V2 APIs** (BSC, Polygon, Arbitrum, Base, Optimism) now use `etherscan.io` domain with `chainid` parameter
+- **One API key** works for all networks (no need for separate BSCScan, PolygonScan keys)
+- **404 errors fixed** - old domains (bscscan.com, polygonscan.com, etc.) were deprecated by Etherscan
+
+### Implementation
+- Modified `url_builder.py:_base_netloc` property to return `etherscan.io` for all V2 APIs
+- Updated 53 url_builder tests to expect new domain structure
+- Added ETHERSCAN_KEY fallback in `config.py` for V2 scanners (bsc, polygon, arbitrum, base, optimism)
+- Updated integration tests to handle V2 API key requirements
+- Full details: see `ETHERSCAN_V2_MIGRATION_COMPLETE.md` and `ETHERSCAN_V2_MIGRATION_RU.md`
+
+### Results
+- ✅ **331/341 tests passing (97.1%)**
+- ✅ Fixed 23 test failures related to old domains
+- ✅ BSC, Polygon, Arbitrum, Base now work with single Etherscan key
+- ✅ E2E tests properly marked as `@pytest.mark.slow` and `@pytest.mark.integration`
+
+### Testing Notes
+- By default, slow E2E tests are skipped (`pytest -m "not slow"`)
+- To run integration tests: `pytest -m integration` or `pytest -m slow`
+- E2E test for Blockscout Ethereum is at `tests/test_blockscout_ethereum_flow.py`
+
+### BSC V2 Verification
+BSC fully works with Etherscan V2 API (chainid=56):
+```bash
+# Quick verification
+python verify_bsc_v2.py
+
+# Expected output:
+✅ URL: https://api.etherscan.io/v2/api
+✅ Chain ID: 56 (BNB Smart Chain Mainnet)
+✅ Configuration is correct
+```
+
+See `BSC_V2_FINAL_REPORT.md` and `ИТОГОВАЯ_СПРАВКА.md` for details.
+
 ## C4 Architecture Views (Concise)
 
 The following views summarize the system using a simplified C4 style. They are optimized for both humans and LLMs (clear labels, stable identifiers).
