@@ -3,8 +3,10 @@ import json
 import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import aiohttp
 import pytest
+pytest.importorskip('aiohttp', reason='Network transport tests require aiohttp runtime')
+
+import aiohttp
 import pytest_asyncio
 from aiohttp import ClientTimeout
 from aiohttp.hdrs import METH_GET, METH_POST
@@ -120,15 +122,8 @@ async def test_post(nw):
 
 @pytest.mark.asyncio
 async def test_request(nw):
-    class MagicMockContext(MagicMock):
-        def __init__(self, *args, **kwargs):
-            super().__init__(*args, **kwargs)
-            type(self).__aenter__ = AsyncMock(return_value=MagicMock())
-            type(self).__aexit__ = AsyncMock(return_value=MagicMock())
-
-    nw._retry_client = AsyncMock()
-
-    throttler_mock = AsyncMock()
+    throttler_enter = AsyncMock()
+    throttler_exit = AsyncMock()
     nw._throttler = AsyncMock()
     nw._throttler.__aenter__ = throttler_mock
 
@@ -152,7 +147,8 @@ async def test_request(nw):
         )
         h.assert_called_once()
 
-    assert throttler_mock.call_count == 2
+    assert throttler_enter.await_count == 2
+    assert throttler_exit.await_count == 2
 
 
 # noinspection PyTypeChecker
@@ -173,12 +169,18 @@ async def test_handle_response(nw):
 
         @property
         def text(self):
-            return 'some text'
+            async def _text():
+                return 'some text'
+
+            return _text
 
         def json(self):
             if self.raise_exc:
                 raise self.raise_exc
-            return json.loads(self.data)
+            async def _json():
+                return json.loads(self.data)
+
+            return _json()
 
     with pytest.raises(ChainscanClientContentTypeError) as e:
         await nw._handle_response(MockResponse('some', aiohttp.ContentTypeError('info', 'hist')))
@@ -202,6 +204,11 @@ async def test_handle_response(nw):
 
     assert await nw._handle_response(MockResponse('{"result": "some_result"}')) == 'some_result'
 
+    payload = await nw._handle_response(
+        MockResponse('{"status": "1", "result": {"items": [{"foo": "bar"}]}}')
+    )
+    assert payload == [{"foo": "bar"}]
+
 
 @pytest.mark.asyncio
 async def test_close_session(nw):
@@ -211,6 +218,8 @@ async def test_close_session(nw):
         m.assert_not_called()
 
         nw._retry_client = MagicMock()
-        nw._retry_client.close = AsyncMock()
+        retry_client = nw._retry_client
+        retry_client.close = AsyncMock()
         await nw.close()
-        nw._retry_client.close.assert_called_once()
+        retry_client.close.assert_awaited_once()
+        assert nw._retry_client is None

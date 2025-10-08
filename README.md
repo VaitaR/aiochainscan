@@ -12,7 +12,7 @@ Async Python wrapper for blockchain explorer APIs (Etherscan, BSCScan, PolygonSc
 - **Comprehensive API coverage** - All major API endpoints supported
 - **Type hints** - Full type safety with Python type hints
 - **Configuration management** - Easy setup with environment variables
-- **Flexible HTTP backends** - Support for both aiohttp and curl_cffi
+- **Robust HTTP client** - aiohttp backend with built-in retries and throttling
 - **🚀 Fast ABI decoding** - High-performance Rust backend with Python fallback
 
 ### Telemetry fields
@@ -536,6 +536,10 @@ uv run mypy --strict aiochainscan
 uv run ruff check --fix
 uv run ruff format
 ```
+
+> **Dependency note:** The SDK relies on third-party async HTTP utilities (``aiohttp``, ``aiohttp_retry``,
+> ``asyncio_throttle``). Ensure they are installed before running tests locally, e.g. ``uv pip install .[dev]``
+> or ``pip install -e '.[dev]'`` with network access to PyPI.
 
 ### CI Note
 - CI now enforces strict static typing with mypy. Run `uv run mypy --strict aiochainscan` locally before pushing to ensure the type check gate passes.
