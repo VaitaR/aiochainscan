@@ -161,4 +161,3 @@ class EtherscanLikeScanner(Scanner):
             parser=PARSERS['etherscan'],
         ),
     }
-
