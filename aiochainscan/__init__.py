@@ -2,6 +2,8 @@ from collections.abc import Mapping
 from datetime import date
 from typing import Any
 
+__version__ = '0.2.1'
+
 from aiochainscan.adapters.aiohttp_client import AiohttpClient
 from aiochainscan.adapters.endpoint_builder_urlbuilder import UrlBuilderEndpoint
 from aiochainscan.adapters.retry_exponential import ExponentialBackoffRetry
@@ -20,6 +22,7 @@ from aiochainscan.capabilities import (
 from aiochainscan.client import Client  # noqa: F401
 from aiochainscan.config import ChainScanConfig, ScannerConfig, config  # noqa: F401
 from aiochainscan.config import config_manager as _config_manager
+from aiochainscan.core.client import ChainscanClient  # unified client export
 from aiochainscan.domain.dto import (
     AddressBalanceDTO,
     BeaconWithdrawalDTO,
@@ -46,6 +49,7 @@ from aiochainscan.services.account import (
 )
 from aiochainscan.services.account import (
     get_address_balance,  # facade use-case
+    normalize_address_balances,
     normalize_beacon_withdrawals,
     normalize_internal_txs,
     normalize_mined_blocks,
@@ -152,6 +156,7 @@ from aiochainscan.services.transaction import (
 
 __all__ = [
     'Client',
+    'ChainscanClient',
     'ChainScanConfig',
     'ScannerConfig',
     'config',

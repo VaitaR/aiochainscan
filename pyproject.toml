@@ -7,7 +7,6 @@ authors = [
 ]
 license = { text = "MIT" }
 readme = "README.md"
-homepage = "https://github.com/VaitaR/aiochainscan"
 requires-python = ">=3.10"
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -54,8 +53,8 @@ Repository = "https://github.com/VaitaR/aiochainscan"
 Issues = "https://github.com/VaitaR/aiochainscan/issues"
 
 [build-system]
-requires = ["maturin>=1.6,<2.0"]
-build-backend = "maturin"
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
 
 [tool.pytest.ini_options]
 pythonpath = [
@@ -88,11 +87,16 @@ quote-style = "single"
 [tool.coverage.run]
 relative_files = true
 
-[tool.maturin]
-module-name = "aiochainscan.aiochainscan_fastabi"
-manifest-path = "aiochainscan/fastabi/Cargo.toml"
-python-source = "aiochainscan"
-features = ["pyo3/extension-module"]
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["aiochainscan*"]
+exclude = ["tests*", "examples*"]
+
+[tool.setuptools.package-data]
+aiochainscan = ["py.typed", "*.pyi", "fastabi/Cargo.toml", "fastabi/**/*.rs"]
 
 [tool.poetry.group.dev.dependencies]
 
