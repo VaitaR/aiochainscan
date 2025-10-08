@@ -70,7 +70,9 @@ async def main():
     print(f'   📦 Scanner: {base_scanner.name} v{base_scanner.version}')
     print(f'   🌐 Networks: {", ".join(sorted(base_scanner.supported_networks))}')
     print(f'   🔐 Auth: {base_scanner.auth_mode} ({base_scanner.auth_field})')
-    print(f'   ⚙️  Methods: {len(base_scanner.SPECS)} inherited from the shared Etherscan-style base')
+    print(
+        f'   ⚙️  Methods: {len(base_scanner.SPECS)} inherited from the shared Etherscan-style base'
+    )
 
     print('\n📋 Inherited Methods:')
     methods = list(base_scanner.SPECS.keys())
