@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Iterator
 from dataclasses import dataclass
-from typing import Any, Awaitable, Iterator, TypeVar
+from typing import Any, TypeVar
 
 import pytest
 
