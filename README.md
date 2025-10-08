@@ -48,9 +48,34 @@ You can inject your own `Telemetry` implementation into facade calls or use `ope
 
 ## Installation
 
-### For users
+### Standard Installation
+
+#### From PyPI (Coming Soon)
+Once published to PyPI, you'll be able to install with:
 ```sh
-pip install -U aiochainscan
+pip install aiochainscan
+```
+
+#### From GitHub (Current Method)
+```sh
+# Install directly from GitHub
+pip install git+https://github.com/VaitaR/aiochainscan.git
+
+# Or clone and install
+git clone https://github.com/VaitaR/aiochainscan.git
+cd aiochainscan
+pip install .
+```
+
+#### Verify Installation
+```python
+# Test that the package is properly installed
+import aiochainscan
+print(f"aiochainscan version: {aiochainscan.__version__}")
+
+# Test imports
+from aiochainscan import Client, get_balance, get_block
+print("✓ Installation successful!")
 ```
 
 ### Fast ABI Decoding (Optional)
@@ -58,12 +83,20 @@ pip install -U aiochainscan
 For significantly faster ABI decoding performance, you can install the optional Rust backend:
 
 ```sh
-# Option 1: Install with fast decoding support
-pip install -U "aiochainscan[fast]"
+# Option 1: Install from GitHub with fast decoder build
+git clone https://github.com/VaitaR/aiochainscan.git
+cd aiochainscan
+pip install ".[fast]"
+maturin develop --manifest-path aiochainscan/fastabi/Cargo.toml
 
-# Option 2: If you have Rust toolchain installed
+# Option 2: After installing the package, build Rust extension separately
+pip install maturin
 maturin develop --manifest-path aiochainscan/fastabi/Cargo.toml
 ```
+
+**Requirements for fast decoder:**
+- Rust toolchain (install from https://rustup.rs)
+- maturin build tool
 
 **Performance Benefits:**
 - 🚀 **10-100× faster** ABI decoding compared to pure Python
@@ -71,7 +104,8 @@ maturin develop --manifest-path aiochainscan/fastabi/Cargo.toml
 - 📦 **Drop-in replacement** - no code changes required
 - 🔧 **Battle-tested** - uses ethers-rs for robust ABI parsing
 
-### For development
+### For Development
+
 ```sh
 # Install uv if you haven't already
 curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -80,12 +114,44 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 git clone https://github.com/VaitaR/aiochainscan.git
 cd aiochainscan
 
-# Install dependencies and create virtual environment
+# Install in editable mode with dev dependencies
 uv sync --dev
 
-# Activate the virtual environment
+# Or use pip
+pip install -e ".[dev]"
+
+# Activate the virtual environment (if using uv)
 source .venv/bin/activate  # On Unix/macOS
 # .venv\Scripts\activate    # On Windows
+```
+
+### Troubleshooting
+
+#### `ModuleNotFoundError: No module named 'aiochainscan'`
+
+If you get this error after installation from GitHub:
+```sh
+# Solution 1: Use editable install
+git clone https://github.com/VaitaR/aiochainscan.git
+cd aiochainscan
+pip install -e .
+
+# Solution 2: Rebuild and install
+pip uninstall aiochainscan
+pip install --no-cache-dir git+https://github.com/VaitaR/aiochainscan.git
+```
+
+#### Package installs but imports fail
+
+Verify the package structure:
+```python
+import sys
+import aiochainscan
+print(f"Package location: {aiochainscan.__file__}")
+
+# Check if modules are accessible
+from aiochainscan import Client, config
+print("✓ Core modules OK")
 ```
 
 ## Quick Start

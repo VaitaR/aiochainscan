@@ -1,0 +1,36 @@
+# MANIFEST.in - Specifies files to include in source distribution
+
+# Documentation
+include README.md
+include LICENSE
+include instructions.md
+include GRAPHQL_SUPPORT_PLAN.md
+
+# Configuration
+include pyproject.toml
+include setup.py
+include .importlinter
+
+# Type hints
+include aiochainscan/py.typed
+recursive-include aiochainscan *.pyi
+
+# Rust extension source (for optional fast ABI decoder)
+recursive-include aiochainscan/fastabi *.rs
+include aiochainscan/fastabi/Cargo.toml
+include aiochainscan/fastabi/Cargo.lock
+
+# Exclude compiled/generated files
+global-exclude *.pyc
+global-exclude *.pyo
+global-exclude __pycache__
+global-exclude .DS_Store
+global-exclude *.so
+global-exclude *.dylib
+
+# Exclude build artifacts
+prune aiochainscan/fastabi/target
+prune .venv
+prune dist
+prune build
+prune *.egg-info
