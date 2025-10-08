@@ -1,0 +1,586 @@
+"""
+Chain registry and provider factory for blockchain scanner APIs.
+
+This module provides a unified interface for creating scanner clients across
+different blockchain networks and API providers.
+"""
+
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass, field
+from enum import IntEnum
+from pathlib import Path
+
+
+def _load_env_file_if_exists() -> None:
+    """
+    Load environment variables from .env file if it exists.
+
+    Searches for .env in:
+    1. Current working directory
+    2. Project root (where this file is located)
+    """
+    # Try current working directory first
+    cwd_env = Path.cwd() / '.env'
+    if cwd_env.exists():
+        _load_env_file(cwd_env)
+        return
+
+    # Try project root (2 levels up from this file)
+    project_root = Path(__file__).parent.parent
+    project_env = project_root / '.env'
+    if project_env.exists():
+        _load_env_file(project_env)
+
+
+def _load_env_file(env_file: Path) -> None:
+    """Load variables from a specific .env file."""
+    try:
+        with open(env_file) as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#') and '=' in line:
+                    key, value = line.split('=', 1)
+                    key = key.strip()
+                    value = value.strip().strip('"\'')
+
+                    # Only set if not already set in environment
+                    if key not in os.environ:
+                        os.environ[key] = value
+    except Exception:
+        # Silently ignore errors - .env is optional
+        pass
+
+
+# Load .env file on module import
+_load_env_file_if_exists()
+
+
+@dataclass(frozen=True)
+class ChainInfo:
+    """
+    Canonical chain information.
+
+    Stores all metadata about a blockchain network and provider-specific
+    mappings for API access.
+    """
+
+    chain_id: int
+    """EIP-155 chain ID"""
+
+    name: str
+    """Canonical chain name (lowercase, e.g., 'ethereum', 'bsc')"""
+
+    display_name: str
+    """Human-readable display name"""
+
+    aliases: frozenset[str] = field(default_factory=frozenset)
+    """Alternative names for this chain (eth, mainnet, etc.)"""
+
+    native_currency: str = 'ETH'
+    """Native currency symbol"""
+
+    testnet: bool = False
+    """Whether this is a testnet"""
+
+    # Provider-specific mappings
+    etherscan_network_name: str | None = None
+    """Network name for Etherscan API (main, goerli, sepolia, etc.)"""
+
+    blockscout_instance: str | None = None
+    """BlockScout instance domain (e.g., 'eth.blockscout.com')"""
+
+    moralis_chain_id: str | None = None
+    """Moralis hex chain ID (e.g., '0x1')"""
+
+    etherscan_api_kind: str | None = None
+    """Legacy api_kind for UrlBuilder compatibility"""
+
+    def __post_init__(self) -> None:
+        """Validate chain info after initialization."""
+        if not self.name:
+            raise ValueError('Chain name cannot be empty')
+        if self.chain_id <= 0:
+            raise ValueError(f'Invalid chain ID: {self.chain_id}')
+
+
+class Chain(IntEnum):
+    """
+    Enum of supported blockchain networks for type-safe chain selection.
+
+    Values are EIP-155 chain IDs.
+    """
+
+    # Ethereum networks
+    ETHEREUM = 1
+    GOERLI = 5
+    SEPOLIA = 11155111
+    HOLESKY = 17000
+
+    # Layer 2 networks
+    OPTIMISM = 10
+    OPTIMISM_GOERLI = 420
+    ARBITRUM_ONE = 42161
+    ARBITRUM_NOVA = 42170
+    ARBITRUM_GOERLI = 421613
+    BASE = 8453
+    BASE_GOERLI = 84531
+    BASE_SEPOLIA = 84532
+    BLAST = 81457
+    BLAST_SEPOLIA = 168587773
+    SCROLL = 534352
+    LINEA = 59144
+    LINEA_GOERLI = 59140
+    MODE = 34443
+
+    # Other EVM networks
+    BSC = 56
+    BSC_TESTNET = 97
+    POLYGON = 137
+    POLYGON_MUMBAI = 80001
+    AVALANCHE = 43114
+    FANTOM = 250
+    FANTOM_TESTNET = 4002
+    GNOSIS = 100
+    GNOSIS_CHIADO = 10200
+
+
+# Chain registry - single source of truth for all blockchain networks
+CHAINS: dict[int, ChainInfo] = {
+    # Ethereum mainnet and testnets
+    1: ChainInfo(
+        chain_id=1,
+        name='ethereum',
+        display_name='Ethereum Mainnet',
+        aliases=frozenset({'eth', 'ethereum', 'mainnet', 'eth-mainnet'}),
+        native_currency='ETH',
+        etherscan_network_name='main',
+        etherscan_api_kind='eth',
+        blockscout_instance='eth.blockscout.com',
+        moralis_chain_id='0x1',
+    ),
+    5: ChainInfo(
+        chain_id=5,
+        name='goerli',
+        display_name='Goerli Testnet',
+        aliases=frozenset({'goerli', 'eth-goerli'}),
+        native_currency='ETH',
+        testnet=True,
+        etherscan_network_name='goerli',
+        etherscan_api_kind='eth',
+    ),
+    11155111: ChainInfo(
+        chain_id=11155111,
+        name='sepolia',
+        display_name='Sepolia Testnet',
+        aliases=frozenset({'sepolia', 'eth-sepolia'}),
+        native_currency='ETH',
+        testnet=True,
+        etherscan_network_name='sepolia',
+        etherscan_api_kind='eth',
+        blockscout_instance='eth-sepolia.blockscout.com',
+    ),
+    17000: ChainInfo(
+        chain_id=17000,
+        name='holesky',
+        display_name='Holesky Testnet',
+        aliases=frozenset({'holesky', 'eth-holesky'}),
+        native_currency='ETH',
+        testnet=True,
+        etherscan_network_name='holesky',
+        etherscan_api_kind='eth',
+    ),
+    # Optimism
+    10: ChainInfo(
+        chain_id=10,
+        name='optimism',
+        display_name='Optimism',
+        aliases=frozenset({'optimism', 'op', 'op-mainnet'}),
+        native_currency='ETH',
+        etherscan_network_name='main',
+        etherscan_api_kind='optimism',
+        blockscout_instance='optimism.blockscout.com',
+        moralis_chain_id='0xa',
+    ),
+    420: ChainInfo(
+        chain_id=420,
+        name='optimism-goerli',
+        display_name='Optimism Goerli',
+        aliases=frozenset({'op-goerli', 'optimism-goerli'}),
+        native_currency='ETH',
+        testnet=True,
+        etherscan_network_name='goerli',
+        etherscan_api_kind='optimism',
+    ),
+    # Arbitrum
+    42161: ChainInfo(
+        chain_id=42161,
+        name='arbitrum',
+        display_name='Arbitrum One',
+        aliases=frozenset({'arbitrum', 'arb', 'arbitrum-one', 'arb-one'}),
+        native_currency='ETH',
+        etherscan_network_name='main',
+        etherscan_api_kind='arbitrum',
+        blockscout_instance='arbitrum.blockscout.com',
+        moralis_chain_id='0xa4b1',
+    ),
+    42170: ChainInfo(
+        chain_id=42170,
+        name='arbitrum-nova',
+        display_name='Arbitrum Nova',
+        aliases=frozenset({'arbitrum-nova', 'arb-nova', 'nova'}),
+        native_currency='ETH',
+        etherscan_network_name='nova',
+        etherscan_api_kind='arbitrum',
+    ),
+    421613: ChainInfo(
+        chain_id=421613,
+        name='arbitrum-goerli',
+        display_name='Arbitrum Goerli',
+        aliases=frozenset({'arbitrum-goerli', 'arb-goerli'}),
+        native_currency='ETH',
+        testnet=True,
+        etherscan_network_name='goerli',
+        etherscan_api_kind='arbitrum',
+    ),
+    # Base
+    8453: ChainInfo(
+        chain_id=8453,
+        name='base',
+        display_name='Base',
+        aliases=frozenset({'base', 'base-mainnet'}),
+        native_currency='ETH',
+        etherscan_network_name='main',
+        etherscan_api_kind='base',
+        blockscout_instance='base.blockscout.com',
+        moralis_chain_id='0x2105',
+    ),
+    84531: ChainInfo(
+        chain_id=84531,
+        name='base-goerli',
+        display_name='Base Goerli',
+        aliases=frozenset({'base-goerli'}),
+        native_currency='ETH',
+        testnet=True,
+        etherscan_network_name='goerli',
+        etherscan_api_kind='base',
+    ),
+    84532: ChainInfo(
+        chain_id=84532,
+        name='base-sepolia',
+        display_name='Base Sepolia',
+        aliases=frozenset({'base-sepolia'}),
+        native_currency='ETH',
+        testnet=True,
+        etherscan_network_name='sepolia',
+        etherscan_api_kind='base',
+    ),
+    # BSC
+    56: ChainInfo(
+        chain_id=56,
+        name='bsc',
+        display_name='BNB Smart Chain',
+        aliases=frozenset({'bsc', 'binance', 'bnb', 'bnb-chain'}),
+        native_currency='BNB',
+        etherscan_network_name='main',
+        etherscan_api_kind='bsc',
+        moralis_chain_id='0x38',
+    ),
+    97: ChainInfo(
+        chain_id=97,
+        name='bsc-testnet',
+        display_name='BSC Testnet',
+        aliases=frozenset({'bsc-testnet', 'bsc-test', 'bnb-testnet'}),
+        native_currency='BNB',
+        testnet=True,
+        etherscan_network_name='test',
+        etherscan_api_kind='bsc',
+    ),
+    # Polygon
+    137: ChainInfo(
+        chain_id=137,
+        name='polygon',
+        display_name='Polygon',
+        aliases=frozenset({'polygon', 'matic', 'polygon-mainnet'}),
+        native_currency='MATIC',
+        etherscan_network_name='main',
+        etherscan_api_kind='polygon',
+        blockscout_instance='polygon.blockscout.com',
+        moralis_chain_id='0x89',
+    ),
+    80001: ChainInfo(
+        chain_id=80001,
+        name='polygon-mumbai',
+        display_name='Polygon Mumbai',
+        aliases=frozenset({'mumbai', 'polygon-mumbai', 'polygon-testnet'}),
+        native_currency='MATIC',
+        testnet=True,
+        etherscan_network_name='mumbai',
+        etherscan_api_kind='polygon',
+    ),
+    # Avalanche
+    43114: ChainInfo(
+        chain_id=43114,
+        name='avalanche',
+        display_name='Avalanche C-Chain',
+        aliases=frozenset({'avalanche', 'avax', 'avalanche-c'}),
+        native_currency='AVAX',
+        moralis_chain_id='0xa86a',
+    ),
+    # Fantom
+    250: ChainInfo(
+        chain_id=250,
+        name='fantom',
+        display_name='Fantom Opera',
+        aliases=frozenset({'fantom', 'ftm'}),
+        native_currency='FTM',
+        etherscan_network_name='main',
+        etherscan_api_kind='fantom',
+    ),
+    4002: ChainInfo(
+        chain_id=4002,
+        name='fantom-testnet',
+        display_name='Fantom Testnet',
+        aliases=frozenset({'fantom-testnet', 'ftm-testnet'}),
+        native_currency='FTM',
+        testnet=True,
+        etherscan_network_name='test',
+        etherscan_api_kind='fantom',
+    ),
+    # Gnosis
+    100: ChainInfo(
+        chain_id=100,
+        name='gnosis',
+        display_name='Gnosis Chain',
+        aliases=frozenset({'gnosis', 'xdai', 'gno'}),
+        native_currency='xDAI',
+        etherscan_network_name='main',
+        etherscan_api_kind='gnosis',
+        blockscout_instance='gnosis.blockscout.com',
+    ),
+    10200: ChainInfo(
+        chain_id=10200,
+        name='gnosis-chiado',
+        display_name='Gnosis Chiado',
+        aliases=frozenset({'chiado', 'gnosis-chiado'}),
+        native_currency='xDAI',
+        testnet=True,
+        etherscan_network_name='chiado',
+        etherscan_api_kind='gnosis',
+    ),
+    # Blast
+    81457: ChainInfo(
+        chain_id=81457,
+        name='blast',
+        display_name='Blast',
+        aliases=frozenset({'blast', 'blast-mainnet'}),
+        native_currency='ETH',
+        etherscan_network_name='main',
+        etherscan_api_kind='blast',
+    ),
+    168587773: ChainInfo(
+        chain_id=168587773,
+        name='blast-sepolia',
+        display_name='Blast Sepolia',
+        aliases=frozenset({'blast-sepolia'}),
+        native_currency='ETH',
+        testnet=True,
+        etherscan_network_name='sepolia',
+        etherscan_api_kind='blast',
+    ),
+    # Linea
+    59144: ChainInfo(
+        chain_id=59144,
+        name='linea',
+        display_name='Linea',
+        aliases=frozenset({'linea', 'linea-mainnet'}),
+        native_currency='ETH',
+        etherscan_network_name='main',
+        etherscan_api_kind='linea',
+        blockscout_instance='linea.blockscout.com',
+    ),
+    59140: ChainInfo(
+        chain_id=59140,
+        name='linea-goerli',
+        display_name='Linea Goerli',
+        aliases=frozenset({'linea-goerli', 'linea-testnet'}),
+        native_currency='ETH',
+        testnet=True,
+        etherscan_network_name='test',
+        etherscan_api_kind='linea',
+    ),
+    # Scroll
+    534352: ChainInfo(
+        chain_id=534352,
+        name='scroll',
+        display_name='Scroll',
+        aliases=frozenset({'scroll', 'scroll-mainnet'}),
+        native_currency='ETH',
+        blockscout_instance='scroll.blockscout.com',
+    ),
+    # Mode
+    34443: ChainInfo(
+        chain_id=34443,
+        name='mode',
+        display_name='Mode',
+        aliases=frozenset({'mode', 'mode-mainnet'}),
+        native_currency='ETH',
+        etherscan_network_name='main',
+        etherscan_api_kind='mode',
+    ),
+}
+
+
+def resolve_chain(identifier: int | str | Chain) -> ChainInfo:
+    """
+    Resolve chain identifier to ChainInfo.
+
+    Args:
+        identifier: Chain ID (int), name (str), alias (str), or Chain enum
+
+    Returns:
+        ChainInfo for the requested chain
+
+    Raises:
+        ValueError: If chain is not found
+
+    Examples:
+        >>> resolve_chain(1)  # By chain ID
+        ChainInfo(chain_id=1, name='ethereum', ...)
+
+        >>> resolve_chain('ethereum')  # By canonical name
+        ChainInfo(chain_id=1, name='ethereum', ...)
+
+        >>> resolve_chain('eth')  # By alias
+        ChainInfo(chain_id=1, name='ethereum', ...)
+
+        >>> resolve_chain(Chain.ETHEREUM)  # By enum
+        ChainInfo(chain_id=1, name='ethereum', ...)
+    """
+    # Handle Chain enum
+    if isinstance(identifier, Chain):
+        identifier = identifier.value
+
+    # Handle chain ID
+    if isinstance(identifier, int):
+        if identifier not in CHAINS:
+            available = ', '.join(f'{c.name} ({c.chain_id})' for c in CHAINS.values())
+            raise ValueError(f'Unknown chain ID: {identifier}. Available chains: {available}')
+        return CHAINS[identifier]
+
+    # Handle string (name or alias)
+    if isinstance(identifier, str):
+        identifier_lower = identifier.lower().strip()
+
+        # Try exact name match first
+        for chain in CHAINS.values():
+            if chain.name == identifier_lower:
+                return chain
+
+        # Try alias match
+        for chain in CHAINS.values():
+            if identifier_lower in chain.aliases:
+                return chain
+
+        # Build helpful error message
+        available_names = sorted(set(c.name for c in CHAINS.values()))
+        raise ValueError(
+            f"Unknown chain: '{identifier}'. Available chains: {', '.join(available_names)}"
+        )
+
+    raise TypeError(
+        f'Invalid chain identifier type: {type(identifier).__name__}. Expected int, str, or Chain enum'
+    )
+
+
+def list_chains(
+    provider: str | None = None,
+    testnet: bool | None = None,
+) -> list[ChainInfo]:
+    """
+    List all supported chains, optionally filtered.
+
+    Args:
+        provider: Filter by provider ('etherscan', 'blockscout', 'moralis')
+        testnet: Filter by testnet status (True=testnets only, False=mainnets only, None=all)
+
+    Returns:
+        List of ChainInfo objects matching filters
+
+    Examples:
+        >>> list_chains()  # All chains
+        [ChainInfo(...), ...]
+
+        >>> list_chains(provider='blockscout')  # Only chains with BlockScout
+        [ChainInfo(...), ...]
+
+        >>> list_chains(testnet=False)  # Only mainnets
+        [ChainInfo(...), ...]
+    """
+    chains = list(CHAINS.values())
+
+    # Filter by provider
+    if provider:
+        provider_lower = provider.lower()
+        if provider_lower == 'etherscan':
+            chains = [c for c in chains if c.etherscan_api_kind is not None]
+        elif provider_lower == 'blockscout':
+            chains = [c for c in chains if c.blockscout_instance is not None]
+        elif provider_lower == 'moralis':
+            chains = [c for c in chains if c.moralis_chain_id is not None]
+        else:
+            raise ValueError(
+                f"Unknown provider: '{provider}'. Supported: etherscan, blockscout, moralis"
+            )
+
+    # Filter by testnet status
+    if testnet is not None:
+        chains = [c for c in chains if c.testnet == testnet]
+
+    return sorted(chains, key=lambda c: c.chain_id)
+
+
+def get_env_api_key(provider: str) -> str | None:
+    """
+    Get API key from environment variables for a provider.
+
+    Args:
+        provider: Provider name ('etherscan', 'moralis', etc.)
+
+    Returns:
+        API key or None if not found
+
+    Examples:
+        >>> get_env_api_key('etherscan')
+        'YOUR_API_KEY' or None
+    """
+    provider_upper = provider.upper()
+
+    # Try various environment variable patterns
+    env_vars = [
+        f'{provider_upper}_API_KEY',
+        f'{provider_upper}_KEY',
+        f'{provider_upper}SCAN_KEY',  # For etherscan, bscscan, etc.
+    ]
+
+    # Special case for Moralis
+    if provider.lower() == 'moralis':
+        env_vars.insert(0, 'MORALIS_API_KEY')
+
+    for var in env_vars:
+        value = os.getenv(var)
+        if value:
+            return value
+
+    return None
+
+
+__all__ = [
+    'Chain',
+    'ChainInfo',
+    'CHAINS',
+    'resolve_chain',
+    'list_chains',
+    'get_env_api_key',
+]

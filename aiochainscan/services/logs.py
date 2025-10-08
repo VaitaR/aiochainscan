@@ -412,8 +412,15 @@ async def get_all_logs_optimized(
                 break
             current_start = max(current_start, last_block + 1)
     else:
+        # Blockscout and other providers may not properly support pagination for logs.
+        # Implement duplicate detection and safety limits to prevent infinite loops.
         page = 1
-        while True:
+        seen_keys: set[str] = set()
+        pages_without_new_data = 0
+        max_pages_limit = 10_000  # Safety limit
+        max_pages_without_progress = 3  # Stop if N consecutive pages add no new unique items
+
+        while pages_processed < max_pages_limit:
             items = await get_logs(
                 start_block=start_block,
                 end_block=end_block,
@@ -432,11 +439,40 @@ async def get_all_logs_optimized(
                 _telemetry=_telemetry,
             )
             pages_processed += 1
+
             if not items:
                 break
+
+            # Track new unique items in this page
+            new_items_count = 0
+            for item in items:
+                if isinstance(item, dict):
+                    txh = item.get('transactionHash') or item.get('hash')
+                    idx = item.get('logIndex')
+                    key = (
+                        f'{txh}:{idx}'
+                        if isinstance(txh, str) and isinstance(idx, str | int)
+                        else None
+                    )
+                    if key and key not in seen_keys:
+                        seen_keys.add(key)
+                        new_items_count += 1
+
             all_items.extend(items)
+
+            # Stop if page returns fewer items than requested (proper pagination end)
             if len(items) < max_offset:
                 break
+
+            # Blockscout workaround: detect when no new unique items are added
+            if new_items_count == 0:
+                pages_without_new_data += 1
+                if pages_without_new_data >= max_pages_without_progress:
+                    # Stop: no new data in last N pages
+                    break
+            else:
+                pages_without_new_data = 0  # Reset counter
+
             page += 1
 
     # Dedup by (txHash, logIndex) and sort

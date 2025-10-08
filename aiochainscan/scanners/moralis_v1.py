@@ -2,7 +2,7 @@
 Moralis Web3 Data API v1 scanner implementation.
 """
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import aiohttp
 
@@ -12,16 +12,8 @@ from ..url_builder import UrlBuilder
 from . import register_scanner
 from .base import Scanner
 
-# Network to Moralis chain ID mapping
-NETWORK_TO_CHAIN_ID = {
-    'eth': '0x1',  # Ethereum Mainnet
-    'bsc': '0x38',  # BSC Mainnet
-    'polygon': '0x89',  # Polygon Mainnet
-    'arbitrum': '0xa4b1',  # Arbitrum One
-    'base': '0x2105',  # Base Mainnet
-    'optimism': '0xa',  # Optimism Mainnet
-    'avalanche': '0xa86a',  # Avalanche C-Chain
-}
+if TYPE_CHECKING:
+    from ..chains import ChainInfo
 
 
 @register_scanner
@@ -35,26 +27,39 @@ class MoralisV1(Scanner):
 
     name = 'moralis'
     version = 'v1'
-    supported_networks = set(NETWORK_TO_CHAIN_ID.keys())
+    supported_networks = {'eth', 'bsc', 'polygon', 'arbitrum', 'base', 'optimism', 'avalanche'}
     auth_mode = 'header'
     auth_field = 'X-API-Key'
 
-    def __init__(self, api_key: str, network: str, url_builder: UrlBuilder) -> None:
+    def _validate_chain_support(self, chain_info: 'ChainInfo') -> None:  # type: ignore[override]
+        """Validate that Moralis supports this chain."""
+        if not chain_info.moralis_chain_id:
+            from ..chains import list_chains
+
+            available = [c.name for c in list_chains(provider='moralis')]
+            raise ValueError(
+                f"Chain '{chain_info.display_name}' (ID: {chain_info.chain_id}) "
+                f'is not supported by Moralis. '
+                f'Available chains: {", ".join(available)}'
+            )
+
+    def __init__(self, api_key: str, chain_info: 'ChainInfo', url_builder: UrlBuilder) -> None:  # type: ignore[override]
         """
-        Initialize Moralis scanner with network-specific chain ID.
+        Initialize Moralis scanner with chain-specific configuration.
 
         Args:
             api_key: Moralis API key (required)
-            network: Network name (must be in supported_networks)
+            chain_info: ChainInfo object with chain metadata
             url_builder: UrlBuilder instance (not used for Moralis)
         """
-        super().__init__(api_key, network, url_builder)
+        super().__init__(api_key, chain_info, url_builder)
 
-        # Get chain ID for this network
-        self.chain_id = NETWORK_TO_CHAIN_ID.get(network)
-        if not self.chain_id:
-            available = ', '.join(sorted(NETWORK_TO_CHAIN_ID.keys()))
-            raise ValueError(f"Network '{network}' not mapped for Moralis. Available: {available}")
+        # Get Moralis chain ID from chain_info
+        self.moralis_chain_id = chain_info.moralis_chain_id
+        if not self.moralis_chain_id:
+            raise ValueError(
+                f"Chain '{chain_info.display_name}' does not have Moralis support configured"
+            )
 
         self.base_url = 'https://deep-index.moralis.io/api/v2.2'
 
@@ -79,7 +84,7 @@ class MoralisV1(Scanner):
 
         # Substitute chain ID in query
         if 'chain' in query_params and query_params['chain'] == '{chain_id}':
-            query_params['chain'] = self.chain_id
+            query_params['chain'] = self.moralis_chain_id
 
         # Handle path parameter substitution for address, txhash, etc.
         for param_name, param_value in params.items():
@@ -121,17 +126,18 @@ class MoralisV1(Scanner):
 
         except Exception as e:
             # Enhanced error reporting for Moralis
-            raise Exception(f'Moralis API error for chain {self.chain_id}: {e}') from e
+            raise Exception(f'Moralis API error for chain {self.moralis_chain_id}: {e}') from e
 
     def __str__(self) -> str:
         """String representation including chain info."""
-        return f'Moralis v{self.version} (chain {self.chain_id})'
+        return f'Moralis v{self.version} ({self.chain_info.display_name}, chain_id={self.moralis_chain_id})'
 
     def __repr__(self) -> str:
         """Detailed string representation."""
         return (
-            f"MoralisV1(network='{self.network}', "
-            f"chain_id='{self.chain_id}', "
+            f"MoralisV1(chain_name='{self.chain_info.name}', "
+            f'chain_id={self.chain_info.chain_id}, '
+            f"moralis_chain_id='{self.moralis_chain_id}', "
             f'methods={len(self.SPECS)})'
         )
 

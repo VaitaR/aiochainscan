@@ -9,7 +9,7 @@ from typing import Any
 from aiohttp import ClientTimeout
 from aiohttp_retry import RetryOptionsBase
 
-from ..config import config as global_config
+from ..chains import ChainInfo
 from ..scanners import get_scanner_class
 from ..scanners.base import Scanner
 from ..url_builder import UrlBuilder
@@ -21,16 +21,19 @@ class ChainscanClient:
     Unified client for accessing different blockchain scanner APIs.
 
     This client provides a single interface for calling logical methods
-    across different scanner implementations (Etherscan, OKLink, etc.),
+    across different scanner implementations (Etherscan, BlockScout, Moralis),
     automatically handling API key management and URL construction.
 
     Example:
         ```python
-        # Using configuration system
-        client = ChainscanClient.from_config('etherscan', 'v2', 'eth', 'main')
+        # Using ChainProvider (recommended)
+        from aiochainscan import ChainProvider
+        client = ChainProvider.etherscan(chain_id=1)
 
-        # Direct instantiation
-        client = ChainscanClient('etherscan', 'v2', 'eth', 'main', 'your_api_key')
+        # Direct instantiation with ChainInfo
+        from aiochainscan.chains import resolve_chain
+        chain_info = resolve_chain(1)  # Ethereum
+        client = ChainscanClient('etherscan', 'v2', chain_info, 'your_api_key')
 
         # Make unified API calls
         balance = await client.call(Method.ACCOUNT_BALANCE, address='0x...')
@@ -41,8 +44,7 @@ class ChainscanClient:
         self,
         scanner_name: str,
         scanner_version: str,
-        api_kind: str,
-        network: str,
+        chain_info: ChainInfo,
         api_key: str,
         loop: AbstractEventLoop | None = None,
         timeout: ClientTimeout | None = None,
@@ -54,11 +56,10 @@ class ChainscanClient:
         Initialize the unified client.
 
         Args:
-            scanner_name: Scanner implementation name (e.g., 'etherscan', 'oklink')
+            scanner_name: Scanner implementation name (e.g., 'etherscan', 'blockscout', 'moralis')
             scanner_version: Scanner version (e.g., 'v1', 'v2')
-            api_kind: API kind for URL building (e.g., 'eth', 'xlayer')
-            network: Network name (e.g., 'main', 'test')
-            api_key: API key for authentication
+            chain_info: ChainInfo object with chain metadata
+            api_key: API key for authentication (empty string if not required)
             loop: Event loop instance
             timeout: Request timeout configuration
             proxy: Proxy URL
@@ -67,16 +68,19 @@ class ChainscanClient:
         """
         self.scanner_name = scanner_name
         self.scanner_version = scanner_version
-        self.api_kind = api_kind
-        self.network = network
+        self.chain_info = chain_info
         self.api_key = api_key
+
+        # Resolve legacy api_kind and network for UrlBuilder compatibility
+        api_kind = chain_info.etherscan_api_kind or 'eth'
+        network = chain_info.etherscan_network_name or 'main'
 
         # Build URL builder (reusing existing infrastructure)
         self._url_builder = UrlBuilder(api_key, api_kind, network)
 
         # Get scanner class and create instance
         scanner_class = get_scanner_class(scanner_name, scanner_version)
-        self._scanner = scanner_class(api_key, network, self._url_builder)
+        self._scanner = scanner_class(api_key, chain_info, self._url_builder)
 
         # Store additional config for potential future use
         self._loop = loop
@@ -84,61 +88,6 @@ class ChainscanClient:
         self._proxy = proxy
         self._throttler = throttler
         self._retry_options = retry_options
-
-    @classmethod
-    def from_config(
-        cls,
-        scanner_name: str,
-        scanner_version: str,
-        scanner_id: str,
-        network: str = 'main',
-        loop: AbstractEventLoop | None = None,
-        timeout: ClientTimeout | None = None,
-        proxy: str | None = None,
-        throttler: AbstractAsyncContextManager[Any] | None = None,
-        retry_options: RetryOptionsBase | None = None,
-    ) -> 'ChainscanClient':
-        """
-        Create client using the existing configuration system.
-
-        Args:
-            scanner_name: Scanner implementation ('etherscan', 'oklink')
-            scanner_version: Scanner version ('v1', 'v2')
-            scanner_id: Scanner ID for config lookup ('eth', 'xlayer')
-            network: Network name ('main', 'test', etc.)
-            loop: Event loop instance
-            timeout: Request timeout configuration
-            proxy: Proxy URL
-            throttler: Rate limiting throttler
-            retry_options: Retry configuration
-
-        Returns:
-            Configured ChainscanClient instance
-
-        Example:
-            ```python
-            # Etherscan v2 for Ethereum mainnet
-            client = ChainscanClient.from_config('etherscan', 'v2', 'eth', 'main')
-
-            # OKLink v1 for XLayer
-            client = ChainscanClient.from_config('oklink', 'v1', 'xlayer', 'main')
-            ```
-        """
-        # Use existing config system to get API key and validate network
-        client_config = global_config.create_client_config(scanner_id, network)
-
-        return cls(
-            scanner_name=scanner_name,
-            scanner_version=scanner_version,
-            api_kind=client_config['api_kind'],
-            network=client_config['network'],
-            api_key=client_config['api_key'],
-            loop=loop,
-            timeout=timeout,
-            proxy=proxy,
-            throttler=throttler,
-            retry_options=retry_options,
-        )
 
     async def call(self, method: Method, **params: Any) -> Any:
         """
@@ -203,7 +152,17 @@ class ChainscanClient:
     @property
     def currency(self) -> str:
         """Get the currency symbol for the current network."""
-        return self._url_builder.currency
+        return self.chain_info.native_currency
+
+    @property
+    def chain_id(self) -> int:
+        """Get the EIP-155 chain ID."""
+        return self.chain_info.chain_id
+
+    @property
+    def chain_name(self) -> str:
+        """Get the canonical chain name."""
+        return self.chain_info.name
 
     async def close(self) -> None:
         """Close any open connections (for compatibility)."""
@@ -252,13 +211,14 @@ class ChainscanClient:
         """String representation of the client."""
         return (
             f'ChainscanClient({self.scanner_name} {self.scanner_version}, '
-            f'{self.api_kind} {self.network})'
+            f'{self.chain_info.display_name} [chain_id={self.chain_info.chain_id}])'
         )
 
     def __repr__(self) -> str:
         """Detailed string representation."""
         return (
             f"ChainscanClient(scanner_name='{self.scanner_name}', "
-            f"scanner_version='{self.scanner_version}', api_kind='{self.api_kind}', "
-            f"network='{self.network}')"
+            f"scanner_version='{self.scanner_version}', "
+            f'chain_id={self.chain_info.chain_id}, '
+            f"chain_name='{self.chain_info.name}')"
         )

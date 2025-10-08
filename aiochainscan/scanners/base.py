@@ -5,6 +5,7 @@ Base scanner class for implementing different blockchain explorer APIs.
 from abc import ABC
 from typing import Any, Literal
 
+from ..chains import ChainInfo
 from ..core.endpoint import EndpointSpec
 from ..core.method import Method
 from ..network import Network
@@ -15,52 +16,74 @@ class Scanner(ABC):
     """
     Abstract base class for blockchain scanner implementations.
 
-    Each scanner represents a specific API provider (like Etherscan, OKLink)
-    with a specific version, supporting certain networks and providing
+    Each scanner represents a specific API provider (like Etherscan, BlockScout)
+    with a specific version, supporting certain chains and providing
     specific endpoint implementations.
     """
 
     # These must be defined by subclasses
     name: str
-    """Scanner name (e.g., 'etherscan', 'oklink')"""
+    """Scanner name (e.g., 'etherscan', 'blockscout', 'moralis')"""
 
     version: str
     """Scanner API version (e.g., 'v1', 'v2')"""
 
     supported_networks: set[str]
-    """Networks supported by this scanner (e.g., {'main', 'test'})"""
+    """Legacy: Networks supported by this scanner (deprecated, use chain validation)"""
 
     auth_mode: Literal['query', 'header'] = 'query'
     """How to authenticate - 'query' for URL params, 'header' for HTTP headers"""
 
     auth_field: str = 'apikey'
-    """Field name for authentication (e.g., 'apikey', 'OK-ACCESS-KEY')"""
+    """Field name for authentication (e.g., 'apikey', 'X-API-Key')"""
 
     SPECS: dict[Method, EndpointSpec]
     """Mapping of logical methods to endpoint specifications"""
 
-    def __init__(self, api_key: str, network: str, url_builder: UrlBuilder) -> None:
+    def __init__(self, api_key: str, chain_info: ChainInfo, url_builder: UrlBuilder) -> None:
         """
         Initialize scanner instance.
 
         Args:
-            api_key: API key for authentication
-            network: Network name (must be in supported_networks)
+            api_key: API key for authentication (empty string if not required)
+            chain_info: ChainInfo object with chain metadata
             url_builder: UrlBuilder instance for URL construction
 
         Raises:
-            ValueError: If network is not supported
+            ValueError: If chain is not supported by this scanner
         """
-        if network not in self.supported_networks:
-            available = ', '.join(sorted(self.supported_networks))
-            raise ValueError(
-                f"Network '{network}' not supported by {self.name} v{self.version}. "
-                f'Available: {available}'
-            )
+        # Validate chain support (subclasses can override this)
+        self._validate_chain_support(chain_info)
 
         self.api_key = api_key
-        self.network = network
+        self.chain_info = chain_info
         self.url_builder = url_builder
+
+        # Legacy compatibility - network name from chain_info
+        self.network = chain_info.etherscan_network_name or 'main'
+
+    def _validate_chain_support(self, chain_info: ChainInfo) -> None:
+        """
+        Validate that this scanner supports the given chain.
+
+        Default implementation checks legacy supported_networks.
+        Subclasses can override for custom validation logic.
+
+        Args:
+            chain_info: ChainInfo to validate
+
+        Raises:
+            ValueError: If chain is not supported
+        """
+        # Default validation using legacy network name
+        network_name = chain_info.etherscan_network_name or chain_info.name
+        if network_name not in self.supported_networks:
+            available = ', '.join(sorted(self.supported_networks))
+            raise ValueError(
+                f"Chain '{chain_info.display_name}' (ID: {chain_info.chain_id}) "
+                f'not supported by {self.name} v{self.version}. '
+                f'Available networks: {available}'
+            )
 
     async def call(self, method: Method, **params: Any) -> Any:
         """

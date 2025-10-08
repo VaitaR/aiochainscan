@@ -43,7 +43,47 @@ print("✓ Installation successful!")
 
 ## Quick Start
 
-### 1. Basic Usage
+### 🆕 New API (v0.3.0+) - Provider-First Approach
+
+The new API provides a cleaner, more intuitive interface with support for chain IDs:
+
+```python
+import asyncio
+from aiochainscan import ChainProvider
+from aiochainscan.core.method import Method
+
+async def main():
+    # Create client by provider + chain ID
+    client = ChainProvider.etherscan(chain_id=1)  # Ethereum
+    # Or by name: ChainProvider.etherscan(chain='ethereum')
+    # Or by enum: ChainProvider.etherscan(chain=Chain.ETHEREUM)
+
+    # Get balance
+    balance = await client.call(
+        Method.ACCOUNT_BALANCE,
+        address='0x742d35Cc6634C0532925a3b8D9fa7a3D91D1e9b3'
+    )
+
+    # BlockScout (free, no API key)
+    client = ChainProvider.blockscout(chain_id=11155111)  # Sepolia
+    balance = await client.call(Method.ACCOUNT_BALANCE, address='0x...')
+
+    # Discover available chains
+    chains = ChainProvider.list_chains(provider='blockscout')
+    print(f"BlockScout supports {len(chains)} chains")
+
+asyncio.run(main())
+```
+
+**Key benefits:**
+- ✅ Clear separation: Provider vs Chain
+- ✅ Support for chain IDs (aligns with Etherscan V2)
+- ✅ Type-safe with IDE autocomplete
+- ✅ Discoverable with `list_chains()`
+
+See [MIGRATION_GUIDE.md](MIGRATION_GUIDE.md) for full details.
+
+### 1. Legacy API (Still Supported)
 
 ```python
 import asyncio

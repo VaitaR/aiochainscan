@@ -11,13 +11,16 @@ Supports multiple blockchain networks through different BlockScout instances:
 - And many more...
 """
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..core.endpoint import EndpointSpec
 from ..core.method import Method
 from ..url_builder import UrlBuilder
 from . import register_scanner
 from ._etherscan_like import EtherscanLikeScanner
+
+if TYPE_CHECKING:
+    from ..chains import ChainInfo
 
 
 @register_scanner
@@ -70,23 +73,34 @@ class BlockScoutV1(EtherscanLikeScanner):
         'linea': 'linea.blockscout.com',
     }
 
-    def __init__(self, api_key: str, network: str, url_builder: UrlBuilder) -> None:
+    def _validate_chain_support(self, chain_info: 'ChainInfo') -> None:  # type: ignore[override]
+        """Validate that BlockScout instance exists for this chain."""
+        if not chain_info.blockscout_instance:
+            from ..chains import list_chains
+
+            available = [c.name for c in list_chains(provider='blockscout')]
+            raise ValueError(
+                f"Chain '{chain_info.display_name}' (ID: {chain_info.chain_id}) "
+                f'does not have a BlockScout instance. '
+                f'Available chains: {", ".join(available)}'
+            )
+
+    def __init__(self, api_key: str, chain_info: 'ChainInfo', url_builder: UrlBuilder) -> None:  # type: ignore[override]
         """
-        Initialize BlockScout scanner with network-specific instance.
+        Initialize BlockScout scanner with chain-specific instance.
 
         Args:
             api_key: API key (optional for BlockScout)
-            network: Network name (must be in supported_networks)
+            chain_info: ChainInfo object with chain metadata
             url_builder: UrlBuilder instance
         """
-        super().__init__(api_key, network, url_builder)
+        super().__init__(api_key, chain_info, url_builder)
 
-        # Get BlockScout instance for this network
-        self.instance_domain = self.NETWORK_INSTANCES.get(network)
+        # Get BlockScout instance from chain_info
+        self.instance_domain = chain_info.blockscout_instance
         if not self.instance_domain:
-            available = ', '.join(sorted(self.NETWORK_INSTANCES.keys()))
             raise ValueError(
-                f"Network '{network}' not mapped to BlockScout instance. Available: {available}"
+                f"Chain '{chain_info.display_name}' does not have a BlockScout instance configured"
             )
 
     def _build_request(self, spec: EndpointSpec, **params: Any) -> dict[str, Any]:

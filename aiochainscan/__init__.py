@@ -4,6 +4,8 @@ from typing import Any
 
 __version__ = '0.2.1'
 
+# New unified API - ChainProvider factory (RECOMMENDED)
+# Legacy imports
 from aiochainscan.adapters.aiohttp_client import AiohttpClient
 from aiochainscan.adapters.endpoint_builder_urlbuilder import UrlBuilderEndpoint
 from aiochainscan.adapters.retry_exponential import ExponentialBackoffRetry
@@ -19,6 +21,7 @@ from aiochainscan.capabilities import (
 from aiochainscan.capabilities import (
     is_feature_supported as _caps_is_feature_supported,
 )
+from aiochainscan.chains import Chain, ChainInfo, list_chains, resolve_chain
 from aiochainscan.client import Client  # noqa: F401
 from aiochainscan.config import ChainScanConfig, ScannerConfig, config  # noqa: F401
 from aiochainscan.config import config_manager as _config_manager
@@ -44,6 +47,7 @@ from aiochainscan.ports.endpoint_builder import EndpointBuilder
 from aiochainscan.ports.http_client import HttpClient
 from aiochainscan.ports.rate_limiter import RateLimiter, RetryPolicy
 from aiochainscan.ports.telemetry import Telemetry
+from aiochainscan.provider import ChainProvider
 from aiochainscan.services.account import (
     get_account_balance_by_blockno as get_account_balance_by_blockno_service,
 )
@@ -160,6 +164,12 @@ __all__ = [
     'ChainScanConfig',
     'ScannerConfig',
     'config',
+    # Chain registry
+    'Chain',
+    'ChainInfo',
+    'ChainProvider',
+    'list_chains',
+    'resolve_chain',
     # Domain VOs
     'Address',
     'BlockNumber',
