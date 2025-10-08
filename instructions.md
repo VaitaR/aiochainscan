@@ -1,6 +1,6 @@
 # aiochainscan Project Overview
 
-Note: For GraphQL provider support under the hexagonal architecture, see the concise implementation plan in `GRAPHQL_SUPPORT_PLAN.md`. This file remains the authoritative overview; the plan file is a focused addendum. Current GraphQL status: Blockscout GraphQL is wired via ports/adapters; transaction-by-hash, token transfers, and address transactions support GraphQL with REST fallback. Logs remain REST-first due to schema variance across instances.
+Async Python wrapper for blockchain explorer APIs with hexagonal architecture and dependency injection support. Provides unified interface for querying blockchain data across multiple networks and scanner providers.
 
 ## Project Purpose
 Async Python wrapper for blockchain explorer APIs (Etherscan, BSCScan, PolygonScan, etc.). Provides unified interface for querying blockchain data across multiple networks with both legacy and modern unified architectures.
@@ -8,17 +8,11 @@ Async Python wrapper for blockchain explorer APIs (Etherscan, BSCScan, PolygonSc
 ## Architecture
 
 ### Core Components
-- **Legacy Client**: Original module-based entry point for backward compatibility
-- **Network**: HTTP client with throttling, retries, and aiohttp backend
-- **UrlBuilder**: Constructs API URLs for different blockchain networks
-- **Modules**: API endpoint implementations (account, block, contract, transaction, etc.)
-
-### 🆕 **Unified Scanner Architecture (Production Ready)**
-- **ChainscanClient**: Unified client providing logical method calls across different scanner APIs
-- **Method Enum**: Type-safe logical operations (ACCOUNT_BALANCE, TX_BY_HASH, etc.)
-- **Scanner Registry**: Plugin system for different blockchain explorer implementations
-- **EndpointSpec**: Declarative endpoint configuration with parameter mapping and response parsing
-- **5 Working Scanner Implementations**: EtherscanV2, BaseScanV1, BlockScoutV1, RoutScanV1, MoralisV1
+- **Facade Functions**: Simple async functions for common operations (`get_balance`, `get_block`, etc.)
+- **Hexagonal Architecture**: Clean layered architecture with ports/adapters pattern
+- **Dependency Injection**: Configurable HTTP clients, rate limiters, retries, caching, and telemetry
+- **Optimized Aggregators**: High-performance range-splitting for bulk operations
+- **Multiple Scanner Support**: Etherscan, Blockscout, Moralis, and custom scanners
 
 ### Key Classes
 - `Client`: Main client class with module instances (legacy - maintained for backward compatibility)
@@ -28,553 +22,136 @@ Async Python wrapper for blockchain explorer APIs (Etherscan, BSCScan, PolygonSc
 - `BaseModule`: Abstract base for all API modules
 - `Scanner`: **NEW** abstract base for scanner implementations
 
-## Supported Scanners & Networks
+## Supported Networks
 
-### Production Ready Scanners (6 implementations):
-1. **EtherscanV2** - Multichain Etherscan format
-   - Networks: Ethereum mainnet + testnets, BSC, Polygon, Arbitrum, Optimism, Base
-   - Methods: 7 (core methods)
-   - Auth: API key via `X-API-Key` header
+### Primary Scanner Providers
+- **Etherscan API**: Ethereum, BSC, Polygon, Arbitrum, Optimism, Base, and other EVM chains
+- **Blockscout**: Public blockchain explorers (no API key required) - Sepolia, Gnosis, Polygon, and others
+- **Moralis**: Multi-chain Web3 API - Ethereum, BSC, Polygon, Arbitrum, Base, Optimism, Avalanche
 
-2. **BaseScanV1** - Base network scanner (inherits from the shared Etherscan-like base)
-   - Networks: Base (main, goerli, sepolia)
-   - Methods: 17 (inherited)
-   - Auth: API key via query parameter
-
-3. **BlockScoutV1** - Public blockchain explorer (inherits from the shared Etherscan-like base)
-   - Networks: Sepolia, Gnosis, Polygon, and many others
-   - Methods: 17 (inherited)
-   - Auth: Optional API key (works without)
-
-4. **RoutScanV1** - Mode network explorer
-   - Networks: Mode (chain ID 34443)
-   - Methods: 7 (core methods)
-   - Auth: Optional API key (works without)
-
-5. **MoralisV1** - Moralis Web3 Data API (NEW)
-   - Networks: Ethereum, BSC, Polygon, Arbitrum, Base, Optimism, Avalanche
-   - Methods: 7 (core Web3 methods)
-   - Auth: API key via X-API-Key header (required)
-   - Features: RESTful API, multi-chain support, rich metadata
-
-### Legacy Module Support
-- Ethereum (etherscan.io)
-- BSC (bscscan.com)
-- Polygon (polygonscan.com)
-- Optimism, Arbitrum, Fantom, Gnosis, Flare, Wemix, Chiliz, Mode, Linea, Blast, Base
+### Key Features by Provider
+- **Etherscan**: Full API coverage, requires API keys, supports most EVM networks
+- **Blockscout**: Free public APIs, GraphQL support for some operations, good for development
+- **Moralis**: Rich metadata, modern REST API, requires API key, excellent multi-chain support
 
 ## Module Structure
 ```
 aiochainscan/
+├── __init__.py        # Main exports and facade functions
 ├── client.py          # Legacy Client class (backward compatibility)
-├── core/              # ✅ Unified architecture components
+├── core/              # Unified architecture components
 │   ├── client.py      # ChainscanClient - unified interface
 │   ├── method.py      # Method enum - logical operations
-│   ├── endpoint.py    # EndpointSpec - endpoint configuration
-│   └── __init__.py
-├── scanners/          # ✅ Scanner implementations (5 working)
+│   └── endpoint.py    # EndpointSpec - endpoint configuration
+├── scanners/          # Scanner implementations
 │   ├── base.py        # Scanner abstract base class
-│   ├── _etherscan_like.py # Shared Etherscan-style implementation for partner scanners
-│   ├── etherscan_v2.py # Etherscan API v2 (7 methods)
-│   ├── basescan_v1.py  # BaseScan (inherits shared Etherscan-style base)
-│   ├── blockscout_v1.py # BlockScout (inherits shared Etherscan-style base)
-│   ├── routscan_v1.py  # RoutScan (Mode network)
-│   └── __init__.py    # Scanner registry system
+│   ├── etherscan_v2.py # Etherscan API v2
+│   ├── blockscout_v1.py # BlockScout implementation
+│   └── moralis_v1.py   # Moralis Web3 API
+├── adapters/          # Hexagonal architecture adapters
+│   ├── aiohttp_client.py
+│   ├── simple_rate_limiter.py
+│   └── structlog_telemetry.py
+├── services/          # Business logic services
+│   ├── account.py      # Account operations
+│   ├── block.py        # Block operations
+│   └── stats.py        # Network statistics
+├── domain/            # Domain models and DTOs
+│   ├── models.py       # Value objects (Address, TxHash, etc.)
+│   └── dto.py          # Data transfer objects
 ├── network.py         # HTTP client with throttling
-├── url_builder.py     # URL construction logic
 ├── exceptions.py      # Custom exceptions
-├── config.py          # Advanced configuration system
-├── common.py          # Chain features and utilities
-└── modules/           # Legacy API modules
-    ├── account.py, block.py, contract.py, etc.
-    └── extra/
-        ├── links.py   # Explorer link generation
-        └── utils.py   # Utility functions
+└── config.py          # Configuration management
 ```
 
 ## Key Features
 
-### Unified Interface
+### Simple Facade API
 ```python
-# Same code works with any scanner
-from aiochainscan.core.client import ChainscanClient
-from aiochainscan.core.method import Method
+# Simple async functions for common operations
+from aiochainscan import get_balance, get_block, get_all_transactions_optimized
 
-# Etherscan
-client = ChainscanClient.from_config('etherscan', 'v2', 'eth', 'main')
-balance = await client.call(Method.ACCOUNT_BALANCE, address='0x...')
-
-# BlockScout (no API key needed)
-client = ChainscanClient.from_config('blockscout', 'v1', 'blockscout_sepolia', 'sepolia')
-balance = await client.call(Method.ACCOUNT_BALANCE, address='0x...')
-
-# RoutScan (Mode network)
-client = ChainscanClient.from_config('routscan', 'v1', 'routscan_mode', 'mode')
-balance = await client.call(Method.ACCOUNT_BALANCE, address='0x...')
-
-# Moralis (multi-chain Web3 API) - NEW
-client = ChainscanClient(
-    scanner_name='moralis', scanner_version='v1',
-    api_kind='moralis', network='eth', api_key='YOUR_MORALIS_KEY'
+# Get balance (works with Blockscout - no API key needed)
+balance = await get_balance(
+    address='0x...',
+    api_kind='blockscout_sepolia',
+    network='sepolia',
+    api_key=''
 )
-balance = await client.call(Method.ACCOUNT_BALANCE, address='0x...')
-tokens = await client.call(Method.TOKEN_BALANCE, address='0x...')
+
+# Get block info (Etherscan - requires API key)
+block = await get_block(
+    tag=17000000,
+    full=False,
+    api_kind='eth',
+    network='main',
+    api_key='YOUR_API_KEY'
+)
+
+# Optimized bulk operations with range splitting
+transactions = await get_all_transactions_optimized(
+    address='0x...',
+    api_kind='eth',
+    network='main',
+    api_key='YOUR_API_KEY',
+    max_concurrent=5
+)
 ```
 
-### Backward Compatibility
+### Dependency Injection
 ```python
-# Legacy API still works
-from aiochainscan import Client
+# Customizable rate limiting, retries, and HTTP clients
+from aiochainscan import get_balance, SimpleRateLimiter, ExponentialBackoffRetry
 
-client = Client("YOUR_API_KEY", "eth", "main")
-balance = await client.account.balance("0x...")
+rate_limiter = SimpleRateLimiter(requests_per_second=1)
+retry_policy = ExponentialBackoffRetry(attempts=3)
+
+balance = await get_balance(
+    address='0x...',
+    api_kind='eth',
+    network='main',
+    api_key='YOUR_API_KEY',
+    rate_limiter=rate_limiter,
+    retry=retry_policy
+)
 ```
 
-## Configuration System
+## Configuration
 
 ### Environment Variables
 ```bash
-# API Keys
+# API Keys (set as needed)
 ETHERSCAN_KEY=your_etherscan_api_key
-BASESCAN_KEY=your_basescan_api_key
 MORALIS_API_KEY=your_moralis_api_key
-# BlockScout and RoutScan work without API keys
-
-# Configuration
-AIOCHAINSCAN_CONFIG_PATH=/path/to/config.json
-```
-
-### Config File Support
-```json
-{
-  "scanners": {
-    "custom_scanner": {
-      "name": "Custom Scanner",
-      "base_domain": "api.custom.com",
-      "currency": "CUSTOM",
-      "supported_networks": ["main", "testnet"],
-      "requires_api_key": true
-    }
-  }
-}
-```
+# Blockscout works without API keys
 
 ## Development Guidelines
 
 ### Code Quality Standards
-- **Linting**: All code must pass `ruff check` (297 tests pass)
-- **Type Safety**: Full type hints with `mypy --strict` compatibility
-- **Testing**: Comprehensive test coverage with `pytest`
-- **Documentation**: Google-style docstrings for all public APIs
+- **Linting**: `ruff check` and `ruff format`
+- **Type Safety**: `mypy --strict` compatibility
+- **Testing**: `pytest` with comprehensive coverage
+- **Documentation**: Google-style docstrings for public APIs
 
-### Testing Strategy
-- **Unit Tests**: All core components and scanner implementations
-- **Integration Tests**: Real API calls with multiple scanners
-- **Mocking**: Network calls mocked for reliable CI/CD
-- **Error Handling**: Comprehensive error scenarios covered
- - **Typing**: CI enforces `mypy --strict` on `aiochainscan/`. Run locally via `uv run mypy --strict aiochainscan`.
+## Adding New Scanners
 
----
+The library supports adding new blockchain scanners through a plugin system. See the scanner implementations in `aiochainscan/scanners/` for examples of how to add support for new APIs.
 
-## 📋 Guide: Adding New Scanner Implementations
+## Hexagonal Architecture
 
-This guide is based on successful implementation of 5 different scanner types during development.
+The project uses hexagonal architecture with clear separation of concerns:
 
-### 🎯 Scanner Implementation Approaches
+- **Domain**: Pure business models and value objects
+- **Ports**: Interfaces for external dependencies (HTTP, cache, telemetry)
+- **Services**: Business logic implementing use cases
+- **Adapters**: Concrete implementations of ports (aiohttp, in-memory cache)
+- **Facade**: Public API composition layer
 
-#### **Approach 1: Inheritance (RECOMMENDED for Etherscan-compatible APIs)**
-**Use when**: New scanner has identical API structure to existing scanner
-**Example**: BaseScan (identical to Etherscan)
-
-**Pros**: ✅ Minimal code (25 lines), automatic updates, zero maintenance
-**Cons**: ⚠️ Limited to identical APIs
-
-```python
-# ✅ BaseScan implementation (successful)
-@register_scanner
-class BaseScanV1(EtherscanLikeScanner):
-    name = "basescan"
-    version = "v1"
-    supported_networks = {"main", "goerli", "sepolia"}
-    # All SPECS and logic inherited from the shared Etherscan-like base
-```
-
-#### **Approach 2: Custom URL Handling (for similar APIs with different URL structure)**
-**Use when**: API is Etherscan-compatible but uses different URL patterns
-**Example**: BlockScout (different instances per network)
-
-**Pros**: ✅ Reuses most logic, handles URL variations
-**Cons**: ⚠️ Requires custom `__init__` and `call` methods
-
-```python
-# ✅ BlockScout implementation (successful)
-@register_scanner
-class BlockScoutV1(EtherscanLikeScanner):
-    name = "blockscout"
-    supported_networks = {"sepolia", "gnosis", "polygon", ...}
-
-    def __init__(self, api_key: str, network: str, url_builder: UrlBuilder):
-        # Custom initialization for network-specific instances
-        super().__init__(api_key, network, url_builder)
-
-    async def call(self, method: Method, **params):
-        # Custom URL building for BlockScout instances
-        # Uses aiohttp directly, bypasses standard Network class
-```
-
-#### **Approach 3: Complete Custom Implementation (for unique APIs)**
-**Use when**: API has completely different structure
-**Example**: RoutScan (chain ID in URL path), OKLink (removed - was problematic)
-
-**Pros**: ✅ Full control, handles any API structure
-**Cons**: ⚠️ Most code, requires maintenance
-
-```python
-# ✅ RoutScan implementation (successful)
-@register_scanner
-class RoutScanV1(Scanner):
-    name = "routscan"
-    NETWORK_CHAIN_IDS = {"mode": "34443"}
-
-    async def call(self, method: Method, **params):
-        # Completely custom URL building
-        base_url = f"https://api.routescan.io/v2/network/mainnet/evm/{self.chain_id}"
-        full_url = base_url + spec.path
-        # Direct aiohttp usage
-```
-
-### 📝 Step-by-Step Implementation Process
-
-#### **Step 1: Research & Planning**
-1. **API Documentation**: Study target API structure thoroughly
-2. **Compare with Existing**: Identify similarity to the shared Etherscan-like base or EtherscanV2
-3. **Choose Approach**: Inheritance → Custom URL → Complete Custom
-4. **Network Mapping**: Document supported networks and their identifiers
-
-#### **Step 2: Configuration Setup**
-Add scanner configuration to `aiochainscan/config.py`:
-
-```python
-# ✅ Add to BUILTIN_SCANNERS
-'new_scanner': ScannerConfig(
-    name='New Scanner',
-    base_domain='api.newscanner.com',
-    currency='TOKEN',
-    supported_networks={'main', 'testnet'},
-    requires_api_key=True,  # or False for public APIs
-    special_config={'custom_field': 'value'} if needed
-),
-```
-
-#### **Step 3: URL Builder Updates**
-Add to `aiochainscan/url_builder.py`:
-
-```python
-# ✅ Add to _API_KINDS
-'new_scanner': ('api.newscanner.com', 'TOKEN'),
-
-# ✅ Handle special URL structure in _get_api_url() if needed
-elif self._api_kind == 'new_scanner':
-    prefix = 'custom-prefix'  # or None for direct /api
-```
-
-#### **Step 4: Scanner Implementation**
-Create `aiochainscan/scanners/new_scanner_v1.py`:
-
-```python
-@register_scanner
-class NewScannerV1(Scanner):  # or inherit from EtherscanLikeScanner when compatible
-    name = "new_scanner"
-    version = "v1"
-    supported_networks = {"main", "testnet"}
-    auth_mode = "query"  # or "header"
-    auth_field = "apikey"  # or custom field name
-
-    SPECS = {
-        Method.ACCOUNT_BALANCE: EndpointSpec(
-            http_method="GET",
-            path="/api",  # or custom path
-            query={"module": "account", "action": "balance"},
-            param_map={"address": "address"},  # map generic → specific
-            parser=PARSERS['etherscan'],  # or custom parser
-        ),
-        # ... more method specifications
-    }
-```
-
-#### **Step 5: Registry Integration**
-Add import to `aiochainscan/scanners/__init__.py`:
-
-```python
-# ✅ Add import (at bottom to avoid circular imports)
-from .new_scanner_v1 import NewScannerV1  # noqa: E402
-
-# ✅ Add to __all__
-__all__ = [
-    # ... existing scanners
-    'NewScannerV1',
-]
-```
-
-#### **Step 6: Testing Strategy**
-
-**Create test file** `test_new_scanner.py`:
-```python
-#!/usr/bin/env python3
-"""Test new scanner implementation."""
-
-import asyncio
-from aiochainscan.core.client import ChainscanClient
-from aiochainscan.core.method import Method
-
-async def test_new_scanner():
-    client = ChainscanClient(
-        scanner_name='new_scanner',
-        scanner_version='v1',
-        api_kind='new_scanner',
-        network='main',
-        api_key='test_key'
-    )
-
-    # Test basic functionality
-    result = await client.call(Method.ACCOUNT_BALANCE, address='0x...')
-    print(f"Result: {result}")
-
-    await client.close()
-
-if __name__ == "__main__":
-    asyncio.run(test_new_scanner())
-```
-
-**Run comprehensive testing**:
-```bash
-# ✅ Code quality
-python3 -m ruff check . --fix
-python3 -m pytest tests/ -v
-
-# ✅ Integration test
-python3 test_new_scanner.py
-```
-
-### 🚀 What Worked (Successful Patterns)
-
-#### **✅ Inheritance for Compatible APIs**
-- **BaseScan**: 25 lines of code, zero maintenance
-- **BlockScout**: Inherited 17 methods, custom URL handling only
-
-#### **✅ Direct aiohttp for Custom URLs**
-- **BlockScout**: Bypassed Network class for instance-specific URLs
-- **RoutScan**: Used aiohttp directly for non-standard URL patterns
-
-#### **✅ Gradual Feature Addition**
-- Start with 1-2 core methods (ACCOUNT_BALANCE, ACCOUNT_TRANSACTIONS)
-- Add more methods incrementally
-- Test each method individually
-
-#### **✅ Proper Error Handling**
-- Custom error messages with scanner context
-- Graceful handling of API-specific error formats
-- Rate limiting detection and reporting
-
-#### **✅ Configuration-Driven Design**
-- Scanner settings in `config.py`
-- Environment variable integration
-- Network validation through configuration
-
-### ⚠️ What Didn't Work (Lessons Learned)
-
-#### **❌ OKLink Integration Challenges (removed)**
-**Issues encountered**:
-- Complex parameter mapping (chainShortName requirements)
-- Header-based authentication vs query-based
-- Non-standard response formats
-- Risk control blocking with certain addresses
-- API restrictions for "scam" addresses
-
-**Lessons**:
-- Research API restrictions thoroughly
-- Test with multiple addresses
-- Understand API's risk management policies
-- Consider API stability and access policies
-
-#### **❌ Over-Engineering Initial Implementations**
-**Mistakes**:
-- Trying to handle all edge cases initially
-- Complex parameter transformation logic
-- Premature optimization
-
-**Better approach**:
-- Start simple, add complexity gradually
-- Focus on core methods first
-- Iterate based on real usage
-
-#### **❌ Insufficient URL Structure Research**
-**Problems**:
-- Wrong assumptions about URL patterns
-- Missing chain ID requirements
-- Incorrect subdomain usage
-
-**Solution**:
-- Study API documentation thoroughly
-- Test URL building manually first
-- Verify with actual API calls
-
-### 🎯 Best Practices for New Scanners
-
-#### **Code Organization**
-1. **Single Responsibility**: Each scanner handles one API provider
-2. **Clear Inheritance**: Use inheritance only for truly compatible APIs
-3. **Descriptive Names**: Clear scanner names reflecting their purpose
-4. **Comprehensive Documentation**: Document all custom behavior
-
-#### **Testing Strategy**
-1. **Start with Real APIs**: Test against actual endpoints early
-2. **Handle Rate Limits**: Expect and handle rate limiting gracefully
-3. **Multiple Addresses**: Test with various address types
-4. **Error Scenarios**: Test invalid addresses, networks, methods
-
-#### **Configuration Management**
-1. **Environment Variables**: Support standard API key patterns
-2. **Network Validation**: Validate networks at client creation
-3. **Flexible Authentication**: Support both query and header auth
-4. **Optional API Keys**: Design for APIs that work without keys
-
-#### **Performance Considerations**
-1. **Efficient HTTP**: Reuse connections where possible
-2. **Proper Async**: Use async/await correctly throughout
-3. **Resource Cleanup**: Always close HTTP sessions
-4. **Error Recovery**: Implement retry logic for transient failures
-
-### 🔄 Maintenance and Updates
-
-#### **Regular Maintenance Tasks**
-1. **API Changes**: Monitor for breaking changes in external APIs
-2. **Test Updates**: Keep integration tests current
-3. **Documentation**: Update examples and guides
-4. **Dependencies**: Keep HTTP libraries updated
-
-#### **Version Management**
-1. **Scanner Versioning**: Use version numbers for scanner implementations
-2. **Backward Compatibility**: Maintain legacy interfaces
-3. **Migration Guides**: Document breaking changes clearly
-4. **Deprecation Notices**: Give advance warning for removals
-
-### 📊 Current Implementation Status
-
-| Scanner | Status | Methods | Networks | Complexity | Maintenance |
-|---------|--------|---------|----------|------------|-------------|
-| **EtherscanV2** | ✅ Production | 7 | 8+ | Medium | Low |
-| **BaseScanV1** | ✅ Production | 17 | 3 | Very Low | Minimal |
-| **BlockScoutV1** | ✅ Production | 17 | 8+ | Medium | Low |
-| **RoutScanV1** | ✅ Production | 7 | 1 | High | Medium |
-| **MoralisV1** | ✅ Production | 7 | 7 | High | Medium |
-
-**Total: 5 working scanner implementations supporting 35+ networks with 70+ unified methods.**
-
----
+This architecture enables easy testing, flexible dependency injection, and technology swapping.
 
 ## 🆕 **Moralis Web3 Data API Integration**
 
-### Overview
-Successfully integrated Moralis Web3 Data API as the 6th scanner implementation in the aiochainscan unified architecture. This integration demonstrates the flexibility and extensibility of the scanner system.
-
-### Implementation Approach
-**Pattern Used**: Complete Custom Implementation (Approach 3)
-- **Why**: Moralis uses completely different API structure (RESTful vs query-based)
-- **Authentication**: Header-based (`X-API-Key`) vs query-based (`apikey`)
-- **URL Structure**: Path parameters (`/wallets/{address}/balance`) vs query modules
-- **Response Format**: Direct JSON objects vs `{"result": data}` wrapper
-
-### Key Features
-- **Multi-chain Support**: 7 major EVM networks (ETH, BSC, Polygon, Arbitrum, Base, Optimism, Avalanche)
-- **RESTful Design**: Modern API endpoints with path parameters
-- **Rich Metadata**: Enhanced transaction and token data
-- **Header Authentication**: Secure API key handling
-- **Custom Parsers**: Specialized response parsing for Moralis format
-
-### Architecture Integration
-```python
-# Following established patterns from RoutScanV1 and BlockScoutV1
-@register_scanner
-class MoralisV1(Scanner):
-    name = "moralis"
-    version = "v1"
-    auth_mode = "header"
-    auth_field = "X-API-Key"
-
-    # Custom call() method for RESTful endpoints
-    # Direct aiohttp usage for non-standard URL patterns
-    # Chain ID mapping for multi-chain support
-```
-
-### Supported Methods (7 core methods)
-- `ACCOUNT_BALANCE` → `/wallets/{address}/balance`
-- `ACCOUNT_TRANSACTIONS` → `/wallets/{address}/history`
-- `TOKEN_BALANCE` → `/wallets/{address}/tokens`
-- `ACCOUNT_ERC20_TRANSFERS` → `/wallets/{address}/tokens/transfers`
-- `TX_BY_HASH` → `/transaction/{txhash}`
-- `BLOCK_BY_NUMBER` → `/block/{block_number}`
-- `CONTRACT_ABI` → `/contracts/{address}`
-
-### Configuration Added
-- **Config System**: Added to `BUILTIN_SCANNERS` with multi-chain mappings
-- **URL Builder**: Added Moralis domain support
-- **Parsers**: 4 custom parsers for Moralis response formats
-- **Environment**: `MORALIS_API_KEY` support
-
-### Usage Example
-```python
-# Multi-chain balance checking with same interface
-networks = ['eth', 'bsc', 'polygon', 'arbitrum', 'base']
-address = "0x742d35Cc6634C0532925a3b8D9fa7a3D91D1e9b3"
-
-for network in networks:
-    client = ChainscanClient(
-        scanner_name='moralis', scanner_version='v1',
-        api_kind='moralis', network=network,
-        api_key=os.getenv('MORALIS_API_KEY')
-    )
-
-    balance = await client.call(Method.ACCOUNT_BALANCE, address=address)
-    tokens = await client.call(Method.TOKEN_BALANCE, address=address)
-
-    print(f"{network}: {balance} wei, {len(tokens)} tokens")
-    await client.close()
-```
-
-### Testing & Quality Assurance
-- **Code Quality**: Passes `ruff check` (PEP 8 compliance)
-- **Type Safety**: Full type hints throughout
-- **Integration Test**: Created `test_moralis_integration.py`
-- **Registry Test**: Verified scanner registration
-- **Multi-chain Test**: Tested all 7 supported networks
-- **Error Handling**: Enhanced error messages with chain context
-
-### Lessons Applied from Project Guidelines
-1. **Inheritance Strategy**: Used direct `Scanner` inheritance (not the shared Etherscan-like base) due to API differences
-2. **URL Handling**: Custom `call()` method following `RoutScanV1` pattern
-3. **Authentication**: Proper header-based auth implementation
-4. **Error Handling**: Chain-specific error context
-5. **Testing**: Comprehensive integration testing
-6. **Documentation**: Complete documentation update
-
-### Performance & Limitations
-- **Performance**: Direct aiohttp usage for optimal speed
-- **Rate Limiting**: Inherits from Moralis API limits
-- **API Coverage**: 7 core methods (expandable to 20+ as needed)
-- **Network Support**: 7 EVM chains (expandable)
-
-### Future Enhancements
-- **Additional Methods**: Easy to add more Moralis endpoints
-- **Caching**: Could add response caching for repeated queries
-- **Batch Requests**: Moralis supports batch operations
-- **WebSocket**: Could add real-time data streaming
-
-This integration serves as a reference implementation for adding complex, modern Web3 APIs to the aiochainscan ecosystem while maintaining backward compatibility and architectural consistency.
-
----
-
-This guide reflects real-world experience implementing 6 different scanner types, including successful patterns and actual failures encountered during development.
+Successfully integrated Moralis Web3 Data API as a modern multi-chain scanner with RESTful endpoints and rich metadata support.
 
 ## Hexagonal Architecture Migration Guide (Phase 1)
 
@@ -590,532 +167,3 @@ This section is the authoritative, living guide for migrating to a Hexagonal Arc
 - **adapters**: concrete implementations of ports (e.g., `aiohttp`). Mapping DTO ↔ domain.
 - **facade (public API)**: stable exports via `aiochainscan.__init__` (re-exports).
 - Dependency direction: `domain -> ports -> services -> adapters -> facade` (no cycles; only rightward imports).
-
-### Directory plan (added under `aiochainscan/`)
-- `domain/` (new)
-- `ports/` (new)
-- `services/` (new)
-- `adapters/` (new)
-
-Keep existing modules (`core/`, `modules/`, `scanners/`, `network.py`, `url_builder.py`) intact initially. Do not change `fastabi` paths or build settings.
-
-### First slice (minimal but valuable)
-1) Create packages: `aiochainscan/domain`, `aiochainscan/ports`, `aiochainscan/services`, `aiochainscan/adapters` (each with `__init__.py`).
-2) Domain models: add `aiochainscan/domain/models.py` with clean VO/aliases (e.g., `Address`, `BlockNumber`, `TxHash`). Gradually migrate existing dataclasses that are truly pure. Do not move config managers or any I/O.
-3) HTTP port: `aiochainscan/ports/http_client.py` with `Protocol`:
-   - `async def get(url: str, params: Mapping[str, Any] | None = None) -> Any`
-   - `async def post(url: str, data: Any | None = None, json: Any | None = None) -> Any`
-4) HTTP adapter (canonical): `aiochainscan/adapters/aiohttp_client.py` implementing the port using `aiohttp.ClientSession` with proper lifecycle and `raise_for_status()`.
-5) Service: `aiochainscan/services/account.py` exposing `async def get_address_balance(address: Address, network: str, api_kind: str, api_key: str | None) -> int`.
-   - Build URL using existing `url_builder` (temporarily). Inject the HTTP port. Parse response via existing parsers if appropriate.
-6) Facade: add new re-exports in `aiochainscan/__init__.py`:
-   - `from .domain.models import Address` (and other VO as they appear)
-   - `from .services.account import get_address_balance`
-   Preserve existing exports (`Client`, `config`, etc.).
-7) Backward compatibility: keep old imports working via re-exports in their original modules when feasible (e.g., thin aliasing in `config.py`). Avoid warnings in this phase.
-
-### DTO policy (Phase 1)
-- Use `TypedDict`/dataclasses for DTO validation at boundaries; keep domain models pydantic-free.
-- Consider Pydantic later if needed; not required now.
-
-### Import-linter contracts (initial)
-- Add import-linter to dev dependencies and CI.
-- Contracts (soft to start):
-  - `domain` must not import from `aiochainscan.ports`, `services`, `adapters`, `core`, `modules`, `scanners`.
-  - `ports` must not import from `services`, `adapters`, `core`, `modules`, `scanners`.
-  - `services` may import `domain`, `ports`, and selected legacy helpers (`url_builder` temporarily) but not `adapters`.
-  - `adapters` may import `ports` (and stdlib/third-party), not `services` or `domain`.
-  - `facade` can import from anywhere; it is the composition edge.
-
-### Quality gates
-- `pytest -q` green (all existing tests must pass).
-- `ruff` passes; formatting unchanged unless touched code requires it.
-- `mypy --strict` passes for new code; avoid `Any` in public APIs.
-- `import-linter` passes with initial contracts.
-
-### Risks and mitigations
-- **Cyclic imports**: Only move pure VO to `domain`. Use lazy imports in services if needed; keep adapters isolated.
-- **Import paths compatibility**: Re-export names in original modules and in `__init__` to keep old imports working.
-- **HTTP lifecycle**: Provide context manager or explicit `close()` in adapter; reuse session in services; no unclosed sessions.
-- **Stack choice**: Use `aiohttp` (already a dependency). Add retries/timeouts where appropriate.
-- **`url_builder` coupling**: Inject it as a function/dependency in the service to avoid cycles; later promote to a dedicated port.
-
-### Definition of Done (Phase 1)
-- New packages created and wired.
-- `domain/models.py` exists with initial VO (`Address`, etc.) and re-exported via `aiochainscan/__init__.py`.
-- `ports/http_client.py` and `adapters/aiohttp_client.py` implemented.
-- `services/account.py:get_address_balance` implemented and exported via facade.
-- All tests green; `mypy --strict`, `ruff`, and `import-linter` pass.
-
-### Next iterations (high level)
-- Add services for block/transaction reads.
-- Extract `endpoint builder` into a port and its adapter; reduce reliance on legacy modules.
-- Introduce DTO validation where responses are complex; consider Pydantic if/when it adds value.
-
-### Progress log (brief)
-- Phase 1: added domain VOs (`Address`, `TxHash`, `BlockNumber`), `HttpClient` port with `AiohttpClient` adapter, services for balance/block/transaction, and facade functions (`get_balance`, `get_block`, `get_transaction`). CI enforces import-linter.
-- Added `EndpointBuilder` port with `UrlBuilder` adapter; refactored services to use it (no direct dependency on `url_builder` inside services).
-- Added `get_token_balance` service and a simple facade helper `get_token_balance_facade` for convenience.
-
-## Hexagonal Architecture – Current Stage (Phase 1 slice complete)
-
-### What is in place
-- domain: value objects (`Address`, `TxHash`, `BlockNumber`)
-- ports: `HttpClient`, `EndpointBuilder`
-- adapters: `AiohttpClient`, `UrlBuilderEndpoint`
-- services: balance, block, transaction, token balance, gas oracle (all consume ports)
-- facade: top-level helpers in `aiochainscan/__init__.py` with re-exports preserved
-- dependency control: import-linter contracts enabled in CI and passing
-- quality: `mypy --strict`, `ruff`, and tests are green; a flaky integration test is excluded from fast pre-push, still executed in CI
-- URL decoupling: services use `EndpointBuilder` port (no direct dependency on `url_builder`)
-
-### Risks / technical debt
-- Legacy layer (`modules/*`, parts of `network.py`) still active in parallel; needs gradual migration/consolidation
-- DTO/validation not standardized yet; services return provider-shaped payloads
-- No unified structlog-based tracing/logging in adapters/services
-- Cache/retries/rate limiting exist only in legacy; not modeled as ports
-- Facade naming has minor inconsistency (`get_token_balance_facade` vs `get_balance`)
-
-### Next steps (prioritized)
-1) Service coverage: add services for logs, stats, proxy reads via `EndpointBuilder`
-2) DTO layer: introduce `TypedDict` for service inputs/outputs and a provider→domain normalization
-3) Infra ports: add `Cache`, `RateLimiter`/`RetryPolicy`, `Telemetry` (+ adapters) and align behavior with legacy
-4) Facade: standardize helper names (prefer `get_*` form) and keep backward-compatible aliases
-5) Legacy migration: route `modules/*` through services or deprecate; reduce direct `network.py` usage
-6) Import rules: gradually tighten import-linter contracts
-7) Tests: unit-test new services/adapters with mocked ports; add DTO snapshot tests
-
-### Short take
-The hexagonal skeleton is in place and already useful. Next focus: broaden services, introduce DTO normalization, migrate legacy module paths, and add infrastructure ports (cache/retries/telemetry).
-
-## Hexagonal Architecture – Phase 1.1 Progress Update
-
-### Implemented (since last update)
-- domain DTOs: `GasOracleDTO`, `BlockDTO`, `TransactionDTO`, `LogEntryDTO`, `EthPriceDTO`.
-- ports (infra added): `Cache`, `RateLimiter`, `RetryPolicy`, `Telemetry`.
-- adapters (infra): `InMemoryCache`, `SimpleRateLimiter`, `ExponentialBackoffRetry`, `NoopTelemetry`.
-- services (+ normalization helpers):
-  - account: `get_address_balance`
-  - block: `get_block_by_number`, `normalize_block`
-  - transaction: `get_transaction_by_hash`, `normalize_transaction`
-  - token: `get_token_balance`, `normalize_token_balance`
-  - gas: `get_gas_oracle`, `normalize_gas_oracle`
-  - logs: `get_logs`, `normalize_log_entry`
-  - stats: `get_eth_price`, `normalize_eth_price`
-- facade helpers exported: `get_balance`, `get_block`, `get_transaction`, `get_token_balance` (+ alias `get_token_balance_facade`), `get_gas_oracle` (+ alias `get_gas_oracle_facade`), `get_logs`, `get_eth_price`.
-- facade normalizers exported: `normalize_block`, `normalize_transaction`, `normalize_log_entry`, `normalize_gas_oracle`, `normalize_token_balance`, `normalize_eth_price`.
-- legacy migration (non-breaking):
-  - `modules/account.py:balance` → calls `get_balance` first (fallback to legacy).
-  - `modules/token.py:token_balance` → calls `get_token_balance` first (fallback to legacy).
-  - `modules/block.py:get_by_number` → calls `get_block` first (fallback to legacy).
-  - `modules/transaction.py:get_by_hash` → calls `get_transaction` first (fallback to legacy).
-
-### Not yet implemented (known gaps)
-- services coverage: remaining `stats` endpoints; broader proxy reads where applicable.
-- DTOs: normalization for more `stats` responses and other complex payloads.
-- telemetry/logging: unify on structlog adapter and propagate through services by default.
-- cache/policy composition: configurable TTLs, composition at facade-level (currently adapters exist but wired as optional parameters inside services).
-- legacy routing: migrate `modules/stats.py` and `modules/logs.py` to services internally, keep public interface intact.
-- import rules: tighten import-linter contracts stepwise as migration proceeds.
-
-### Testing notes (local fast path)
-- Prefer running only related tests when touching specific layers, e.g.:
-  - `pytest -q tests/test_logs.py tests/test_stats.py`
-  - `pytest -q tests/test_block.py tests/test_transaction.py tests/test_token.py`
-- CI remains responsible for full-suite and type checks (`mypy --strict`).
-
-## Hexagonal Architecture – Phase 1.2 Progress Update (current)
-
-### Implemented since last update
-- Contract services/facade: `getabi`, `getsourcecode`, `verifysourcecode`, `checkverifystatus`, `verifyproxycontract`, `checkproxyverification`, `getcontractcreation`. Legacy `modules/contract.py` now prefers facades with safe fallbacks.
-- Account list services/facade: multi-balance (`balancemulti`), normal txs (`txlist`), internal txs (`txlistinternal`), token transfers (ERC-20/721/1155), mined blocks, beacon withdrawals, historical balance by block (`balancehistory`). Legacy `modules/account.py` routed to facades with fallbacks.
-- Stats daily series: remaining daily endpoints surfaced via services and facades where applicable.
-- Telemetry: `StructlogTelemetry` adapter added; duration events recorded across services.
-- Import rules: initial import‑linter contracts added (services ↔ adapters forbidden, domain isolated, ports don’t import adapters).
-- Quality gates: ruff, ruff-format, mypy --strict, pytest quick path passing locally; network‑flaky integration acknowledged in CI.
-
-### Backward compatibility
-- Preserved. Legacy modules remain as thin adapters to new facades with try/fallback to original logic.
-
-### Next steps (short)
-- Modules routing: increase coverage of unconditional facade routing for stable endpoints; with `AIOCHAINSCAN_FORCE_FACADES=1` verify no hidden legacy calls in CI.
-- Telemetry: standardize events/fields across services (api_kind, network, duration_ms, items) and document in README.
-- Import-linter: keep contracts enforced in CI; consider stricter boundaries for `facade` to avoid cross-layer leakage.
-- Infra composition: expose cache/rate‑limit/retry/telemetry composition ergonomically at the facade; keep adapters opt‑in.
-- Stats coverage: validate any residual daily endpoints and add tests if gaps are found.
-
-## Hexagonal Migration – Next Steps (Phase 1.3 → 2.0)
-
-### Phase 1.3 (DI completion, non-breaking)
-- Ensure DI kwargs on all facades (http, endpoint_builder, rate_limiter, retry, cache, telemetry). Status: DONE.
-- Provide a small reusable session helper to reuse HTTP connections across multiple calls. Status: DONE (`open_default_session()`).
-- Finish DTOs/normalizers for any remaining list/aggregate endpoints; export via `aiochainscan/__init__.py`. Status: DONE.
-- Migrate examples to facade usage while keeping legacy examples intact. Status: DONE.
-
-### Phase 1.4 (facade hardening, smooth transition)
-- Route `modules/*` through facades unconditionally where stable; gradually remove legacy fallbacks without changing public signatures. Environment toggle available: set `AIOCHAINSCAN_FORCE_FACADES=1` to disable legacy fallbacks (default off). Status: DONE for key paths (account, block, transaction, logs, token, contract, proxy) with strict raises when forced.
-- Optional deprecation messaging behind an environment flag (default off). Implemented via `AIOCHAINSCAN_DEPRECATE_MODULES=1` (default off). Status: DONE.
-- Tighten import-linter: forbid services → core/network, modules → services/adapters, and add explicit core boundary contracts. Status: services → core/network DONE; others IN PROGRESS.
-
-### Phase 1.5 (quality/observability)
-- Keep retry/rate limit/cache defaults opt-in only; no hidden behavior changes.
-- Standardize telemetry events/fields (api_kind, network, duration_ms, items) across services.
-  - Implemented across high-traffic services (account, logs, stats, token, block, transaction, proxy, gas). Events now emit `duration_ms` for request timing and `items` for list-returning endpoints.
-- Update README with short sections: “Facades + DI”, “Normalizers/DTO”.
-  - Add: “Optimized fetch-all (range-splitting aggregator)” docs; generic aggregator at `services/aggregator.py` used by: `get_all_transactions_optimized` (+ typed), `get_all_internal_transactions_optimized`, `get_all_logs_optimized`.
- - Introduce typed DTO facades in parallel (non-breaking): `get_block_typed`, `get_transaction_typed`, `get_logs_typed`, `get_token_balance_typed`, `get_gas_oracle_typed`, and typed daily stats helpers. Keep legacy facades intact; typed versions are opt-in.
-
-#### Phase 1.5 preparation: DTO typing plan
-
-- Safe-to-type endpoints (introduce parallel `*_typed` facades, keep legacy untyped):
-  - `get_block`, `get_transaction`, `get_logs`, `get_token_balance`, daily stats series (tx count, gas used, block count), `get_gas_oracle`.
-  - Rationale: stable shapes across providers, existing normalizers already define field sets.
-- Approach:
-  - Define DTOs as `TypedDict` under `aiochainscan/domain/dto.py` and re-export via facade.
-  - Add sibling facades (e.g., `get_block_typed`) returning DTOs; keep current facades returning `dict`/`list[dict]`.
-  - Deprecation policy: mark untyped returns as deprecated in README once coverage ≥80%; remove in 2.0.
-- Endpoint shortlist for `_typed` in 1.5:
-  - Blocks: `get_block_typed`
-  - Transactions: `get_transaction_typed`
-  - Logs: `get_logs_typed`
-  - Tokens: `get_token_balance_typed`
-  - Gas: `get_gas_oracle_typed`
-  - Stats: `get_daily_tx_count_typed`, `get_daily_gas_used_typed`, `get_daily_block_count_typed`
-
-### Phase 2.0 (major, breaking)
-- Switch service return types from `list[dict]` to strict DTOs (or introduce `*_typed` and deprecate old ones).
-- Remove legacy `modules/*` and `network`; provide minimal shims only where essential.
-- Consolidate examples/docs around facades and DTO usage.
-
-### CI and quality gates (unchanged)
-- Pre-commit/CI: ruff, ruff-format, mypy --strict, pytest -q (benchmarks excluded by marker), import-linter.
-
-### Current checklist snapshot
-- DI parity across facades: DONE
-- Reusable session helper: DONE
-- Account/list DTOs + normalizers (incl. logs): DONE
-- Stats daily endpoints + normalizers: IN PROGRESS (most added). Telemetry standardized.
-- Wire legacy modules to facades: IN PROGRESS (env toggle available)
-- Import-linter tightening: IN PROGRESS (services → core/network DONE)
-
-## Fast migration to clean architecture (Phase 1.4 → 1.5)
-
-### Status (ready to cut over)
-- **Phase 1.4 complete**: modules route via facades by default with safe fallback; `AIOCHAINSCAN_FORCE_FACADES=1` disables fallbacks. Tests are green. Telemetry standardized: `api_kind`, `network`, `duration_ms`, `items` (for lists). Import-linter boundaries tightened and passing. README updated (Telemetry fields, Facades + DI, Normalizers/DTO).
-- **Phase 1.5 started**: parallel typed facades (`*_typed`) added; DTO exports in place; typing/deprecation plan recorded above.
-
-### Cutover checklist (fast path)
-1) Enable forced facades
-   - CI/local: set `AIOCHAINSCAN_FORCE_FACADES=1`; run targeted tests for hot paths.
-   - Example: `pytest -q tests/test_account.py tests/test_block.py tests/test_transaction.py tests/test_logs.py tests/test_token.py tests/test_stats.py`.
-
-2) Make facades the only runtime path
-   - Remove legacy fallbacks in `modules/*` while keeping public signatures intact.
-   - Keep optional deprecation hints behind `AIOCHAINSCAN_DEPRECATE_MODULES=1` until 2.0.
-
-3) Lock architectural boundaries
-   - Keep current contracts enforced; add a rule preventing internal code from importing `aiochainscan.modules` (use facades or unified core).
-   - Maintain: `services` must not import `core/network/scanners/adapters`; `modules` must not import modern layers.
-
-4) Promote typed DTO facades
-   - Prefer `*_typed` facades in docs/examples; keep untyped facades for compatibility.
-   - Mark untyped returns deprecated in docs once coverage ≥80%; removal planned for 2.0.
-
-5) Docs/examples sweep
-   - README and examples should show facades + DI and typed DTO usage first. Legacy examples remain but are not default.
-
-6) Quality gates on every step
-   - `ruff check`, `mypy --strict aiochainscan`, `pytest -q` (targeted locally, full in CI), and `import-linter` must pass.
-
-### Rollout notes
-- Default behavior stays backward compatible; forcing facades in CI catches regressions early without breaking consumers.
-- Actual removal of `modules/*` and `network.py` is reserved for Phase 2.0 with thin shims and a documented deprecation window.
-
-## ✅ Package Installation Fix (COMPLETED 2025-10-08)
-
-Fixed critical installation issues that prevented users from installing and using the package from GitHub.
-
-### Problem Identified
-The library was using `maturin` as the sole build backend, which is primarily designed for Rust extensions. This caused Python source files to not be included in the distribution:
-- `pip install git+https://github.com/...` appeared successful but only installed metadata
-- Python modules (`aiochainscan/*.py`) were not copied to site-packages
-- Users got `ModuleNotFoundError` when trying to import the package
-- Only the Rust extension (`aiochainscan_fastabi`) and metadata were installed
-
-### Root Cause
-```toml
-# OLD (broken):
-[build-system]
-requires = ["maturin>=1.6,<2.0"]
-build-backend = "maturin"
-
-[tool.maturin]
-python-source = "aiochainscan"  # This didn't work as expected
-```
-
-The `python-source` configuration in maturin doesn't properly package pure Python modules when maturin is the sole build backend.
-
-### Solution Implemented
-Switched to `setuptools` as the primary build backend with proper package discovery:
-
-```toml
-# NEW (working):
-[build-system]
-requires = ["setuptools>=61.0", "wheel"]
-build-backend = "setuptools.build_meta"
-
-[tool.setuptools]
-packages = ["aiochainscan"]
-include-package-data = true
-```
-
-### Files Created/Modified
-1. **pyproject.toml**: Changed build-system from maturin to setuptools
-2. **setup.py**: Added explicit setup.py for backward compatibility
-3. **MANIFEST.in**: Created to specify which files to include in distributions
-4. **.github/workflows/test-install.yml**: New CI workflow to test installations
-
-### Testing Strategy
-The new CI workflow (`test-install.yml`) verifies:
-- Wheel installation in clean environments (Python 3.10-3.13)
-- Source distribution installation
-- Editable/development installation
-- Direct git installation (simulating user experience)
-- Package structure integrity
-- All dependencies are properly installed
-- CLI tool availability
-
-### Installation Methods Now Supported
-```sh
-# Method 1: Direct from GitHub
-pip install git+https://github.com/VaitaR/aiochainscan.git
-
-# Method 2: Clone and install
-git clone https://github.com/VaitaR/aiochainscan.git
-cd aiochainscan
-pip install .
-
-# Method 3: Editable install (development)
-pip install -e .
-
-# Method 4: From built wheel
-python -m build
-pip install dist/*.whl
-```
-
-### Rust Extension (Optional)
-The fast ABI decoder (Rust-based) is now truly optional:
-- Main package works without Rust toolchain
-- Users who want the fast decoder can build it separately:
-  ```sh
-  pip install maturin
-  maturin develop --manifest-path aiochainscan/fastabi/Cargo.toml
-  ```
-
-### Verification
-After installation, users can verify:
-```python
-import aiochainscan
-print(aiochainscan.__version__)  # Should print "0.2.1"
-
-from aiochainscan import Client, get_balance, get_block
-print("✓ Installation successful!")
-```
-
-### Migration Path to PyPI
-The package is now ready for PyPI publication:
-```sh
-python -m build
-twine upload dist/*
-```
-
-After PyPI publication, users will be able to simply:
-```sh
-pip install aiochainscan
-```
-
-### Related Documentation
-- README.md updated with correct installation instructions
-- Added troubleshooting section for common installation issues
-- CI now validates installation on every push
-
----
-
-## ✅ CFFI Removal and Network Retry Fix (COMPLETED 2025-10-08)
-
-Removed legacy `use_cffi` parameter from `Network` class and fixed retry/error handling logic. All network retry tests now pass correctly.
-
-### Changes Made
-- Removed `use_cffi` parameter from `Network.__init__()` (no longer used after previous refactoring)
-- Fixed `test_network_retry.py` - removed all `use_cffi=False` arguments
-- Fixed `Network._handle_response()` - proper HTTP status code handling for aiohttp-retry:
-  - Added `response.raise_for_status()` to let aiohttp-retry handle 429, 5xx errors
-  - Fixed exception handler order: `ContentTypeError` before `ClientResponseError` (inheritance chain)
-  - HTTP errors (429, 403, etc.) now properly bubble up to aiohttp-retry for retry logic
-- Simplified `test_retry_after_honored_once` - removed timing assertions (aiohttp-retry doesn't honor Retry-After by default)
-- Fixed `test_network.py::test_handle_response` - added missing `raise_for_status()` and `ok` property to MockResponse
-
-### Results
-- ✅ **340/350 tests passing** (10 skipped, slow integration tests)
-- ✅ All network retry tests green (5/5)
-- ✅ Proper HTTP error handling with aiohttp-retry
-- ✅ No breaking changes to public API
-
-## ✅ Etherscan V2 API Migration (COMPLETED 2025-10-08)
-
-The library has been successfully migrated to use Etherscan V2 API for all supported networks according to the [official migration guide](https://docs.etherscan.io/v2-migration).
-
-### What Changed
-- **All V2 APIs** (BSC, Polygon, Arbitrum, Base, Optimism) now use `etherscan.io` domain with `chainid` parameter
-- **One API key** works for all networks (no need for separate BSCScan, PolygonScan keys)
-- **404 errors fixed** - old domains (bscscan.com, polygonscan.com, etc.) were deprecated by Etherscan
-
-### Implementation
-- Modified `url_builder.py:_base_netloc` property to return `etherscan.io` for all V2 APIs
-- Updated 53 url_builder tests to expect new domain structure
-- Added ETHERSCAN_KEY fallback in `config.py` for V2 scanners (bsc, polygon, arbitrum, base, optimism)
-- Updated integration tests to handle V2 API key requirements
-- Full details: see `ETHERSCAN_V2_MIGRATION_COMPLETE.md` and `ETHERSCAN_V2_MIGRATION_RU.md`
-
-### Results
-- ✅ **331/341 tests passing (97.1%)**
-- ✅ Fixed 23 test failures related to old domains
-- ✅ BSC, Polygon, Arbitrum, Base now work with single Etherscan key
-- ✅ E2E tests properly marked as `@pytest.mark.slow` and `@pytest.mark.integration`
-
-### Testing Notes
-- By default, slow E2E tests are skipped (`pytest -m "not slow"`)
-- To run integration tests: `pytest -m integration` or `pytest -m slow`
-- E2E test for Blockscout Ethereum is at `tests/test_blockscout_ethereum_flow.py`
-
-### BSC V2 Verification
-BSC fully works with Etherscan V2 API (chainid=56):
-```bash
-# Quick verification
-python verify_bsc_v2.py
-
-# Expected output:
-✅ URL: https://api.etherscan.io/v2/api
-✅ Chain ID: 56 (BNB Smart Chain Mainnet)
-✅ Configuration is correct
-```
-
-See `BSC_V2_FINAL_REPORT.md` and `ИТОГОВАЯ_СПРАВКА.md` for details.
-
-## C4 Architecture Views (Concise)
-
-The following views summarize the system using a simplified C4 style. They are optimized for both humans and LLMs (clear labels, stable identifiers).
-
-### C1 – System Context
-
-```mermaid
-graph TB
-  user["Consumer App (your code)"] -- async calls --> lib["aiochainscan Library [System]"]
-  lib --> apis["Blockchain Explorer APIs [External System]\nEtherscan, BaseScan, Blockscout, RoutScan, Moralis"]
-  lib --> internet["Internet / HTTP"]
-  dev["Developer / Operator"] -. env/config .-> lib
-  ci["CI: ruff, mypy --strict, pytest, import-linter"] -. quality gates .-> lib
-```
-
-### C2 – Container View (internal runtime containers)
-
-```mermaid
-graph LR
-  subgraph Facade
-    facade["Facade [Container]\n`aiochainscan.__init__`\n(re-exports, DI helpers)"]
-  end
-
-  subgraph Hexagonal
-    services["Services [Container]\nUse-cases (account, block, logs, token, gas, stats, proxy)"]
-    ports["Ports [Container]\nProtocols: HttpClient, EndpointBuilder, Cache, RateLimiter, RetryPolicy, Telemetry"]
-    adapters["Adapters [Container]\nAiohttpClient, UrlBuilderEndpoint, InMemoryCache, SimpleRateLimiter, ExponentialBackoffRetry, StructlogTelemetry"]
-    domain["Domain [Container]\nVOs/DTOs: Address, TxHash, BlockNumber, DTO TypedDicts"]
-  end
-
-  subgraph UnifiedCore
-    core["Core [Container]\nChainscanClient, Method, EndpointSpec"]
-    scanners["Scanners [Container]\netherscan_v2, basescan_v1, blockscout_v1, routscan_v1, moralis_v1"]
-    urlb["UrlBuilder [Container]"]
-    net["Network [Container]\n(aiohttp)"]
-    fastabi["FastABI [Container]\nRust/PyO3"]
-  end
-
-  userApp["Consumer App"] --> facade
-  facade --> services
-  facade --> core
-  services --> ports
-  ports --> adapters
-  services --> domain
-  core --> scanners
-  scanners --> urlb
-  core --> urlb
-  core --> net
-  services -. optional decode .-> fastabi
-  adapters --> internet
-  net --> internet
-```
-
-Notes:
-- Two valid runtime paths coexist: Facade→Services (hexagonal) and Core→Scanners (unified client). Public API keeps both available.
-- Import boundaries are enforced by import-linter.
-
-### C3 – Component View (example: Logs service request path)
-
-```mermaid
-graph TD
-  Facade["Facade: get_logs()"] --> SVC["Service: services.logs.get_logs"]
-  SVC --> EB["Port: EndpointBuilder.open(api_key, api_kind, network)"]
-  EB --> URL["Compose URL + sign params"]
-  SVC --> RL["Port: RateLimiter.acquire(key)"]
-  SVC --> RETRY["Port: RetryPolicy.run(func)"]
-  SVC --> TEL["Port: Telemetry.record_event/error"]
-  SVC --> CACHE_GET["Port: Cache.get(cache_key)"]
-  RETRY --> HTTP["Port: HttpClient.get(url, params, headers)"]
-  HTTP --> RESP["JSON/Text response"]
-  SVC --> PARSE["Parse Etherscan-style result → list[dict]"]
-  SVC --> CACHE_SET["Port: Cache.set(cache_key, ttl=15s)"]
-  PARSE --> FacadeOut["Return list[dict] | DTO-typed variant"]
-```
-
-### LLM-readable boundaries (authoritative summary)
-
-```yaml
-architecture:
-  layers:
-    - name: domain
-      rule: "Pure data types (VOs/DTOs). No I/O, no env, no logging."
-    - name: ports
-      rule: "Protocols/ABCs for external deps (HttpClient, EndpointBuilder, Cache, RateLimiter, RetryPolicy, Telemetry)."
-    - name: services
-      rule: "Use-cases; orchestrate ports; no imports from adapters/core/network/scanners."
-    - name: adapters
-      rule: "Implement ports (aiohttp client, in-memory cache, etc.). No imports from services/domain."
-    - name: facade
-      rule: "Composition boundary and public API re-exports."
-    - name: unified_core
-      rule: "Alternative path: ChainscanClient + Scanners + EndpointSpec; parallel to services."
-  dependency_direction: [domain, ports, services, adapters, facade]
-  forbidden_imports:
-    - "services -> adapters | core | network | scanners"
-    - "domain -> ports | services | adapters | core | modules | scanners"
-    - "ports -> adapters | services | core | modules | scanners"
-    - "internal (domain/services/adapters/ports) -> modules"
-  runtime_paths:
-    - "facade -> services -> ports -> adapters -> HTTP"
-    - "core -> scanners -> (url_builder, network) -> HTTP"
-```
-
-## Telemetry and Observability Conventions
-
-- Event naming: module.action.phase
-  - module: one of account, block, transaction, logs, gas, proxy, stats
-  - action: the public service function name (e.g., get_address_balance)
-  - phase: duration | ok | error
-- Attributes: always include api_kind, network; add duration_ms for duration events; add items for list outputs; include error_type and error_message for error events (adapter responsibility).
-- Example: stats.get_eth_price.duration { api_kind, network, duration_ms }
-
-## Capabilities Model (Source of Truth)
-
-- `aiochainscan/capabilities.py`: feature→(scanner,network) gating used by tests; treat as authoritative for feature toggles (e.g., gas_estimate, gas_oracle).
-- `aiochainscan/config.py:ScannerCapabilities`: per‑scanner descriptive flags intended for documentation/UX; do not drive gating. Keep in sync conceptually but prefer `capabilities.py` for runtime checks.
-- Future: if consolidation is desired, expose a single read‑only facade that merges both views while keeping `capabilities.py` as the backing store to preserve test stability.
