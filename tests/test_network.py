@@ -193,17 +193,22 @@ async def test_handle_response(nw):
             return 200
 
         @property
-        def text(self):
-            async def _text():
-                return 'some text'
+        def ok(self):
+            """Simulate successful HTTP status (2xx)"""
+            return True
 
-            return _text
+        def raise_for_status(self):
+            """Mock raise_for_status method - does nothing for 200 OK"""
+            pass
+
+        async def text(self):
+            """Return text content as coroutine"""
+            return 'some text'
 
         def json(self):
-            if self.raise_exc:
-                raise self.raise_exc
-
             async def _json():
+                if self.raise_exc:
+                    raise self.raise_exc
                 return json.loads(self.data)
 
             return _json()

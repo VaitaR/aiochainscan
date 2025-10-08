@@ -173,11 +173,17 @@ class Network:
     ) -> dict[str, Any] | list[Any] | str:
         try:
             status = response.status
+            # Let aiohttp-retry handle HTTP status codes (429, 5xx, etc.)
+            response.raise_for_status()
             response_json = await _maybe_await(response.json())
         except aiohttp.ContentTypeError:
+            # Handle ContentTypeError first (it's a subclass of ClientResponseError)
             raise ChainscanClientContentTypeError(
                 status, await _maybe_await(response.text)
             ) from None
+        except aiohttp.ClientResponseError:
+            # Re-raise HTTP errors (429, 403, 5xx) so aiohttp-retry can handle them
+            raise
         except Exception as e:
             raise ChainscanClientError(e) from e
         else:
