@@ -128,8 +128,10 @@ jobs:
     runs-on: ubuntu-latest
     needs: build
     if: github.event_name == 'release' && github.event.action == 'published'
+    environment: pypi
     permissions:
       id-token: write
+      contents: read
 
     steps:
       - name: Download build artifacts
