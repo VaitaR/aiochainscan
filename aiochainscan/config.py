@@ -385,17 +385,38 @@ class ConfigurationManager:
         return self._scanners[scanner_id]
 
     def get_api_key(self, scanner_id: str) -> str:
-        """Get API key for a scanner with validation."""
+        """Get API key for a scanner with validation.
+
+        After Etherscan V2 API migration, BSC/Polygon/Arbitrum/Base/Optimism
+        all use ETHERSCAN_KEY as fallback.
+        """
         config = self.get_scanner_config(scanner_id)
 
-        if config.requires_api_key and not config.api_key:
+        # If key is already set, use it
+        if config.api_key:
+            return config.api_key
+
+        # V2 API scanners can use ETHERSCAN_KEY as fallback
+        v2_scanners = {'bsc', 'polygon', 'arbitrum', 'base', 'optimism'}
+        if scanner_id in v2_scanners:
+            # Try ETHERSCAN_KEY as fallback for V2 API scanners
+            import os
+
+            etherscan_key = os.getenv('ETHERSCAN_KEY')
+            if etherscan_key:
+                return etherscan_key
+
+        if config.requires_api_key:
             suggestions = self._get_api_key_suggestions(scanner_id)
+            # Add ETHERSCAN_KEY to suggestions for V2 scanners
+            if scanner_id in v2_scanners and 'ETHERSCAN_KEY' not in suggestions:
+                suggestions.insert(0, 'ETHERSCAN_KEY')
             raise ValueError(
                 f'API key required for {config.name}. '
                 f'Set one of these environment variables: {", ".join(suggestions)}'
             )
 
-        return config.api_key or ''
+        return ''
 
     def _get_api_key_suggestions(self, scanner_id: str) -> list[str]:
         """Get suggestions for API key environment variable names."""

@@ -46,24 +46,28 @@ def test_query_param_auth():
 @pytest.mark.parametrize(
     'api_kind,network_name,expected',
     [
+        # Etherscan V2 API - all use etherscan.io domain
+        # Reference: https://docs.etherscan.io/v2-migration
         ('eth', 'main', 'https://api.etherscan.io/v2/api'),
         ('eth', 'ropsten', 'https://api-ropsten.etherscan.io/v2/api'),
         ('eth', 'kovan', 'https://api-kovan.etherscan.io/v2/api'),
         ('eth', 'rinkeby', 'https://api-rinkeby.etherscan.io/v2/api'),
         ('eth', 'goerli', 'https://api-goerli.etherscan.io/v2/api'),
         ('eth', 'sepolia', 'https://api-sepolia.etherscan.io/v2/api'),
-        ('bsc', 'main', 'https://api.bscscan.com/v2/api'),
-        ('bsc', 'testnet', 'https://api-testnet.bscscan.com/v2/api'),
-        ('polygon', 'main', 'https://api.polygonscan.com/v2/api'),
-        ('polygon', 'testnet', 'https://api-testnet.polygonscan.com/v2/api'),
+        # V2 Migration: BSC, Polygon, Arbitrum, Base now use etherscan.io
+        ('bsc', 'main', 'https://api.etherscan.io/v2/api'),
+        ('bsc', 'testnet', 'https://api-testnet.etherscan.io/v2/api'),
+        ('polygon', 'main', 'https://api.etherscan.io/v2/api'),
+        ('polygon', 'testnet', 'https://api-testnet.etherscan.io/v2/api'),
         ('optimism', 'main', 'https://api-optimistic.etherscan.io/v2/api'),
         ('optimism', 'goerli', 'https://api-goerli-optimistic.etherscan.io/v2/api'),
-        ('arbitrum', 'main', 'https://api.arbiscan.io/v2/api'),
-        ('arbitrum', 'nova', 'https://api-nova.arbiscan.io/v2/api'),
-        ('arbitrum', 'goerli', 'https://api-goerli.arbiscan.io/v2/api'),
+        ('arbitrum', 'main', 'https://api.etherscan.io/v2/api'),
+        ('arbitrum', 'nova', 'https://api-nova.etherscan.io/v2/api'),
+        ('arbitrum', 'goerli', 'https://api-goerli.etherscan.io/v2/api'),
+        # Non-V2 APIs still use their own domains
         ('fantom', 'main', 'https://api.ftmscan.com/api'),
         ('fantom', 'testnet', 'https://api-testnet.ftmscan.com/api'),
-        ('base', 'main', 'https://api.basescan.org/v2/api'),
+        ('base', 'main', 'https://api.etherscan.io/v2/api'),
     ],
 )
 def test_api_url(api_kind, network_name, expected):
@@ -74,21 +78,24 @@ def test_api_url(api_kind, network_name, expected):
 @pytest.mark.parametrize(
     'api_kind,network_name,expected',
     [
+        # Etherscan V2 API - all use etherscan.io domain
         ('eth', 'main', 'https://etherscan.io'),
         ('eth', 'ropsten', 'https://ropsten.etherscan.io'),
         ('eth', 'kovan', 'https://kovan.etherscan.io'),
         ('eth', 'rinkeby', 'https://rinkeby.etherscan.io'),
         ('eth', 'goerli', 'https://goerli.etherscan.io'),
         ('eth', 'sepolia', 'https://sepolia.etherscan.io'),
-        ('bsc', 'main', 'https://bscscan.com'),
-        ('bsc', 'testnet', 'https://testnet.bscscan.com'),
-        ('polygon', 'main', 'https://polygonscan.com'),
-        ('polygon', 'testnet', 'https://mumbai.polygonscan.com'),
+        # V2 Migration: BSC, Polygon, Arbitrum, Base now use etherscan.io
+        ('bsc', 'main', 'https://etherscan.io'),
+        ('bsc', 'testnet', 'https://testnet.etherscan.io'),
+        ('polygon', 'main', 'https://etherscan.io'),
+        ('polygon', 'testnet', 'https://mumbai.etherscan.io'),
         ('optimism', 'main', 'https://optimistic.etherscan.io'),
         ('optimism', 'goerli', 'https://goerli-optimism.etherscan.io'),
-        ('arbitrum', 'main', 'https://arbiscan.io'),
-        ('arbitrum', 'nova', 'https://nova.arbiscan.io'),
-        ('arbitrum', 'goerli', 'https://goerli.arbiscan.io'),
+        ('arbitrum', 'main', 'https://etherscan.io'),
+        ('arbitrum', 'nova', 'https://nova.etherscan.io'),
+        ('arbitrum', 'goerli', 'https://goerli.etherscan.io'),
+        # Non-V2 APIs still use their own domains
         ('fantom', 'main', 'https://ftmscan.com'),
         ('fantom', 'testnet', 'https://testnet.ftmscan.com'),
     ],
@@ -124,7 +131,8 @@ def test_currency(api_kind, expected):
 @pytest.mark.parametrize(
     'api_kind,network,expected_base_contains,expected_api_contains',
     [
-        ('base', 'main', 'basescan.org', 'https://api.basescan.org/v2/api'),
+        # V2 Migration: Base now uses etherscan.io
+        ('base', 'main', 'etherscan.io', 'https://api.etherscan.io/v2/api'),
         (
             'routscan_mode',
             'main',
