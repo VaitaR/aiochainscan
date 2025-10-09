@@ -15,14 +15,14 @@ class Scanner(ABC):
     """
     Abstract base class for blockchain scanner implementations.
 
-    Each scanner represents a specific API provider (like Etherscan, OKLink)
+    Each scanner represents a specific API provider (like Etherscan, BlockScout)
     with a specific version, supporting certain networks and providing
     specific endpoint implementations.
     """
 
     # These must be defined by subclasses
     name: str
-    """Scanner name (e.g., 'etherscan', 'oklink')"""
+    """Scanner name (e.g., 'etherscan', 'blockscout')"""
 
     version: str
     """Scanner API version (e.g., 'v1', 'v2')"""

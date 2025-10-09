@@ -26,7 +26,7 @@ python examples/balance_comparison.py
 ```
 
 - **Purpose**: Compare balance retrieval across different scanner implementations
-- **Features**: Etherscan, OKLink support with automatic parameter mapping
+- **Features**: Etherscan, BlockScout support with automatic parameter mapping
 - **Shows**: How unified interface works across different APIs
 
 ### `unified_client_demo.py`
@@ -99,16 +99,16 @@ Create a `.env` file in the project root:
 ```bash
 # .env
 ETHERSCAN_KEY=your_etherscan_api_key_here
-OKLINK_KEY=your_oklink_api_key_here  # Optional for OKLink examples
 BSCSCAN_KEY=your_bscscan_api_key_here  # Optional for BSC
 POLYGONSCAN_KEY=your_polygonscan_api_key_here  # Optional for Polygon
+MORALIS_API_KEY=your_moralis_api_key_here  # Optional for Moralis examples
 ```
 
 Get API keys at:
 - **Etherscan**: https://etherscan.io/apis
-- **OKLink**: https://www.oklink.com/account/my-api
 - **BSCScan**: https://bscscan.com/apis
 - **PolygonScan**: https://polygonscan.com/apis
+- **Moralis**: https://moralis.io
 
 ## Quick Start Guide
 
@@ -174,8 +174,8 @@ balance = await client.call(Method.ACCOUNT_BALANCE, address=address)
 txs = await client.call(Method.ACCOUNT_TRANSACTIONS, address=address)
 
 # Same code works with different scanners!
-oklink_client = ChainscanClient.from_config('oklink_eth', 'v1', 'oklink_eth', 'main')
-balance = await oklink_client.call(Method.ACCOUNT_BALANCE, address=address)
+blockscout_client = ChainscanClient.from_config('blockscout', 'v1', 'blockscout_eth', 'eth')
+balance = await blockscout_client.call(Method.ACCOUNT_BALANCE, address=address)
 ```
 
 ### 🎯 **Key Benefits of Unified Architecture**
