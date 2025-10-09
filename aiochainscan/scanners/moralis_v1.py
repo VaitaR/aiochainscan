@@ -39,7 +39,9 @@ class MoralisV1(Scanner):
     auth_mode = 'header'
     auth_field = 'X-API-Key'
 
-    def __init__(self, api_key: str, network: str, url_builder: UrlBuilder) -> None:
+    def __init__(
+        self, api_key: str, network: str, url_builder: UrlBuilder, chain_id: int | None = None
+    ) -> None:
         """
         Initialize Moralis scanner with network-specific chain ID.
 
@@ -47,14 +49,19 @@ class MoralisV1(Scanner):
             api_key: Moralis API key (required)
             network: Network name (must be in supported_networks)
             url_builder: UrlBuilder instance (not used for Moralis)
+            chain_id: Chain ID (optional, will be resolved from network)
         """
-        super().__init__(api_key, network, url_builder)
+        super().__init__(api_key, network, url_builder, chain_id)
 
         # Get chain ID for this network
-        self.chain_id = NETWORK_TO_CHAIN_ID.get(network)
-        if not self.chain_id:
+        chain_id_value = chain_id or NETWORK_TO_CHAIN_ID.get(network)
+        if not chain_id_value:
             available = ', '.join(sorted(NETWORK_TO_CHAIN_ID.keys()))
             raise ValueError(f"Network '{network}' not mapped for Moralis. Available: {available}")
+        if isinstance(chain_id_value, str):
+            self.chain_id = int(chain_id_value)
+        else:
+            self.chain_id = chain_id_value
 
         self.base_url = 'https://deep-index.moralis.io/api/v2.2'
 
@@ -77,9 +84,9 @@ class MoralisV1(Scanner):
         url_path = spec.path
         query_params: dict[str, Any] = spec.query.copy()
 
-        # Substitute chain ID in query
+        # Substitute chain ID in query (Moralis expects hex string)
         if 'chain' in query_params and query_params['chain'] == '{chain_id}':
-            query_params['chain'] = self.chain_id
+            query_params['chain'] = f'0x{self.chain_id:x}'
 
         # Handle path parameter substitution for address, txhash, etc.
         for param_name, param_value in params.items():

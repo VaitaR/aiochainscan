@@ -74,13 +74,14 @@ async def _assert_balance_ok(client: ChainscanClient, address: str) -> None:
 @pytest.mark.asyncio
 async def test_blockscout_two_chains_live() -> None:
     # BlockScout typically doesn't require API keys
+    # Test only Ethereum mainnet for now (BlockScout eth instance)
     tests = [
         ('blockscout', 'v1', 'blockscout_eth', 'eth'),
-        ('blockscout', 'v1', 'blockscout_polygon', 'polygon'),
     ]
 
-    for scanner_name, version, scanner_id, network in tests:
-        client = ChainscanClient.from_config(scanner_name, version, scanner_id, network)
+    for scanner_name, version, _scanner_id, network in tests:
+        # BlockScout scanners don't need API keys
+        client = ChainscanClient.from_config(scanner_name, version, network)
         await _assert_balance_ok(client, TEST_ADDRESS)
         await client.close()
         # Gentle pacing between providers
@@ -108,7 +109,7 @@ async def test_etherscan_two_chains_live() -> None:
         elif not _has_api_key(scanner_id):
             pytest.skip(f'Missing API key for {scanner_id}')
 
-        client = ChainscanClient.from_config(scanner_name, version, scanner_id, network)
+        client = ChainscanClient.from_config(scanner_name, version, network)
         try:
             await _assert_balance_ok(client, TEST_ADDRESS)
         except ChainscanClientApiError as e:  # pragma: no cover - live guardrail
@@ -141,7 +142,7 @@ async def test_moralis_two_chains_live() -> None:
     for scanner_name, version, scanner_id, network in tests:
         if not _has_api_key(scanner_id):
             pytest.skip('Missing MORALIS_API_KEY')
-        client = ChainscanClient.from_config(scanner_name, version, scanner_id, network)
+        client = ChainscanClient.from_config(scanner_name, version, network)
         await _assert_balance_ok(client, TEST_ADDRESS)
         await client.close()
         await asyncio.sleep(0.2)
@@ -152,8 +153,8 @@ async def test_routscan_mode_live() -> None:
     # RoutScan supports Mode only (one network)
     # RoutScan may not be registered in config in all environments; skip if unknown
     try:
-        scanner_name, version, scanner_id, network = ('routscan', 'v1', 'routscan_mode', 'mode')
-        client = ChainscanClient.from_config(scanner_name, version, scanner_id, network)
+        scanner_name, version, _scanner_id, network = ('routscan', 'v1', 'routscan_mode', 'mode')
+        client = ChainscanClient.from_config(scanner_name, version, network)
     except Exception as e:
         pytest.skip(f'RoutScan not available in this build: {e}')
     # Address may be zero on Mode; we still validate shape

@@ -400,7 +400,7 @@ async def fetch_all_token_transfers_basic(
         if isinstance(h, str) and isinstance(log_idx, str | int):
             return f'{h}:{log_idx}'
         if isinstance(h, str):
-            return f"{h}:{it.get('contractAddress')}:{it.get('from')}:{it.get('to')}:{it.get('value')}"
+            return f'{h}:{it.get("contractAddress")}:{it.get("from")}:{it.get("to")}:{it.get("value")}'
         return None
 
     async def _fetch_page(
@@ -485,7 +485,7 @@ async def fetch_all_token_transfers_fast(
         if isinstance(h, str) and isinstance(log_idx, str | int):
             return f'{h}:{log_idx}'
         if isinstance(h, str):
-            return f"{h}:{it.get('contractAddress')}:{it.get('from')}:{it.get('to')}:{it.get('value')}"
+            return f'{h}:{it.get("contractAddress")}:{it.get("from")}:{it.get("to")}:{it.get("value")}'
         return None
 
     async def _fetch_page(
@@ -588,7 +588,7 @@ async def fetch_all_logs_basic(
         name='logs',
         fetch_page=_fetch_page,
         key_fn=lambda it: (
-            f"{it.get('transactionHash') or it.get('hash')}:{it.get('logIndex')}"
+            f'{it.get("transactionHash") or it.get("hash")}:{it.get("logIndex")}'
             if isinstance(it.get('transactionHash') or it.get('hash'), str)
             and isinstance(it.get('logIndex'), str | int)
             else None
@@ -672,7 +672,7 @@ async def fetch_all_logs_fast(
         name='logs',
         fetch_page=_fetch_page,
         key_fn=lambda it: (
-            f"{it.get('transactionHash') or it.get('hash')}:{it.get('logIndex')}"
+            f'{it.get("transactionHash") or it.get("hash")}:{it.get("logIndex")}'
             if isinstance(it.get('transactionHash') or it.get('hash'), str)
             and isinstance(it.get('logIndex'), str | int)
             else None

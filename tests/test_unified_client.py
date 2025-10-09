@@ -106,12 +106,12 @@ class TestScannerBase:
         class TestScanner(Scanner):
             name = 'test'
             version = 'v1'
-            supported_networks = {'main', 'test'}
+            supported_networks = {'ethereum', 'test'}
             SPECS = {}
 
-        scanner = TestScanner('test_key', 'main', mock_url_builder)
+        scanner = TestScanner('test_key', 'ethereum', mock_url_builder)
         assert scanner.api_key == 'test_key'
-        assert scanner.network == 'main'
+        assert scanner.network == 'ethereum'
         assert scanner.url_builder == mock_url_builder
 
     def test_scanner_initialization_unsupported_network(self, mock_url_builder):
@@ -121,7 +121,7 @@ class TestScannerBase:
         class TestScanner2(Scanner):
             name = 'test2'
             version = 'v1'
-            supported_networks = {'main'}
+            supported_networks = {'ethereum'}
             SPECS = {}
 
         with pytest.raises(ValueError, match="Network 'testnet' not supported"):
@@ -134,10 +134,10 @@ class TestScannerBase:
         class TestScanner3(Scanner):
             name = 'test3'
             version = 'v1'
-            supported_networks = {'main'}
+            supported_networks = {'ethereum'}
             SPECS = {Method.ACCOUNT_BALANCE: EndpointSpec('GET', '/api')}
 
-        scanner = TestScanner3('test_key', 'main', mock_url_builder)
+        scanner = TestScanner3('test_key', 'ethereum', mock_url_builder)
         assert scanner.supports_method(Method.ACCOUNT_BALANCE)
         assert not scanner.supports_method(Method.TX_BY_HASH)
 
@@ -148,13 +148,13 @@ class TestScannerBase:
         class TestScanner4(Scanner):
             name = 'test4'
             version = 'v1'
-            supported_networks = {'main'}
+            supported_networks = {'ethereum'}
             SPECS = {
                 Method.ACCOUNT_BALANCE: EndpointSpec('GET', '/api'),
                 Method.TX_BY_HASH: EndpointSpec('GET', '/api'),
             }
 
-        scanner = TestScanner4('test_key', 'main', mock_url_builder)
+        scanner = TestScanner4('test_key', 'ethereum', mock_url_builder)
         methods = scanner.get_supported_methods()
         assert Method.ACCOUNT_BALANCE in methods
         assert Method.TX_BY_HASH in methods
@@ -167,22 +167,22 @@ class TestChainscanClient:
     @pytest.fixture
     def mock_config(self):
         """Mock configuration system."""
-        return {'api_key': 'test_api_key', 'api_kind': 'eth', 'network': 'main'}
+        return {'api_key': 'test_api_key', 'api_kind': 'eth', 'network': 'ethereum'}
 
     @patch('aiochainscan.core.client.global_config')
     def test_client_from_config(self, mock_global_config, mock_config):
         """Test client creation from config."""
         mock_global_config.create_client_config.return_value = mock_config
 
-        client = ChainscanClient.from_config('etherscan', 'v2', 'eth', 'main')
+        client = ChainscanClient.from_config('etherscan', 'v2', 'ethereum')
 
         assert client.scanner_name == 'etherscan'
         assert client.scanner_version == 'v2'
         assert client.api_kind == 'eth'
-        assert client.network == 'main'
+        assert client.network == 'ethereum'
         assert client.api_key == 'test_api_key'
 
-        mock_global_config.create_client_config.assert_called_once_with('eth', 'main')
+        mock_global_config.create_client_config.assert_called_once_with('eth', 'ethereum')
 
     def test_client_direct_initialization(self):
         """Test direct client initialization."""
@@ -190,14 +190,14 @@ class TestChainscanClient:
             scanner_name='etherscan',
             scanner_version='v2',
             api_kind='eth',
-            network='main',
+            network='ethereum',
             api_key='test_key',
         )
 
         assert client.scanner_name == 'etherscan'
         assert client.scanner_version == 'v2'
         assert client.api_kind == 'eth'
-        assert client.network == 'main'
+        assert client.network == 'ethereum'
         assert client.api_key == 'test_key'
 
     @pytest.mark.asyncio
@@ -212,7 +212,7 @@ class TestChainscanClient:
             mock_scanner_class.return_value = mock_scanner
             mock_get_scanner.return_value = mock_scanner_class
 
-            client = ChainscanClient('etherscan', 'v2', 'eth', 'main', 'test_key')
+            client = ChainscanClient('etherscan', 'v2', 'eth', 'ethereum', 'test_key')
 
             result = await client.call(Method.ACCOUNT_BALANCE, address='0x123')
 
@@ -229,7 +229,7 @@ class TestChainscanClient:
             mock_scanner_class.return_value = mock_scanner
             mock_get_scanner.return_value = mock_scanner_class
 
-            client = ChainscanClient('etherscan', 'v2', 'eth', 'main', 'test_key')
+            client = ChainscanClient('etherscan', 'v2', 'eth', 'ethereum', 'test_key')
 
             assert client.supports_method(Method.ACCOUNT_BALANCE)
             mock_scanner.supports_method.assert_called_once_with(Method.ACCOUNT_BALANCE)
@@ -244,7 +244,7 @@ class TestChainscanClient:
             mock_scanner_class.return_value = mock_scanner
             mock_get_scanner.return_value = mock_scanner_class
 
-            client = ChainscanClient('etherscan', 'v2', 'eth', 'main', 'test_key')
+            client = ChainscanClient('etherscan', 'v2', 'eth', 'ethereum', 'test_key')
 
             methods = client.get_supported_methods()
             assert methods == [Method.ACCOUNT_BALANCE]
@@ -252,9 +252,9 @@ class TestChainscanClient:
     def test_client_string_representation(self):
         """Test client string representations."""
         with patch('aiochainscan.core.client.get_scanner_class'):
-            client = ChainscanClient('etherscan', 'v2', 'eth', 'main', 'test_key')
+            client = ChainscanClient('etherscan', 'v2', 'eth', 'ethereum', 'test_key')
 
-            assert str(client) == 'ChainscanClient(etherscan v2, eth main)'
+            assert str(client) == 'ChainscanClient(etherscan v2, eth ethereum)'
             assert 'etherscan' in repr(client)
             assert 'v2' in repr(client)
 
@@ -272,7 +272,7 @@ class TestChainscanClient:
         mock_scanner_class = Mock()
         mock_scanner_class.name = 'etherscan'
         mock_scanner_class.version = 'v2'
-        mock_scanner_class.supported_networks = {'main', 'sepolia'}
+        mock_scanner_class.supported_networks = {'ethereum', 'sepolia'}
         mock_scanner_class.auth_mode = 'header'
         mock_scanner_class.auth_field = 'X-API-Key'
         mock_scanner_class.SPECS = {Method.ACCOUNT_BALANCE: Mock()}
@@ -286,7 +286,7 @@ class TestChainscanClient:
             scanner_info = capabilities['etherscan_v2']
             assert scanner_info['name'] == 'etherscan'
             assert scanner_info['version'] == 'v2'
-            assert 'main' in scanner_info['networks']
+            assert 'ethereum' in scanner_info['networks']
             assert scanner_info['auth_mode'] == 'header'
             assert scanner_info['method_count'] == 1
 
@@ -317,7 +317,7 @@ async def test_end_to_end_workflow():
         mock_config.create_client_config.return_value = {
             'api_key': 'test_key',
             'api_kind': 'eth',
-            'network': 'main',
+            'network': 'ethereum',
         }
 
         # Mock the scanner's call method
@@ -325,7 +325,7 @@ async def test_end_to_end_workflow():
             mock_call.return_value = '1000000000000000000'
 
             # Create client and make call
-            client = ChainscanClient.from_config('etherscan', 'v2', 'eth', 'main')
+            client = ChainscanClient.from_config('etherscan', 'v2', 'ethereum')
 
             result = await client.call(
                 Method.ACCOUNT_BALANCE, address='0x742d35Cc6634C0532925a3b8D9Fa7a3D91'

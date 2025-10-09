@@ -70,7 +70,9 @@ class BlockScoutV1(EtherscanLikeScanner):
         'linea': 'linea.blockscout.com',
     }
 
-    def __init__(self, api_key: str, network: str, url_builder: UrlBuilder) -> None:
+    def __init__(
+        self, api_key: str, network: str, url_builder: UrlBuilder, chain_id: int | None = None
+    ) -> None:
         """
         Initialize BlockScout scanner with network-specific instance.
 
@@ -78,8 +80,9 @@ class BlockScoutV1(EtherscanLikeScanner):
             api_key: API key (optional for BlockScout)
             network: Network name (must be in supported_networks)
             url_builder: UrlBuilder instance
+            chain_id: Chain ID (optional, will be resolved from network)
         """
-        super().__init__(api_key, network, url_builder)
+        super().__init__(api_key, network, url_builder, chain_id)
 
         # Get BlockScout instance for this network
         self.instance_domain = self.NETWORK_INSTANCES.get(network)

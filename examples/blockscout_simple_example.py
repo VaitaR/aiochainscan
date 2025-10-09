@@ -134,7 +134,7 @@ async def fetch_all_transactions_optimized_demo(*, address: str) -> list[dict]:
             )
             elapsed = time.time() - started
             print(
-                f'duration_s={elapsed:.2f} items={len(txs_es_fast)} tps={len(txs_es_fast)/max(elapsed,1e-6):.1f}'
+                f'duration_s={elapsed:.2f} items={len(txs_es_fast)} tps={len(txs_es_fast) / max(elapsed, 1e-6):.1f}'
             )
 
         #     # Internal transactions (Etherscan-style sliding, using fast engine policy)

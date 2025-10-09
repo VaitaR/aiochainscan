@@ -39,9 +39,7 @@ async def demo_unified_client():
     if eth_key:
         print('✅ Creating Etherscan client...')
         try:
-            eth_client = ChainscanClient.from_config(
-                scanner_name='etherscan', scanner_version='v2', scanner_id='eth', network='main'
-            )
+            eth_client = ChainscanClient.from_config('etherscan', 'v2', 'ethereum')
             print(f'   {eth_client}')
             print(f'   Currency: {eth_client.currency}')
             print(f'   Supported methods: {len(eth_client.get_supported_methods())}')
