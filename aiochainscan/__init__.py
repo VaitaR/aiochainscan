@@ -2,7 +2,7 @@ from collections.abc import Mapping
 from datetime import date
 from typing import Any
 
-__version__ = '0.2.2'
+__version__ = '0.2.3'
 
 from aiochainscan.adapters.aiohttp_client import AiohttpClient
 from aiochainscan.adapters.endpoint_builder_urlbuilder import UrlBuilderEndpoint
