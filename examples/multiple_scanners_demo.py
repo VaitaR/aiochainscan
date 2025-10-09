@@ -57,7 +57,7 @@ async def main():
     print('\n2️⃣ ChainscanClient + Etherscan v2 (multichain support):')
     print('   Code: client.call(Method.ACCOUNT_BALANCE, address=address)')
     try:
-        client_v2 = ChainscanClient.from_config('etherscan', 'v2', 'ethereum')
+        client_v2 = ChainscanClient.from_config('etherscan', 'ethereum')  # v2 default
         balance3 = await client_v2.call(Method.ACCOUNT_BALANCE, address=address)
         print(f'   ✅ Result: {balance3} wei ({int(balance3) / 10**18:.6f} ETH)')
         results.append(('Etherscan v2', balance3))
@@ -70,7 +70,7 @@ async def main():
         print('\n3️⃣ ChainscanClient + BaseScan v1 (Base network):')
         print('   Code: client.call(Method.ACCOUNT_BALANCE, address=address)')
         try:
-            client_base = ChainscanClient.from_config('etherscan', 'v2', 'base')
+            client_base = ChainscanClient.from_config('etherscan', 'base')  # v2 default
             balance_base = await client_base.call(Method.ACCOUNT_BALANCE, address=address)
             print(f'   ✅ Result: {balance_base} wei ({int(balance_base) / 10**18:.6f} ETH)')
             results.append(('BaseScan v1', balance_base))

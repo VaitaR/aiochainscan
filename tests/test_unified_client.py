@@ -174,7 +174,7 @@ class TestChainscanClient:
         """Test client creation from config."""
         mock_global_config.create_client_config.return_value = mock_config
 
-        client = ChainscanClient.from_config('etherscan', 'v2', 'ethereum')
+        client = ChainscanClient.from_config('etherscan', 'ethereum', 'v2')
 
         assert client.scanner_name == 'etherscan'
         assert client.scanner_version == 'v2'
@@ -183,6 +183,28 @@ class TestChainscanClient:
         assert client.api_key == 'test_api_key'
 
         mock_global_config.create_client_config.assert_called_once_with('eth', 'ethereum')
+
+    @patch('aiochainscan.core.client.global_config')
+    def test_client_from_config_default_version(self, mock_global_config, mock_config):
+        """Test client creation from config with default version."""
+        mock_global_config.create_client_config.return_value = mock_config
+
+        # Test Etherscan defaults to v2
+        client = ChainscanClient.from_config('etherscan', 'ethereum')
+
+        assert client.scanner_name == 'etherscan'
+        assert client.scanner_version == 'v2'  # Should default to v2
+        assert client.api_kind == 'eth'
+        assert client.network == 'ethereum'
+        assert client.api_key == 'test_api_key'
+
+        # Test BlockScout defaults to v1
+        client = ChainscanClient.from_config(
+            'blockscout', 'eth'
+        )  # Use 'eth' instead of 'ethereum'
+
+        assert client.scanner_name == 'blockscout'
+        assert client.scanner_version == 'v1'  # Should default to v1
 
     def test_client_direct_initialization(self):
         """Test direct client initialization."""
@@ -325,7 +347,7 @@ async def test_end_to_end_workflow():
             mock_call.return_value = '1000000000000000000'
 
             # Create client and make call
-            client = ChainscanClient.from_config('etherscan', 'v2', 'ethereum')
+            client = ChainscanClient.from_config('etherscan', 'ethereum', 'v2')
 
             result = await client.call(
                 Method.ACCOUNT_BALANCE, address='0x742d35Cc6634C0532925a3b8D9Fa7a3D91'
