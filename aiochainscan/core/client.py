@@ -21,7 +21,7 @@ class ChainscanClient:
     Unified client for accessing different blockchain scanner APIs.
 
     This client provides a single interface for calling logical methods
-    across different scanner implementations (Etherscan, OKLink, etc.),
+    across different scanner implementations (Etherscan, BlockScout, Moralis, etc.),
     automatically handling API key management and URL construction.
 
     Example:
@@ -54,9 +54,9 @@ class ChainscanClient:
         Initialize the unified client.
 
         Args:
-            scanner_name: Scanner implementation name (e.g., 'etherscan', 'oklink')
+            scanner_name: Scanner implementation name (e.g., 'etherscan', 'blockscout')
             scanner_version: Scanner version (e.g., 'v1', 'v2')
-            api_kind: API kind for URL building (e.g., 'eth', 'xlayer')
+            api_kind: API kind for URL building (e.g., 'eth', 'base')
             network: Network name (e.g., 'main', 'test')
             api_key: API key for authentication
             loop: Event loop instance
@@ -102,9 +102,9 @@ class ChainscanClient:
         Create client using the existing configuration system.
 
         Args:
-            scanner_name: Scanner implementation ('etherscan', 'oklink')
+            scanner_name: Scanner implementation ('etherscan', 'blockscout')
             scanner_version: Scanner version ('v1', 'v2')
-            scanner_id: Scanner ID for config lookup ('eth', 'xlayer')
+            scanner_id: Scanner ID for config lookup ('eth', 'base')
             network: Network name ('main', 'test', etc.)
             loop: Event loop instance
             timeout: Request timeout configuration
@@ -118,10 +118,20 @@ class ChainscanClient:
         Example:
             ```python
             # Etherscan v2 for Ethereum mainnet
-            client = ChainscanClient.from_config('etherscan', 'v2', 'eth', 'main')
+            client = ChainscanClient.from_config(
+                scanner_name='etherscan',
+                scanner_version='v2',
+                scanner_id='eth',
+                network='main'
+            )
 
-            # OKLink v1 for XLayer
-            client = ChainscanClient.from_config('oklink', 'v1', 'xlayer', 'main')
+            # BlockScout v1 for Polygon
+            client = ChainscanClient.from_config(
+                scanner_name='blockscout',
+                scanner_version='v1',
+                scanner_id='blockscout_polygon',
+                network='polygon'
+            )
             ```
         """
         # Use existing config system to get API key and validate network

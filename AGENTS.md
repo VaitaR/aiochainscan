@@ -101,18 +101,33 @@ from aiochainscan.core.client import ChainscanClient
 from aiochainscan.core.method import Method
 
 # Create client for any scanner using simple config
-client = ChainscanClient.from_config('blockscout', 'v1', 'blockscout_eth', 'eth')
+client = ChainscanClient.from_config(
+    scanner_name='blockscout',      # Provider name
+    scanner_version='v1',           # API version
+    scanner_id='blockscout_eth',    # Config identifier for Ethereum
+    network='eth'                   # Network name
+)
 
 # Use logical methods - scanner details hidden under the hood
 balance = await client.call(Method.ACCOUNT_BALANCE, address='0x...')
 logs = await client.call(Method.EVENT_LOGS, address='0x...', **params)
 
 # Easy scanner switching - same interface for all!
-client = ChainscanClient.from_config('etherscan', 'v2', 'eth', 'main')
+client = ChainscanClient.from_config(
+    scanner_name='etherscan',      # Provider name
+    scanner_version='v2',          # API version
+    scanner_id='eth',              # Config identifier for Ethereum
+    network='main'                 # Mainnet
+)
 balance = await client.call(Method.ACCOUNT_BALANCE, address='0x...')
 
-# Use Base network through Etherscan V2 (chain_id 8453)
-client = ChainscanClient.from_config('etherscan', 'v2', 'base', 'main')
+# Use Base network through Etherscan V2 (requires ETHERSCAN_KEY)
+client = ChainscanClient.from_config(
+    scanner_name='etherscan',      # Same provider
+    scanner_version='v2',          # Same version
+    scanner_id='base',             # Config identifier for Base network
+    network='main'                 # Mainnet
+)
 balance = await client.call(Method.ACCOUNT_BALANCE, address='0x...')
 ```
 
@@ -160,13 +175,13 @@ rate_limiter = SimpleRateLimiter(requests_per_second=1)
 retry_policy = ExponentialBackoffRetry(attempts=3)
 
 client = ChainscanClient(
-    scanner_name='etherscan',
-    scanner_version='v2',
-    api_kind='eth',
-    network='main',
-    api_key='YOUR_API_KEY',
-    throttler=rate_limiter,
-    retry_options=retry_policy
+    scanner_name='etherscan',      # Provider name
+    scanner_version='v2',          # API version
+    api_kind='eth',                # Scanner identifier
+    network='main',                # Network name
+    api_key='YOUR_ETHERSCAN_API_KEY',
+    throttler=rate_limiter,        # Custom rate limiter
+    retry_options=retry_policy     # Custom retry policy
 )
 
 balance = await client.call(Method.ACCOUNT_BALANCE, address='0x...')
@@ -208,11 +223,17 @@ The **ChainscanClient** is the recommended interface because it provides:
 ### 🚀 **Easy Scanner Switching**
 ```python
 # Switch from BlockScout to Etherscan with one line change
+# Parameters: scanner_name, scanner_version, scanner_id, network
 client = ChainscanClient.from_config('blockscout', 'v1', 'blockscout_eth', 'eth')
 balance = await client.call(Method.ACCOUNT_BALANCE, address='0x...')
 
 # Same code works with Etherscan
-client = ChainscanClient.from_config('etherscan', 'v2', 'eth', 'main')
+client = ChainscanClient.from_config(
+    scanner_name='etherscan',      # Provider name
+    scanner_version='v2',          # API version
+    scanner_id='eth',              # Config identifier for Ethereum
+    network='main'                 # Mainnet
+)
 balance = await client.call(Method.ACCOUNT_BALANCE, address='0x...')
 ```
 
@@ -226,6 +247,25 @@ balance = await client.call(Method.ACCOUNT_BALANCE, address='0x...')
 - Dependency injection support
 - Real-world tested with multiple scanners
 - Consistent response formats
+
+## Configuration Parameters
+
+When using `ChainscanClient.from_config()`, you need to specify four key parameters:
+
+- **scanner_name**: Provider name (`'etherscan'`, `'blockscout'`, `'moralis'`, etc.)
+- **scanner_version**: API version (`'v1'`, `'v2'`)
+- **scanner_id**: Configuration identifier for the specific network (`'eth'`, `'blockscout_eth'`, `'base'`, etc.)
+- **network**: Network name (`'main'`, `'sepolia'`, `'polygon'`, etc.)
+
+### Common Configurations:
+
+| Provider | scanner_name | scanner_version | scanner_id | network | API Key |
+|----------|-------------|----------------|------------|---------|---------|
+| **BlockScout Ethereum** | `'blockscout'` | `'v1'` | `'blockscout_eth'` | `'eth'` | ❌ Not required |
+| **BlockScout Polygon** | `'blockscout'` | `'v1'` | `'blockscout_polygon'` | `'polygon'` | ❌ Not required |
+| **Etherscan Ethereum** | `'etherscan'` | `'v2'` | `'eth'` | `'main'` | ✅ `ETHERSCAN_KEY` |
+| **Etherscan Base** | `'etherscan'` | `'v2'` | `'base'` | `'main'` | ✅ `ETHERSCAN_KEY` |
+| **Moralis Ethereum** | `'moralis'` | `'v1'` | `'moralis'` | `'eth'` | ✅ `MORALIS_API_KEY` |
 
 ## Configuration
 

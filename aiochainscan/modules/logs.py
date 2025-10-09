@@ -30,8 +30,7 @@ class Logs(BaseModule):
         topics: list[str] | None = None,  # Make topics optional
         topic_operators: list[str] | None = None,
     ) -> list[dict[str, Any]]:
-        """https://www.oklink.com/docs/en/#evm-rpc-data-log-get-event-logs"""
-        # if url link have oklink prefix so  params startblock and endblock
+        """Event Log API for retrieving contract event logs"""
 
         """[Beta] The Event Log API was designed to provide an alternative to the native eth_getLogs
 

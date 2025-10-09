@@ -80,15 +80,6 @@ def etherscan_parser(response: dict[str, Any]) -> Any:
     return response
 
 
-def oklink_parser(response: dict[str, Any]) -> Any:
-    """OKLink API response parser."""
-    if 'data' in response and isinstance(response['data'], list) and response['data']:
-        return response['data'][0]
-    elif 'data' in response:
-        return response['data']
-    return response
-
-
 def moralis_balance_parser(response: dict[str, Any]) -> int:
     """Moralis balance response parser."""
     # Moralis возвращает: {"balance": "123456789000000000000"} или в другом формате
@@ -133,7 +124,6 @@ def raw_parser(response: dict[str, Any]) -> Any:
 
 PARSERS: dict[str, Callable[[dict[str, Any]], Any]] = {
     'etherscan': etherscan_parser,
-    'oklink': oklink_parser,
     'moralis_balance': moralis_balance_parser,
     'moralis_transactions': moralis_transactions_parser,
     'moralis_token_balances': moralis_token_balances_parser,

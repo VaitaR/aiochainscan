@@ -57,25 +57,39 @@ from aiochainscan.core.method import Method
 
 async def main():
     # Create client for any scanner using simple config
-    # BlockScout (free, no API key needed)
-    client = ChainscanClient.from_config('blockscout', 'v1', 'blockscout_eth', 'eth')
+    client = ChainscanClient.from_config(
+        scanner_name='blockscout',      # Provider name
+        scanner_version='v1',           # API version
+        scanner_id='blockscout_eth',    # Config identifier for Ethereum
+        network='eth'                   # Network name
+    )
 
     # Use logical methods - scanner details hidden under the hood
     balance = await client.call(Method.ACCOUNT_BALANCE, address='0x742d35Cc6634C0532925a3b8D9fa7a3D91D1e9b3')
     print(f"Balance: {balance} wei ({int(balance) / 10**18:.6f} ETH)")
 
-# Switch to Etherscan easily (requires API key)
-client = ChainscanClient.from_config('etherscan', 'v2', 'eth', 'main')
-block = await client.call(Method.BLOCK_BY_NUMBER, block_number='latest')
-print(f"Latest block: #{block['number']}")
+    # Switch to Etherscan easily (requires API key)
+    client = ChainscanClient.from_config(
+        scanner_name='etherscan',      # Provider name
+        scanner_version='v2',          # API version (V2 supports Base via chain_id)
+        scanner_id='eth',              # Config identifier for Ethereum
+        network='main'                 # Mainnet
+    )
+    block = await client.call(Method.BLOCK_BY_NUMBER, block_number='latest')
+    print(f"Latest block: #{block['number']}")
 
-# Use Base network through Etherscan V2 (requires ETHERSCAN_KEY)
-client = ChainscanClient.from_config('etherscan', 'v2', 'base', 'main')
-balance = await client.call(Method.ACCOUNT_BALANCE, address='0x...')
-print(f"Base balance: {balance} wei")
+    # Use Base network through Etherscan V2 (requires ETHERSCAN_KEY)
+    client = ChainscanClient.from_config(
+        scanner_name='etherscan',      # Same provider
+        scanner_version='v2',          # Same version
+        scanner_id='base',             # Config identifier for Base network
+        network='main'                 # Mainnet
+    )
+    balance = await client.call(Method.ACCOUNT_BALANCE, address='0x...')
+    print(f"Base balance: {balance} wei")
 
-# Same interface for any scanner!
-await client.close()
+    # Same interface for any scanner!
+    await client.close()
 
 asyncio.run(main())
 ```
@@ -154,13 +168,13 @@ async def main():
 
     # Create client with custom configuration
     client = ChainscanClient(
-        scanner_name='etherscan',
-        scanner_version='v2',
-        api_kind='eth',
-        network='main',
+        scanner_name='etherscan',      # Provider name
+        scanner_version='v2',          # API version
+        api_kind='eth',                # Scanner identifier
+        network='main',                # Network name
         api_key='YOUR_ETHERSCAN_API_KEY',
-        throttler=rate_limiter,
-        retry_options=retry_policy
+        throttler=rate_limiter,        # Custom rate limiter
+        retry_options=retry_policy     # Custom retry policy
     )
 
     try:
@@ -274,6 +288,25 @@ export ETHERSCAN_KEY="your_etherscan_api_key"
 export MORALIS_API_KEY="your_moralis_api_key"
 # Blockscout and some networks work without API keys
 ```
+
+## Configuration Parameters
+
+When using `ChainscanClient.from_config()`, you need to specify four key parameters:
+
+- **scanner_name**: Provider name (`'etherscan'`, `'blockscout'`, `'moralis'`, etc.)
+- **scanner_version**: API version (`'v1'`, `'v2'`)
+- **scanner_id**: Configuration identifier for the specific network (`'eth'`, `'blockscout_eth'`, `'base'`, etc.)
+- **network**: Network name (`'main'`, `'sepolia'`, `'polygon'`, etc.)
+
+### Common Configurations:
+
+| Provider | scanner_name | scanner_version | scanner_id | network | API Key |
+|----------|-------------|----------------|------------|---------|---------|
+| **BlockScout Ethereum** | `'blockscout'` | `'v1'` | `'blockscout_eth'` | `'eth'` | ❌ Not required |
+| **BlockScout Polygon** | `'blockscout'` | `'v1'` | `'blockscout_polygon'` | `'polygon'` | ❌ Not required |
+| **Etherscan Ethereum** | `'etherscan'` | `'v2'` | `'eth'` | `'main'` | ✅ `ETHERSCAN_KEY` |
+| **Etherscan Base** | `'etherscan'` | `'v2'` | `'base'` | `'main'` | ✅ `ETHERSCAN_KEY` |
+| **Moralis Ethereum** | `'moralis'` | `'v1'` | `'moralis'` | `'eth'` | ✅ `MORALIS_API_KEY` |
 
 ## Available Interfaces
 
