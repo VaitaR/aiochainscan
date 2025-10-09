@@ -31,7 +31,9 @@ class RoutScanV1(Scanner):
         'mode': '34443',  # Mode network
     }
 
-    def __init__(self, api_key: str, network: str, url_builder: UrlBuilder) -> None:
+    def __init__(
+        self, api_key: str, network: str, url_builder: UrlBuilder, chain_id: int | None = None
+    ) -> None:
         """
         Initialize RoutScan scanner with network-specific chain ID.
 
@@ -39,16 +41,21 @@ class RoutScanV1(Scanner):
             api_key: API key (optional for RoutScan)
             network: Network name (must be in supported_networks)
             url_builder: UrlBuilder instance
+            chain_id: Chain ID (optional, will be resolved from network)
         """
-        super().__init__(api_key, network, url_builder)
+        super().__init__(api_key, network, url_builder, chain_id)
 
         # Get chain ID for this network
-        self.chain_id = self.NETWORK_CHAIN_IDS.get(network)
-        if not self.chain_id:
+        chain_id_value = chain_id or self.NETWORK_CHAIN_IDS.get(network)
+        if not chain_id_value:
             available = ', '.join(sorted(self.NETWORK_CHAIN_IDS.keys()))
             raise ValueError(
                 f"Network '{network}' not mapped for RoutScan. Available: {available}"
             )
+        if isinstance(chain_id_value, str):
+            self.chain_id = int(chain_id_value)
+        else:
+            self.chain_id = chain_id_value
 
     async def call(self, method: Method, **params: Any) -> Any:
         """

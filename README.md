@@ -60,8 +60,7 @@ async def main():
     client = ChainscanClient.from_config(
         scanner_name='blockscout',      # Provider name
         scanner_version='v1',           # API version
-        scanner_id='blockscout_eth',    # Config identifier for Ethereum
-        network='eth'                   # Network name
+        network='ethereum'              # Chain name/ID
     )
 
     # Use logical methods - scanner details hidden under the hood
@@ -72,8 +71,7 @@ async def main():
     client = ChainscanClient.from_config(
         scanner_name='etherscan',      # Provider name
         scanner_version='v2',          # API version (V2 supports Base via chain_id)
-        scanner_id='eth',              # Config identifier for Ethereum
-        network='main'                 # Mainnet
+        network='ethereum'             # Chain name
     )
     block = await client.call(Method.BLOCK_BY_NUMBER, block_number='latest')
     print(f"Latest block: #{block['number']}")
@@ -82,8 +80,7 @@ async def main():
     client = ChainscanClient.from_config(
         scanner_name='etherscan',      # Same provider
         scanner_version='v2',          # Same version
-        scanner_id='base',             # Config identifier for Base network
-        network='main'                 # Mainnet
+        network='base'                 # Chain name
     )
     balance = await client.call(Method.ACCOUNT_BALANCE, address='0x...')
     print(f"Base balance: {balance} wei")
@@ -216,21 +213,20 @@ async def check_multi_scanner_balance():
     # Same code works with any scanner - just change config!
     scanners = [
         # BlockScout (free, no API key needed)
-        ('blockscout', 'v1', 'blockscout_eth', 'eth', ''),
+        ('blockscout', 'v1', 'eth', ''),
 
         # Etherscan (requires API key)
-        ('etherscan', 'v2', 'eth', 'main', 'YOUR_ETHERSCAN_API_KEY'),
+        ('etherscan', 'v2', 'eth', 'YOUR_ETHERSCAN_API_KEY'),
 
         # Moralis (requires API key)
-        ('moralis', 'v1', 'moralis', 'eth', 'YOUR_MORALIS_API_KEY'),
+        ('moralis', 'v1', 'eth', 'YOUR_MORALIS_API_KEY'),
     ]
 
-    for scanner_name, version, api_kind, network, api_key in scanners:
+    for scanner_name, version, network, api_key in scanners:
         try:
             client = ChainscanClient.from_config(
                 scanner_name=scanner_name,
                 scanner_version=version,
-                scanner_id=api_kind,
                 network=network
             )
 
@@ -291,22 +287,27 @@ export MORALIS_API_KEY="your_moralis_api_key"
 
 ## Configuration Parameters
 
-When using `ChainscanClient.from_config()`, you need to specify four key parameters:
+When using `ChainscanClient.from_config()`, you need to specify three key parameters:
 
 - **scanner_name**: Provider name (`'etherscan'`, `'blockscout'`, `'moralis'`, etc.)
 - **scanner_version**: API version (`'v1'`, `'v2'`)
-- **scanner_id**: Configuration identifier for the specific network (`'eth'`, `'blockscout_eth'`, `'base'`, etc.)
-- **network**: Network name (`'main'`, `'sepolia'`, `'polygon'`, etc.)
+- **network**: Chain name/ID (`'eth'`, `'ethereum'`, `1`, `'base'`, `8453`, etc.)
 
 ### Common Configurations:
 
-| Provider | scanner_name | scanner_version | scanner_id | network | API Key |
-|----------|-------------|----------------|------------|---------|---------|
-| **BlockScout Ethereum** | `'blockscout'` | `'v1'` | `'blockscout_eth'` | `'eth'` | ❌ Not required |
-| **BlockScout Polygon** | `'blockscout'` | `'v1'` | `'blockscout_polygon'` | `'polygon'` | ❌ Not required |
-| **Etherscan Ethereum** | `'etherscan'` | `'v2'` | `'eth'` | `'main'` | ✅ `ETHERSCAN_KEY` |
-| **Etherscan Base** | `'etherscan'` | `'v2'` | `'base'` | `'main'` | ✅ `ETHERSCAN_KEY` |
-| **Moralis Ethereum** | `'moralis'` | `'v1'` | `'moralis'` | `'eth'` | ✅ `MORALIS_API_KEY` |
+| Provider | scanner_name | scanner_version | network | API Key |
+|----------|-------------|----------------|---------|---------|
+| **BlockScout Ethereum** | `'blockscout'` | `'v1'` | `'ethereum'` | ❌ Not required |
+| **BlockScout Polygon** | `'blockscout'` | `'v1'` | `'polygon'` | ❌ Not required |
+| **Etherscan Ethereum** | `'etherscan'` | `'v2'` | `'ethereum'` | ✅ `ETHERSCAN_KEY` |
+| **Etherscan Base** | `'etherscan'` | `'v2'` | `'base'` | ✅ `ETHERSCAN_KEY` |
+| **Moralis Ethereum** | `'moralis'` | `'v1'` | `'ethereum'` | ✅ `MORALIS_API_KEY` |
+
+**Network parameter supports both names and chain IDs:**
+- `'ethereum'`, `'eth'`, `1` - Ethereum
+- `'base'`, `8453` - Base
+- `'polygon'`, `'matic'` - Polygon
+- `'bsc'`, `'binance'`, `56` - Binance Smart Chain
 
 ## Available Interfaces
 
@@ -321,7 +322,7 @@ from aiochainscan.core.client import ChainscanClient
 from aiochainscan.core.method import Method
 
 # Create client for any scanner
-client = ChainscanClient.from_config('blockscout', 'v1', 'blockscout_eth', 'eth')
+client = ChainscanClient.from_config('blockscout', 'v1', 'ethereum')
 
 # Use logical methods - scanner details hidden
 balance = await client.call(Method.ACCOUNT_BALANCE, address='0x...')
@@ -329,7 +330,7 @@ logs = await client.call(Method.EVENT_LOGS, address='0x...', **params)
 block = await client.call(Method.BLOCK_BY_NUMBER, block_number='latest')
 
 # Easy scanner switching - same interface!
-client = ChainscanClient.from_config('etherscan', 'v2', 'eth', 'main')
+client = ChainscanClient.from_config('etherscan', 'v2', 'ethereum')
 balance = await client.call(Method.ACCOUNT_BALANCE, address='0x...')
 ```
 
