@@ -30,8 +30,8 @@ class EtherscanV2(Scanner):
         'optimism',
         'base',
     }
-    auth_mode = 'header'
-    auth_field = 'X-API-Key'
+    auth_mode = 'query'
+    auth_field = 'apikey'
 
     SPECS = {
         Method.ACCOUNT_BALANCE: EndpointSpec(

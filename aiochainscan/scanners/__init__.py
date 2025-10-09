@@ -71,7 +71,6 @@ def list_scanners() -> dict[tuple[str, str], type[Scanner]]:
 
 # Import scanner implementations to trigger registration
 # This must be done after register_scanner is defined to avoid circular imports
-from .basescan_v1 import BaseScanV1  # noqa: E402
 from .blockscout_v1 import BlockScoutV1  # noqa: E402
 from .etherscan_v2 import EtherscanV2  # noqa: E402
 from .moralis_v1 import MoralisV1  # noqa: E402
@@ -84,7 +83,6 @@ __all__ = [
     'list_scanners',
     'EtherscanV2',
     'RoutScanV1',
-    'BaseScanV1',
     'BlockScoutV1',
     'MoralisV1',
 ]
