@@ -147,6 +147,10 @@ class UrlBuilder:
         return self._build_url(prefix, path)
 
     def _get_base_url(self) -> str:
+        # Etherscan V2 API uses unified domain etherscan.io for all networks
+        if self._api_kind in self._HEADER_AUTH_API_KINDS:
+            return 'https://etherscan.io'
+
         network_exceptions = {('polygon', 'testnet'): 'mumbai'}
         network = network_exceptions.get((self._api_kind, self._network), self._network)
 
