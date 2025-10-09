@@ -43,7 +43,7 @@ def get_scanner_class(name: str, version: str) -> type[Scanner]:
     Get scanner class by name and version.
 
     Args:
-        name: Scanner name (e.g., 'etherscan', 'oklink')
+        name: Scanner name (e.g., 'etherscan', 'blockscout')
         version: Scanner version (e.g., 'v1', 'v2')
 
     Returns:

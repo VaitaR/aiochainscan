@@ -117,8 +117,8 @@ async def demo_unified_client():
     # Etherscan format
     balance = await eth_client.call(Method.ACCOUNT_BALANCE, address='0x...')
 
-    # OKLink format (parameters automatically mapped)
-    balance = await oklink_client.call(Method.ACCOUNT_BALANCE, address='0x...')
+    # BlockScout format (parameters automatically mapped)
+    balance = await blockscout_client.call(Method.ACCOUNT_BALANCE, address='0x...')
 
     # Different scanners, same logical operation, same client code!
     """)
