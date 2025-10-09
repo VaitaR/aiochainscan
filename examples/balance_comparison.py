@@ -5,9 +5,9 @@ Simple comparison of getting Ether balance through different API methods.
 This example shows how to get the same balance using:
 1. Legacy Client (etherscan v1 style)
 2. New ChainscanClient with etherscan v1
-3. OKLink API (when available)
+3. Different scanner implementations
 
-All three should return the same balance for the same address.
+All should return the same balance for the same address.
 """
 
 import asyncio
@@ -27,17 +27,12 @@ async def main():
 
     # Check if we have required API keys
     etherscan_key = os.getenv('ETHERSCAN_KEY')
-    oklink_key = os.getenv('OKLINK_KEY')
 
     if not etherscan_key:
         print('❌ ETHERSCAN_KEY not found in environment variables')
         return
 
     print('✅ ETHERSCAN_KEY found')
-    if oklink_key:
-        print('✅ OKLINK_KEY found')
-    else:
-        print('⚠️  OKLINK_KEY not found - OKLink test will be skipped')
 
     print('\n' + '=' * 60)
 
@@ -63,37 +58,28 @@ async def main():
     except Exception as e:
         print(f'   ❌ Error: {e}')
 
-    # Method 3: OKLink API for Ethereum
-    print('\n3️⃣ OKLink API for Ethereum:')
-    if oklink_key:
+    # Method 3: BlockScout API for Ethereum (free, no API key needed)
+    print('\n3️⃣ BlockScout API for Ethereum (free):')
+    try:
+        client_blockscout = ChainscanClient.from_config(
+            'blockscout', 'v1', 'blockscout_eth', 'eth'
+        )
+
+        balance_blockscout = await client_blockscout.call(
+            Method.ACCOUNT_BALANCE, address=TEST_ADDRESS
+        )
+        print(f'   Balance: {balance_blockscout} wei')
+
+        # Convert to ETH if it's a numeric string
         try:
-            # Create UrlBuilder and ChainscanClient for OKLink
-            from aiochainscan.url_builder import UrlBuilder
+            balance_eth = float(balance_blockscout) / 10**18
+            print(f'   Balance: {balance_eth:.6f} ETH')
+        except (ValueError, TypeError):
+            print(f'   Balance (raw): {balance_blockscout}')
 
-            oklink_url_builder = UrlBuilder(oklink_key, 'oklink_eth', 'main')
-            client_oklink = ChainscanClient(
-                scanner_name='oklink_eth',
-                scanner_version='v1',
-                api_kind='oklink_eth',
-                network='main',
-                api_key=oklink_key,
-            )
-
-            balance_oklink = await client_oklink.call(Method.ACCOUNT_BALANCE, address=TEST_ADDRESS)
-            print(f'   Balance: {balance_oklink} wei')
-
-            # Convert to ETH if it's a numeric string
-            try:
-                balance_eth = float(balance_oklink) / 10**18
-                print(f'   Balance: {balance_eth:.6f} ETH')
-            except (ValueError, TypeError):
-                print(f'   Balance (raw): {balance_oklink}')
-
-            await client_oklink.close()
-        except Exception as e:
-            print(f'   ❌ Error: {e}')
-    else:
-        print('   ❌ OKLINK_KEY not available')
+        await client_blockscout.close()
+    except Exception as e:
+        print(f'   ❌ Error: {e}')
 
     # Comparison
     print('\n' + '=' * 60)
@@ -105,8 +91,8 @@ async def main():
             results.append(('Legacy Client', balance_v1))
         if 'balance_v2' in locals():
             results.append(('ChainscanClient', balance_v2))
-        if 'balance_oklink' in locals():
-            results.append(('OKLink', balance_oklink))
+        if 'balance_blockscout' in locals():
+            results.append(('BlockScout', balance_blockscout))
 
         if len(results) >= 2:
             # Compare results
@@ -124,7 +110,7 @@ async def main():
 
     print('\n💡 This example demonstrates:')
     print('   • Legacy Client vs new ChainscanClient')
-    print('   • Different scanner implementations (Etherscan vs OKLink)')
+    print('   • Different scanner implementations (Etherscan vs BlockScout)')
     print('   • Unified Method enum usage across different APIs')
 
 

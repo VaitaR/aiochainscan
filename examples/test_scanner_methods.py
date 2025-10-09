@@ -86,7 +86,6 @@ class ScannerMethodTester:
             'gnosis': '0x6A023CCd1ff6F2045C3309768eAd9E68F978f6e1',  # WETH on Gnosis
             'linea': '0xe5D7C2a44FfDDf6b295A15c148167daaAf5Cf34f',  # ETH bridge
             'blast': '0x4300000000000000000000000000000000000003',  # USDB
-            'xlayer': '0x5A77f1443D16ee5761b7fcE5A0C0f2e78987e2Ed',  # Bridge
             'flare': '0x1D80c49BbBCd1C0911346656B529DF9E5c2F783d',  # WFLR
         }
 
@@ -102,7 +101,6 @@ class ScannerMethodTester:
             'gnosis': 10000,  # January 2024
             'linea': 10000,  # Historical block
             'blast': 10000,  # Historical block
-            'xlayer': 10000,  # Historical block
             'flare': 10000,  # Historical block
         }
 
