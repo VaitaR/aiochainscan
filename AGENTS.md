@@ -102,9 +102,8 @@ from aiochainscan.core.method import Method
 
 # Create client for any scanner using simple config
 client = ChainscanClient.from_config(
-    scanner_name='blockscout',      # Provider name
-    scanner_version='v1',           # API version
-    network='ethereum'              # Chain name/ID
+    'blockscout',                   # Provider name (version defaults to 'v1')
+    'ethereum'                      # Chain name/ID
 )
 
 # Use logical methods - scanner details hidden under the hood
@@ -113,17 +112,15 @@ logs = await client.call(Method.EVENT_LOGS, address='0x...', **params)
 
 # Easy scanner switching - same interface for all!
 client = ChainscanClient.from_config(
-    scanner_name='etherscan',      # Provider name
-    scanner_version='v2',          # API version
-    network='ethereum'             # Chain name
+    'etherscan',                    # Provider name (version defaults to 'v2')
+    'ethereum'                      # Chain name
 )
 balance = await client.call(Method.ACCOUNT_BALANCE, address='0x...')
 
-# Use Base network through Etherscan V2 (requires ETHERSCAN_KEY)
+# Use Base network through Etherscan (requires ETHERSCAN_KEY)
 client = ChainscanClient.from_config(
-    scanner_name='etherscan',      # Same provider
-    scanner_version='v2',          # Same version
-    network='base'                 # Chain name
+    'etherscan',                    # Same provider (version defaults to 'v2')
+    'base'                          # Chain name
 )
 balance = await client.call(Method.ACCOUNT_BALANCE, address='0x...')
 ```
@@ -249,13 +246,13 @@ When using `ChainscanClient.from_config()`, you need to specify three key parame
 
 ### Common Configurations:
 
-| Provider | scanner_name | scanner_version | network | API Key |
-|----------|-------------|----------------|---------|---------|
-| **BlockScout Ethereum** | `'blockscout'` | `'v1'` | `'ethereum'` | ❌ Not required |
-| **BlockScout Polygon** | `'blockscout'` | `'v1'` | `'polygon'` | ❌ Not required |
-| **Etherscan Ethereum** | `'etherscan'` | `'v2'` | `'ethereum'` | ✅ `ETHERSCAN_KEY` |
-| **Etherscan Base** | `'etherscan'` | `'v2'` | `'base'` | ✅ `ETHERSCAN_KEY` |
-| **Moralis Ethereum** | `'moralis'` | `'v1'` | `'ethereum'` | ✅ `MORALIS_API_KEY` |
+| Provider | scanner_name | default_version | network | API Key |
+|----------|-------------|-----------------|---------|---------|
+| **BlockScout Ethereum** | `'blockscout'` | `v1` | `'ethereum'` | ❌ Not required |
+| **BlockScout Polygon** | `'blockscout'` | `v1` | `'polygon'` | ❌ Not required |
+| **Etherscan Ethereum** | `'etherscan'` | `v2` | `'ethereum'` | ✅ `ETHERSCAN_KEY` |
+| **Etherscan Base** | `'etherscan'` | `v2` | `'base'` | ✅ `ETHERSCAN_KEY` |
+| **Moralis Ethereum** | `'moralis'` | `v1` | `'ethereum'` | ✅ `MORALIS_API_KEY` |
 
 ## Configuration
 

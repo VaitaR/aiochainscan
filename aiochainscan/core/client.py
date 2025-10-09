@@ -27,8 +27,8 @@ class ChainscanClient:
 
     Example:
         ```python
-        # Using configuration system
-        client = ChainscanClient.from_config('etherscan', 'v2', 'ethereum')
+        # Using configuration system (version defaults to 'v2' for etherscan)
+        client = ChainscanClient.from_config('etherscan', network='ethereum')
 
         # Direct instantiation
         client = ChainscanClient('etherscan', 'v2', 'eth', 'ethereum', 'your_api_key')
@@ -100,8 +100,8 @@ class ChainscanClient:
     def from_config(
         cls,
         scanner_name: str,
-        scanner_version: str,
         network: str | int,
+        scanner_version: str | None = None,
         loop: AbstractEventLoop | None = None,
         timeout: ClientTimeout | None = None,
         proxy: str | None = None,
@@ -113,8 +113,10 @@ class ChainscanClient:
 
         Args:
             scanner_name: Scanner implementation ('etherscan', 'blockscout')
-            scanner_version: Scanner version ('v1', 'v2')
-            network: Chain name/ID ('eth', 'ethereum', 1, 8453)
+            network: Chain name/ID ('ethereum', 'base', 1, 8453)
+            scanner_version: Scanner version ('v1', 'v2'). If None, uses default:
+                - 'v2' for etherscan (recommended)
+                - 'v1' for all other scanners
             loop: Event loop instance
             timeout: Request timeout configuration
             proxy: Proxy URL
@@ -126,35 +128,23 @@ class ChainscanClient:
 
         Example:
             ```python
-            # Etherscan v2 for Ethereum mainnet
-            client = ChainscanClient.from_config(
-                scanner_name='etherscan',
-                scanner_version='v2',
-                network='eth'
-            )
+            # Etherscan v2 for Ethereum (version defaults to 'v2')
+            client = ChainscanClient.from_config('etherscan', 'ethereum')
 
-            # BlockScout v1 for Polygon
-            client = ChainscanClient.from_config(
-                scanner_name='blockscout',
-                scanner_version='v1',
-                network='polygon'
-            )
+            # BlockScout v1 for Polygon (version defaults to 'v1')
+            client = ChainscanClient.from_config('blockscout', 'polygon')
 
-            # Base network via Etherscan V2
-            client = ChainscanClient.from_config(
-                scanner_name='etherscan',
-                scanner_version='v2',
-                network='base'
-            )
+            # Explicit version specification
+            client = ChainscanClient.from_config('moralis', 'ethereum', 'v1')
 
             # Works with chain_id too
-            client = ChainscanClient.from_config(
-                scanner_name='etherscan',
-                scanner_version='v2',
-                network=8453  # Base mainnet
-            )
+            client = ChainscanClient.from_config('etherscan', 8453)
             ```
         """
+        # Determine default scanner version if not provided
+        if scanner_version is None:
+            scanner_version = 'v2' if scanner_name == 'etherscan' else 'v1'
+
         # Resolve chain_id from network name/id
         chain_id = resolve_chain_id(network)
 
