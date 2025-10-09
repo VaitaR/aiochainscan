@@ -25,10 +25,9 @@ Async Python wrapper for blockchain explorer APIs (Etherscan, BSCScan, PolygonSc
 ## Supported Networks
 
 ### Primary Scanner Providers
-- **Etherscan API**: Ethereum, BSC, Polygon, Arbitrum, Optimism, Base, Fantom, Gnosis, and more EVM chains
+- **Etherscan API**: Ethereum, BSC, Polygon, Arbitrum, Optimism, Base, Fantom, Gnosis, and more EVM chains (Base supported via Etherscan V2)
 - **BlockScout**: Public blockchain explorers (no API key required) - Ethereum, Sepolia, Gnosis, Polygon, Optimism, Arbitrum, Base, Scroll, Linea, and others
 - **Moralis**: Multi-chain Web3 API - Ethereum, BSC, Polygon, Arbitrum, Base, Optimism, Avalanche, and more
-- **BaseScan**: Base network explorer (Etherscan-compatible)
 - **RoutScan**: Mode network explorer
 
 ### Key Features by Provider
@@ -51,7 +50,6 @@ aiochainscan/
 │   ├── etherscan_v2.py    # Etherscan API v2
 │   ├── blockscout_v1.py   # BlockScout implementation
 │   ├── moralis_v1.py      # Moralis Web3 API
-│   ├── basescan_v1.py     # BaseScan implementation
 │   └── routscan_v1.py     # RoutScan implementation
 ├── adapters/          # Hexagonal architecture adapters
 │   ├── aiohttp_client.py
@@ -111,6 +109,10 @@ logs = await client.call(Method.EVENT_LOGS, address='0x...', **params)
 
 # Easy scanner switching - same interface for all!
 client = ChainscanClient.from_config('etherscan', 'v2', 'eth', 'main')
+balance = await client.call(Method.ACCOUNT_BALANCE, address='0x...')
+
+# Use Base network through Etherscan V2 (chain_id 8453)
+client = ChainscanClient.from_config('etherscan', 'v2', 'base', 'main')
 balance = await client.call(Method.ACCOUNT_BALANCE, address='0x...')
 ```
 

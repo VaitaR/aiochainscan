@@ -162,13 +162,6 @@ class ConfigurationManager:
                 requires_api_key=False,
                 special_config={'subdomain_pattern': 'flare-explorer'},
             ),
-            'base': ScannerConfig(
-                name='BaseScan',
-                base_domain='basescan.org',
-                currency='BASE',
-                supported_networks={'main', 'goerli', 'sepolia'},
-                requires_api_key=True,
-            ),
             'linea': ScannerConfig(
                 name='LineaScan',
                 base_domain='lineascan.build',
@@ -182,6 +175,14 @@ class ConfigurationManager:
                 currency='BLAST',
                 supported_networks={'main', 'sepolia'},
                 requires_api_key=True,
+            ),
+            'base': ScannerConfig(
+                name='Etherscan (Base)',
+                base_domain='etherscan.io',
+                currency='BASE',
+                supported_networks={'main', 'goerli', 'sepolia'},
+                requires_api_key=True,
+                special_config={'etherscan_v2': True},  # Use Etherscan V2 for Base
             ),
             'blockscout_eth': ScannerConfig(
                 name='BlockScout Ethereum',

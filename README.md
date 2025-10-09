@@ -19,7 +19,7 @@ Provides a single, consistent API for accessing blockchain data across multiple 
 
 ## Supported Networks
 
-**Etherscan API**: Ethereum, BSC, Polygon, Arbitrum, Optimism, Base, Fantom, Gnosis, and more
+**Etherscan API**: Ethereum, BSC, Polygon, Arbitrum, Optimism, Base, Fantom, Gnosis, and more EVM chains (Base supported via Etherscan V2)
 **Blockscout**: Public blockchain explorers (no API key needed) - Sepolia, Gnosis, Polygon, and others
 **Moralis**: Multi-chain Web3 API - Ethereum, BSC, Polygon, Arbitrum, Base, Optimism, Avalanche
 
@@ -64,13 +64,18 @@ async def main():
     balance = await client.call(Method.ACCOUNT_BALANCE, address='0x742d35Cc6634C0532925a3b8D9fa7a3D91D1e9b3')
     print(f"Balance: {balance} wei ({int(balance) / 10**18:.6f} ETH)")
 
-    # Switch to Etherscan easily (requires API key)
-    client = ChainscanClient.from_config('etherscan', 'v2', 'eth', 'main')
-    block = await client.call(Method.BLOCK_BY_NUMBER, block_number='latest')
-    print(f"Latest block: #{block['number']}")
+# Switch to Etherscan easily (requires API key)
+client = ChainscanClient.from_config('etherscan', 'v2', 'eth', 'main')
+block = await client.call(Method.BLOCK_BY_NUMBER, block_number='latest')
+print(f"Latest block: #{block['number']}")
 
-    # Same interface for any scanner!
-    await client.close()
+# Use Base network through Etherscan V2 (requires ETHERSCAN_KEY)
+client = ChainscanClient.from_config('etherscan', 'v2', 'base', 'main')
+balance = await client.call(Method.ACCOUNT_BALANCE, address='0x...')
+print(f"Base balance: {balance} wei")
+
+# Same interface for any scanner!
+await client.close()
 
 asyncio.run(main())
 ```

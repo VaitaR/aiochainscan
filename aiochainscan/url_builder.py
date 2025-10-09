@@ -19,7 +19,7 @@ class UrlBuilder:
         'mode': ('routescan.io/v2/network/mainnet/evm/34443/etherscan', 'MODE'),
         'linea': ('lineascan.build', 'LINEA'),
         'blast': ('blastscan.io', 'BLAST'),
-        'base': ('basescan.org', 'BASE'),
+        'base': ('etherscan.io', 'BASE'),  # Base network via Etherscan V2
         'routscan_mode': ('api.routescan.io/v2/network/mainnet/evm/34443', 'ETH'),
         'blockscout_eth': ('eth.blockscout.com', 'ETH'),
         'blockscout_sepolia': ('eth-sepolia.blockscout.com', 'ETH'),
@@ -28,6 +28,8 @@ class UrlBuilder:
         'moralis': ('deep-index.moralis.io', 'Multi-chain'),
     }
 
+    # API kinds that use Etherscan V2 header-based authentication.
+    # IMPORTANT: Only Etherscan-compatible V2 endpoints should be listed here.
     _HEADER_AUTH_API_KINDS = {'eth', 'optimism', 'arbitrum', 'bsc', 'polygon', 'base'}
 
     _CHAIN_ID_MAP = {
@@ -133,13 +135,22 @@ class UrlBuilder:
         elif self._api_kind.startswith('blockscout_'):
             prefix = None  # BlockScout uses direct /api path
 
+        # Default path
         path = 'api'
+
+        # Etherscan V2 header-auth APIs use unified domain api.etherscan.io
+        # and fixed 'api' prefix regardless of network, with path 'v2/api'.
         if self._api_kind in self._HEADER_AUTH_API_KINDS:
+            prefix = 'api'  # force unified api prefix
             path = 'v2/api'
 
         return self._build_url(prefix, path)
 
     def _get_base_url(self) -> str:
+        # Etherscan V2 API uses unified domain etherscan.io for all networks
+        if self._api_kind in self._HEADER_AUTH_API_KINDS:
+            return 'https://etherscan.io'
+
         network_exceptions = {('polygon', 'testnet'): 'mumbai'}
         network = network_exceptions.get((self._api_kind, self._network), self._network)
 

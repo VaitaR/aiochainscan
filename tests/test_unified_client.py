@@ -296,14 +296,12 @@ class TestIntegrationWithExistingConfig:
 
     def test_scanner_registry_integration(self):
         """Test that scanners are properly registered."""
-        # EtherscanV2 and BaseScanV1 should be registered
+        # EtherscanV2 should be registered (BaseScanV1 removed)
         etherscan_class = get_scanner_class('etherscan', 'v2')
-        basescan_class = get_scanner_class('basescan', 'v1')
+        # Base network now supported via Etherscan V2
 
         assert etherscan_class is not None
-        assert basescan_class is not None
         assert etherscan_class.name == 'etherscan'
-        assert basescan_class.name == 'basescan'
 
     def test_unknown_scanner_error(self):
         """Test error for unknown scanner."""
