@@ -61,9 +61,7 @@ async def main():
     # Method 3: BlockScout API for Ethereum (free, no API key needed)
     print('\n3️⃣ BlockScout API for Ethereum (free):')
     try:
-        client_blockscout = ChainscanClient.from_config(
-            'blockscout', 'v1', 'blockscout_eth', 'eth'
-        )
+        client_blockscout = ChainscanClient.from_config('blockscout', 'v1', 'eth')
 
         balance_blockscout = await client_blockscout.call(
             Method.ACCOUNT_BALANCE, address=TEST_ADDRESS

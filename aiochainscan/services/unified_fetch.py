@@ -189,7 +189,7 @@ async def fetch_all(
             if isinstance(h, str) and isinstance(log_idx, str | int):
                 return f'{h}:{log_idx}'
             if isinstance(h, str):
-                return f"{h}:{it.get('contractAddress')}:{it.get('from')}:{it.get('to')}:{it.get('value')}"
+                return f'{h}:{it.get("contractAddress")}:{it.get("from")}:{it.get("to")}:{it.get("value")}'
             return None
 
         key_fn = _key_fn_token

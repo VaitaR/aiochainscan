@@ -469,6 +469,24 @@ class ConfigurationManager:
             'network': validated_network,
         }
 
+    def create_client_config_with_chain_id(self, scanner_id: str, chain_id: int) -> dict[str, str]:
+        """Create configuration dict for Client initialization with chain_id."""
+        # Get scanner config
+        config = self.get_scanner_config(scanner_id)
+
+        # For Etherscan V2, we need to handle chain_id differently
+        if scanner_id in self._scanners and 'etherscan_v2' in config.special_config:
+            # Etherscan V2 uses chain_id as query parameter, not in URL
+            api_key = self.get_api_key(scanner_id)
+            return {
+                'api_key': api_key,
+                'api_kind': scanner_id,
+                'network': 'main',  # Etherscan V2 uses 'main' for all networks
+            }
+        else:
+            # Legacy behavior
+            return self.create_client_config(scanner_id, 'main')
+
     def list_all_configurations(self) -> dict[str, dict[str, Any]]:
         """Get overview of all scanner configurations."""
         result: dict[str, dict[str, Any]] = {}
