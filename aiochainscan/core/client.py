@@ -9,6 +9,7 @@ from typing import Any
 from aiohttp import ClientTimeout
 from aiohttp_retry import RetryOptionsBase
 
+from ..chain_registry import get_chain_info, resolve_chain_id
 from ..config import config as global_config
 from ..scanners import get_scanner_class
 from ..scanners.base import Scanner
@@ -27,10 +28,10 @@ class ChainscanClient:
     Example:
         ```python
         # Using configuration system
-        client = ChainscanClient.from_config('etherscan', 'v2', 'eth', 'main')
+        client = ChainscanClient.from_config('etherscan', 'v2', 'ethereum')
 
         # Direct instantiation
-        client = ChainscanClient('etherscan', 'v2', 'eth', 'main', 'your_api_key')
+        client = ChainscanClient('etherscan', 'v2', 'eth', 'ethereum', 'your_api_key')
 
         # Make unified API calls
         balance = await client.call(Method.ACCOUNT_BALANCE, address='0x...')
@@ -44,6 +45,7 @@ class ChainscanClient:
         api_kind: str,
         network: str,
         api_key: str,
+        chain_id: int | None = None,
         loop: AbstractEventLoop | None = None,
         timeout: ClientTimeout | None = None,
         proxy: str | None = None,
@@ -59,6 +61,7 @@ class ChainscanClient:
             api_kind: API kind for URL building (e.g., 'eth', 'base')
             network: Network name (e.g., 'main', 'test')
             api_key: API key for authentication
+            chain_id: Chain ID for the network (optional, auto-resolved from network)
             loop: Event loop instance
             timeout: Request timeout configuration
             proxy: Proxy URL
@@ -70,13 +73,21 @@ class ChainscanClient:
         self.api_kind = api_kind
         self.network = network
         self.api_key = api_key
+        self.chain_id = chain_id or resolve_chain_id(network)
+
+        # Map network to appropriate network parameter for UrlBuilder
+        # UrlBuilder expects 'main' for Ethereum mainnet, not 'ethereum'
+        chain_info = get_chain_info(self.chain_id)
+        network_for_urlbuilder = chain_info['name'] if chain_info['name'] != 'ethereum' else 'main'
 
         # Build URL builder (reusing existing infrastructure)
-        self._url_builder = UrlBuilder(api_key, api_kind, network)
+        self._url_builder = UrlBuilder(api_key, api_kind, network_for_urlbuilder)
 
         # Get scanner class and create instance
         scanner_class = get_scanner_class(scanner_name, scanner_version)
-        self._scanner = scanner_class(api_key, network, self._url_builder)
+        # Use chain_id to resolve the correct network name for this scanner
+        scanner_network = self._get_scanner_network_name(scanner_name, network)
+        self._scanner = scanner_class(api_key, scanner_network, self._url_builder, chain_id)
 
         # Store additional config for potential future use
         self._loop = loop
@@ -90,8 +101,7 @@ class ChainscanClient:
         cls,
         scanner_name: str,
         scanner_version: str,
-        scanner_id: str,
-        network: str = 'main',
+        network: str | int,
         loop: AbstractEventLoop | None = None,
         timeout: ClientTimeout | None = None,
         proxy: str | None = None,
@@ -99,13 +109,12 @@ class ChainscanClient:
         retry_options: RetryOptionsBase | None = None,
     ) -> 'ChainscanClient':
         """
-        Create client using the existing configuration system.
+        Create client using unified chain-based configuration.
 
         Args:
             scanner_name: Scanner implementation ('etherscan', 'blockscout')
             scanner_version: Scanner version ('v1', 'v2')
-            scanner_id: Scanner ID for config lookup ('eth', 'base')
-            network: Network name ('main', 'test', etc.)
+            network: Chain name/ID ('eth', 'ethereum', 1, 8453)
             loop: Event loop instance
             timeout: Request timeout configuration
             proxy: Proxy URL
@@ -121,34 +130,93 @@ class ChainscanClient:
             client = ChainscanClient.from_config(
                 scanner_name='etherscan',
                 scanner_version='v2',
-                scanner_id='eth',
-                network='main'
+                network='eth'
             )
 
             # BlockScout v1 for Polygon
             client = ChainscanClient.from_config(
                 scanner_name='blockscout',
                 scanner_version='v1',
-                scanner_id='blockscout_polygon',
                 network='polygon'
+            )
+
+            # Base network via Etherscan V2
+            client = ChainscanClient.from_config(
+                scanner_name='etherscan',
+                scanner_version='v2',
+                network='base'
+            )
+
+            # Works with chain_id too
+            client = ChainscanClient.from_config(
+                scanner_name='etherscan',
+                scanner_version='v2',
+                network=8453  # Base mainnet
             )
             ```
         """
-        # Use existing config system to get API key and validate network
-        client_config = global_config.create_client_config(scanner_id, network)
+        # Resolve chain_id from network name/id
+        chain_id = resolve_chain_id(network)
+
+        # Get API key using existing config system
+        # For backward compatibility, map scanner names to their config IDs
+        scanner_id_map = {
+            'blockscout': 'blockscout_eth',
+            'etherscan': 'eth',
+            'moralis': 'moralis',
+            'routscan': 'routscan_mode',
+        }
+        scanner_id = scanner_id_map.get(scanner_name, scanner_name)
+        # Use the original network parameter for config lookup, not the resolved chain name
+        # Ensure network is a string for config lookup
+        network_str = str(network) if not isinstance(network, str) else network
+        client_config = global_config.create_client_config(scanner_id, network_str)
+
+        # Map scanner_name to appropriate api_kind for UrlBuilder
+        # For backward compatibility, map scanner names to their api_kind equivalents
+        api_kind_map = {
+            'etherscan': 'eth',
+            'blockscout': 'blockscout_eth',
+            'moralis': 'moralis',
+            'routscan': 'routscan_mode',
+        }
+
+        api_kind = api_kind_map.get(scanner_name, scanner_name)
 
         return cls(
             scanner_name=scanner_name,
             scanner_version=scanner_version,
-            api_kind=client_config['api_kind'],
-            network=client_config['network'],
+            api_kind=api_kind,  # Use mapped api_kind for UrlBuilder compatibility
+            network=network_str,  # Use string version of network
             api_key=client_config['api_key'],
+            chain_id=chain_id,  # Pass chain_id to scanner
             loop=loop,
             timeout=timeout,
             proxy=proxy,
             throttler=throttler,
             retry_options=retry_options,
         )
+
+    def _get_scanner_network_name(self, scanner_name: str, network: str) -> str:
+        """
+        Get the correct network name for a specific scanner.
+
+        Different scanners use different naming conventions for the same networks.
+        This method maps the unified network name to scanner-specific names.
+
+        Args:
+            scanner_name: Name of the scanner (e.g., 'etherscan', 'blockscout')
+            network: Unified network name (e.g., 'ethereum', 'polygon', 1)
+
+        Returns:
+            Scanner-specific network name
+        """
+        # For Etherscan, map 'ethereum' to 'main' for backward compatibility
+        if scanner_name == 'etherscan' and network == 'ethereum':
+            return 'main'
+
+        # For other scanners, use the network name as-is
+        return network
 
     async def call(self, method: Method, **params: Any) -> Any:
         """

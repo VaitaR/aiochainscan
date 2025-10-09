@@ -62,7 +62,7 @@ async def main():
     # Method 3: ChainscanClient with Etherscan v2 (unified)
     print('\n3️⃣ ChainscanClient + Etherscan v2 (unified):')
     try:
-        client_v2 = ChainscanClient.from_config('etherscan', 'v2', 'eth', 'main')
+        client_v2 = ChainscanClient.from_config('etherscan', 'v2', 'ethereum')
         balance3 = await client_v2.call(Method.ACCOUNT_BALANCE, address=address)
         print(f'   {balance3} wei')
         print(f'   {int(balance3) / 10**18:.6f} ETH')
@@ -97,7 +97,7 @@ async def main():
     print('   balance = await client.account.balance(address)')
 
     print('\n🆕 Unified approach (cross-scanner):')
-    print("   client = ChainscanClient.from_config('etherscan', 'v2', 'eth', 'main')")
+    print("   client = ChainscanClient.from_config('etherscan', 'v2', 'ethereum')")
     print('   balance = await client.call(Method.ACCOUNT_BALANCE, address=address)')
 
     print('\n✨ Key benefits:')

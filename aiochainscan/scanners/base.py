@@ -5,6 +5,7 @@ Base scanner class for implementing different blockchain explorer APIs.
 from abc import ABC
 from typing import Any, Literal
 
+from ..chain_registry import resolve_chain_id
 from ..core.endpoint import EndpointSpec
 from ..core.method import Method
 from ..network import Network
@@ -39,7 +40,9 @@ class Scanner(ABC):
     SPECS: dict[Method, EndpointSpec]
     """Mapping of logical methods to endpoint specifications"""
 
-    def __init__(self, api_key: str, network: str, url_builder: UrlBuilder) -> None:
+    def __init__(
+        self, api_key: str, network: str, url_builder: UrlBuilder, chain_id: int | None = None
+    ) -> None:
         """
         Initialize scanner instance.
 
@@ -47,6 +50,7 @@ class Scanner(ABC):
             api_key: API key for authentication
             network: Network name (must be in supported_networks)
             url_builder: UrlBuilder instance for URL construction
+            chain_id: Chain ID (optional, will be resolved from network)
 
         Raises:
             ValueError: If network is not supported
@@ -61,6 +65,7 @@ class Scanner(ABC):
         self.api_key = api_key
         self.network = network
         self.url_builder = url_builder
+        self.chain_id = chain_id or resolve_chain_id(network)
 
     async def call(self, method: Method, **params: Any) -> Any:
         """
@@ -119,6 +124,12 @@ class Scanner(ABC):
         """
         # Map parameters using the spec
         mapped_params = spec.map_params(**params)
+
+        # Substitute chain_id placeholders
+        if hasattr(self, 'chain_id'):
+            for key, value in mapped_params.items():
+                if isinstance(value, str) and value == '{chain_id}':
+                    mapped_params[key] = self.chain_id
 
         # Set up authentication
         headers = {}

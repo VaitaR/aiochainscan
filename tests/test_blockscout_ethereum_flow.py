@@ -22,20 +22,21 @@ pytest.importorskip(
     reason='Blockscout end-to-end flow exercises the aiohttp transport dependency',
 )
 
-from aiochainscan import Client  # noqa: E402
+from aiochainscan.core.client import ChainscanClient  # noqa: E402
+from aiochainscan.core.method import Method  # noqa: E402
 from aiochainscan.decode import decode_log_data, decode_transaction_input  # noqa: E402
 from aiochainscan.exceptions import ChainscanClientApiError  # noqa: E402
-from aiochainscan.modules.base import _facade_injection, _resolve_api_context  # noqa: E402
-from aiochainscan.services.fetch_all import fetch_all_logs_basic, fetch_all_logs_fast  # noqa: E402
+
+# Removed old fetch_all functions - using new unified interface
 
 # USDT contract on Ethereum mainnet - very active contract with lots of events
 CONTRACT_ADDRESS = '0xdac17f958d2ee523a2206206994597c13d831ec7'
 
 
-async def _resolve_contract_abi(client: Client, address: str) -> list[dict[str, object]]:
+async def _resolve_contract_abi(client: ChainscanClient, address: str) -> list[dict[str, object]]:
     """Fetch contract ABI, following the proxy implementation if needed."""
 
-    source_entries = await client.contract.contract_source_code(address=address)
+    source_entries = await client.call(Method.CONTRACT_SOURCE, address=address)
     implementation = next(
         (
             entry.get('Implementation')
@@ -46,7 +47,7 @@ async def _resolve_contract_abi(client: Client, address: str) -> list[dict[str, 
     )
 
     abi_target = implementation or address
-    abi_raw = await client.contract.contract_abi(address=abi_target)
+    abi_raw = await client.call(Method.CONTRACT_ABI, address=abi_target)
     assert abi_raw and abi_raw != 'Contract source code not verified'
 
     # Blockscout returns ABI as JSON encoded string
@@ -69,14 +70,14 @@ def _decode_logs(
 
 
 async def _decode_transactions(
-    client: Client,
+    client: ChainscanClient,
     tx_hashes: Iterable[str],
     abi: list[dict[str, object]],
 ) -> tuple[int, int]:
     decoded = 0
     total = 0
     for tx_hash in tx_hashes:
-        tx = await client.transaction.get_by_hash(tx_hash)
+        tx = await client.call(Method.TX_BY_HASH, txhash=tx_hash)
         if not isinstance(tx, dict):
             continue
 
@@ -110,20 +111,17 @@ async def test_blockscout_ethereum_logs_and_decoding() -> None:
     Skipped by default - run explicitly with: pytest -m integration
     """
     try:
-        client = Client.from_config('blockscout_eth', 'eth')
+        client = ChainscanClient.from_config('blockscout', 'v1', 'ethereum')
     except ValueError as e:
         pytest.skip(f'Blockscout ETH configuration not available: {e}')
         return
 
     try:
-        http_adapter, endpoint_builder = _facade_injection(client)
-        api_kind, network, api_key = _resolve_api_context(client)
-
         # Get latest block and use recent range to avoid timeout
         # USDT is extremely active, so even 100 blocks will give us many logs
         try:
-            latest_block_hex = await client.proxy.block_number()
-            latest_block = int(latest_block_hex, 16)
+            latest_block_info = await client.call(Method.BLOCK_BY_NUMBER, block_number='latest')
+            latest_block = int(latest_block_info['number'], 16)
         except ChainscanClientApiError as e:
             if 'unknown module' in str(e).lower():
                 pytest.skip(f"Blockscout Ethereum API doesn't support proxy module: {e}")
@@ -132,14 +130,9 @@ async def test_blockscout_ethereum_logs_and_decoding() -> None:
         # Use last 100 blocks to keep test fast and avoid timeout
         start_block = latest_block - 100
 
-        logs = await _fetch_blockscout_logs(
+        logs = await _fetch_blockscout_logs_new(
             client=client,
             address=CONTRACT_ADDRESS,
-            api_kind=api_kind,
-            network=network,
-            api_key=api_key,
-            http=http_adapter,
-            endpoint_builder=endpoint_builder,
             start_block=start_block,
             end_block=latest_block,
         )
@@ -180,64 +173,20 @@ async def test_blockscout_ethereum_logs_and_decoding() -> None:
         await client.close()
 
 
-async def _fetch_blockscout_logs(
+async def _fetch_blockscout_logs_new(
     *,
-    client: Client,
+    client: ChainscanClient,
     address: str,
-    api_kind: str,
-    network: str,
-    api_key: str,
-    http,
-    endpoint_builder,
     start_block: int = 0,
     end_block: int | None = None,
 ) -> list[dict[str, object]]:
-    try:
-        logs = await fetch_all_logs_fast(
-            address=address,
-            start_block=start_block,
-            end_block=end_block,
-            api_kind=api_kind,
-            network=network,
-            api_key=api_key,
-            http=http,
-            endpoint_builder=endpoint_builder,
-            rate_limiter=None,
-            retry=None,
-            telemetry=None,
-            max_offset=1_000,
-            max_concurrent=4,
-        )
-    except ChainscanClientApiError as exc:
-        if _is_no_logs_error(exc):
-            logs = await fetch_all_logs_basic(
-                address=address,
-                start_block=start_block,
-                end_block=end_block,
-                api_kind=api_kind,
-                network=network,
-                api_key=api_key,
-                http=http,
-                endpoint_builder=endpoint_builder,
-                rate_limiter=None,
-                retry=None,
-                telemetry=None,
-                max_offset=1_000,
-            )
-        else:
-            raise
-
-    if logs:
-        return logs
-
-    # Slow-path fallback that pages through the REST endpoint when the paged helpers
-    # report an empty result set (Blockscout occasionally responds with empty pages
-    # even when data exists).
+    # Use the new unified interface with pagination
     results: list[dict[str, object]] = []
     page = 1
     while True:
         try:
-            page_logs = await client.logs.get_logs(
+            page_logs = await client.call(
+                Method.EVENT_LOGS,
                 start_block=start_block,
                 end_block=end_block or 'latest',
                 address=address,

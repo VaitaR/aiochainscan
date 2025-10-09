@@ -169,12 +169,12 @@ from aiochainscan.core.client import ChainscanClient
 from aiochainscan.core.method import Method
 
 # Works with any scanner implementation
-client = ChainscanClient.from_config('etherscan', 'v1', 'eth', 'main')
+client = ChainscanClient.from_config('etherscan', 'v2', 'ethereum')
 balance = await client.call(Method.ACCOUNT_BALANCE, address=address)
 txs = await client.call(Method.ACCOUNT_TRANSACTIONS, address=address)
 
 # Same code works with different scanners!
-blockscout_client = ChainscanClient.from_config('blockscout', 'v1', 'blockscout_eth', 'eth')
+blockscout_client = ChainscanClient.from_config('blockscout', 'v1', 'eth')
 balance = await blockscout_client.call(Method.ACCOUNT_BALANCE, address=address)
 ```
 
