@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..core.endpoint import EndpointSpec
 from ..core.method import Method
+from ..exceptions import ChainscanClientApiError, ChainscanNetworkError
 from ..url_builder import UrlBuilder
 from . import register_scanner
 from ._etherscan_like import EtherscanLikeScanner
@@ -142,6 +143,9 @@ class BlockScoutV1(EtherscanLikeScanner):
         base_url = f'https://{self.instance_domain}'
         full_url = base_url + spec.path
 
+        # TODO: ARCHITECTURAL ISSUE - This bypasses the Network layer's retry/rate-limit/pooling.
+        # A proper fix requires refactoring to use self._network_client with custom URL support.
+        # See: https://github.com/aiochainscan/aiochainscan/issues/XXX
         # Use aiohttp directly for BlockScout requests
         import aiohttp
 
@@ -164,9 +168,24 @@ class BlockScoutV1(EtherscanLikeScanner):
 
             return spec.parse_response(raw_response)
 
+        except aiohttp.ClientResponseError as e:
+            # API-level errors (4xx, 5xx)
+            raise ChainscanClientApiError(
+                f'BlockScout API error ({e.status})',
+                f'{e.message} - URL: {full_url}',
+            ) from e
+        except aiohttp.ClientError as e:
+            # Network/connection errors
+            raise ChainscanNetworkError(
+                f'BlockScout network error for {self.instance_domain}: {e}',
+                retryable=True,
+            ) from e
         except Exception as e:
-            # Enhanced error reporting for BlockScout
-            raise Exception(f'BlockScout API error for {self.instance_domain}: {e}') from e
+            # Unexpected errors
+            raise ChainscanNetworkError(
+                f'BlockScout unexpected error for {self.instance_domain}: {e}',
+                retryable=False,
+            ) from e
 
     def __str__(self) -> str:
         """String representation including instance info."""

@@ -182,7 +182,8 @@ class TestChainscanClient:
         assert client.network == 'ethereum'
         assert client.api_key == 'test_api_key'
 
-        mock_global_config.create_client_config.assert_called_once_with('eth', 'ethereum')
+        # Network is normalized to 'main' for etherscan config lookup
+        mock_global_config.create_client_config.assert_called_once_with('eth', 'main')
 
     @patch('aiochainscan.core.client.global_config')
     def test_client_from_config_default_version(self, mock_global_config, mock_config):

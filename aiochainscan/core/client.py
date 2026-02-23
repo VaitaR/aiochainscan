@@ -3,9 +3,12 @@ Unified client for blockchain scanner APIs.
 """
 
 from collections.abc import AsyncIterator
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import httpx
+
+if TYPE_CHECKING:
+    import polars as pl
 
 from ..chain_registry import get_chain_info, resolve_chain_id
 from ..config import config as global_config
@@ -16,22 +19,22 @@ from ..url_builder import UrlBuilder
 from .method import Method
 
 # Strict type aliases for scanner and network names (defined after imports)
-ScannerName = Literal["etherscan", "blockscout", "blockscout_v2"]
+ScannerName = Literal['etherscan', 'blockscout', 'blockscout_v2']
 NetworkName = Literal[
-    "ethereum",
-    "mainnet",
-    "goerli",
-    "sepolia",
-    "polygon",
-    "arbitrum",
-    "optimism",
-    "base",
-    "bsc",
-    "gnosis",
-    "zksync",
-    "scroll",
-    "linea",
-    "celo",
+    'ethereum',
+    'mainnet',
+    'goerli',
+    'sepolia',
+    'polygon',
+    'arbitrum',
+    'optimism',
+    'base',
+    'bsc',
+    'gnosis',
+    'zksync',
+    'scroll',
+    'linea',
+    'celo',
 ]
 
 
@@ -197,11 +200,23 @@ class ChainscanClient:
         # Ensure network is a string for config lookup
         network_str = str(network) if not isinstance(network, str) else network
 
+        # Normalize network aliases for different scanners (for config lookup only)
+        # Different scanners use different naming conventions for the same networks
+        network_aliases: dict[str, dict[str, str]] = {
+            'etherscan': {'ethereum': 'main', 'eth': 'main'},
+            'blockscout': {'ethereum': 'eth', 'main': 'eth'},
+            'blockscout_v2': {'main': 'ethereum'},
+        }
+        config_network = network_str  # Preserve original for client property
+        if scanner_name in network_aliases:
+            aliases = network_aliases[scanner_name]
+            config_network = aliases.get(network_str, network_str)
+
         # For blockscout_v2, we don't need config validation - it handles its own networks
         if scanner_name == 'blockscout_v2':
             api_key = ''  # BlockScout V2 doesn't require API key
         else:
-            client_config = global_config.create_client_config(scanner_id, network_str)
+            client_config = global_config.create_client_config(scanner_id, config_network)
             api_key = client_config['api_key']
 
         # Map scanner_name to appropriate api_kind for UrlBuilder
@@ -220,7 +235,7 @@ class ChainscanClient:
             scanner_name=actual_scanner_name,
             scanner_version=scanner_version,
             api_kind=api_kind,  # Use mapped api_kind for UrlBuilder compatibility
-            network=network_str,  # Use string version of network
+            network=network_str,  # Use original network string for client property
             api_key=api_key,
             chain_id=chain_id,  # Pass chain_id to scanner
             timeout=timeout,
@@ -322,11 +337,16 @@ class ChainscanClient:
             self._network = None  # type: ignore[assignment]
 
     # Context manager support
-    async def __aenter__(self) -> "ChainscanClient":
+    async def __aenter__(self) -> 'ChainscanClient':
         """Enter async context manager."""
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: Any,
+    ) -> None:
         """Exit async context manager, closing the client."""
         await self.close()
 
@@ -344,10 +364,10 @@ class ChainscanClient:
         Returns:
             Balance in Wei as string
         """
-        params: dict[str, Any] = {"address": address}
+        params: dict[str, Any] = {'address': address}
         # Only pass tag for Etherscan (other scanners may not support it)
         if self.scanner_name == 'etherscan':
-            params["tag"] = tag
+            params['tag'] = tag
         return await self.call(Method.ACCOUNT_BALANCE, **params)
 
     async def get_transactions(
@@ -370,14 +390,14 @@ class ChainscanClient:
         Returns:
             List of transaction dictionaries
         """
-        params: dict[str, Any] = {"address": address}
+        params: dict[str, Any] = {'address': address}
         # Only pass pagination params for Etherscan (blockscout_v2 doesn't support them)
         if self.scanner_name == 'etherscan':
-            params["startblock"] = start_block
-            params["page"] = page
-            params["offset"] = offset
+            params['startblock'] = start_block
+            params['page'] = page
+            params['offset'] = offset
             if end_block is not None:
-                params["endblock"] = end_block
+                params['endblock'] = end_block
         return await self.call(Method.ACCOUNT_TRANSACTIONS, **params)
 
     async def get_token_transfers(
@@ -398,14 +418,14 @@ class ChainscanClient:
         Returns:
             List of token transfer dictionaries
         """
-        params: dict[str, Any] = {"address": address}
+        params: dict[str, Any] = {'address': address}
         # Only pass extra params for Etherscan
         if self.scanner_name == 'etherscan':
-            params["startblock"] = start_block
+            params['startblock'] = start_block
             if contract_address:
-                params["contractaddress"] = contract_address
+                params['contractaddress'] = contract_address
             if end_block:
-                params["endblock"] = end_block
+                params['endblock'] = end_block
         return await self.call(Method.ACCOUNT_ERC20_TRANSFERS, **params)
 
     async def get_token_portfolio(self, address: str) -> list[dict]:
@@ -467,7 +487,7 @@ class ChainscanClient:
                 Method.ACCOUNT_TRANSACTIONS,
                 address=address,
             )
-            items = txs if isinstance(txs, list) else txs.get("items", [])
+            items = txs if isinstance(txs, list) else txs.get('items', [])
             for tx in items:
                 yield tx
             return
@@ -483,7 +503,7 @@ class ChainscanClient:
             )
 
             # Handle both list and dict responses
-            items = txs if isinstance(txs, list) else txs.get("items", [])
+            items = txs if isinstance(txs, list) else txs.get('items', [])
             if not items:
                 break
 
@@ -536,7 +556,7 @@ class ChainscanClient:
     # DATAFRAME API - Polars integration for data analysis
     # =========================================================================
 
-    async def get_transactions_df(self, address: str):
+    async def get_transactions_df(self, address: str) -> 'pl.DataFrame':
         """
         Get transactions as a Polars DataFrame.
 
@@ -548,11 +568,12 @@ class ChainscanClient:
             to_address, value_wei, value_eth, gas_used, timestamp
         """
         from aiochainscan.services.analytics import transactions_to_dataframe
+
         txs = await self.call(Method.ACCOUNT_TRANSACTIONS, address=address)
-        items = txs if isinstance(txs, list) else txs.get("items", [])
+        items = txs if isinstance(txs, list) else txs.get('items', [])
         return await transactions_to_dataframe(items)
 
-    async def get_token_portfolio_df(self, address: str):
+    async def get_token_portfolio_df(self, address: str) -> 'pl.DataFrame':
         """
         Get token portfolio as a Polars DataFrame.
 
@@ -562,8 +583,9 @@ class ChainscanClient:
             pl.DataFrame with columns: symbol, name, contract_address, balance, decimals
         """
         from aiochainscan.services.analytics import token_portfolio_to_dataframe
+
         tokens = await self.call(Method.ACCOUNT_TOKEN_PORTFOLIO, address=address)
-        items = tokens if isinstance(tokens, list) else tokens.get("items", [])
+        items = tokens if isinstance(tokens, list) else tokens.get('items', [])
         return await token_portfolio_to_dataframe(items)
 
     def __str__(self) -> str:

@@ -1,7 +1,7 @@
 # aiochainscan - Agent Context Guide
 
 > **Purpose**: Quick context for LLM agents working on this codebase.
-> **Version**: 0.3.0
+> **Version**: 0.4.0
 
 ## What is this project?
 
