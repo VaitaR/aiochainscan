@@ -6,7 +6,6 @@ from unittest.mock import patch
 
 import pytest
 
-from aiochainscan import Client
 from aiochainscan.config import ConfigurationManager, ScannerConfig, config_manager
 
 
@@ -231,9 +230,10 @@ EMPTY_VALUE=
 
         # Test missing required API key - need to clear the scanner's API key too
         with patch.dict(os.environ, {}, clear=True):
-            # Clear the cached API key from the scanner config
-            eth_config = manager.get_scanner_config('eth')
-            eth_config.api_key = None
+            # Clear the cached API key from the scanner's internal state
+            # Note: get_scanner_config() returns a deepcopy for security, so we
+            # must modify the internal _scanners dict directly for testing
+            manager._scanners['eth'].api_key = None
 
             with pytest.raises(ValueError, match='API key required for Etherscan'):
                 manager.get_api_key('eth')
@@ -305,49 +305,6 @@ class TestGlobalConfigManager:
         scanners = config_manager.get_supported_scanners()
         assert len(scanners) > 0
         assert 'eth' in scanners
-
-
-class TestClientIntegration:
-    """Test Client integration with the new configuration system."""
-
-    def test_client_from_config(self):
-        """Test creating client from configuration."""
-        with (
-            patch.dict(os.environ, {'ETHERSCAN_KEY': 'test_api_key'}),
-            patch('asyncio.get_running_loop') as mock_loop,
-        ):
-            mock_loop.return_value = None
-
-            # Reload config to pick up environment variable
-            config_manager._load_api_keys()
-
-            client = Client.from_config('eth', 'main')
-
-            assert client._url_builder._API_KEY == 'test_api_key'
-            assert client._url_builder._api_kind == 'eth'
-            assert client._url_builder._network == 'main'
-
-    def test_client_from_config_missing_key(self):
-        """Test error when creating client with missing API key."""
-        with patch.dict(os.environ, {}, clear=True):
-            # Clear the cached API key from the scanner config
-            eth_config = config_manager.get_scanner_config('eth')
-            eth_config.api_key = None
-
-            with pytest.raises(ValueError, match='API key required'):
-                Client.from_config('eth', 'main')
-
-    def test_client_from_config_invalid_scanner(self):
-        """Test error when creating client with invalid scanner."""
-        with pytest.raises(ValueError, match='Unknown scanner'):
-            Client.from_config('invalid_scanner', 'main')
-
-    def test_client_from_config_invalid_network(self):
-        """Test error when creating client with invalid network."""
-        with patch.dict(os.environ, {'ETHERSCAN_KEY': 'test_key'}):
-            config_manager._load_api_keys()
-            with pytest.raises(ValueError, match='not supported'):
-                Client.from_config('eth', 'invalid_network')
 
 
 class TestAdvancedFeatures:

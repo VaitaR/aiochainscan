@@ -11,13 +11,17 @@ Supports multiple blockchain networks through different BlockScout instances:
 - And many more...
 """
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..core.endpoint import EndpointSpec
 from ..core.method import Method
+from ..exceptions import ChainscanClientApiError, ChainscanNetworkError
 from ..url_builder import UrlBuilder
 from . import register_scanner
 from ._etherscan_like import EtherscanLikeScanner
+
+if TYPE_CHECKING:
+    from ..network import Network
 
 
 @register_scanner
@@ -71,7 +75,12 @@ class BlockScoutV1(EtherscanLikeScanner):
     }
 
     def __init__(
-        self, api_key: str, network: str, url_builder: UrlBuilder, chain_id: int | None = None
+        self,
+        api_key: str,
+        network: str,
+        url_builder: UrlBuilder,
+        chain_id: int | None = None,
+        network_client: 'Network | None' = None,
     ) -> None:
         """
         Initialize BlockScout scanner with network-specific instance.
@@ -81,8 +90,9 @@ class BlockScoutV1(EtherscanLikeScanner):
             network: Network name (must be in supported_networks)
             url_builder: UrlBuilder instance
             chain_id: Chain ID (optional, will be resolved from network)
+            network_client: Optional Network instance for connection pooling
         """
-        super().__init__(api_key, network, url_builder, chain_id)
+        super().__init__(api_key, network, url_builder, chain_id, network_client)
 
         # Get BlockScout instance for this network
         self.instance_domain = self.NETWORK_INSTANCES.get(network)
@@ -133,6 +143,9 @@ class BlockScoutV1(EtherscanLikeScanner):
         base_url = f'https://{self.instance_domain}'
         full_url = base_url + spec.path
 
+        # TODO: ARCHITECTURAL ISSUE - This bypasses the Network layer's retry/rate-limit/pooling.
+        # A proper fix requires refactoring to use self._network_client with custom URL support.
+        # See: https://github.com/aiochainscan/aiochainscan/issues/XXX
         # Use aiohttp directly for BlockScout requests
         import aiohttp
 
@@ -155,9 +168,24 @@ class BlockScoutV1(EtherscanLikeScanner):
 
             return spec.parse_response(raw_response)
 
+        except aiohttp.ClientResponseError as e:
+            # API-level errors (4xx, 5xx)
+            raise ChainscanClientApiError(
+                f'BlockScout API error ({e.status})',
+                f'{e.message} - URL: {full_url}',
+            ) from e
+        except aiohttp.ClientError as e:
+            # Network/connection errors
+            raise ChainscanNetworkError(
+                f'BlockScout network error for {self.instance_domain}: {e}',
+                retryable=True,
+            ) from e
         except Exception as e:
-            # Enhanced error reporting for BlockScout
-            raise Exception(f'BlockScout API error for {self.instance_domain}: {e}') from e
+            # Unexpected errors
+            raise ChainscanNetworkError(
+                f'BlockScout unexpected error for {self.instance_domain}: {e}',
+                retryable=False,
+            ) from e
 
     def __str__(self) -> str:
         """String representation including instance info."""

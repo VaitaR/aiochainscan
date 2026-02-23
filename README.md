@@ -373,3 +373,49 @@ async def main():
 
 asyncio.run(main())
 ```
+
+## Development Setup
+
+### For Contributors
+
+```bash
+# Clone the repository
+git clone https://github.com/VaitaR/aiochainscan.git
+cd aiochainscan
+
+# Run setup script (installs deps + git hooks)
+chmod +x scripts/setup-dev.sh
+./scripts/setup-dev.sh
+```
+
+This sets up:
+- ✅ All dependencies via `uv`
+- ✅ Pre-commit hooks (format, lint, import tests)
+- ✅ Pre-push hooks (type checking, tests)
+- ✅ Automatic quality checks on every commit
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed development guide.
+
+### Quality Gates
+
+We have **3 levels** of protection:
+1. **Pre-commit** (5s) - Format, lint, import tests
+2. **Pre-push** (30s) - Type checking, quick tests
+3. **CI/CD** (5min) - Full test suite, wheel building
+
+Import tests catch circular dependencies **before commit**! See [docs/QUALITY_GATES.md](docs/QUALITY_GATES.md).
+
+## Contributing
+
+Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for:
+- Development setup
+- Code style guidelines
+- Testing requirements
+- Pull request process
+
+Quick checklist:
+- [ ] Run `./scripts/setup-dev.sh` first
+- [ ] All import tests pass (`pytest tests/test_imports.py`)
+- [ ] All pre-commit hooks pass
+- [ ] Type checking passes (`mypy --strict aiochainscan`)
+- [ ] All tests pass (`pytest -v`)

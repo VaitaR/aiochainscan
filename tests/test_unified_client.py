@@ -182,7 +182,8 @@ class TestChainscanClient:
         assert client.network == 'ethereum'
         assert client.api_key == 'test_api_key'
 
-        mock_global_config.create_client_config.assert_called_once_with('eth', 'ethereum')
+        # Network is normalized to 'main' for etherscan config lookup
+        mock_global_config.create_client_config.assert_called_once_with('eth', 'main')
 
     @patch('aiochainscan.core.client.global_config')
     def test_client_from_config_default_version(self, mock_global_config, mock_config):
@@ -197,6 +198,83 @@ class TestChainscanClient:
         assert client.api_kind == 'eth'
         assert client.network == 'ethereum'
         assert client.api_key == 'test_api_key'
+
+    @patch('aiochainscan.core.client.global_config')
+    def test_client_from_config_with_chain_id(self, mock_global_config, mock_config):
+        """Test client creation from config with numeric chain_id instead of network name.
+
+        This is a regression test for P1 bug where from_config('etherscan', 8453)
+        would fail because chain_id wasn't resolved to network name 'base'.
+        """
+        mock_global_config.create_client_config.return_value = mock_config
+
+        # Use chain_id 8453 (Base) instead of network name
+        client = ChainscanClient.from_config('etherscan', 8453)
+
+        assert client.scanner_name == 'etherscan'
+        assert client.scanner_version == 'v2'
+        assert client.api_kind == 'eth'
+        # Chain ID 8453 should be resolved to 'base'
+        assert client.network == 'base'
+        assert client.api_key == 'test_api_key'
+
+        # Config should be looked up with resolved network name 'main' (Base uses 'main')
+        mock_global_config.create_client_config.assert_called_once_with('eth', 'main')
+
+    @patch('aiochainscan.core.client.global_config')
+    def test_client_from_config_blockscout_network_mapping(self, mock_global_config, mock_config):
+        """Test BlockScout config mapping by network (not hardcoded to blockscout_eth).
+
+        This is a regression test for P1 bug where from_config('blockscout', 'polygon')
+        would always use blockscout_eth config regardless of the actual network.
+        """
+        mock_global_config.create_client_config.return_value = mock_config
+
+        # Test Polygon - should use blockscout_polygon config
+        client = ChainscanClient.from_config('blockscout', 'polygon')
+
+        assert client.scanner_name == 'blockscout'
+        # Config lookup should use blockscout_polygon, not blockscout_eth
+        mock_global_config.create_client_config.assert_called_once_with(
+            'blockscout_polygon', 'polygon'
+        )
+
+        # Reset mock
+        mock_global_config.create_client_config.reset_mock()
+
+        # Test Gnosis - should use blockscout_gnosis config
+        client = ChainscanClient.from_config('blockscout', 'gnosis')
+        mock_global_config.create_client_config.assert_called_once_with(
+            'blockscout_gnosis', 'gnosis'
+        )
+
+    @patch('aiochainscan.core.client.global_config')
+    def test_client_from_config_blockscout_api_kind_matches_network(
+        self, mock_global_config, mock_config
+    ):
+        """Test that blockscout api_kind matches the network-specific scanner_id.
+
+        This is a regression test for High Severity bug where api_kind was
+        hardcoded to 'blockscout_eth' for all networks, causing requests
+        to route to wrong explorer domain.
+        """
+        mock_global_config.create_client_config.return_value = mock_config
+
+        # Test Polygon - api_kind should be blockscout_polygon, not blockscout_eth
+        client = ChainscanClient.from_config('blockscout', 'polygon')
+
+        assert client.scanner_name == 'blockscout'
+        assert (
+            client.api_kind == 'blockscout_polygon'
+        ), 'api_kind should match network-specific scanner_id for correct domain routing'
+
+        # Test Gnosis
+        client = ChainscanClient.from_config('blockscout', 'gnosis')
+        assert client.api_kind == 'blockscout_gnosis'
+
+        # Test Ethereum
+        client = ChainscanClient.from_config('blockscout', 'ethereum')
+        assert client.api_kind == 'blockscout_eth'
 
         # Test BlockScout defaults to v1
         client = ChainscanClient.from_config(
@@ -360,3 +438,67 @@ async def test_end_to_end_workflow():
             mock_call.assert_called_once_with(
                 Method.ACCOUNT_BALANCE, address='0x742d35Cc6634C0532925a3b8D9Fa7a3D91'
             )
+
+
+class TestIterTransactionsValidation:
+    """Test iter_transactions parameter validation."""
+
+    @pytest.mark.asyncio
+    async def test_iter_transactions_validates_batch_size(self):
+        """Test that iter_transactions raises ValueError for invalid batch_size."""
+        # Use blockscout_v2 - doesn't require API key
+        client = ChainscanClient.from_config('blockscout_v2', 'ethereum')
+
+        # Test batch_size = 0
+        with pytest.raises(ValueError, match='batch_size must be at least 1, got 0'):
+            async for _ in client.iter_transactions('0x742d35Cc', batch_size=0):
+                pass
+
+        # Test negative batch_size
+        with pytest.raises(ValueError, match='batch_size must be at least 1, got -1'):
+            async for _ in client.iter_transactions('0x742d35Cc', batch_size=-1):
+                pass
+
+        # Test large negative batch_size
+        with pytest.raises(ValueError, match='batch_size must be at least 1, got -999'):
+            async for _ in client.iter_transactions('0x742d35Cc', batch_size=-999):
+                pass
+
+        await client.close()
+
+    @pytest.mark.asyncio
+    async def test_iter_transactions_accepts_valid_batch_size(self):
+        """Test that iter_transactions accepts valid batch_size values (no exception raised)."""
+        # Use blockscout_v2 - doesn't require API key
+        # This test just verifies that valid batch_size values don't raise ValueError
+        # (actual API calls would fail with 422 for invalid address, but that's OK)
+
+        client = ChainscanClient.from_config('blockscout_v2', 'ethereum')
+
+        # These should NOT raise ValueError - they're valid batch_size values
+        # We don't actually iterate (would hit API), just verify no ValueError on creation
+
+        # batch_size = 1 should not raise ValueError
+        try:
+            gen1 = client.iter_transactions('0x742d35Cc', batch_size=1)
+            # The ValueError should happen immediately in the function, not on first iteration
+            # So if we get here, validation passed
+            assert gen1 is not None
+        except ValueError:
+            pytest.fail('batch_size=1 should be valid')
+
+        # batch_size = 1000 (default) should not raise ValueError
+        try:
+            gen2 = client.iter_transactions('0x742d35Cc', batch_size=1000)
+            assert gen2 is not None
+        except ValueError:
+            pytest.fail('batch_size=1000 should be valid')
+
+        # batch_size = 10000 (max) should not raise ValueError
+        try:
+            gen3 = client.iter_transactions('0x742d35Cc', batch_size=10000)
+            assert gen3 is not None
+        except ValueError:
+            pytest.fail('batch_size=10000 should be valid')
+
+        await client.close()

@@ -1,11 +1,19 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import aiohttp
+if TYPE_CHECKING:
+    import aiohttp
 
 from aiochainscan.ports.http_client import HttpClient
+
+try:
+    import aiohttp
+except ImportError:
+    raise ImportError(
+        'aiohttp is required for AiohttpClient. Install with: pip install aiohttp'
+    ) from None
 
 
 class AiohttpClient(HttpClient):

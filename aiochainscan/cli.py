@@ -152,22 +152,24 @@ def cmd_test_scanner(args: argparse.Namespace) -> None:
     """Test a scanner configuration."""
     import asyncio
 
-    from aiochainscan import Client
+    from aiochainscan import ChainscanClient, Method
 
     async def test_scanner() -> None:
         print(f'🧪 Testing {args.scanner} scanner...')
 
         try:
-            client = Client.from_config(args.scanner, args.network)
+            client = ChainscanClient.from_config(args.scanner, args.network)
             print('✅ Client created successfully')
 
-            # Test a simple API call
+            # Test a simple API call using a universally supported method
             try:
-                if hasattr(client.stats, 'eth_price'):
-                    price = await client.stats.eth_price()
-                    print(f'✅ API test successful - got response: {type(price)}')
-                else:
-                    print('⚠️ No eth_price method available for testing')
+                # Use ACCOUNT_BALANCE as it's supported by all scanners
+                # Use a well-known address (Vitalik's) for consistent testing
+                result = await client.call(
+                    Method.ACCOUNT_BALANCE,
+                    address='0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045',
+                )
+                print(f'✅ API test successful - got response: {type(result)}')
 
             except Exception as e:
                 print(f'⚠️ API test failed: {e}')

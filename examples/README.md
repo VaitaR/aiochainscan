@@ -1,290 +1,172 @@
 # aiochainscan Examples
 
-This directory contains example scripts demonstrating the usage of the aiochainscan library.
+Practical examples for Data Analysts and Data Engineers working with blockchain data.
 
-## 🆕 **NEW: Unified Architecture Examples**
+## 🚀 Quick Start
 
-### `simple_balance_comparison.py` ⭐
-
-**QUICK START** - Compare legacy vs unified client architecture:
+### No API Key Required (BlockScout V2)
 
 ```bash
-python examples/simple_balance_comparison.py
+# Run the quickstart example
+python examples/01_quickstart.py
 ```
 
-- **Purpose**: Demonstrates the new unified `ChainscanClient` vs legacy `Client`
-- **Shows**: How same balance can be retrieved using different approaches
-- **Output**: Side-by-side comparison proving backward compatibility
-- **Key benefit**: Type-safe `Method` enum vs string-based calls
-
-### `balance_comparison.py`
-
-**ADVANCED** - Multi-scanner balance comparison:
+### With Etherscan API Key
 
 ```bash
-python examples/balance_comparison.py
-```
-
-- **Purpose**: Compare balance retrieval across different scanner implementations
-- **Features**: Etherscan, BlockScout support with automatic parameter mapping
-- **Shows**: How unified interface works across different APIs
-
-### `unified_client_demo.py`
-
-**COMPREHENSIVE** - Complete unified architecture demonstration:
-
-```bash
-python examples/unified_client_demo.py
-```
-
-- **Purpose**: Full showcase of the new scanner architecture
-- **Features**:
-  - Available scanner implementations and capabilities
-  - Method support comparison matrix
-  - Error handling demonstration
-  - Scanner registry system
-- **Output**: Interactive demo of all unified architecture features
-
-## Traditional Examples
-
-### `quick_scanner_check.py`
-
-**QUICK START** - Fast connectivity test for all scanners with minimal API calls:
-
-- **Purpose**: Quick overview of scanner status and API key configuration
-- **Speed**: Fast single method test per scanner (block_number only)
-- **Output**: Console summary showing working/broken scanners
-- **Use case**: Initial setup validation and troubleshooting
-
-### `test_scanner_methods.py`
-
-**COMPREHENSIVE** - Full test script that validates all API methods across all supported blockchain scanners:
-
-- **Purpose**: Tests all available API methods for each scanner to determine compatibility
-- **Coverage**: Tests all modules (proxy, account, stats, block, transaction, logs, gas_tracker, token, contract)
-- **Networks**: Tests main networks (and testnet for Ethereum)
-- **Features tested**:
-  - Scanner configuration and API key validation
-  - Method-by-method testing with detailed error reporting
-  - Performance measurement (execution time per method)
-  - Success rate analysis per scanner and module
-  - Comprehensive reporting with multiple output formats
-
-### `test_decode_functionality.py`
-
-Comprehensive test script that validates the decode functionality using **real Ethereum mainnet data**:
-
-- **Purpose**: Tests the library's ability to fetch and decode real blockchain data
-- **Network**: Ethereum Mainnet via Etherscan API
-- **Contract**: UNI Token (0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984)
-- **Features tested**:
-  - Fetching real logs from UNI token contract (5 pages)
-  - Fetching real transactions with input data (5 pages)
-  - Fetching verified contract ABI from Etherscan
-  - Decoding logs using real contract ABI
-  - Decoding transactions using two methods:
-    - Real contract ABI-based decoding
-    - Online signature lookup decoding
-
-## Setup
-
-1. **Install dependencies:**
-```bash
-uv sync --extra dev
-```
-
-2. **Set up API keys:**
-
-Create a `.env` file in the project root:
-```bash
-# .env
-ETHERSCAN_KEY=your_etherscan_api_key_here
-BSCSCAN_KEY=your_bscscan_api_key_here  # Optional for BSC
-POLYGONSCAN_KEY=your_polygonscan_api_key_here  # Optional for Polygon
-MORALIS_API_KEY=your_moralis_api_key_here  # Optional for Moralis examples
-```
-
-Get API keys at:
-- **Etherscan**: https://etherscan.io/apis
-- **BSCScan**: https://bscscan.com/apis
-- **PolygonScan**: https://polygonscan.com/apis
-- **Moralis**: https://moralis.io
-
-## Quick Start Guide
-
-### 1. **Try the New Architecture** (Recommended)
-```bash
-# Set your Etherscan API key
+# Get your free key at https://etherscan.io/apis
 export ETHERSCAN_KEY="your_key_here"
-
-# Compare legacy vs unified approach
-python examples/simple_balance_comparison.py
+python examples/04_etherscan_with_api_key.py
 ```
 
-**Output:**
-```
-🔍 Getting balance for: 0x4838B106FCe9647Bdf1E7877BF73cE8B0BAD5f97
+---
 
-1️⃣ Legacy Client (traditional way):
-   15010879002106550271 wei
-   15.010879 ETH
+## 📚 Examples Overview
 
-2️⃣ ChainscanClient (new unified way):
-   15010879002106550271 wei
-   15.010879 ETH
+| # | File | Description | Difficulty |
+|---|------|-------------|------------|
+| 01 | [01_quickstart.py](01_quickstart.py) | Get wallet balance and transactions | ⭐ Beginner |
+| 02 | [02_export_to_csv.py](02_export_to_csv.py) | Export transactions to CSV | ⭐ Beginner |
+| 03 | [03_multi_wallet_analysis.py](03_multi_wallet_analysis.py) | Analyze multiple wallets | ⭐⭐ Intermediate |
+| 04 | [04_etherscan_with_api_key.py](04_etherscan_with_api_key.py) | Using Etherscan with API key | ⭐⭐ Intermediate |
+| 05 | [05_pydantic_typed_responses.py](05_pydantic_typed_responses.py) | Type-safe data with Pydantic | ⭐⭐⭐ Advanced |
+| 06 | [06_multichain_comparison.py](06_multichain_comparison.py) | Cross-chain portfolio analysis | ⭐⭐⭐ Advanced |
 
-✅ Both methods return identical results!
-```
+---
 
-### 2. **Explore Scanner Capabilities**
-```bash
-# See all available scanners and methods
-python examples/unified_client_demo.py
-```
+## 🎯 Use Cases for Data Teams
 
-### 3. **Test Traditional Features**
-```bash
-# Quick connectivity test
-python examples/quick_scanner_check.py
+### Data Analysts
+- **01_quickstart.py** - Quick wallet inspection
+- **02_export_to_csv.py** - Export for Excel/pandas analysis
+- **03_multi_wallet_analysis.py** - Whale tracking, portfolio comparison
 
-# Full method testing
-python examples/test_scanner_methods.py
-```
+### Data Engineers
+- **04_etherscan_with_api_key.py** - Production pipelines with rate limits
+- **05_pydantic_typed_responses.py** - Type-safe ETL with validation
+- **06_multichain_comparison.py** - Multi-chain data aggregation
 
-## Architecture Comparison
+---
 
-### 🔄 **Legacy Approach** (Per-Module)
-```python
-from aiochainscan import Client
+## 📋 Supported APIs
 
-client = Client.from_config('eth', 'main')
-balance = await client.account.balance(address)
-txs = await client.account.normal_txs(address)
-await client.close()
-```
+### BlockScout V2 (Recommended - No API Key!)
 
-### 🆕 **Unified Approach** (Cross-Scanner)
 ```python
 from aiochainscan.core.client import ChainscanClient
 from aiochainscan.core.method import Method
 
-# Works with any scanner implementation
-client = ChainscanClient.from_config('etherscan', 'v2', 'ethereum')
-balance = await client.call(Method.ACCOUNT_BALANCE, address=address)
-txs = await client.call(Method.ACCOUNT_TRANSACTIONS, address=address)
-
-# Same code works with different scanners!
-blockscout_client = ChainscanClient.from_config('blockscout', 'v1', 'eth')
-balance = await blockscout_client.call(Method.ACCOUNT_BALANCE, address=address)
+client = ChainscanClient.from_config("blockscout_v2", "ethereum")
+balance = await client.call(Method.ACCOUNT_BALANCE, address="0x...")
+await client.close()
 ```
 
-### 🎯 **Key Benefits of Unified Architecture**
+**Supported Networks:**
+- `ethereum` - Ethereum Mainnet
+- `polygon` - Polygon PoS
+- `arbitrum` - Arbitrum One
+- `optimism` - Optimism
+- `base` - Base (Coinbase L2)
+- `gnosis` - Gnosis Chain
+- `zksync` - zkSync Era
+- `scroll` - Scroll
+- `linea` - Linea
+- `celo` - Celo
+- `rootstock` - Rootstock (RSK)
 
-1. **Type Safety**: `Method.ACCOUNT_BALANCE` vs `"balance"`
-2. **Cross-Scanner**: Same code works with different APIs
-3. **Auto-Mapping**: Parameter names automatically converted
-4. **Unified Parsing**: Response formats automatically normalized
-5. **Easy Extension**: Add new scanners with ~30 lines of code
-
-## Usage Examples
-
-### 🆕 **Unified Client Examples**
-```bash
-# Quick comparison of legacy vs unified
-python examples/simple_balance_comparison.py
-
-# Advanced multi-scanner comparison
-python examples/balance_comparison.py
-
-# Complete architecture demonstration
-python examples/unified_client_demo.py
-```
-
-### Traditional Examples
-```bash
-# Quick connectivity test for all scanners
-python examples/quick_scanner_check.py
-
-# Test all available methods for all scanners
-python examples/test_scanner_methods.py
-
-# Test decode functionality with real Ethereum data
-python examples/test_decode_functionality.py
-```
-
-## Outputs
-
-### Scanner Methods Test Outputs
-- `scanner_methods_test.log` - Detailed execution logs
-- `scanner_methods_summary.md` - High-level overview of all scanners and success rates
-- `scanner_methods_detailed.md` - Method-by-method results for each scanner
-- `scanner_methods_results.json` - Raw test data for further analysis
-
-### Decode Test Outputs
-- `test_decode.log` - Detailed execution logs
-- `decode_test_report.txt` - Human-readable test report with real data results
-- `decode_test_results.json` - Raw test results for debugging
-
-**Note**: All outputs are automatically added to `.gitignore` to prevent accidentally committing test data.
-
-## What the Test Does
-
-1. **Connects to Ethereum mainnet** using your Etherscan API key
-2. **Fetches real contract ABI** for the UNI token from verified source code
-3. **Retrieves recent logs** from the last 1000 blocks for UNI token
-4. **Fetches real transactions** with input data to/from UNI token contract
-5. **Decodes everything** using both the real ABI and online signature lookup
-6. **Generates comprehensive report** showing success rates and detailed results
-
-This provides a complete end-to-end test of the library's capabilities with production data!
-
-## Testing with Your API Keys
-
-If you have API keys for multiple scanners, see `test_with_your_keys.md` for detailed instructions on:
-- Setting up all API keys properly
-- Running comprehensive tests across all scanners
-- Analyzing results and troubleshooting issues
-- Understanding scanner-specific limitations
-
-The comprehensive test will show you exactly which methods work on which scanners with your specific API key configuration.
-
-## 🆕 RoutScan Demo
-
-### `routscan_demo.py` ⭐
-
-**MODE NETWORK** - Complete RoutScan API demonstration:
-
-```bash
-python examples/routscan_demo.py
-```
-
-- **Purpose**: Demonstrates RoutScan API for Mode Network (Layer 2)
-- **Features**:
-  - Account balance checking on Mode network
-  - Transaction history and internal transactions
-  - ERC-20 token transfers
-  - Contract ABI retrieval
-  - Block information
-  - Scanner comparison with other networks
-- **Network**: Mode (Chain ID: 34443)
-- **API Key**: Optional (works without, but recommended for higher limits)
-- **Set API Key**: `export ROUTSCAN_API_KEY='your_key_here'`
-
-**Key Features:**
-- ✅ Works without API key (public access)
-- ✅ Layer 2 low-cost transactions
-- ✅ Standard Etherscan-compatible endpoints
-- ✅ Real-time transaction tracking
-- ✅ 7 supported methods (same as other scanners)
-
-## Logging (optional)
-
-If you use the new facades, lightweight telemetry logs are emitted via structlog when available. Minimal setup:
+### Etherscan (API Key Required)
 
 ```python
-import structlog
-
-structlog.configure(processors=[structlog.processors.JSONRenderer()])
+client = ChainscanClient.from_config("etherscan", "ethereum", api_key="YOUR_KEY")
 ```
 
-If `structlog` is not configured or unavailable, logging safely falls back to the standard logging module.
+**Get your key:** https://etherscan.io/apis (Free tier: 5 req/sec)
+
+---
+
+## 🔧 Available Methods
+
+```python
+from aiochainscan.core.method import Method
+
+# Account
+Method.ACCOUNT_BALANCE            # Native coin balance
+Method.ACCOUNT_BALANCE_MULTI      # Multiple addresses
+Method.ACCOUNT_TRANSACTIONS       # Normal transactions
+Method.ACCOUNT_INTERNAL_TRANSACTIONS  # Internal/trace txs
+Method.ACCOUNT_TOKEN_PORTFOLIO    # All ERC20 tokens
+Method.ACCOUNT_NFT_PORTFOLIO      # All NFTs
+
+# Tokens
+Method.TOKEN_BALANCE              # Specific token balance
+Method.TOKEN_TRANSFERS            # Token transfer history
+
+# Contract
+Method.CONTRACT_ABI               # Contract ABI
+Method.CONTRACT_SOURCE            # Verified source code
+Method.CONTRACT_VERIFY            # Submit verification
+Method.CONTRACT_VERIFY_STATUS     # Check verification
+
+# Block
+Method.BLOCK_BY_NUMBER            # Block details
+Method.BLOCK_COUNTDOWN            # Blocks until target
+
+# Other
+Method.EVENT_LOGS                 # Event logs with filters
+Method.GAS_ORACLE                 # Current gas prices
+Method.ETH_SUPPLY                 # Total ETH supply
+Method.ETH_PRICE                  # ETH/USD price
+```
+
+---
+
+## 💡 Tips for Production
+
+### 1. Always Close Clients
+
+```python
+client = ChainscanClient.from_config("blockscout_v2", "ethereum")
+try:
+    data = await client.call(Method.ACCOUNT_BALANCE, address=addr)
+finally:
+    await client.close()
+```
+
+### 2. Handle Rate Limits
+
+```python
+from aiochainscan.exceptions import ChainscanRateLimitError
+
+try:
+    data = await client.call(Method.ACCOUNT_TRANSACTIONS, address=addr)
+except ChainscanRateLimitError:
+    await asyncio.sleep(1)
+    # Retry...
+```
+
+### 3. Type-Safe Responses with Pydantic
+
+```python
+from aiochainscan.domain.dto_v2 import TransactionDTO
+
+# Parse raw response into typed model
+tx = TransactionDTO.model_validate(raw_tx_dict)
+print(tx.value)  # IDE knows this is int!
+```
+
+---
+
+## 📦 Legacy Examples
+
+The following older examples are kept for reference but may use deprecated patterns:
+
+- `blockscout_demo.py` - BlockScout V1 examples
+- `unified_client_demo.py` - Legacy client patterns
+- `dump_data.py` - Bulk data extraction
+
+---
+
+## 🆘 Getting Help
+
+- **Documentation:** See [AGENTS.md](../AGENTS.md) for architecture overview
+- **Issues:** https://github.com/VaitaR/aiochainscan/issues

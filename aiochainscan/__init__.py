@@ -2,13 +2,15 @@ from collections.abc import Mapping
 from datetime import date
 from typing import Any
 
-__version__ = '0.2.3'
+__version__ = '0.4.0'
 
-from aiochainscan.adapters.aiohttp_client import AiohttpClient
+from aiochainscan.adapters.aiolimiter_adapter import AioLimiterAdapter
 from aiochainscan.adapters.endpoint_builder_urlbuilder import UrlBuilderEndpoint
+from aiochainscan.adapters.httpx_client import HttpxClientAdapter
 from aiochainscan.adapters.retry_exponential import ExponentialBackoffRetry
 from aiochainscan.adapters.simple_rate_limiter import SimpleRateLimiter
 from aiochainscan.adapters.structlog_telemetry import StructlogTelemetry
+from aiochainscan.adapters.tenacity_retry import TenacityRetryAdapter
 from aiochainscan.capabilities import FEATURE_SUPPORT as _FEATURE_SUPPORT_SRC
 from aiochainscan.capabilities import (
     get_supported_features as _caps_get_supported_features,
@@ -19,10 +21,13 @@ from aiochainscan.capabilities import (
 from aiochainscan.capabilities import (
     is_feature_supported as _caps_is_feature_supported,
 )
-from aiochainscan.client import Client  # noqa: F401
 from aiochainscan.config import ChainScanConfig, ScannerConfig, config  # noqa: F401
 from aiochainscan.config import config_manager as _config_manager
-from aiochainscan.core.client import ChainscanClient  # unified client export
+
+# Import ChainscanClient last to avoid circular import
+# (it imports scanners which register themselves during import)
+from aiochainscan.core.client import ChainscanClient  # noqa: E402
+from aiochainscan.core.method import Method  # unified method enum
 from aiochainscan.domain.dto import (
     AddressBalanceDTO,
     BeaconWithdrawalDTO,
@@ -37,6 +42,21 @@ from aiochainscan.domain.dto import (
     ProxyTxDTO,
     TokenTransferDTO,
     TransactionDTO,
+)
+from aiochainscan.domain.dto_v2 import (
+    BlockDTO as BlockDTOv2,
+)
+from aiochainscan.domain.dto_v2 import (
+    InternalTransactionDTO as InternalTransactionDTOv2,
+)
+from aiochainscan.domain.dto_v2 import (
+    LogEventDTO as LogEventDTOv2,
+)
+from aiochainscan.domain.dto_v2 import (
+    TokenTransferDTO as TokenTransferDTOv2,
+)
+from aiochainscan.domain.dto_v2 import (
+    TransactionDTO as TransactionDTOv2,
 )
 from aiochainscan.domain.models import Address, BlockNumber, Page, TxHash  # re-export domain VOs
 from aiochainscan.ports.cache import Cache
@@ -155,8 +175,8 @@ from aiochainscan.services.transaction import (
 )
 
 __all__ = [
-    'Client',
     'ChainscanClient',
+    'Method',
     'ChainScanConfig',
     'ScannerConfig',
     'config',
@@ -212,8 +232,16 @@ __all__ = [
     'BlockDTO',
     'TransactionDTO',
     'GasOracleDTO',
+    # V2 DTOs (Pydantic models)
+    'TransactionDTOv2',
+    'InternalTransactionDTOv2',
+    'TokenTransferDTOv2',
+    'LogEventDTOv2',
+    'BlockDTOv2',
     # Adapters (public DI helpers)
-    'AiohttpClient',
+    'HttpxClientAdapter',
+    'TenacityRetryAdapter',
+    'AioLimiterAdapter',
     'UrlBuilderEndpoint',
     'StructlogTelemetry',
     'SimpleRateLimiter',
@@ -320,7 +348,7 @@ async def get_balance(
     Convenience facade for simple use without manual client wiring.
     """
 
-    http = http or AiohttpClient()
+    http = http or HttpxClientAdapter()
     endpoint = endpoint_builder or UrlBuilderEndpoint()
     telemetry = telemetry or StructlogTelemetry()
     try:
@@ -399,7 +427,7 @@ async def get_block(
 ) -> dict[str, Any]:
     """Fetch block by number via default adapter."""
 
-    http = http or AiohttpClient()
+    http = http or HttpxClientAdapter()
     endpoint = endpoint_builder or UrlBuilderEndpoint()
     telemetry = telemetry or StructlogTelemetry()
     try:
@@ -577,7 +605,7 @@ async def get_logs_page_typed(
     )
     from aiochainscan.adapters.simple_provider_federator import SimpleProviderFederator
 
-    http = http or AiohttpClient()
+    http = http or HttpxClientAdapter()
     endpoint = endpoint_builder or UrlBuilderEndpoint()
     telemetry = telemetry or StructlogTelemetry()
     gql = AiohttpGraphQLClient()
@@ -635,7 +663,7 @@ async def get_token_transfers_page_typed(
     from aiochainscan.adapters.simple_provider_federator import SimpleProviderFederator
     from aiochainscan.services.account import normalize_token_transfers
 
-    http = http or AiohttpClient()
+    http = http or HttpxClientAdapter()
     endpoint = endpoint_builder or UrlBuilderEndpoint()
     telemetry = telemetry or StructlogTelemetry()
     gql = AiohttpGraphQLClient()
@@ -712,7 +740,7 @@ async def get_address_transactions_page_typed(
     from aiochainscan.adapters.simple_provider_federator import SimpleProviderFederator
     from aiochainscan.services.account import normalize_normal_txs
 
-    http = http or AiohttpClient()
+    http = http or HttpxClientAdapter()
     endpoint = endpoint_builder or UrlBuilderEndpoint()
     telemetry = telemetry or StructlogTelemetry()
     gql = AiohttpGraphQLClient()
@@ -925,7 +953,7 @@ async def get_address_balances(
     retry: RetryPolicy | None = None,
     telemetry: Telemetry | None = None,
 ) -> list[dict[str, Any]]:
-    http = http or AiohttpClient()
+    http = http or HttpxClientAdapter()
     endpoint = endpoint_builder or UrlBuilderEndpoint()
     telemetry = telemetry or StructlogTelemetry()
     try:
@@ -962,7 +990,7 @@ async def get_normal_transactions(
     retry: RetryPolicy | None = None,
     telemetry: Telemetry | None = None,
 ) -> list[dict[str, Any]]:
-    http = http or AiohttpClient()
+    http = http or HttpxClientAdapter()
     endpoint = endpoint_builder or UrlBuilderEndpoint()
     telemetry = telemetry or StructlogTelemetry()
     try:
@@ -1011,7 +1039,7 @@ async def get_all_transactions_optimized(
     Uses range splitting + priority queue under the hood, respects rate limits
     and works with Blockscout without API key.
     """
-    http = http or AiohttpClient()
+    http = http or HttpxClientAdapter()
     endpoint = endpoint_builder or UrlBuilderEndpoint()
     telemetry = telemetry or StructlogTelemetry()
     try:
@@ -1095,7 +1123,7 @@ async def get_all_internal_transactions_optimized(
     max_attempts_per_range: int = 3,
     stats: dict[str, int] | None = None,
 ) -> list[dict[str, Any]]:
-    http = http or AiohttpClient()
+    http = http or HttpxClientAdapter()
     endpoint = endpoint_builder or UrlBuilderEndpoint()
     telemetry = telemetry or StructlogTelemetry()
     try:
@@ -1142,7 +1170,7 @@ async def get_all_logs_optimized(
     max_attempts_per_range: int = 3,
     stats: dict[str, int] | None = None,
 ) -> list[dict[str, Any]]:
-    http = http or AiohttpClient()
+    http = http or HttpxClientAdapter()
     endpoint = endpoint_builder or UrlBuilderEndpoint()
     telemetry = telemetry or StructlogTelemetry()
     try:
@@ -1192,7 +1220,7 @@ async def get_internal_transactions(
     retry: RetryPolicy | None = None,
     telemetry: Telemetry | None = None,
 ) -> list[dict[str, Any]]:
-    http = http or AiohttpClient()
+    http = http or HttpxClientAdapter()
     endpoint = endpoint_builder or UrlBuilderEndpoint()
     telemetry = telemetry or StructlogTelemetry()
     try:
@@ -1236,7 +1264,7 @@ async def get_token_transfers(
     retry: RetryPolicy | None = None,
     telemetry: Telemetry | None = None,
 ) -> list[dict[str, Any]]:
-    http = http or AiohttpClient()
+    http = http or HttpxClientAdapter()
     endpoint = endpoint_builder or UrlBuilderEndpoint()
     telemetry = telemetry or StructlogTelemetry()
     try:
@@ -1277,7 +1305,7 @@ async def get_mined_blocks(
     retry: RetryPolicy | None = None,
     telemetry: Telemetry | None = None,
 ) -> list[dict[str, Any]]:
-    http = http or AiohttpClient()
+    http = http or HttpxClientAdapter()
     endpoint = endpoint_builder or UrlBuilderEndpoint()
     telemetry = telemetry or StructlogTelemetry()
     try:
@@ -1316,7 +1344,7 @@ async def get_beacon_chain_withdrawals(
     retry: RetryPolicy | None = None,
     telemetry: Telemetry | None = None,
 ) -> list[dict[str, Any]]:
-    http = http or AiohttpClient()
+    http = http or HttpxClientAdapter()
     endpoint = endpoint_builder or UrlBuilderEndpoint()
     telemetry = telemetry or StructlogTelemetry()
     try:
@@ -1353,7 +1381,7 @@ async def get_account_balance_by_blockno(
     retry: RetryPolicy | None = None,
     telemetry: Telemetry | None = None,
 ) -> str:
-    http = http or AiohttpClient()
+    http = http or HttpxClientAdapter()
     endpoint = endpoint_builder or UrlBuilderEndpoint()
     telemetry = telemetry or StructlogTelemetry()
     try:
@@ -1388,7 +1416,7 @@ async def get_transaction(
 ) -> dict[str, Any]:
     """Fetch transaction by hash via default adapter."""
 
-    http = http or AiohttpClient()
+    http = http or HttpxClientAdapter()
     endpoint = endpoint_builder or UrlBuilderEndpoint()
     telemetry = telemetry or StructlogTelemetry()
     try:
@@ -1424,7 +1452,7 @@ async def get_token_balance(
 ) -> int:
     """Fetch ERC-20 token balance via default adapter."""
 
-    http = http or AiohttpClient()
+    http = http or HttpxClientAdapter()
     endpoint = endpoint_builder or UrlBuilderEndpoint()
     telemetry = telemetry or StructlogTelemetry()
     try:
@@ -1463,7 +1491,7 @@ async def get_gas_oracle(
 ) -> dict[str, Any]:
     """Fetch gas oracle via default adapter."""
 
-    http = http or AiohttpClient()
+    http = http or HttpxClientAdapter()
     endpoint = endpoint_builder or UrlBuilderEndpoint()
     telemetry = telemetry or StructlogTelemetry()
     try:
@@ -1508,7 +1536,7 @@ async def get_logs(
 
     from aiochainscan.services.logs import get_logs as get_logs_service
 
-    http = http or AiohttpClient()
+    http = http or HttpxClientAdapter()
     endpoint = endpoint_builder or UrlBuilderEndpoint()
     telemetry = telemetry or StructlogTelemetry()
     try:
@@ -1549,7 +1577,7 @@ async def get_eth_price(
 
     from aiochainscan.services.stats import get_eth_price as get_eth_price_service
 
-    http = http or AiohttpClient()
+    http = http or HttpxClientAdapter()
     endpoint = endpoint_builder or UrlBuilderEndpoint()
     telemetry = telemetry or StructlogTelemetry()
     try:
@@ -1588,7 +1616,7 @@ async def get_daily_transaction_count(
         get_daily_transaction_count as get_daily_transaction_count_service,
     )
 
-    http = http or AiohttpClient()
+    http = http or HttpxClientAdapter()
     endpoint = endpoint_builder or UrlBuilderEndpoint()
     telemetry = telemetry or StructlogTelemetry()
     try:
@@ -1629,7 +1657,7 @@ async def get_daily_new_address_count(
         get_daily_new_address_count as get_daily_new_address_count_service,
     )
 
-    http = http or AiohttpClient()
+    http = http or HttpxClientAdapter()
     endpoint = endpoint_builder or UrlBuilderEndpoint()
     telemetry = telemetry or StructlogTelemetry()
     try:
@@ -1670,7 +1698,7 @@ async def get_daily_network_tx_fee(
         get_daily_network_tx_fee as get_daily_network_tx_fee_service,
     )
 
-    http = http or AiohttpClient()
+    http = http or HttpxClientAdapter()
     endpoint = endpoint_builder or UrlBuilderEndpoint()
     telemetry = telemetry or StructlogTelemetry()
     try:
@@ -1711,7 +1739,7 @@ async def get_daily_network_utilization(
         get_daily_network_utilization as get_daily_network_utilization_service,
     )
 
-    http = http or AiohttpClient()
+    http = http or HttpxClientAdapter()
     endpoint = endpoint_builder or UrlBuilderEndpoint()
     telemetry = telemetry or StructlogTelemetry()
     try:
@@ -1749,7 +1777,7 @@ async def get_daily_average_block_size(
 ) -> list[dict[str, Any]]:
     from aiochainscan.services.stats import get_daily_average_block_size as svc
 
-    http = http or AiohttpClient()
+    http = http or HttpxClientAdapter()
     endpoint = endpoint_builder or UrlBuilderEndpoint()
     telemetry = telemetry or StructlogTelemetry()
     try:
@@ -1786,7 +1814,7 @@ async def get_daily_block_rewards(
 ) -> list[dict[str, Any]]:
     from aiochainscan.services.stats import get_daily_block_rewards as svc
 
-    http = http or AiohttpClient()
+    http = http or HttpxClientAdapter()
     endpoint = endpoint_builder or UrlBuilderEndpoint()
     telemetry = telemetry or StructlogTelemetry()
     try:
@@ -1823,7 +1851,7 @@ async def get_daily_average_block_time(
 ) -> list[dict[str, Any]]:
     from aiochainscan.services.stats import get_daily_average_block_time as svc
 
-    http = http or AiohttpClient()
+    http = http or HttpxClientAdapter()
     endpoint = endpoint_builder or UrlBuilderEndpoint()
     telemetry = telemetry or StructlogTelemetry()
     try:
@@ -1860,7 +1888,7 @@ async def get_daily_uncle_block_count(
 ) -> list[dict[str, Any]]:
     from aiochainscan.services.stats import get_daily_uncle_block_count as svc
 
-    http = http or AiohttpClient()
+    http = http or HttpxClientAdapter()
     endpoint = endpoint_builder or UrlBuilderEndpoint()
     telemetry = telemetry or StructlogTelemetry()
     try:
@@ -1897,7 +1925,7 @@ async def get_daily_average_gas_limit(
 ) -> list[dict[str, Any]]:
     from aiochainscan.services.stats import get_daily_average_gas_limit as svc
 
-    http = http or AiohttpClient()
+    http = http or HttpxClientAdapter()
     endpoint = endpoint_builder or UrlBuilderEndpoint()
     telemetry = telemetry or StructlogTelemetry()
     try:
@@ -1934,7 +1962,7 @@ async def get_daily_total_gas_used(
 ) -> list[dict[str, Any]]:
     from aiochainscan.services.stats import get_daily_total_gas_used as svc
 
-    http = http or AiohttpClient()
+    http = http or HttpxClientAdapter()
     endpoint = endpoint_builder or UrlBuilderEndpoint()
     telemetry = telemetry or StructlogTelemetry()
     try:
@@ -1971,7 +1999,7 @@ async def get_daily_average_gas_price(
 ) -> list[dict[str, Any]]:
     from aiochainscan.services.stats import get_daily_average_gas_price as svc
 
-    http = http or AiohttpClient()
+    http = http or HttpxClientAdapter()
     endpoint = endpoint_builder or UrlBuilderEndpoint()
     telemetry = telemetry or StructlogTelemetry()
     try:
@@ -2008,7 +2036,7 @@ async def get_daily_block_count(
 ) -> list[dict[str, Any]]:
     from aiochainscan.services.stats import get_daily_block_count as svc
 
-    http = http or AiohttpClient()
+    http = http or HttpxClientAdapter()
     endpoint = endpoint_builder or UrlBuilderEndpoint()
     telemetry = telemetry or StructlogTelemetry()
     try:
@@ -2045,7 +2073,7 @@ async def get_daily_average_network_hash_rate(
 ) -> list[dict[str, Any]]:
     from aiochainscan.services.stats import get_daily_average_network_hash_rate as svc
 
-    http = http or AiohttpClient()
+    http = http or HttpxClientAdapter()
     endpoint = endpoint_builder or UrlBuilderEndpoint()
     telemetry = telemetry or StructlogTelemetry()
     try:
@@ -2082,7 +2110,7 @@ async def get_daily_average_network_difficulty(
 ) -> list[dict[str, Any]]:
     from aiochainscan.services.stats import get_daily_average_network_difficulty as svc
 
-    http = http or AiohttpClient()
+    http = http or HttpxClientAdapter()
     endpoint = endpoint_builder or UrlBuilderEndpoint()
     telemetry = telemetry or StructlogTelemetry()
     try:
@@ -2119,7 +2147,7 @@ async def get_ether_historical_daily_market_cap(
 ) -> list[dict[str, Any]]:
     from aiochainscan.services.stats import get_ether_historical_daily_market_cap as svc
 
-    http = http or AiohttpClient()
+    http = http or HttpxClientAdapter()
     endpoint = endpoint_builder or UrlBuilderEndpoint()
     telemetry = telemetry or StructlogTelemetry()
     try:
@@ -2156,7 +2184,7 @@ async def get_ether_historical_price(
 ) -> list[dict[str, Any]]:
     from aiochainscan.services.stats import get_ether_historical_price as svc
 
-    http = http or AiohttpClient()
+    http = http or HttpxClientAdapter()
     endpoint = endpoint_builder or UrlBuilderEndpoint()
     telemetry = telemetry or StructlogTelemetry()
     try:
@@ -2190,7 +2218,7 @@ async def get_block_number(
 ) -> str:
     """Fetch latest block number via default adapter."""
 
-    http = http or AiohttpClient()
+    http = http or HttpxClientAdapter()
     endpoint = endpoint_builder or UrlBuilderEndpoint()
     telemetry = telemetry or StructlogTelemetry()
     try:
@@ -2219,7 +2247,7 @@ async def get_gas_price(
     retry: RetryPolicy | None = None,
     telemetry: Telemetry | None = None,
 ) -> str:
-    http = http or AiohttpClient()
+    http = http or HttpxClientAdapter()
     endpoint = endpoint_builder or UrlBuilderEndpoint()
     telemetry = telemetry or StructlogTelemetry()
     try:
@@ -2250,7 +2278,7 @@ async def get_tx_count(
     retry: RetryPolicy | None = None,
     telemetry: Telemetry | None = None,
 ) -> str:
-    http = http or AiohttpClient()
+    http = http or HttpxClientAdapter()
     endpoint = endpoint_builder or UrlBuilderEndpoint()
     telemetry = telemetry or StructlogTelemetry()
     try:
@@ -2283,7 +2311,7 @@ async def get_code(
     retry: RetryPolicy | None = None,
     telemetry: Telemetry | None = None,
 ) -> str:
-    http = http or AiohttpClient()
+    http = http or HttpxClientAdapter()
     endpoint = endpoint_builder or UrlBuilderEndpoint()
     telemetry = telemetry or StructlogTelemetry()
     try:
@@ -2317,7 +2345,7 @@ async def eth_call(
     retry: RetryPolicy | None = None,
     telemetry: Telemetry | None = None,
 ) -> str:
-    http = http or AiohttpClient()
+    http = http or HttpxClientAdapter()
     endpoint = endpoint_builder or UrlBuilderEndpoint()
     telemetry = telemetry or StructlogTelemetry()
     try:
@@ -2352,7 +2380,7 @@ async def get_storage_at(
     retry: RetryPolicy | None = None,
     telemetry: Telemetry | None = None,
 ) -> str:
-    http = http or AiohttpClient()
+    http = http or HttpxClientAdapter()
     endpoint = endpoint_builder or UrlBuilderEndpoint()
     telemetry = telemetry or StructlogTelemetry()
     try:
@@ -2385,7 +2413,7 @@ async def get_block_tx_count_by_number(
     retry: RetryPolicy | None = None,
     telemetry: Telemetry | None = None,
 ) -> str:
-    http = http or AiohttpClient()
+    http = http or HttpxClientAdapter()
     endpoint = endpoint_builder or UrlBuilderEndpoint()
     telemetry = telemetry or StructlogTelemetry()
     try:
@@ -2417,7 +2445,7 @@ async def get_tx_by_block_number_and_index(
     retry: RetryPolicy | None = None,
     telemetry: Telemetry | None = None,
 ) -> dict[str, Any]:
-    http = http or AiohttpClient()
+    http = http or HttpxClientAdapter()
     endpoint = endpoint_builder or UrlBuilderEndpoint()
     telemetry = telemetry or StructlogTelemetry()
     try:
@@ -2450,7 +2478,7 @@ async def get_uncle_by_block_number_and_index(
     retry: RetryPolicy | None = None,
     telemetry: Telemetry | None = None,
 ) -> dict[str, Any]:
-    http = http or AiohttpClient()
+    http = http or HttpxClientAdapter()
     endpoint = endpoint_builder or UrlBuilderEndpoint()
     telemetry = telemetry or StructlogTelemetry()
     try:
@@ -2485,7 +2513,7 @@ async def estimate_gas(
     retry: RetryPolicy | None = None,
     telemetry: Telemetry | None = None,
 ) -> str:
-    http = http or AiohttpClient()
+    http = http or HttpxClientAdapter()
     endpoint = endpoint_builder or UrlBuilderEndpoint()
     telemetry = telemetry or StructlogTelemetry()
     try:
@@ -2519,7 +2547,7 @@ async def send_raw_tx(
     retry: RetryPolicy | None = None,
     telemetry: Telemetry | None = None,
 ) -> dict[str, Any]:
-    http = http or AiohttpClient()
+    http = http or HttpxClientAdapter()
     endpoint = endpoint_builder or UrlBuilderEndpoint()
     telemetry = telemetry or StructlogTelemetry()
     try:
@@ -2550,7 +2578,7 @@ async def get_tx_receipt(
     retry: RetryPolicy | None = None,
     telemetry: Telemetry | None = None,
 ) -> dict[str, Any]:
-    http = http or AiohttpClient()
+    http = http or HttpxClientAdapter()
     endpoint = endpoint_builder or UrlBuilderEndpoint()
     telemetry = telemetry or StructlogTelemetry()
     try:
@@ -2581,7 +2609,7 @@ async def get_contract_abi(
     retry: RetryPolicy | None = None,
     telemetry: Telemetry | None = None,
 ) -> str:
-    http = http or AiohttpClient()
+    http = http or HttpxClientAdapter()
     endpoint = endpoint_builder or UrlBuilderEndpoint()
     telemetry = telemetry or StructlogTelemetry()
     try:
@@ -2612,7 +2640,7 @@ async def get_contract_source_code(
     retry: RetryPolicy | None = None,
     telemetry: Telemetry | None = None,
 ) -> list[dict[str, Any]]:
-    http = http or AiohttpClient()
+    http = http or HttpxClientAdapter()
     endpoint = endpoint_builder or UrlBuilderEndpoint()
     telemetry = telemetry or StructlogTelemetry()
     try:
@@ -2647,7 +2675,7 @@ async def verify_contract_source_code(
     http: HttpClient | None = None
     endpoint: EndpointBuilder | None = None
     telemetry: Telemetry | None = None
-    http = http or AiohttpClient()
+    http = http or HttpxClientAdapter()
     endpoint = endpoint or UrlBuilderEndpoint()
     telemetry = telemetry or StructlogTelemetry()
     try:
@@ -2682,7 +2710,7 @@ async def check_verification_status(
     retry: RetryPolicy | None = None,
     telemetry: Telemetry | None = None,
 ) -> dict[str, Any]:
-    http = http or AiohttpClient()
+    http = http or HttpxClientAdapter()
     endpoint = endpoint_builder or UrlBuilderEndpoint()
     telemetry = telemetry or StructlogTelemetry()
     try:
@@ -2714,7 +2742,7 @@ async def verify_proxy_contract(
     retry: RetryPolicy | None = None,
     telemetry: Telemetry | None = None,
 ) -> dict[str, Any]:
-    http = http or AiohttpClient()
+    http = http or HttpxClientAdapter()
     endpoint = endpoint_builder or UrlBuilderEndpoint()
     telemetry = telemetry or StructlogTelemetry()
     try:
@@ -2746,7 +2774,7 @@ async def check_proxy_contract_verification(
     retry: RetryPolicy | None = None,
     telemetry: Telemetry | None = None,
 ) -> dict[str, Any]:
-    http = http or AiohttpClient()
+    http = http or HttpxClientAdapter()
     endpoint = endpoint_builder or UrlBuilderEndpoint()
     telemetry = telemetry or StructlogTelemetry()
     try:
@@ -2777,7 +2805,7 @@ async def get_contract_creation(
     retry: RetryPolicy | None = None,
     telemetry: Telemetry | None = None,
 ) -> list[dict[str, Any]]:
-    http = http or AiohttpClient()
+    http = http or HttpxClientAdapter()
     endpoint = endpoint_builder or UrlBuilderEndpoint()
     telemetry = telemetry or StructlogTelemetry()
     try:
@@ -2812,7 +2840,7 @@ async def open_default_session() -> _DefaultSession:
     Returns an object with `http`, `endpoint`, and `telemetry` attributes.
     Caller should `await session.aclose()` when done.
     """
-    http = AiohttpClient()
+    http = HttpxClientAdapter()
     endpoint = UrlBuilderEndpoint()
     telemetry = StructlogTelemetry()
     return _DefaultSession(http, endpoint, telemetry)
