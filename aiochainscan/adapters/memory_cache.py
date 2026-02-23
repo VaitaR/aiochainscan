@@ -24,6 +24,8 @@ class InMemoryCache(Cache):
     """
 
     def __init__(self, max_size: int = 10000) -> None:
+        if max_size <= 0:
+            raise ValueError(f'max_size must be greater than 0, got {max_size}')
         self._store: OrderedDict[str, tuple[Any, float | None]] = OrderedDict()
         self._max_size = max_size
 
@@ -41,14 +43,17 @@ class InMemoryCache(Cache):
         return value
 
     async def set(self, key: str, value: Any, *, ttl_seconds: int | None = None) -> None:
-        # Evict oldest entries if at capacity (before adding new entry)
-        while len(self._store) >= self._max_size:
-            self._store.popitem(last=False)  # Remove oldest (first) item
+        # Only evict if adding a NEW key and at capacity
+        if key not in self._store:
+            while len(self._store) >= self._max_size:
+                self._store.popitem(last=False)  # Remove oldest (first) item
 
         expires_at: float | None = None
         if ttl_seconds is not None and ttl_seconds > 0:
             expires_at = time.time() + float(ttl_seconds)
         self._store[key] = (value, expires_at)
+        # Move to end (most recently used) for LRU ordering
+        self._store.move_to_end(key)
 
     async def delete(self, key: str) -> None:
         self._store.pop(key, None)

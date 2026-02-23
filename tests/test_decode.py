@@ -1,5 +1,7 @@
 from unittest.mock import patch
 
+import pytest
+
 from aiochainscan.decode import (
     decode_log_data,
     decode_transaction_input,
@@ -8,7 +10,17 @@ from aiochainscan.decode import (
     keccak_hash,
 )
 
+# Check if eth-hash backend is available
+try:
+    from eth_utils import keccak
 
+    keccak(b'test')
+    ETH_HASH_AVAILABLE = True
+except (ImportError, Exception):
+    ETH_HASH_AVAILABLE = False
+
+
+@pytest.mark.skipif(not ETH_HASH_AVAILABLE, reason='eth-hash backend not installed')
 class TestKeccakHash:
     """Test keccak hash generation."""
 
@@ -38,6 +50,7 @@ class TestKeccakHash:
         assert hash1 == hash2
 
 
+@pytest.mark.skipif(not ETH_HASH_AVAILABLE, reason='eth-hash backend not installed')
 class TestGenerateFunctionAbi:
     """Test ABI generation from function signatures."""
 
@@ -101,6 +114,7 @@ class TestGenerateFunctionAbi:
         assert result == expected
 
 
+@pytest.mark.skipif(not ETH_HASH_AVAILABLE, reason='eth-hash backend not installed')
 class TestDecodeTransactionInput:
     """Test transaction input decoding."""
 
@@ -196,6 +210,7 @@ class TestDecodeTransactionInput:
         assert result['decoded_data'] == {}
 
 
+@pytest.mark.skipif(not ETH_HASH_AVAILABLE, reason='eth-hash backend not installed')
 class TestDecodeTransactionInputWithFunctionName:
     """Test transaction decoding using function name signature."""
 
@@ -235,6 +250,7 @@ class TestDecodeTransactionInputWithFunctionName:
         mock_generate_abi.assert_called_once_with('approve(address spender, uint256 amount)')
 
 
+@pytest.mark.skipif(not ETH_HASH_AVAILABLE, reason='eth-hash backend not installed')
 class TestDecodeLogData:
     """Test event log data decoding."""
 
@@ -378,6 +394,7 @@ class TestDecodeLogData:
         assert decoded['spender'] == '0xabc123def456789012345678901234567890abcd'
 
 
+@pytest.mark.skipif(not ETH_HASH_AVAILABLE, reason='eth-hash backend not installed')
 class TestDecodeIntegration:
     """Integration tests for decode functionality."""
 

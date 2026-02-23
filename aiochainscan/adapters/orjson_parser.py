@@ -39,7 +39,7 @@ def parse_response_str(raw_str: str) -> dict[str, Any]:
     Raises:
         orjson.JSONDecodeError: If the input is not valid JSON
     """
-    return orjson.loads(raw_str)
+    return orjson.loads(raw_str.encode('utf-8'))
 
 
 def serialize(data: Any) -> bytes:

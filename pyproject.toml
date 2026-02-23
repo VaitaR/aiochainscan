@@ -41,6 +41,7 @@ dev = [
     "ruff==0.4.7",
     "mypy",
     "import-linter>=2.0.0",
+    "eth-hash[pycryptodome]",
 ]
 fast = [
     "maturin>=1.6,<2.0",

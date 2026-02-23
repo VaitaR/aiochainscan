@@ -56,7 +56,7 @@ test_method_enum_complete()              # Method enum полный
 
 #### Теперь при `git commit`:
 1. ✅ ruff format
-2. ✅ ruff lint  
+2. ✅ ruff lint
 3. ✅ **test-imports** ← НОВОЕ!
 4. ✅ trailing-whitespace
 5. ✅ end-of-file-fixer
@@ -184,7 +184,7 @@ test imports (detect circular deps).................Failed
 - hook id: test-imports
 - exit code: 1
 
-ImportError: cannot import name 'ChainscanClient' from 
+ImportError: cannot import name 'ChainscanClient' from
 partially initialized module 'aiochainscan.core.client'
 
 ❌ Коммит заблокирован!
@@ -272,7 +272,7 @@ uv run pytest -v
 
 **Теперь НЕВОЗМОЖНО** закоммитить:
 - ❌ Circular imports
-- ❌ Import blockers  
+- ❌ Import blockers
 - ❌ Broken optional dependencies
 - ❌ Bad formatting
 - ❌ Type errors (на pre-push)
