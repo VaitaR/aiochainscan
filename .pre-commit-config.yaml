@@ -18,12 +18,23 @@ repos:
 
   - repo: local
     hooks:
+      # Run import tests on every commit to catch circular imports early
+      - id: test-imports
+        name: test imports (detect circular deps)
+        entry: uv run pytest tests/test_imports.py -v --tb=short
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+
+      # Run mypy on EVERY COMMIT to catch type errors early
       - id: mypy
-        name: mypy (strict)
+        name: mypy (strict - local check)
         entry: uv run mypy --strict aiochainscan
         language: system
         pass_filenames: false
-        stages: [pre-push]
+        stages: [pre-commit]
+
+      # Run quick tests on pre-push
       - id: pytest
         name: pytest (quick)
         entry: uv run pytest -q -k 'not tests/test_integration.py::TestBasicAPIFunctionality::test_scanner_basic_calls'

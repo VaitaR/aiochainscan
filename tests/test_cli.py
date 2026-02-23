@@ -315,6 +315,31 @@ class TestCmdTestScanner:
         # Verify asyncio.run was called
         mock_run.assert_called_once()
 
+    def test_test_scanner_uses_universal_method(self):
+        """Test that test_scanner function uses a universal method (ACCOUNT_BALANCE).
+
+        This is a regression test for the bug where ETH_PRICE was used,
+        which is not supported by all scanners (e.g., BlockScout V2).
+        """
+        import inspect
+
+        from aiochainscan.cli import cmd_test_scanner
+
+        # Get the source code of cmd_test_scanner
+        source = inspect.getsource(cmd_test_scanner)
+
+        # Verify it uses ACCOUNT_BALANCE, not ETH_PRICE
+        assert (
+            'Method.ACCOUNT_BALANCE' in source
+        ), 'cmd_test_scanner should use Method.ACCOUNT_BALANCE (universal method)'
+        assert (
+            'Method.ETH_PRICE' not in source
+        ), 'cmd_test_scanner should NOT use Method.ETH_PRICE (not supported by all scanners)'
+        # Verify it uses a real address for testing
+        assert (
+            '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045' in source
+        ), 'cmd_test_scanner should use a valid test address'
+
 
 class TestMainFunction:
     """Test main CLI entry point."""

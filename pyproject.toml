@@ -1,6 +1,6 @@
 [project]
 name = "aiochainscan"
-version = "0.2.3"
+version = "0.4.0"
 description = "Chainscan API async Python wrapper"
 authors = [
     { name = "VaitaR", email = "andrey.shivalin@gmail.com" }
@@ -16,16 +16,18 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
 ]
 
 dependencies = [
-    "aiohttp>=3.4",
-    "asyncio-throttle>=1.0.1",
-    "aiohttp-retry>=2.8.3",
-    "pycryptodome",
+    "httpx[http2]>=0.27.0",
+    "aiolimiter>=1.1.0",
+    "tenacity>=8.2.0",
     "eth-abi",
-    "requests>=2.31.0",
+    "eth-utils>=2.0.0",
     "structlog>=23.1.0",
+    "orjson>=3.10.0",
+    "pydantic>=2.7.0",
 ]
 
 [project.optional-dependencies]
@@ -39,9 +41,16 @@ dev = [
     "ruff==0.4.7",
     "mypy",
     "import-linter>=2.0.0",
+    "eth-hash[pycryptodome]",
 ]
 fast = [
     "maturin>=1.6,<2.0",
+]
+mcp = [
+    "mcp>=1.0.0",
+]
+data = [
+    "polars>=1.0.0",
 ]
 
 [project.scripts]
@@ -53,14 +62,23 @@ Repository = "https://github.com/VaitaR/aiochainscan"
 Issues = "https://github.com/VaitaR/aiochainscan/issues"
 
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
-build-backend = "setuptools.build_meta"
+requires = ["maturin>=1.8,<2.0"]  # >=1.8 required for ZIP64 support
+build-backend = "maturin"
+
+[tool.maturin]
+# Build the fastabi Rust extension
+module-name = "aiochainscan.aiochainscan_fastabi"
+manifest-path = "aiochainscan/fastabi/Cargo.toml"
+python-source = "."
+features = ["pyo3/extension-module"]
+strip = true  # Strip debug symbols from the binary to reduce wheel size
 
 [tool.pytest.ini_options]
 pythonpath = [
     "."
 ]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 addopts = [
   "-m",
   "not benchmark and not slow",
@@ -103,6 +121,9 @@ aiochainscan = ["py.typed", "*.pyi", "fastabi/Cargo.toml", "fastabi/**/*.rs"]
 [tool.mypy]
 python_version = "3.10"
 strict = true
+warn_return_any = true
+warn_unused_configs = true
+show_error_codes = true
 files = ["aiochainscan"]
 plugins = []
 
@@ -210,21 +231,6 @@ forbidden_modules = [
 
 [[tool.mypy.overrides]]
 module = [
-  "aiochainscan.modules.extra.*",
-]
-ignore_errors = false
-
-[[tool.mypy.overrides]]
-module = [
-  "aiochainscan.modules.transaction",
-  "aiochainscan.modules.logs",
-  "aiochainscan.modules.contract",
-  "aiochainscan.modules.token",
-  "aiochainscan.modules.stats",
-  "aiochainscan.modules.proxy",
-  "aiochainscan.modules.gas_tracker",
- "aiochainscan.modules.block",
- "aiochainscan.modules.account",
  "aiochainscan.common",
  "aiochainscan.network",
  "aiochainscan.config",
@@ -242,3 +248,23 @@ module = [
   "structlog",
 ]
 ignore_missing_imports = true
+
+# Per-module overrides for optional dependencies
+# These packages are installed via extras: pip install aiochainscan[data,http,ai]
+
+[[tool.mypy.overrides]]
+module = ["polars", "polars.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["aiohttp", "aiohttp.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["mcp", "mcp.*", "mcp.server.*", "mcp.server.fastmcp"]
+ignore_missing_imports = true
+
+# Ignore untyped decorators in mcp_server when mcp package is missing
+[[tool.mypy.overrides]]
+module = ["aiochainscan.mcp_server"]
+disable_error_code = ["misc"]

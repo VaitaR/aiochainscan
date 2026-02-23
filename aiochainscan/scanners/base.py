@@ -41,7 +41,12 @@ class Scanner(ABC):
     """Mapping of logical methods to endpoint specifications"""
 
     def __init__(
-        self, api_key: str, network: str, url_builder: UrlBuilder, chain_id: int | None = None
+        self,
+        api_key: str,
+        network: str,
+        url_builder: UrlBuilder,
+        chain_id: int | None = None,
+        network_client: Network | None = None,
     ) -> None:
         """
         Initialize scanner instance.
@@ -51,6 +56,9 @@ class Scanner(ABC):
             network: Network name (must be in supported_networks)
             url_builder: UrlBuilder instance for URL construction
             chain_id: Chain ID (optional, will be resolved from network)
+            network_client: Optional Network instance for connection pooling.
+                If provided, Scanner will use it for requests (client owns lifecycle).
+                If None, Scanner creates a temporary Network per request (legacy behavior).
 
         Raises:
             ValueError: If network is not supported
@@ -66,6 +74,8 @@ class Scanner(ABC):
         self.network = network
         self.url_builder = url_builder
         self.chain_id = chain_id or resolve_chain_id(network)
+        self._network_client = network_client
+        self._owns_network = False  # Scanner doesn't own injected client
 
     async def call(self, method: Method, **params: Any) -> Any:
         """
@@ -92,9 +102,14 @@ class Scanner(ABC):
         spec = self.SPECS[method]
         request_data = self._build_request(spec, **params)
 
-        # Create temporary Network instance for this request
-        # Note: In production, this would be injected or cached
-        network = Network(self.url_builder)
+        # Use injected network client if available, otherwise create temporary one
+        # (legacy behavior for backward compatibility)
+        if self._network_client is not None:
+            network = self._network_client
+            should_close = False
+        else:
+            network = Network(self.url_builder)
+            should_close = True
 
         try:
             if spec.http_method == 'GET':
@@ -109,7 +124,8 @@ class Scanner(ABC):
             return spec.parse_response(raw_response)
 
         finally:
-            await network.close()
+            if should_close:
+                await network.close()
 
     def _build_request(self, spec: EndpointSpec, **params: Any) -> dict[str, Any]:
         """
@@ -148,6 +164,18 @@ class Scanner(ABC):
             request_data['data'] = mapped_params
 
         return request_data
+
+    async def close(self) -> None:
+        """
+        Close network client if owned by this scanner.
+
+        Note: If a network_client was injected, this is a no-op since
+        the caller owns the lifecycle. Only closes self-created clients.
+        """
+        if self._owns_network and self._network_client is not None:
+            await self._network_client.close()
+            self._network_client = None
+            self._owns_network = False
 
     def supports_method(self, method: Method) -> bool:
         """

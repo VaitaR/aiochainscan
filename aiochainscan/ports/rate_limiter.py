@@ -9,7 +9,7 @@ T = TypeVar('T')
 class RateLimiter(Protocol):
     """Rate limiter port supporting keyed acquisition."""
 
-    async def acquire(self, key: str) -> None:
+    async def acquire(self, key: str = 'default') -> None:
         """Acquire permission to perform an operation identified by key."""
 
 

@@ -1,324 +1,255 @@
-# aiochainscan Project Overview
+# aiochainscan - Agent Context Guide
 
-Async Python wrapper for blockchain explorer APIs with hexagonal architecture and dependency injection support. Provides unified interface for querying blockchain data across multiple networks and scanner providers.
+> **Purpose**: Quick context for LLM agents working on this codebase.
+> **Version**: 0.4.0
 
-## Project Purpose
-Async Python wrapper for blockchain explorer APIs (Etherscan, BSCScan, PolygonScan, etc.). Provides unified interface for querying blockchain data across multiple networks with both legacy and modern unified architectures.
+## What is this project?
 
-## Architecture
+Async Python wrapper for blockchain explorer APIs (Etherscan, BlockScout). Unified interface for querying blockchain data with hexagonal architecture and dependency injection.
 
-### Core Components
-- **Facade Functions**: Simple async functions for common operations (`get_balance`, `get_block`, etc.)
-- **Hexagonal Architecture**: Clean layered architecture with ports/adapters pattern
-- **Dependency Injection**: Configurable HTTP clients, rate limiters, retries, caching, and telemetry
-- **Optimized Aggregators**: High-performance range-splitting for bulk operations
-- **Multiple Scanner Support**: Etherscan, Blockscout, Moralis, and custom scanners
+---
 
-### Key Classes
-- `ChainscanClient`: **PRIMARY** unified client for cross-scanner logical method calls (recommended interface)
-- `Client`: Main client class with module instances (legacy - maintained for backward compatibility)
-- `Network`: HTTP handling with throttling and error management
-- `UrlBuilder`: URL construction for different blockchain APIs
-- `BaseModule`: Abstract base for all API modules
-- `Scanner`: Abstract base for scanner implementations
+## Quick Start for Agents
 
-## Supported Networks
-
-### Primary Scanner Providers
-- **Etherscan API**: Ethereum, BSC, Polygon, Arbitrum, Optimism, Base, Fantom, Gnosis, and more EVM chains (Base supported via Etherscan V2)
-- **BlockScout**: Public blockchain explorers (no API key required) - Ethereum, Sepolia, Gnosis, Polygon, Optimism, Arbitrum, Base, Scroll, Linea, and others
-- **Moralis**: Multi-chain Web3 API - Ethereum, BSC, Polygon, Arbitrum, Base, Optimism, Avalanche, and more
-- **RoutScan**: Mode network explorer
-
-### Key Features by Provider
-- **Etherscan**: Full API coverage, requires API keys, supports most EVM networks
-- **Blockscout**: Free public APIs, GraphQL support for some operations, good for development
-- **Moralis**: Rich metadata, modern REST API, requires API key, excellent multi-chain support
-
-## Module Structure
-```
-aiochainscan/
-├── __init__.py        # Main exports and facade functions (legacy + new)
-├── client.py          # Legacy Client class (backward compatibility)
-├── core/              # Unified architecture components
-│   ├── client.py      # ChainscanClient - primary unified interface
-│   ├── method.py      # Method enum - logical operations
-│   └── endpoint.py    # EndpointSpec - endpoint configuration
-├── scanners/          # Scanner implementations
-│   ├── base.py        # Scanner abstract base class
-│   ├── _etherscan_like.py # Shared Etherscan-style implementation
-│   ├── etherscan_v2.py    # Etherscan API v2
-│   ├── blockscout_v1.py   # BlockScout implementation
-│   ├── moralis_v1.py      # Moralis Web3 API
-│   └── routscan_v1.py     # RoutScan implementation
-├── adapters/          # Hexagonal architecture adapters
-│   ├── aiohttp_client.py
-│   ├── aiohttp_graphql_client.py
-│   ├── blockscout_graphql_builder.py
-│   ├── endpoint_builder_urlbuilder.py
-│   ├── memory_cache.py
-│   ├── noop_telemetry.py
-│   ├── retry_exponential.py
-│   ├── simple_provider_federator.py
-│   ├── simple_rate_limiter.py
-│   └── structlog_telemetry.py
-├── services/          # Business logic services
-│   ├── account.py      # Account operations
-│   ├── block.py        # Block operations
-│   ├── contract.py     # Contract operations
-│   ├── gas.py         # Gas operations
-│   ├── logs.py        # Log operations
-│   ├── proxy.py       # Proxy operations
-│   ├── stats.py       # Network statistics
-│   ├── token.py       # Token operations
-│   ├── transaction.py # Transaction operations
-│   └── ...           # Additional services
-├── domain/            # Domain models and DTOs
-│   ├── models.py       # Value objects (Address, TxHash, etc.)
-│   └── dto.py          # Data transfer objects
-├── modules/           # Legacy module-based API
-│   ├── account.py      # Account module
-│   ├── block.py        # Block module
-│   ├── contract.py     # Contract module
-│   ├── gas_tracker.py  # Gas tracker module
-│   ├── logs.py        # Logs module
-│   ├── proxy.py       # Proxy module
-│   ├── stats.py       # Stats module
-│   ├── token.py       # Token module
-│   └── transaction.py # Transaction module
-├── network.py         # HTTP client with throttling
-├── exceptions.py      # Custom exceptions
-├── config.py          # Configuration management
-└── ...               # Additional utilities
-```
-
-## Key Features
-
-### Unified ChainscanClient (Primary Interface)
+### Primary Interface (USE THIS)
 ```python
-# Unified client for all blockchain scanners
 from aiochainscan.core.client import ChainscanClient
 from aiochainscan.core.method import Method
 
-# Create client for any scanner using simple config
-client = ChainscanClient.from_config(
-    'blockscout',                   # Provider name (version defaults to 'v1')
-    'ethereum'                      # Chain name/ID
-)
+# Create client (BlockScout V2 - no API key needed)
+client = ChainscanClient.from_config('blockscout_v2', 'ethereum')
 
-# Use logical methods - scanner details hidden under the hood
+# Make API calls
 balance = await client.call(Method.ACCOUNT_BALANCE, address='0x...')
-logs = await client.call(Method.EVENT_LOGS, address='0x...', **params)
+txs = await client.call(Method.ACCOUNT_TRANSACTIONS, address='0x...')
+portfolio = await client.call(Method.ACCOUNT_TOKEN_PORTFOLIO, address='0x...')
 
-# Easy scanner switching - same interface for all!
-client = ChainscanClient.from_config(
-    'etherscan',                    # Provider name (version defaults to 'v2')
-    'ethereum'                      # Chain name
-)
-balance = await client.call(Method.ACCOUNT_BALANCE, address='0x...')
-
-# Use Base network through Etherscan (requires ETHERSCAN_KEY)
-client = ChainscanClient.from_config(
-    'etherscan',                    # Same provider (version defaults to 'v2')
-    'base'                          # Chain name
-)
-balance = await client.call(Method.ACCOUNT_BALANCE, address='0x...')
-```
-
-### Legacy Facade API (Backward Compatibility)
-```python
-# Simple async functions for common operations (legacy interface)
-from aiochainscan import get_balance, get_block, get_all_transactions_optimized
-
-# Get balance (works with Blockscout - no API key needed)
-balance = await get_balance(
-    address='0x...',
-    api_kind='blockscout_sepolia',
-    network='sepolia',
-    api_key=''
-)
-
-# Get block info (Etherscan - requires API key)
-block = await get_block(
-    tag=17000000,
-    full=False,
-    api_kind='eth',
-    network='main',
-    api_key='YOUR_API_KEY'
-)
-
-# Optimized bulk operations with range splitting
-transactions = await get_all_transactions_optimized(
-    address='0x...',
-    api_kind='eth',
-    network='main',
-    api_key='YOUR_API_KEY',
-    max_concurrent=5
-)
-```
-
-### Dependency Injection with ChainscanClient
-```python
-# Customizable rate limiting, retries, and HTTP clients
-from aiochainscan.core.client import ChainscanClient
-from aiochainscan.core.method import Method
-from aiochainscan.adapters.simple_rate_limiter import SimpleRateLimiter
-from aiochainscan.adapters.retry_exponential import ExponentialBackoffRetry
-
-rate_limiter = SimpleRateLimiter(requests_per_second=1)
-retry_policy = ExponentialBackoffRetry(attempts=3)
-
-client = ChainscanClient(
-    scanner_name='etherscan',      # Provider name
-    scanner_version='v2',          # API version
-    api_kind='eth',                # Scanner identifier
-    network='main',                # Network name
-    api_key='YOUR_ETHERSCAN_API_KEY',
-    throttler=rate_limiter,        # Custom rate limiter
-    retry_options=retry_policy     # Custom retry policy
-)
-
-balance = await client.call(Method.ACCOUNT_BALANCE, address='0x...')
+# Always close when done
 await client.close()
 ```
 
-### Legacy Dependency Injection
+> **Note:** Legacy `Client` class and `modules/` were removed in v0.3.0.
+> See [docs/MIGRATION_GUIDE.md](docs/MIGRATION_GUIDE.md) for migration help.
+
+---
+
+## Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      FACADE LAYER                            │
+│  core/client.py (ChainscanClient) | __init__.py (get_*)     │
+└─────────────────────────┬───────────────────────────────────┘
+                          │
+┌─────────────────────────▼───────────────────────────────────┐
+│                    SCANNER LAYER                             │
+│  scanners/base.py | etherscan_v2.py | blockscout_v1.py      │
+│                   | blockscout_v2.py (NEW)                   │
+└─────────────────────────┬───────────────────────────────────┘
+                          │
+┌─────────────────────────▼───────────────────────────────────┐
+│                    SERVICE LAYER                             │
+│  services/account.py | paging_engine.py | unified_fetch.py  │
+└─────────────────────────┬───────────────────────────────────┘
+                          │
+┌─────────────────────────▼───────────────────────────────────┐
+│                     PORTS (Interfaces)                       │
+│  ports/http.py | ports/cache.py | ports/telemetry.py        │
+└─────────────────────────┬───────────────────────────────────┘
+                          │
+┌─────────────────────────▼───────────────────────────────────┐
+│                    ADAPTERS (Implementations)                │
+│  adapters/aiohttp_client.py | memory_cache.py               │
+│  adapters/aiolimiter_adapter.py (Token Bucket rate limit)   │
+│          | simple_rate_limiter.py | retry_exponential.py    │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Dependency rule**: Only downward. Never upward.
+
+---
+
+## Key Files to Know
+
+| File | Purpose |
+|------|---------|
+| `core/client.py` | **ChainscanClient** - primary unified interface |
+| `core/method.py` | **Method** enum - all supported API operations |
+| `scanners/base.py` | **Scanner** base class - implement for new providers |
+| `scanners/blockscout_v2.py` | **BlockScoutV2Scanner** - modern REST API V2 |
+| `adapters/aiolimiter_adapter.py` | **AioLimiterAdapter** - Token Bucket rate limiting |
+| `network.py` | HTTP client with throttling, retry, session management |
+| `exceptions.py` | All custom exceptions (`ChainscanRateLimitError`, etc.) |
+| `config.py` | Configuration management, scanner configs |
+| `services/paging_engine.py` | Pagination logic for bulk fetching |
+
+---
+
+## Scanner Support Matrix
+
+| Scanner | Version | Free? | Key Env Var |
+|---------|---------|-------|-------------|
+| BlockScout | v1, **v2** | ✅ Yes | - |
+| Etherscan | v2 | ❌ No | `ETHERSCAN_KEY` |
+
+> **Removed in v0.3.0:** Moralis, RoutScan scanners
+
+---
+
+## Common Tasks
+
+### Adding a New Scanner
+1. Create `scanners/newscan_v1.py`
+2. Inherit from `Scanner` base class
+3. Define `SPECS` dict mapping `Method` → `EndpointSpec`
+4. Register in `scanners/__init__.py`
+
+### Adding a New Method
+1. Add to `Method` enum in `core/method.py`
+2. Add `EndpointSpec` in relevant scanner's `SPECS` dict
+
+### Modifying HTTP Behavior
+- Rate limiting: `adapters/simple_rate_limiter.py`
+- Retry logic: `adapters/retry_exponential.py`
+- Session management: `network.py`
+
+---
+
+## Important Patterns
+
+### Session Lifecycle
 ```python
-# Legacy interface with dependency injection
-from aiochainscan import get_balance, SimpleRateLimiter, ExponentialBackoffRetry
+# ChainscanClient owns the Network session
+# Scanner receives it via dependency injection
+# Session is reused across all calls (connection pooling)
 
-rate_limiter = SimpleRateLimiter(requests_per_second=1)
-retry_policy = ExponentialBackoffRetry(attempts=3)
+client = ChainscanClient.from_config('blockscout', 'ethereum')
+try:
+    # All calls reuse same HTTP session
+    await client.call(Method.ACCOUNT_BALANCE, address='0x...')
+    await client.call(Method.ACCOUNT_TRANSACTIONS, address='0x...')
+finally:
+    await client.close()  # Closes session
+```
 
-balance = await get_balance(
+### Error Handling
+```python
+from aiochainscan.exceptions import (
+    ChainscanRateLimitError,  # Rate limit hit (retry with backoff)
+    ChainscanClientApiError,   # API returned error
+    ChainscanClientProxyError, # JSON-RPC error
+)
+
+try:
+    result = await client.call(Method.ACCOUNT_BALANCE, address='0x...')
+except ChainscanRateLimitError:
+    # Wait and retry
+except ChainscanClientApiError as e:
+    # Check e.message, e.result
+```
+
+### Pagination
+```python
+from aiochainscan.services.unified_fetch import fetch_all
+
+# Fetch all transactions with automatic pagination
+txs = await fetch_all(
+    data_type='transactions',
     address='0x...',
     api_kind='eth',
     network='main',
-    api_key='YOUR_API_KEY',
-    rate_limiter=rate_limiter,
-    retry=retry_policy
+    api_key='KEY',
+    strategy='fast',  # or 'safe'
 )
 ```
 
-## Why ChainscanClient is the Primary Interface
+---
 
-The **ChainscanClient** is the recommended interface because it provides:
+## Testing
 
-### 🎯 **Universal Scanner Support**
-- Single interface for all blockchain scanners (Etherscan, BlockScout, Moralis, etc.)
-- Automatic method routing based on scanner capabilities
-- Consistent API regardless of underlying scanner implementation
+```bash
+# Run all tests
+pytest tests/ -q
 
-### 🔧 **Logical Method Calls**
-- Use logical operations (`Method.ACCOUNT_BALANCE`, `Method.EVENT_LOGS`) instead of API-specific parameters
-- Scanner details (URLs, authentication, parameter mapping) hidden under the hood
-- Type-safe method enum for better IDE support
+# Run specific test file
+pytest tests/test_client.py -v
 
-### 🚀 **Easy Scanner Switching**
-```python
-# Switch from BlockScout to Etherscan with one line change
-client = ChainscanClient.from_config('blockscout', 'v1', 'ethereum')
-balance = await client.call(Method.ACCOUNT_BALANCE, address='0x...')
+# Run with coverage
+pytest --cov=aiochainscan tests/
 
-# Same code works with Etherscan
-client = ChainscanClient.from_config('etherscan', 'v2', 'ethereum')
-balance = await client.call(Method.ACCOUNT_BALANCE, address='0x...')
+# Type checking
+mypy aiochainscan --ignore-missing-imports
+
+# Linting
+ruff check .
+ruff format .
 ```
 
-### 📊 **Method Discovery**
-- `client.get_supported_methods()` - see what methods are available
-- `client.supports_method(Method.EVENT_LOGS)` - check method support
-- `ChainscanClient.list_scanner_capabilities()` - view all scanner capabilities
+---
 
-### 🏗️ **Production Ready**
-- Comprehensive error handling
-- Dependency injection support
-- Real-world tested with multiple scanners
-- Consistent response formats
+## Known Issues / Tech Debt
 
-## Configuration Parameters
+See [docs/ROADMAP.md](docs/ROADMAP.md) for full list. Key items:
 
-When using `ChainscanClient.from_config()`, you need to specify three key parameters:
+1. **DRY violations in `unified_fetch.py`** - Duplicate page fetcher closures
+2. **`fetch_all_elements_optimized` in `utils.py`** - 150-line SRP violation
+3. **Hardcoded scanner mappings** - Need scanner registry pattern
 
-- **scanner_name**: Provider name (`'etherscan'`, `'blockscout'`, `'moralis'`, etc.)
-- **scanner_version**: API version (`'v1'`, `'v2'`)
-- **network**: Chain name/ID (`'eth'`, `'ethereum'`, `1`, `'base'`, `8453`, etc.)
+---
 
-### Common Configurations:
+## Quick Reference: Method Enum
 
-| Provider | scanner_name | default_version | network | API Key |
-|----------|-------------|-----------------|---------|---------|
-| **BlockScout Ethereum** | `'blockscout'` | `v1` | `'ethereum'` | ❌ Not required |
-| **BlockScout Polygon** | `'blockscout'` | `v1` | `'polygon'` | ❌ Not required |
-| **Etherscan Ethereum** | `'etherscan'` | `v2` | `'ethereum'` | ✅ `ETHERSCAN_KEY` |
-| **Etherscan Base** | `'etherscan'` | `v2` | `'base'` | ✅ `ETHERSCAN_KEY` |
-| **Moralis Ethereum** | `'moralis'` | `v1` | `'ethereum'` | ✅ `MORALIS_API_KEY` |
+```python
+class Method(Enum):
+    # Account
+    ACCOUNT_BALANCE = "account_balance"
+    ACCOUNT_BALANCE_MULTI = "account_balance_multi"
+    ACCOUNT_TRANSACTIONS = "account_transactions"
+    ACCOUNT_INTERNAL_TRANSACTIONS = "account_internal_transactions"
 
-## Configuration
+    # Tokens
+    TOKEN_BALANCE = "token_balance"
+    TOKEN_TRANSFERS = "token_transfers"
+    ACCOUNT_TOKEN_PORTFOLIO = "account_token_portfolio"    # NEW in v0.3
+    ACCOUNT_NFT_PORTFOLIO = "account_nft_portfolio"        # NEW in v0.3
 
-### Environment Variables
+    # Contract
+    CONTRACT_ABI = "contract_abi"
+    CONTRACT_SOURCE = "contract_source"
+    CONTRACT_VERIFY = "contract_verify"                    # NEW in v0.3
+    CONTRACT_VERIFY_STATUS = "contract_verify_status"      # NEW in v0.3
+
+    # Block
+    BLOCK_BY_NUMBER = "block_by_number"
+    BLOCK_COUNTDOWN = "block_countdown"
+
+    # Logs
+    EVENT_LOGS = "event_logs"
+
+    # Gas
+    GAS_ORACLE = "gas_oracle"
+
+    # Stats
+    ETH_SUPPLY = "eth_supply"
+    ETH_PRICE = "eth_price"
+```
+
+---
+
+## Environment Setup
+
 ```bash
-# API Keys (set as needed)
-ETHERSCAN_KEY=your_etherscan_api_key
-MORALIS_API_KEY=your_moralis_api_key
-# Blockscout works without API keys
+# Install dependencies
+pip install -e ".[dev]"
 
-## Development Guidelines
+# Set API keys (optional)
+export ETHERSCAN_KEY="your_key"
+```
 
-### Code Quality Standards
-- **Linting**: `ruff check` and `ruff format`
-- **Type Safety**: `mypy --strict` compatibility
-- **Testing**: `pytest` with comprehensive coverage
-- **Documentation**: Google-style docstrings for public APIs
+---
 
-## Adding New Scanners
+## Contact / Contributing
 
-The library supports adding new blockchain scanners through a plugin system. See the scanner implementations in `aiochainscan/scanners/` for examples of how to add support for new APIs.
-
-## Hexagonal Architecture
-
-The project implements hexagonal architecture with clear separation of concerns:
-
-- **Domain**: Pure business models and value objects (`domain/` module)
-- **Ports**: Protocol interfaces for external dependencies (`ports/` module)
-- **Services**: Business logic implementing use cases (`services/` module)
-- **Adapters**: Concrete implementations of ports (`adapters/` module)
-- **Facade**: Public API composition layer (`__init__.py` and `core/` modules)
-
-This architecture enables:
-- Easy testing through dependency injection
-- Flexible technology swapping (HTTP client, cache, telemetry)
-- Clean separation of business logic from infrastructure concerns
-- LLM-friendly code structure for maintainability
-
-## 🆕 **Moralis Web3 Data API Integration**
-
-Successfully integrated Moralis Web3 Data API as a modern multi-chain scanner with RESTful endpoints and rich metadata support.
-
-## Hexagonal Architecture Implementation Status
-
-The hexagonal architecture has been successfully implemented with clear separation of concerns:
-
-### ✅ **Completed Layers**
-- **Domain**: Pure value objects and business models in `domain/` module
-- **Ports**: Protocol interfaces in `ports/` module for external dependencies
-- **Services**: Business logic in `services/` module implementing use cases
-- **Adapters**: Concrete implementations in `adapters/` module
-- **Facade**: Public API in `__init__.py` and `core/` modules
-
-### ✅ **Architecture Benefits Achieved**
-- **Testability**: Dependency injection enables comprehensive testing
-- **Flexibility**: Easy swapping of HTTP clients, caches, telemetry backends
-- **Maintainability**: Clear separation of business logic from infrastructure
-- **Extensibility**: Adding new scanners or features follows established patterns
-
-### 🔄 **Migration Status**
-- **Phase 1**: ✅ Core hexagonal architecture implemented
-- **Phase 2**: ✅ ChainscanClient as primary unified interface
-- **Phase 3**: ✅ Legacy interfaces maintained for backward compatibility
-- **Future**: Enhanced type safety and performance optimizations
-
-### 📋 **Dependency Rules**
-- **Domain** → **Ports** → **Services** → **Adapters** → **Facade**
-- No cycles allowed; only rightward dependencies
-- Clean interfaces between layers enable technology swapping
+- See `CONTRIBUTING.md` for guidelines
+- Run `ruff check . && pytest tests/` before PRs
+- Follow hexagonal architecture patterns
