@@ -40,6 +40,10 @@ jobs:
       - name: Install dependencies
         run: uv sync --extra dev --frozen
 
+      # Run import tests FIRST to catch circular dependencies early
+      - name: Test imports (catch circular deps)
+        run: uv run pytest tests/test_imports.py -v --tb=short
+
       - name: Run pre-commit (all files)
         run: uv run pre-commit run --all-files --show-diff-on-failure
 
