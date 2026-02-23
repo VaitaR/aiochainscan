@@ -26,7 +26,7 @@ from aiochainscan.core.client import ChainscanClient
 from aiochainscan.core.method import Method
 
 
-def create_mcp_server():
+def create_mcp_server() -> FastMCPType:
     """Create and configure the MCP server with blockchain tools."""
 
     if not MCP_AVAILABLE:
@@ -136,5 +136,5 @@ if __name__ == '__main__':
         print('Error: MCP not installed. Run: pip install mcp')
         exit(1)
 
-    server = create_mcp_server()
+    server: FastMCPType = create_mcp_server()
     server.run()

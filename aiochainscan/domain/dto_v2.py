@@ -212,7 +212,7 @@ class TokenBalanceDTO(BaseModel):
         """Return balance as decimal value using token decimals."""
         if self.token_decimal is None:
             return None
-        return self.balance / (10**self.token_decimal)
+        return float(self.balance / (10**self.token_decimal))
 
 
 class BlockDTO(BaseModel):

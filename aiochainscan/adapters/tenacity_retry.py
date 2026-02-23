@@ -46,7 +46,7 @@ def _default_before_sleep_callback(retry_state: RetryCallState) -> None:
     logger.warning(
         'Retry attempt %d/%s failed with %s: %s. Waiting %.2f seconds before next attempt.',
         retry_state.attempt_number,
-        retry_state.retry_object.stop.max_attempt_number  # type: ignore[union-attr]
+        retry_state.retry_object.stop.max_attempt_number
         if hasattr(retry_state.retry_object.stop, 'max_attempt_number')
         else '?',
         type(exception).__name__ if exception else 'unknown',
