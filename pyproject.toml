@@ -121,6 +121,9 @@ aiochainscan = ["py.typed", "*.pyi", "fastabi/Cargo.toml", "fastabi/**/*.rs"]
 [tool.mypy]
 python_version = "3.10"
 strict = true
+warn_return_any = true
+warn_unused_configs = true
+show_error_codes = true
 files = ["aiochainscan"]
 plugins = []
 
@@ -244,4 +247,19 @@ module = [
   "requests",
   "structlog",
 ]
+ignore_missing_imports = true
+
+# Per-module overrides for optional dependencies
+# These packages are installed via extras: pip install aiochainscan[data,http,ai]
+
+[[tool.mypy.overrides]]
+module = ["polars", "polars.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["aiohttp", "aiohttp.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["mcp", "mcp.*", "mcp.server.*", "mcp.server.fastmcp"]
 ignore_missing_imports = true
