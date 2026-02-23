@@ -381,7 +381,8 @@ class ChainscanClient:
         # Only pass tag for Etherscan (other scanners may not support it)
         if self.scanner_name == 'etherscan':
             params['tag'] = tag
-        return await self.call(Method.ACCOUNT_BALANCE, **params)
+        result: str = await self.call(Method.ACCOUNT_BALANCE, **params)
+        return result
 
     async def get_transactions(
         self,
@@ -390,7 +391,7 @@ class ChainscanClient:
         end_block: int | None = None,
         page: int = 1,
         offset: int = 100,
-    ) -> list[dict]:
+    ) -> list[dict[Any, Any]]:
         """Get list of normal transactions for address.
 
         Args:
@@ -411,7 +412,8 @@ class ChainscanClient:
             params['offset'] = offset
             if end_block is not None:
                 params['endblock'] = end_block
-        return await self.call(Method.ACCOUNT_TRANSACTIONS, **params)
+        result: list[dict[Any, Any]] = await self.call(Method.ACCOUNT_TRANSACTIONS, **params)
+        return result
 
     async def get_token_transfers(
         self,
@@ -419,7 +421,7 @@ class ChainscanClient:
         contract_address: str | None = None,
         start_block: int = 0,
         end_block: int | None = None,
-    ) -> list[dict]:
+    ) -> list[dict[Any, Any]]:
         """Get ERC20 token transfers for address.
 
         Args:
@@ -439,9 +441,10 @@ class ChainscanClient:
                 params['contractaddress'] = contract_address
             if end_block:
                 params['endblock'] = end_block
-        return await self.call(Method.ACCOUNT_ERC20_TRANSFERS, **params)
+        result: list[dict[Any, Any]] = await self.call(Method.ACCOUNT_ERC20_TRANSFERS, **params)
+        return result
 
-    async def get_token_portfolio(self, address: str) -> list[dict]:
+    async def get_token_portfolio(self, address: str) -> list[dict[Any, Any]]:
         """Get all ERC20 tokens held by address.
 
         Args:
@@ -450,7 +453,10 @@ class ChainscanClient:
         Returns:
             List of token holding dictionaries
         """
-        return await self.call(Method.ACCOUNT_TOKEN_PORTFOLIO, address=address)
+        result: list[dict[Any, Any]] = await self.call(
+            Method.ACCOUNT_TOKEN_PORTFOLIO, address=address
+        )
+        return result
 
     async def get_contract_abi(self, address: str) -> str:
         """Get contract ABI as JSON string.
@@ -461,7 +467,8 @@ class ChainscanClient:
         Returns:
             Contract ABI as JSON string
         """
-        return await self.call(Method.CONTRACT_ABI, address=address)
+        result: str = await self.call(Method.CONTRACT_ABI, address=address)
+        return result
 
     # =========================================================================
     # STREAMING API - Memory-efficient iteration
@@ -471,7 +478,7 @@ class ChainscanClient:
         self,
         address: str,
         batch_size: int = 1000,
-    ) -> AsyncIterator[dict]:
+    ) -> AsyncIterator[dict[Any, Any]]:
         """
         Stream transactions with O(1) memory usage.
 

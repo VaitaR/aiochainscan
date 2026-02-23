@@ -71,6 +71,7 @@ module-name = "aiochainscan.aiochainscan_fastabi"
 manifest-path = "aiochainscan/fastabi/Cargo.toml"
 python-source = "."
 features = ["pyo3/extension-module"]
+strip = true  # Strip debug symbols from the binary to reduce wheel size
 
 [tool.pytest.ini_options]
 pythonpath = [

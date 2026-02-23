@@ -6,7 +6,7 @@ from typing import Any, cast
 
 import requests
 from eth_abi.abi import decode
-from eth_utils import keccak
+from eth_utils import keccak  # type: ignore[attr-defined]
 
 # Try to import fastabi Rust backend
 try:
