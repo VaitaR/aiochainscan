@@ -438,27 +438,22 @@ class TestCallMethod:
             'coin_balance': '12345678901234567890',
         }
 
-        # Mock aiohttp module import
-        mock_aiohttp = MagicMock()
-        with patch.dict('sys.modules', {'aiohttp': mock_aiohttp}):
-            mock_session_class = mock_aiohttp.ClientSession
-            # Set up the async context manager chain
+        # Mock httpx module import (we now use httpx instead of aiohttp)
+        mock_httpx = MagicMock()
+        with patch.dict('sys.modules', {'httpx': mock_httpx}):
+            # Set up the async client mock
             mock_response_obj = MagicMock()
-            mock_response_obj.json = AsyncMock(return_value=mock_response)
+            mock_response_obj.json = MagicMock(return_value=mock_response)
             mock_response_obj.raise_for_status = MagicMock()
 
-            mock_get_context = MagicMock()
-            mock_get_context.__aenter__ = AsyncMock(return_value=mock_response_obj)
-            mock_get_context.__aexit__ = AsyncMock(return_value=None)
+            mock_client = MagicMock()
+            mock_client.get = AsyncMock(return_value=mock_response_obj)
 
-            mock_session = MagicMock()
-            mock_session.get = MagicMock(return_value=mock_get_context)
+            mock_client_context = MagicMock()
+            mock_client_context.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client_context.__aexit__ = AsyncMock(return_value=None)
 
-            mock_session_context = MagicMock()
-            mock_session_context.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_session_context.__aexit__ = AsyncMock(return_value=None)
-
-            mock_session_class.return_value = mock_session_context
+            mock_httpx.AsyncClient.return_value = mock_client_context
 
             result = await scanner.call(
                 Method.ACCOUNT_BALANCE,
@@ -482,27 +477,22 @@ class TestCallMethod:
             'next_page_params': None,
         }
 
-        # Mock aiohttp module import
-        mock_aiohttp = MagicMock()
-        with patch.dict('sys.modules', {'aiohttp': mock_aiohttp}):
-            mock_session_class = mock_aiohttp.ClientSession
-            # Set up the async context manager chain
+        # Mock httpx module import (we now use httpx instead of aiohttp)
+        mock_httpx = MagicMock()
+        with patch.dict('sys.modules', {'httpx': mock_httpx}):
+            # Set up the async client mock
             mock_response_obj = MagicMock()
-            mock_response_obj.json = AsyncMock(return_value=mock_response)
+            mock_response_obj.json = MagicMock(return_value=mock_response)
             mock_response_obj.raise_for_status = MagicMock()
 
-            mock_get_context = MagicMock()
-            mock_get_context.__aenter__ = AsyncMock(return_value=mock_response_obj)
-            mock_get_context.__aexit__ = AsyncMock(return_value=None)
+            mock_client = MagicMock()
+            mock_client.get = AsyncMock(return_value=mock_response_obj)
 
-            mock_session = MagicMock()
-            mock_session.get = MagicMock(return_value=mock_get_context)
+            mock_client_context = MagicMock()
+            mock_client_context.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client_context.__aexit__ = AsyncMock(return_value=None)
 
-            mock_session_context = MagicMock()
-            mock_session_context.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_session_context.__aexit__ = AsyncMock(return_value=None)
-
-            mock_session_class.return_value = mock_session_context
+            mock_httpx.AsyncClient.return_value = mock_client_context
 
             result = await scanner.call(
                 Method.ACCOUNT_TOKEN_PORTFOLIO,
@@ -510,6 +500,8 @@ class TestCallMethod:
             )
 
             assert len(result) == 1
+            assert result[0]['token']['symbol'] == 'USDC'
+            assert result[0]['value'] == '1000000'
             assert result[0]['token']['symbol'] == 'USDC'
 
 

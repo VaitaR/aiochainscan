@@ -186,24 +186,39 @@ class ChainscanClient:
         # Resolve chain_id from network name/id
         chain_id = resolve_chain_id(network)
 
+        # If network was passed as int (chain_id), resolve it to canonical name
+        # This ensures from_config('etherscan', 8453) works correctly
+        from aiochainscan.chain_registry import get_chain_name
+
+        network_str = get_chain_name(network) if isinstance(network, int) else str(network)
+
         # Get API key using existing config system
         # For backward compatibility, map scanner names to their config IDs
-        scanner_id_map = {
-            'blockscout': 'blockscout_eth',
-            'blockscout_v2': 'blockscout_eth',  # BlockScout V2 uses same config
-            'etherscan': 'eth',
-            'moralis': 'moralis',
-            'routscan': 'routscan_mode',
-        }
-        scanner_id = scanner_id_map.get(scanner_name, scanner_name)
-        # Use the original network parameter for config lookup, not the resolved chain name
-        # Ensure network is a string for config lookup
-        network_str = str(network) if not isinstance(network, str) else network
+        # BlockScout scanner ID is determined by network (not hardcoded to eth)
+        if scanner_name == 'blockscout':
+            # Map network to appropriate BlockScout config ID
+            blockscout_config_map = {
+                'ethereum': 'blockscout_eth',
+                'eth': 'blockscout_eth',
+                'polygon': 'blockscout_polygon',
+                'gnosis': 'blockscout_gnosis',
+                'optimism': 'blockscout_optimism',
+                'base': 'blockscout_base',
+            }
+            scanner_id = blockscout_config_map.get(network_str, f'blockscout_{network_str}')
+        else:
+            scanner_id_map = {
+                'blockscout_v2': 'blockscout_eth',  # V2 doesn't use config
+                'etherscan': 'eth',
+                'moralis': 'moralis',
+                'routscan': 'routscan_mode',
+            }
+            scanner_id = scanner_id_map.get(scanner_name, scanner_name)
 
         # Normalize network aliases for different scanners (for config lookup only)
         # Different scanners use different naming conventions for the same networks
         network_aliases: dict[str, dict[str, str]] = {
-            'etherscan': {'ethereum': 'main', 'eth': 'main'},
+            'etherscan': {'ethereum': 'main', 'eth': 'main', 'base': 'main'},
             'blockscout': {'ethereum': 'eth', 'main': 'eth'},
             'blockscout_v2': {'main': 'ethereum'},
         }

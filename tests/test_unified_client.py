@@ -199,6 +199,55 @@ class TestChainscanClient:
         assert client.network == 'ethereum'
         assert client.api_key == 'test_api_key'
 
+    @patch('aiochainscan.core.client.global_config')
+    def test_client_from_config_with_chain_id(self, mock_global_config, mock_config):
+        """Test client creation from config with numeric chain_id instead of network name.
+
+        This is a regression test for P1 bug where from_config('etherscan', 8453)
+        would fail because chain_id wasn't resolved to network name 'base'.
+        """
+        mock_global_config.create_client_config.return_value = mock_config
+
+        # Use chain_id 8453 (Base) instead of network name
+        client = ChainscanClient.from_config('etherscan', 8453)
+
+        assert client.scanner_name == 'etherscan'
+        assert client.scanner_version == 'v2'
+        assert client.api_kind == 'eth'
+        # Chain ID 8453 should be resolved to 'base'
+        assert client.network == 'base'
+        assert client.api_key == 'test_api_key'
+
+        # Config should be looked up with resolved network name 'main' (Base uses 'main')
+        mock_global_config.create_client_config.assert_called_once_with('eth', 'main')
+
+    @patch('aiochainscan.core.client.global_config')
+    def test_client_from_config_blockscout_network_mapping(self, mock_global_config, mock_config):
+        """Test BlockScout config mapping by network (not hardcoded to blockscout_eth).
+
+        This is a regression test for P1 bug where from_config('blockscout', 'polygon')
+        would always use blockscout_eth config regardless of the actual network.
+        """
+        mock_global_config.create_client_config.return_value = mock_config
+
+        # Test Polygon - should use blockscout_polygon config
+        client = ChainscanClient.from_config('blockscout', 'polygon')
+
+        assert client.scanner_name == 'blockscout'
+        # Config lookup should use blockscout_polygon, not blockscout_eth
+        mock_global_config.create_client_config.assert_called_once_with(
+            'blockscout_polygon', 'polygon'
+        )
+
+        # Reset mock
+        mock_global_config.create_client_config.reset_mock()
+
+        # Test Gnosis - should use blockscout_gnosis config
+        client = ChainscanClient.from_config('blockscout', 'gnosis')
+        mock_global_config.create_client_config.assert_called_once_with(
+            'blockscout_gnosis', 'gnosis'
+        )
+
         # Test BlockScout defaults to v1
         client = ChainscanClient.from_config(
             'blockscout', 'eth'
