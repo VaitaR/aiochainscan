@@ -322,39 +322,39 @@ class BlockScoutV2Scanner(Scanner):
             'Accept-Encoding': 'gzip, deflate',
         }
 
-        # Import aiohttp locally to avoid hard dependency at module level
-        import aiohttp
+        # Use httpx (declared dependency) instead of aiohttp
+        import httpx
 
         # TODO: ARCHITECTURAL ISSUE - This bypasses the Network layer's retry/rate-limit/pooling.
         # A proper fix requires refactoring to use self._network_client with custom URL support.
         # See: https://github.com/aiochainscan/aiochainscan/issues/XXX
         try:
-            async with aiohttp.ClientSession() as session:
+            async with httpx.AsyncClient() as client:
                 if spec.http_method == 'GET':
-                    async with session.get(
+                    response = await client.get(
                         url,
                         params=query_params if query_params else None,
                         headers=headers,
-                    ) as response:
-                        response.raise_for_status()
-                        raw_response = await response.json()
+                    )
+                    response.raise_for_status()
+                    raw_response = response.json()
                 else:  # POST
-                    async with session.post(
+                    response = await client.post(
                         url,
                         json=query_params if query_params else None,
                         headers={**headers, 'Content-Type': 'application/json'},
-                    ) as response:
-                        response.raise_for_status()
-                        raw_response = await response.json()
+                    )
+                    response.raise_for_status()
+                    raw_response = response.json()
 
             return spec.parse_response(raw_response)
 
-        except aiohttp.ClientResponseError as e:
+        except httpx.HTTPStatusError as e:
             raise ChainscanClientApiError(
-                f'Blockscout V2 API error ({e.status})',
-                f'{e.message} - URL: {url}',
+                f'Blockscout V2 API error ({e.response.status_code})',
+                f'{e.response.text} - URL: {url}',
             ) from e
-        except aiohttp.ClientError as e:
+        except httpx.HTTPError as e:
             raise ChainscanNetworkError(
                 f'Blockscout V2 network error for {self.base_url}: {e}',
                 retryable=True,
@@ -444,20 +444,18 @@ class BlockScoutV2Scanner(Scanner):
         spec = self.SPECS[Method.ACCOUNT_BALANCE]
         url = self._build_url(spec, address=address)
 
-        # Import aiohttp locally to avoid hard dependency at module level
-        import aiohttp
+        # Use httpx (declared dependency) instead of aiohttp
+        import httpx
 
         headers = {
             'Accept': 'application/json',
             'Accept-Encoding': 'gzip, deflate',
         }
 
-        async with (
-            aiohttp.ClientSession() as session,
-            session.get(url, headers=headers) as response,
-        ):
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, headers=headers)
             response.raise_for_status()
-            result = await response.json()
+            result = response.json()
             return dict(result) if result else {}
 
     def __str__(self) -> str:
