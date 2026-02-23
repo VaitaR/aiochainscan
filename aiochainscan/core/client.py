@@ -492,12 +492,19 @@ class ChainscanClient:
         Yields:
             Transaction dictionaries one at a time
 
+        Raises:
+            ValueError: If batch_size is less than 1
+
         Example:
             ```python
             async for tx in client.iter_transactions(address):
                 await db.save(tx)
             ```
         """
+        # Validate batch_size to prevent infinite loops
+        if batch_size < 1:
+            raise ValueError(f'batch_size must be at least 1, got {batch_size}')
+
         # BlockScout V2 has special pagination with next_page_params
         if self.scanner_name == 'blockscout' and self.scanner_version == 'v2':
             # Import here to avoid circular dependency
