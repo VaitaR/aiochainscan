@@ -19,6 +19,9 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
         with:
@@ -27,7 +30,7 @@ jobs:
       - name: Install build tools
         run: |
           python -m pip install --upgrade pip
-          pip install build wheel setuptools
+          pip install 'maturin>=1.8,<2.0' build wheel setuptools
 
       - name: Build wheel
         run: python -m build
@@ -79,6 +82,9 @@ jobs:
           python -m venv /tmp/test-editable
           source /tmp/test-editable/bin/activate
 
+          # Install maturin first (for Rust extension build)
+          pip install 'maturin>=1.8,<2.0'
+
           pip install -e .
 
           # Verify editable install
@@ -94,6 +100,9 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -104,6 +113,9 @@ jobs:
           # Simulate user installing from GitHub
           python -m venv /tmp/test-git
           source /tmp/test-git/bin/activate
+
+          # Install maturin first (for Rust extension build)
+          pip install 'maturin>=1.8,<2.0'
 
           # Install from current directory (simulates git+https://...)
           pip install .
@@ -125,6 +137,9 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -132,7 +147,7 @@ jobs:
 
       - name: Build and install
         run: |
-          python -m pip install --upgrade pip build
+          python -m pip install --upgrade pip 'maturin>=1.8,<2.0' build
           python -m build
           pip install dist/*.whl
 
