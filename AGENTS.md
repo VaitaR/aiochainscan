@@ -28,7 +28,7 @@ portfolio = await client.call(Method.ACCOUNT_TOKEN_PORTFOLIO, address='0x...')
 await client.close()
 ```
 
-> **Note:** Legacy `Client` class and `modules/` were removed in v0.3.0. 
+> **Note:** Legacy `Client` class and `modules/` were removed in v0.3.0.
 > See [docs/MIGRATION_GUIDE.md](docs/MIGRATION_GUIDE.md) for migration help.
 
 ---
@@ -206,29 +206,29 @@ class Method(Enum):
     ACCOUNT_BALANCE_MULTI = "account_balance_multi"
     ACCOUNT_TRANSACTIONS = "account_transactions"
     ACCOUNT_INTERNAL_TRANSACTIONS = "account_internal_transactions"
-    
+
     # Tokens
     TOKEN_BALANCE = "token_balance"
     TOKEN_TRANSFERS = "token_transfers"
     ACCOUNT_TOKEN_PORTFOLIO = "account_token_portfolio"    # NEW in v0.3
     ACCOUNT_NFT_PORTFOLIO = "account_nft_portfolio"        # NEW in v0.3
-    
+
     # Contract
     CONTRACT_ABI = "contract_abi"
     CONTRACT_SOURCE = "contract_source"
     CONTRACT_VERIFY = "contract_verify"                    # NEW in v0.3
     CONTRACT_VERIFY_STATUS = "contract_verify_status"      # NEW in v0.3
-    
+
     # Block
     BLOCK_BY_NUMBER = "block_by_number"
     BLOCK_COUNTDOWN = "block_countdown"
-    
+
     # Logs
     EVENT_LOGS = "event_logs"
-    
+
     # Gas
     GAS_ORACLE = "gas_oracle"
-    
+
     # Stats
     ETH_SUPPLY = "eth_supply"
     ETH_PRICE = "eth_price"

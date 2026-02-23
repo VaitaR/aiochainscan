@@ -17,7 +17,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, ClassVar
 
-import aiohttp
+try:
+    import aiohttp
+except ImportError:
+    aiohttp = None  # type: ignore
 
 from ..core.endpoint import EndpointSpec
 from ..core.method import Method
@@ -324,6 +327,12 @@ class BlockScoutV2Scanner(Scanner):
             'Accept-Encoding': 'gzip, deflate',
         }
 
+        if aiohttp is None:
+            raise ImportError(
+                'aiohttp is required for BlockScout V2 scanner. '
+                "Install it with: pip install 'aiochainscan[http]'"
+            )
+
         # TODO: ARCHITECTURAL ISSUE - This bypasses the Network layer's retry/rate-limit/pooling.
         # A proper fix requires refactoring to use self._network_client with custom URL support.
         # See: https://github.com/aiochainscan/aiochainscan/issues/XXX
@@ -442,6 +451,12 @@ class BlockScoutV2Scanner(Scanner):
 
         spec = self.SPECS[Method.ACCOUNT_BALANCE]
         url = self._build_url(spec, address=address)
+
+        if aiohttp is None:
+            raise ImportError(
+                'aiohttp is required for BlockScout V2 scanner. '
+                "Install it with: pip install 'aiochainscan[http]'"
+            )
 
         headers = {
             'Accept': 'application/json',

@@ -23,7 +23,10 @@ from aiochainscan.capabilities import (
 )
 from aiochainscan.config import ChainScanConfig, ScannerConfig, config  # noqa: F401
 from aiochainscan.config import config_manager as _config_manager
-from aiochainscan.core.client import ChainscanClient  # unified client export
+
+# Import ChainscanClient last to avoid circular import
+# (it imports scanners which register themselves during import)
+from aiochainscan.core.client import ChainscanClient  # noqa: E402
 from aiochainscan.core.method import Method  # unified method enum
 from aiochainscan.domain.dto import (
     AddressBalanceDTO,
