@@ -122,7 +122,7 @@ class ChainscanClient:
         # Get scanner class and create instance with shared network client
         scanner_class = get_scanner_class(scanner_name, scanner_version)
         # Use chain_id to resolve the correct network name for this scanner
-        scanner_network = self._get_scanner_network_name(scanner_name, network)
+        scanner_network = self._get_scanner_network_name(scanner_name, scanner_version, network)
         self._scanner = scanner_class(
             api_key, scanner_network, self._url_builder, chain_id, network_client=self._network
         )
@@ -235,7 +235,7 @@ class ChainscanClient:
             scanner_name=actual_scanner_name,
             scanner_version=scanner_version,
             api_kind=api_kind,  # Use mapped api_kind for UrlBuilder compatibility
-            network=config_network,  # Use normalized network for scanner compatibility
+            network=network_str,  # Preserve original network value
             api_key=api_key,
             chain_id=chain_id,  # Pass chain_id to scanner
             timeout=timeout,
@@ -244,7 +244,9 @@ class ChainscanClient:
             retry_policy=retry_policy,
         )
 
-    def _get_scanner_network_name(self, scanner_name: str, network: str) -> str:
+    def _get_scanner_network_name(
+        self, scanner_name: str, scanner_version: str, network: str
+    ) -> str:
         """
         Get the correct network name for a specific scanner.
 
@@ -253,16 +255,27 @@ class ChainscanClient:
 
         Args:
             scanner_name: Name of the scanner (e.g., 'etherscan', 'blockscout')
+            scanner_version: Version of the scanner (e.g., 'v1', 'v2')
             network: Unified network name (e.g., 'ethereum', 'polygon', 1)
 
         Returns:
             Scanner-specific network name
         """
-        # For Etherscan, map 'ethereum' to 'main' for backward compatibility
-        if scanner_name == 'etherscan' and network == 'ethereum':
+        # Network aliases for different scanners
+        # blockscout v1 uses 'eth', v2 uses 'ethereum'
+        if scanner_name == 'blockscout' and scanner_version == 'v1':
+            # v1 uses 'eth' for Ethereum mainnet
+            if network in ('ethereum', 'main'):
+                return 'eth'
+        elif scanner_name == 'blockscout' and scanner_version == 'v2':
+            # v2 uses 'ethereum' for Ethereum mainnet
+            if network == 'main':
+                return 'ethereum'
+        elif scanner_name == 'etherscan' and network == 'ethereum':
+            # Etherscan uses 'main' for Ethereum mainnet
             return 'main'
 
-        # For other scanners, use the network name as-is
+        # For other cases, use the network name as-is
         return network
 
     async def call(self, method: Method, **params: Any) -> Any:
