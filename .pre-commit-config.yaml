@@ -26,13 +26,13 @@ repos:
         pass_filenames: false
         stages: [pre-commit]
 
-      # Run mypy on pre-push (slower, more thorough)
+      # Run mypy on EVERY COMMIT to catch type errors early
       - id: mypy
-        name: mypy (strict)
+        name: mypy (strict - local check)
         entry: uv run mypy --strict aiochainscan
         language: system
         pass_filenames: false
-        stages: [pre-push]
+        stages: [pre-commit]
 
       # Run quick tests on pre-push
       - id: pytest
