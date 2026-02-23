@@ -265,11 +265,11 @@ async def fetch_all(
                             _telemetry=telemetry,
                         )
                     except Exception as exc:  # noqa: BLE001
-                        from aiohttp import ClientResponseError  # local import
+                        import httpx  # local import
 
                         if (
-                            isinstance(exc, ClientResponseError)
-                            and exc.status in {502, 503, 504, 520, 524}
+                            isinstance(exc, httpx.HTTPStatusError)
+                            and exc.response.status_code in {502, 503, 504, 520, 524}
                             and attempts_left > 0
                         ):
                             attempts_left -= 1
