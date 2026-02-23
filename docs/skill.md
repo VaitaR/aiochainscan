@@ -23,13 +23,13 @@ async def get_wallet_info(address: str):
         # Get balance (returns Wei as string)
         balance_wei = await client.get_balance(address)
         balance_eth = int(balance_wei) / 10**18
-        
+
         # Get transactions
         txs = await client.get_transactions(address)
-        
+
         # Get token portfolio
         tokens = await client.get_token_portfolio(address)
-        
+
         return {
             "balance_eth": balance_eth,
             "transaction_count": len(txs),
@@ -194,12 +194,12 @@ async def check_wallets(addresses: list[str]):
 async def get_multichain_balance(address: str):
     networks = ["ethereum", "polygon", "arbitrum", "optimism", "base"]
     results = {}
-    
+
     for network in networks:
         async with ChainscanClient.from_config("blockscout_v2", network) as client:
             balance = await client.get_balance(address)
             results[network] = int(balance) / 10**18
-    
+
     return results
 ```
 
@@ -210,7 +210,7 @@ import csv
 async def export_transactions(address: str, filename: str):
     async with ChainscanClient.from_config("blockscout_v2", "ethereum") as client:
         txs = await client.get_transactions(address)
-        
+
         with open(filename, 'w', newline='') as f:
             writer = csv.DictWriter(f, fieldnames=["hash", "value", "from", "to"])
             writer.writeheader()

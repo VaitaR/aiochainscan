@@ -205,12 +205,12 @@ class ClientContext(Protocol):
 ```python
 class AdaptiveRetryPolicy:
     """Retry policy that handles both HTTP errors and logical rate limits."""
-    
+
     def should_retry(self, error: Exception) -> bool:
         if isinstance(error, ChainscanRateLimitError):
             return True  # Always retry rate limits
         # ... existing logic
-    
+
     def get_delay(self, attempt: int, error: Exception) -> float:
         if isinstance(error, ChainscanRateLimitError):
             return min(2 ** attempt, 60)  # Exponential up to 60s
@@ -289,9 +289,9 @@ async def get_balances_multi(
 ```python
 class FinalityAwareCache:
     """Cache that respects blockchain finality depth."""
-    
+
     SAFE_DEPTH = 32  # Blocks considered finalized
-    
+
     async def set(self, key: str, value: Any, *, block_number: int | None = None):
         if block_number and self._is_finalized(block_number):
             ttl = 86400  # 24h for finalized data
@@ -328,8 +328,8 @@ Currently only partial GraphQL support. Expand to cover:
 
 ### 6. New Scanner Integrations
 
-> **Note:** In v0.3.0, we removed Moralis and RoutScan scanners to focus on 
-> core Etherscan and Blockscout support. Future scanner additions will follow 
+> **Note:** In v0.3.0, we removed Moralis and RoutScan scanners to focus on
+> core Etherscan and Blockscout support. Future scanner additions will follow
 > the same clean architecture established with these core providers.
 
 #### 6.1 Alchemy API
@@ -450,7 +450,7 @@ class OptimizedFetcher:
     def __init__(self, scheduler: BlockRangeScheduler, workers: int):
         self.scheduler = scheduler
         self.workers = workers
-    
+
     async def fetch(self, address: str) -> list[dict]:
         ranges = self.scheduler.generate_ranges()
         results = await self._parallel_fetch(ranges)

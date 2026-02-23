@@ -1,6 +1,6 @@
 # Independent Code Audit: aiochainscan
-**Date:** 2026-02-23  
-**Auditor:** Senior Software Architect  
+**Date:** 2026-02-23
+**Auditor:** Senior Software Architect
 **Focus:** Architecture, Security, Type Safety, Performance, API Consistency
 
 ---
@@ -74,7 +74,7 @@ This audit discovered **29 mypy errors**, multiple architectural concerns, and s
 class RateLimiter(Protocol):
     async def acquire(self, key: str = 'default') -> None: ...
 
-# Adapter implements:  
+# Adapter implements:
 class SimpleRateLimiter(RateLimiter):
     async def acquire(self, key: str) -> None:  # Missing default!
 ```
