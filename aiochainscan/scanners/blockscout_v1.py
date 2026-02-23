@@ -11,13 +11,16 @@ Supports multiple blockchain networks through different BlockScout instances:
 - And many more...
 """
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..core.endpoint import EndpointSpec
 from ..core.method import Method
 from ..url_builder import UrlBuilder
 from . import register_scanner
 from ._etherscan_like import EtherscanLikeScanner
+
+if TYPE_CHECKING:
+    from ..network import Network
 
 
 @register_scanner
@@ -71,7 +74,12 @@ class BlockScoutV1(EtherscanLikeScanner):
     }
 
     def __init__(
-        self, api_key: str, network: str, url_builder: UrlBuilder, chain_id: int | None = None
+        self,
+        api_key: str,
+        network: str,
+        url_builder: UrlBuilder,
+        chain_id: int | None = None,
+        network_client: 'Network | None' = None,
     ) -> None:
         """
         Initialize BlockScout scanner with network-specific instance.
@@ -81,8 +89,9 @@ class BlockScoutV1(EtherscanLikeScanner):
             network: Network name (must be in supported_networks)
             url_builder: UrlBuilder instance
             chain_id: Chain ID (optional, will be resolved from network)
+            network_client: Optional Network instance for connection pooling
         """
-        super().__init__(api_key, network, url_builder, chain_id)
+        super().__init__(api_key, network, url_builder, chain_id, network_client)
 
         # Get BlockScout instance for this network
         self.instance_domain = self.NETWORK_INSTANCES.get(network)

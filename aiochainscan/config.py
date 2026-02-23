@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import os
@@ -379,11 +380,20 @@ class ConfigurationManager:
             raise ValueError(f'Invalid scanner configuration for {scanner_id}: missing {e}') from e
 
     def get_scanner_config(self, scanner_id: str) -> ScannerConfig:
-        """Get configuration for a specific scanner."""
+        """Get configuration for a specific scanner.
+
+        Returns a deep copy of the configuration to ensure thread safety and
+        prevent mutable state leakage between different client instances.
+        This is critical for multi-tenant applications where API keys and
+        other sensitive configuration must remain isolated per client.
+        """
         if scanner_id not in self._scanners:
             available = ', '.join(self._scanners.keys())
             raise ValueError(f'Unknown scanner "{scanner_id}". Available: {available}')
-        return self._scanners[scanner_id]
+        # Security: Return a deep copy to prevent mutation of shared global state.
+        # This ensures API keys and other sensitive config cannot leak between
+        # different client instances in multi-tenant environments.
+        return copy.deepcopy(self._scanners[scanner_id])
 
     def get_api_key(self, scanner_id: str) -> str:
         """Get API key for a scanner with validation.

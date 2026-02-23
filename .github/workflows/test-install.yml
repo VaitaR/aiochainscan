@@ -48,7 +48,7 @@ jobs:
           python -c "import aiochainscan; print(f'✓ Version: {aiochainscan.__version__}')"
 
           # Verify main modules
-          python -c "from aiochainscan import Client, ChainscanClient; print('✓ Main classes imported')"
+          python -c "from aiochainscan import ChainscanClient, Method; print('✓ Main classes imported')"
 
           # Verify facade imports
           python -c "from aiochainscan import get_balance, get_block, get_transaction; print('✓ Facades imported')"
@@ -139,7 +139,7 @@ jobs:
       - name: Check dependencies are installed
         run: |
           python -c "import aiohttp; print('✓ aiohttp')"
-          python -c "import asyncio_throttle; print('✓ asyncio_throttle')"
+          python -c "import aiolimiter; print('✓ aiolimiter')"
           python -c "import aiohttp_retry; print('✓ aiohttp_retry')"
           python -c "import eth_abi; print('✓ eth_abi')"
           python -c "import structlog; print('✓ structlog')"

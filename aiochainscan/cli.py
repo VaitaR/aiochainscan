@@ -152,22 +152,22 @@ def cmd_test_scanner(args: argparse.Namespace) -> None:
     """Test a scanner configuration."""
     import asyncio
 
-    from aiochainscan import Client
+    from aiochainscan import ChainscanClient, Method
 
     async def test_scanner() -> None:
         print(f'🧪 Testing {args.scanner} scanner...')
 
         try:
-            client = Client.from_config(args.scanner, args.network)
+            client = ChainscanClient.from_config(args.scanner, args.network)
             print('✅ Client created successfully')
 
             # Test a simple API call
             try:
-                if hasattr(client.stats, 'eth_price'):
-                    price = await client.stats.eth_price()
-                    print(f'✅ API test successful - got response: {type(price)}')
-                else:
-                    print('⚠️ No eth_price method available for testing')
+                # Use the modern Method-based API
+                result = await client.call(
+                    Method.ETH_PRICE,
+                )
+                print(f'✅ API test successful - got response: {type(result)}')
 
             except Exception as e:
                 print(f'⚠️ API test failed: {e}')

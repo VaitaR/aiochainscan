@@ -184,3 +184,11 @@ examples/*_results.json
 examples/*_summary.md
 examples/*_detailed.md
 !examples/README.md
+
+# Dump files and directories
+dumps/
+dump_*.py
+dump_*.json
+test_dump.py
+*_dump.json
+ethereum_*.json

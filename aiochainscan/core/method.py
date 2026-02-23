@@ -36,11 +36,17 @@ class Method(Enum):
     CONTRACT_ABI = auto()
     CONTRACT_SOURCE = auto()
     CONTRACT_CREATION = auto()
+    CONTRACT_VERIFY = auto()  # Submit source for verification
+    CONTRACT_VERIFY_STATUS = auto()  # Check verification status
 
     # Token operations
     TOKEN_BALANCE = auto()
     TOKEN_SUPPLY = auto()
     TOKEN_INFO = auto()
+
+    # Token/NFT Portfolio
+    ACCOUNT_TOKEN_PORTFOLIO = auto()  # All ERC20 tokens for address
+    ACCOUNT_NFT_PORTFOLIO = auto()  # All NFTs for address
 
     # Gas operations
     GAS_ESTIMATE = auto()

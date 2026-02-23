@@ -1,6 +1,6 @@
 [project]
 name = "aiochainscan"
-version = "0.2.3"
+version = "0.4.0"
 description = "Chainscan API async Python wrapper"
 authors = [
     { name = "VaitaR", email = "andrey.shivalin@gmail.com" }
@@ -16,16 +16,18 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
 ]
 
 dependencies = [
-    "aiohttp>=3.4",
-    "asyncio-throttle>=1.0.1",
-    "aiohttp-retry>=2.8.3",
-    "pycryptodome",
+    "httpx[http2]>=0.27.0",
+    "aiolimiter>=1.1.0",
+    "tenacity>=8.2.0",
     "eth-abi",
-    "requests>=2.31.0",
+    "eth-utils>=2.0.0",
     "structlog>=23.1.0",
+    "orjson>=3.10.0",
+    "pydantic>=2.7.0",
 ]
 
 [project.optional-dependencies]
@@ -43,6 +45,12 @@ dev = [
 fast = [
     "maturin>=1.6,<2.0",
 ]
+mcp = [
+    "mcp>=1.0.0",
+]
+data = [
+    "polars>=1.0.0",
+]
 
 [project.scripts]
 aiochainscan = "aiochainscan.cli:main"
@@ -53,8 +61,15 @@ Repository = "https://github.com/VaitaR/aiochainscan"
 Issues = "https://github.com/VaitaR/aiochainscan/issues"
 
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
-build-backend = "setuptools.build_meta"
+requires = ["maturin>=1.6,<2.0"]
+build-backend = "maturin"
+
+[tool.maturin]
+# Build the fastabi Rust extension
+module-name = "aiochainscan.aiochainscan_fastabi"
+manifest-path = "aiochainscan/fastabi/Cargo.toml"
+python-source = "."
+features = ["pyo3/extension-module"]
 
 [tool.pytest.ini_options]
 pythonpath = [
@@ -210,21 +225,6 @@ forbidden_modules = [
 
 [[tool.mypy.overrides]]
 module = [
-  "aiochainscan.modules.extra.*",
-]
-ignore_errors = false
-
-[[tool.mypy.overrides]]
-module = [
-  "aiochainscan.modules.transaction",
-  "aiochainscan.modules.logs",
-  "aiochainscan.modules.contract",
-  "aiochainscan.modules.token",
-  "aiochainscan.modules.stats",
-  "aiochainscan.modules.proxy",
-  "aiochainscan.modules.gas_tracker",
- "aiochainscan.modules.block",
- "aiochainscan.modules.account",
  "aiochainscan.common",
  "aiochainscan.network",
  "aiochainscan.config",

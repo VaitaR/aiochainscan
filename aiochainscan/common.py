@@ -1,9 +1,6 @@
 from datetime import date
 from enum import Enum
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from aiochainscan.client import Client
+from typing import Any
 
 
 class ChainFeatures(Enum):
@@ -97,14 +94,19 @@ SCANNER_FEATURES: dict[str, set[ChainFeatures]] = {
 }
 
 
-def check_feature_support(client: 'Client', feature: ChainFeatures) -> bool:
-    """Check if a feature is supported by the current scanner."""
+def check_feature_support(client: Any, feature: ChainFeatures) -> bool:
+    """Check if a feature is supported by the current scanner.
+
+    Args:
+        client: Client-like object with _url_builder._api_kind attribute
+        feature: Feature to check support for
+    """
     scanner_id = client._url_builder._api_kind
     scanner_features = SCANNER_FEATURES.get(scanner_id, set[ChainFeatures]())
     return feature in scanner_features
 
 
-def require_feature_support(client: 'Client', feature: ChainFeatures) -> None:
+def require_feature_support(client: Any, feature: ChainFeatures) -> None:
     """Raise FeatureNotSupportedError if the feature is not supported by the current scanner."""
     if not check_feature_support(client, feature):
         from aiochainscan.config import config_manager

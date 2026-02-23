@@ -251,9 +251,37 @@ async def fetch_all_generic(
                 # Advance to the next block after last item; order_fn's first element must be block number
                 try:
                     last_item = items[-1]
+                    first_item = items[0]
                     last_block = int(fetch_spec.order_fn(last_item)[0])
+                    first_block = int(fetch_spec.order_fn(first_item)[0])
                 except Exception:
                     break
+
+                # CRITICAL: Detect "whale problem" - when all items are in the same block
+                # and we've hit the API limit. This means data loss is occurring because
+                # we can't paginate within a single block.
+                if len(items) >= effective_offset_for_provider and first_block == last_block:
+                    import logging
+
+                    logger = logging.getLogger(__name__)
+                    logger.critical(
+                        'PAGINATION DATA LOSS: Block %d contains >= %d items. '
+                        'API limit prevents fetching all items from this block. '
+                        'Consider using topic filtering or alternative data source.',
+                        last_block,
+                        effective_offset_for_provider,
+                    )
+                    if telemetry is not None:
+                        await telemetry.record_event(
+                            'paging.data_loss_warning',
+                            {
+                                'mode': 'sliding',
+                                'block': last_block,
+                                'items_fetched': len(items),
+                                'limit': effective_offset_for_provider,
+                            },
+                        )
+
                 current_start = max(current_start, last_block + 1)
         else:  # paged
             next_page: int = 1

@@ -5,8 +5,8 @@ from collections.abc import Sequence
 from typing import Any, cast
 
 import requests
-from Crypto.Hash import keccak
 from eth_abi.abi import decode
+from eth_utils import keccak
 
 # Try to import fastabi Rust backend
 try:
@@ -110,9 +110,7 @@ def _convert_large_ints_to_strings(data: Any) -> Any:
 
 # Function to generate Keccak hash of the input text
 def keccak_hash(text: str) -> str:
-    k = keccak.new(digest_bits=256)
-    k.update(text.encode('utf-8'))
-    return k.hexdigest()
+    return keccak(text.encode('utf-8')).hex()
 
 
 def _decode_transaction_input_fast(
@@ -186,9 +184,17 @@ def _decode_transaction_input_python(
                 )
             )
             transaction['decoded_data'] = decoded_transaction
-        except Exception:
+        except (ValueError, TypeError) as e:
+            # ValueError: invalid hex input data
+            # TypeError: ABI decoding type errors
             transaction['decoded_func'] = ''
             transaction['decoded_data'] = {}
+            # Log at debug level to help with troubleshooting
+            import logging
+
+            logging.getLogger(__name__).debug(
+                'Failed to decode transaction input: %s - %s', type(e).__name__, e
+            )
     else:
         # No matching function found, assign empty values
         transaction['decoded_func'] = ''

@@ -1,48 +1,23 @@
-import asyncio
+"""Tests for Network transport layer using httpx/tenacity/aiolimiter."""
+
 import json
 import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
+import pytest_asyncio
 
-pytest.importorskip('aiohttp', reason='Network transport tests require aiohttp runtime')
-
-import aiohttp  # noqa: E402
-import pytest_asyncio  # noqa: E402
-from aiohttp import ClientTimeout  # noqa: E402
-from aiohttp.hdrs import METH_GET, METH_POST  # noqa: E402
-from aiohttp_retry import ExponentialRetry  # noqa: E402
-from asyncio_throttle import Throttler  # noqa: E402
-
-from aiochainscan.exceptions import (  # noqa: E402
+from aiochainscan.adapters.aiolimiter_adapter import AioLimiterAdapter
+from aiochainscan.adapters.tenacity_retry import TenacityRetryAdapter
+from aiochainscan.exceptions import (
     ChainscanClientApiError,
     ChainscanClientContentTypeError,
-    ChainscanClientError,
     ChainscanClientProxyError,
+    ChainscanRateLimitError,
 )
-from aiochainscan.network import Network  # noqa: E402
-from aiochainscan.url_builder import UrlBuilder  # noqa: E402
-
-
-class SessionMock(AsyncMock):
-    # noinspection PyUnusedLocal
-    @pytest.mark.asyncio
-    async def get(self, url, params, data):
-        return AsyncCtxMgrMock()
-
-
-class AsyncCtxMgrMock(MagicMock):
-    @pytest.mark.asyncio
-    async def __aenter__(self):
-        return self.aenter
-
-    @pytest.mark.asyncio
-    async def __aexit__(self, *args):
-        pass
-
-
-def get_loop():
-    return asyncio.get_event_loop()
+from aiochainscan.network import Network
+from aiochainscan.url_builder import UrlBuilder
 
 
 @pytest_asyncio.fixture
@@ -53,42 +28,70 @@ async def ub():
 
 @pytest_asyncio.fixture
 async def nw(ub):
-    nw = Network(ub, get_loop(), None, None, None, None)
+    nw = Network(ub, timeout=10.0)
     yield nw
     await nw.close()
 
 
 def test_init(ub):
-    myloop = get_loop()
-    proxy = 'qwe'
-    timeout = ClientTimeout(5)
-    throttler = Throttler(1)
-    retry_options = ExponentialRetry()
-    n = Network(ub, myloop, timeout, proxy, throttler, retry_options)
+    """Test Network initialization with various parameters."""
+    proxy = 'http://proxy:8080'
+    timeout = httpx.Timeout(5.0)
+    rate_limiter = AioLimiterAdapter(max_rate=10.0, time_period=1.0)
+    retry_policy = TenacityRetryAdapter(max_attempts=3)
+
+    n = Network(
+        ub,
+        timeout=timeout,
+        proxy=proxy,
+        rate_limiter=rate_limiter,
+        retry_policy=retry_policy,
+        http2=False,
+        max_connections=50,
+    )
 
     assert n._url_builder is ub
-    assert n._loop == myloop
     assert n._timeout is timeout
     assert n._proxy is proxy
-    assert n._throttler is throttler
-
-    assert n._retry_options is retry_options
-    assert n._retry_client is None
-
+    assert n._rate_limiter is rate_limiter
+    assert n._retry_policy is retry_policy
+    assert n._http2 is False
+    assert n._max_connections == 50
+    assert n._client is None
     assert isinstance(n._logger, logging.Logger)
 
 
-def test_no_loop(ub):
-    network = Network(ub, None, None, None, None, None)
-    assert network._loop is not None
+def test_default_timeout(ub):
+    """Test default timeout initialization."""
+    # Float timeout
+    n1 = Network(ub, timeout=5.0)
+    assert n1._timeout.connect == 5.0
+
+    # None timeout (uses default)
+    n2 = Network(ub, timeout=None)
+    assert n2._timeout.connect == 10.0
+
+    # httpx.Timeout passthrough
+    custom_timeout = httpx.Timeout(15.0, connect=5.0)
+    n3 = Network(ub, timeout=custom_timeout)
+    assert n3._timeout is custom_timeout
+
+
+def test_default_adapters(ub):
+    """Test that default adapters are created."""
+    n = Network(ub)
+
+    assert isinstance(n._rate_limiter, AioLimiterAdapter)
+    assert isinstance(n._retry_policy, TenacityRetryAdapter)
 
 
 @pytest.mark.asyncio
 async def test_get(nw):
-    with patch('aiochainscan.network.Network._request', new=AsyncMock()) as mock:
+    """Test GET request routing."""
+    with patch.object(nw, '_request', new=AsyncMock()) as mock:
         await nw.get()
         mock.assert_called_once_with(
-            METH_GET,
+            'GET',
             params={'chainid': '1'},
             headers={'X-API-Key': nw._url_builder._API_KEY},
         )
@@ -96,76 +99,63 @@ async def test_get(nw):
 
 @pytest.mark.asyncio
 async def test_post(nw):
-    with patch('aiochainscan.network.Network._request', new=AsyncMock()) as mock:
+    """Test POST request routing."""
+    with patch.object(nw, '_request', new=AsyncMock()) as mock:
         await nw.post()
         mock.assert_called_once_with(
-            METH_POST,
+            'POST',
             data={'chainid': '1'},
             headers={'X-API-Key': nw._url_builder._API_KEY},
         )
 
-    with patch('aiochainscan.network.Network._request', new=AsyncMock()) as mock:
+    with patch.object(nw, '_request', new=AsyncMock()) as mock:
         await nw.post({'some': 'data'})
         mock.assert_called_once_with(
-            METH_POST,
+            'POST',
             data={'chainid': '1', 'some': 'data'},
             headers={'X-API-Key': nw._url_builder._API_KEY},
         )
 
-    with patch('aiochainscan.network.Network._request', new=AsyncMock()) as mock:
+    with patch.object(nw, '_request', new=AsyncMock()) as mock:
         await nw.post({'some': 'data', 'null': None})
         mock.assert_called_once_with(
-            METH_POST,
+            'POST',
             data={'chainid': '1', 'some': 'data'},
             headers={'X-API-Key': nw._url_builder._API_KEY},
         )
 
 
 @pytest.mark.asyncio
-async def test_request():
-    """Test Network._request method with proper mocking.
-
-    This test verifies that Network correctly:
-    - Constructs URLs using UrlBuilder
-    - Makes HTTP requests (GET/POST)
-    - Handles responses through aiohttp-retry
-    """
-    from aiochainscan.network import Network
-    from aiochainscan.url_builder import UrlBuilder
-
-    # Create a fresh Network instance with proper initialization
+async def test_request_with_mocked_httpx():
+    """Test Network._request method with httpx mocking."""
     url_builder = UrlBuilder('test_api_key', 'eth', 'main')
     network = Network(url_builder)
 
     try:
-        # Mock the actual HTTP response at the aiohttp level
         mock_response_data = {'status': '1', 'result': 'test_result'}
 
-        # Test GET request - mock at the aiohttp_retry level
-        with patch('aiohttp_retry.RetryClient.get') as mock_get:
-            # Setup mock response
-            mock_response = AsyncMock()
-            mock_response.status = 200
-            mock_response.json = AsyncMock(return_value=mock_response_data)
-            mock_response.text = AsyncMock(return_value='')
-            # RetryClient.get is a context manager
-            mock_get.return_value.__aenter__.return_value = mock_response
-            mock_get.return_value.__aexit__.return_value = AsyncMock()
+        # Test GET request
+        with patch.object(httpx.AsyncClient, 'get') as mock_get:
+            mock_response = MagicMock(spec=httpx.Response)
+            mock_response.status_code = 200
+            mock_response.headers = {'content-type': 'application/json'}
+            mock_response.json.return_value = mock_response_data
+            mock_response.raise_for_status = MagicMock()
+            mock_get.return_value = mock_response
 
             result = await network.get(params={'test': 'param'})
 
-            # Verify the result
             assert result == 'test_result'
             assert mock_get.called
 
         # Test POST request
-        with patch('aiohttp_retry.RetryClient.post') as mock_post:
-            mock_response = AsyncMock()
-            mock_response.status = 200
-            mock_response.json = AsyncMock(return_value=mock_response_data)
-            mock_response.text = AsyncMock(return_value='')
-            mock_post.return_value.__aenter__.return_value = mock_response
-            mock_post.return_value.__aexit__.return_value = AsyncMock()
+        with patch.object(httpx.AsyncClient, 'post') as mock_post:
+            mock_response = MagicMock(spec=httpx.Response)
+            mock_response.status_code = 200
+            mock_response.headers = {'content-type': 'application/json'}
+            mock_response.json.return_value = mock_response_data
+            mock_response.raise_for_status = MagicMock()
+            mock_post.return_value = mock_response
 
             result = await network.post(data={'test': 'data'})
 
@@ -176,81 +166,94 @@ async def test_request():
         await network.close()
 
 
-# noinspection PyTypeChecker
 @pytest.mark.asyncio
 async def test_handle_response(nw):
-    class MockResponse:
-        def __init__(self, data, raise_exc=None):
-            self.data = data
-            self.raise_exc = raise_exc
+    """Test response handling with various scenarios."""
 
-        @property
-        def status(self):
-            return 200
+    def make_mock_response(
+        data: str,
+        status_code: int = 200,
+        content_type: str = 'application/json',
+        raise_for_status_error: Exception | None = None,
+    ) -> MagicMock:
+        mock = MagicMock(spec=httpx.Response)
+        mock.status_code = status_code
+        mock.headers = {'content-type': content_type}
+        mock.text = data
 
-        @property
-        def status_code(self):
-            return 200
+        if raise_for_status_error:
+            mock.raise_for_status.side_effect = raise_for_status_error
+        else:
+            mock.raise_for_status = MagicMock()
 
-        @property
-        def ok(self):
-            """Simulate successful HTTP status (2xx)"""
-            return True
+        try:
+            mock.json.return_value = json.loads(data)
+        except json.JSONDecodeError:
+            mock.json.side_effect = json.JSONDecodeError('Invalid JSON', data, 0)
 
-        def raise_for_status(self):
-            """Mock raise_for_status method - does nothing for 200 OK"""
-            pass
+        return mock
 
-        async def text(self):
-            """Return text content as coroutine"""
-            return 'some text'
-
-        def json(self):
-            async def _json():
-                if self.raise_exc:
-                    raise self.raise_exc
-                return json.loads(self.data)
-
-            return _json()
-
+    # Test ContentTypeError (non-JSON response)
     with pytest.raises(ChainscanClientContentTypeError) as e:
-        await nw._handle_response(MockResponse('some', aiohttp.ContentTypeError('info', 'hist')))
+        nw._handle_response(make_mock_response('not json', content_type='text/html'))
     assert e.value.status == 200
-    assert e.value.content == 'some text'
+    assert e.value.content == 'not json'
 
-    with pytest.raises(ChainscanClientError, match='some exception'):
-        await nw._handle_response(MockResponse('some', Exception('some exception')))
-
+    # Test API error response
     with pytest.raises(ChainscanClientApiError) as e:
-        await nw._handle_response(
-            MockResponse('{"status": "0", "message": "NOTOK", "result": "res"}')
+        nw._handle_response(
+            make_mock_response('{"status": "0", "message": "NOTOK", "result": "res"}')
         )
     assert e.value.message == 'NOTOK'
     assert e.value.result == 'res'
 
+    # Test proxy error response
     with pytest.raises(ChainscanClientProxyError) as e:
-        await nw._handle_response(MockResponse('{"error": {"code": "100", "message": "msg"}}'))
+        nw._handle_response(make_mock_response('{"error": {"code": "100", "message": "msg"}}'))
     assert e.value.code == '100'
     assert e.value.message == 'msg'
 
-    assert await nw._handle_response(MockResponse('{"result": "some_result"}')) == 'some_result'
+    # Test rate limit error in body
+    with pytest.raises(ChainscanRateLimitError):
+        nw._handle_response(
+            make_mock_response(
+                '{"status": "0", "message": "NOTOK", "result": "Max rate limit reached"}'
+            )
+        )
 
-    payload = await nw._handle_response(
-        MockResponse('{"status": "1", "result": {"items": [{"foo": "bar"}]}}')
+    # Test successful response with result field
+    assert nw._handle_response(make_mock_response('{"result": "some_result"}')) == 'some_result'
+
+    # Test successful response with nested result
+    payload = nw._handle_response(
+        make_mock_response('{"status": "1", "result": {"items": [{"foo": "bar"}]}}')
     )
     assert payload == {'items': [{'foo': 'bar'}]}
+
+    # Test HTTP 429 error
+    with pytest.raises(ChainscanRateLimitError):
+        mock_429 = make_mock_response(
+            '{}',
+            status_code=429,
+            raise_for_status_error=httpx.HTTPStatusError(
+                'Too Many Requests',
+                request=MagicMock(),
+                response=MagicMock(status_code=429),
+            ),
+        )
+        nw._handle_response(mock_429)
 
 
 @pytest.mark.asyncio
 async def test_close_session(nw):
-    with patch('aiohttp.ClientSession.close', new_callable=AsyncMock) as m:
-        await nw.close()
-        m: AsyncMock
-        m.assert_not_called()
+    """Test client cleanup on close."""
+    # First close without client initialized
+    await nw.close()
+    assert nw._client is None
 
-        nw._retry_client = MagicMock()
-        retry_client = nw._retry_client
-        retry_client.close = AsyncMock()
-        await nw.close()
-        retry_client.close.assert_awaited_once()
-        assert nw._retry_client is None
+    # Initialize client and then close
+    await nw._ensure_client()
+    assert nw._client is not None
+
+    await nw.close()
+    assert nw._client is None

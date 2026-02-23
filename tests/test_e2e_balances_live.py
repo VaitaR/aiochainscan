@@ -71,6 +71,7 @@ async def _assert_balance_ok(client: ChainscanClient, address: str) -> None:
         raise AssertionError(f'Unexpected balance type: {type(result)} -> {result}')
 
 
+@pytest.mark.slow
 @pytest.mark.asyncio
 async def test_blockscout_two_chains_live() -> None:
     # BlockScout typically doesn't require API keys
@@ -88,6 +89,7 @@ async def test_blockscout_two_chains_live() -> None:
         await asyncio.sleep(0.2)
 
 
+@pytest.mark.slow
 @pytest.mark.asyncio
 async def test_etherscan_two_chains_live() -> None:
     # Requires ETHERSCAN_KEY in env
@@ -131,6 +133,7 @@ async def test_etherscan_two_chains_live() -> None:
 # No need for separate BaseScan scanner
 
 
+@pytest.mark.slow
 @pytest.mark.asyncio
 async def test_moralis_two_chains_live() -> None:
     # Moralis requires MORALIS_API_KEY
@@ -148,6 +151,7 @@ async def test_moralis_two_chains_live() -> None:
         await asyncio.sleep(0.2)
 
 
+@pytest.mark.slow
 @pytest.mark.asyncio
 async def test_routscan_mode_live() -> None:
     # RoutScan supports Mode only (one network)
