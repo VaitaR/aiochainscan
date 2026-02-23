@@ -101,3 +101,36 @@ async def test_multiple_updates_at_capacity():
     assert await cache.get('key1') == 'value1_4'
     assert await cache.get('key2') == 'value2_4'
     assert len(cache) == 2
+
+
+@pytest.mark.asyncio
+async def test_expired_keys_cleared_before_eviction():
+    """Test that expired keys are cleared before LRU eviction.
+
+    This is a regression test for Low Severity bug where expired keys
+    were not cleared before eviction, causing valid entries to be evicted
+    while expired entries remained in the cache.
+    """
+    import time
+
+    cache = InMemoryCache(max_size=3)
+
+    # Add entries with short TTL that will expire
+    await cache.set('expired1', 'val1', ttl_seconds=1)
+    await cache.set('expired2', 'val2', ttl_seconds=1)
+
+    # Wait for them to expire
+    time.sleep(1.1)
+
+    # Add a valid entry - should clear expired keys first, not evict by LRU
+    await cache.set('valid', 'valid_value')
+
+    # Valid entry should exist
+    assert await cache.get('valid') == 'valid_value'
+
+    # Expired entries should be gone (cleared before eviction, not after)
+    assert await cache.get('expired1') is None
+    assert await cache.get('expired2') is None
+
+    # Cache should only have 1 entry (valid), not 3
+    assert len(cache) == 1

@@ -236,15 +236,19 @@ class ChainscanClient:
 
         # Map scanner_name to appropriate api_kind for UrlBuilder
         # For backward compatibility, map scanner names to their api_kind equivalents
-        api_kind_map = {
-            'etherscan': 'eth',
-            'blockscout': 'blockscout_eth',
-            'blockscout_v2': 'blockscout_eth',
-            'moralis': 'moralis',
-            'routscan': 'routscan_mode',
-        }
-
-        api_kind = api_kind_map.get(scanner_name, scanner_name)
+        # For blockscout, use the network-specific scanner_id (e.g., blockscout_polygon)
+        if scanner_name == 'blockscout':
+            api_kind = (
+                scanner_id  # Use network-specific ID (blockscout_polygon, blockscout_gnosis, etc.)
+            )
+        else:
+            api_kind_map = {
+                'etherscan': 'eth',
+                'blockscout_v2': 'blockscout_eth',
+                'moralis': 'moralis',
+                'routscan': 'routscan_mode',
+            }
+            api_kind = api_kind_map.get(scanner_name, scanner_name)
 
         return cls(
             scanner_name=actual_scanner_name,

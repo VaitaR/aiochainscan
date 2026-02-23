@@ -248,6 +248,34 @@ class TestChainscanClient:
             'blockscout_gnosis', 'gnosis'
         )
 
+    @patch('aiochainscan.core.client.global_config')
+    def test_client_from_config_blockscout_api_kind_matches_network(
+        self, mock_global_config, mock_config
+    ):
+        """Test that blockscout api_kind matches the network-specific scanner_id.
+
+        This is a regression test for High Severity bug where api_kind was
+        hardcoded to 'blockscout_eth' for all networks, causing requests
+        to route to wrong explorer domain.
+        """
+        mock_global_config.create_client_config.return_value = mock_config
+
+        # Test Polygon - api_kind should be blockscout_polygon, not blockscout_eth
+        client = ChainscanClient.from_config('blockscout', 'polygon')
+
+        assert client.scanner_name == 'blockscout'
+        assert (
+            client.api_kind == 'blockscout_polygon'
+        ), 'api_kind should match network-specific scanner_id for correct domain routing'
+
+        # Test Gnosis
+        client = ChainscanClient.from_config('blockscout', 'gnosis')
+        assert client.api_kind == 'blockscout_gnosis'
+
+        # Test Ethereum
+        client = ChainscanClient.from_config('blockscout', 'ethereum')
+        assert client.api_kind == 'blockscout_eth'
+
         # Test BlockScout defaults to v1
         client = ChainscanClient.from_config(
             'blockscout', 'eth'

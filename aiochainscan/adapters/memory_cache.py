@@ -43,8 +43,17 @@ class InMemoryCache(Cache):
         return value
 
     async def set(self, key: str, value: Any, *, ttl_seconds: int | None = None) -> None:
-        # Only evict if adding a NEW key and at capacity
+        # Clean up expired entries before checking capacity
+        # This prevents evicting valid entries when expired keys exist
         if key not in self._store:
+            current_time = time.time()
+            expired_keys = [
+                k for k, (_, exp) in self._store.items() if exp is not None and current_time >= exp
+            ]
+            for expired_key in expired_keys:
+                del self._store[expired_key]
+
+            # Only evict if still at capacity after cleaning expired keys
             while len(self._store) >= self._max_size:
                 self._store.popitem(last=False)  # Remove oldest (first) item
 
