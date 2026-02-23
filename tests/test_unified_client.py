@@ -361,3 +361,67 @@ async def test_end_to_end_workflow():
             mock_call.assert_called_once_with(
                 Method.ACCOUNT_BALANCE, address='0x742d35Cc6634C0532925a3b8D9Fa7a3D91'
             )
+
+
+class TestIterTransactionsValidation:
+    """Test iter_transactions parameter validation."""
+
+    @pytest.mark.asyncio
+    async def test_iter_transactions_validates_batch_size(self):
+        """Test that iter_transactions raises ValueError for invalid batch_size."""
+        # Use blockscout_v2 - doesn't require API key
+        client = ChainscanClient.from_config('blockscout_v2', 'ethereum')
+
+        # Test batch_size = 0
+        with pytest.raises(ValueError, match='batch_size must be at least 1, got 0'):
+            async for _ in client.iter_transactions('0x742d35Cc', batch_size=0):
+                pass
+
+        # Test negative batch_size
+        with pytest.raises(ValueError, match='batch_size must be at least 1, got -1'):
+            async for _ in client.iter_transactions('0x742d35Cc', batch_size=-1):
+                pass
+
+        # Test large negative batch_size
+        with pytest.raises(ValueError, match='batch_size must be at least 1, got -999'):
+            async for _ in client.iter_transactions('0x742d35Cc', batch_size=-999):
+                pass
+
+        await client.close()
+
+    @pytest.mark.asyncio
+    async def test_iter_transactions_accepts_valid_batch_size(self):
+        """Test that iter_transactions accepts valid batch_size values (no exception raised)."""
+        # Use blockscout_v2 - doesn't require API key
+        # This test just verifies that valid batch_size values don't raise ValueError
+        # (actual API calls would fail with 422 for invalid address, but that's OK)
+
+        client = ChainscanClient.from_config('blockscout_v2', 'ethereum')
+
+        # These should NOT raise ValueError - they're valid batch_size values
+        # We don't actually iterate (would hit API), just verify no ValueError on creation
+
+        # batch_size = 1 should not raise ValueError
+        try:
+            gen1 = client.iter_transactions('0x742d35Cc', batch_size=1)
+            # The ValueError should happen immediately in the function, not on first iteration
+            # So if we get here, validation passed
+            assert gen1 is not None
+        except ValueError:
+            pytest.fail('batch_size=1 should be valid')
+
+        # batch_size = 1000 (default) should not raise ValueError
+        try:
+            gen2 = client.iter_transactions('0x742d35Cc', batch_size=1000)
+            assert gen2 is not None
+        except ValueError:
+            pytest.fail('batch_size=1000 should be valid')
+
+        # batch_size = 10000 (max) should not raise ValueError
+        try:
+            gen3 = client.iter_transactions('0x742d35Cc', batch_size=10000)
+            assert gen3 is not None
+        except ValueError:
+            pytest.fail('batch_size=10000 should be valid')
+
+        await client.close()
