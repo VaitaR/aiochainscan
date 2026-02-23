@@ -62,7 +62,7 @@ Repository = "https://github.com/VaitaR/aiochainscan"
 Issues = "https://github.com/VaitaR/aiochainscan/issues"
 
 [build-system]
-requires = ["maturin>=1.6,<2.0"]
+requires = ["maturin>=1.8,<2.0"]  # >=1.8 required for ZIP64 support
 build-backend = "maturin"
 
 [tool.maturin]
