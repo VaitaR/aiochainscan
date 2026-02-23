@@ -161,11 +161,13 @@ def cmd_test_scanner(args: argparse.Namespace) -> None:
             client = ChainscanClient.from_config(args.scanner, args.network)
             print('✅ Client created successfully')
 
-            # Test a simple API call
+            # Test a simple API call using a universally supported method
             try:
-                # Use the modern Method-based API
+                # Use ACCOUNT_BALANCE as it's supported by all scanners
+                # Use a well-known address (Vitalik's) for consistent testing
                 result = await client.call(
-                    Method.ETH_PRICE,
+                    Method.ACCOUNT_BALANCE,
+                    address='0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045',
                 )
                 print(f'✅ API test successful - got response: {type(result)}')
 
