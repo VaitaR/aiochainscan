@@ -3,7 +3,7 @@
 ## Issues Fixed
 
 ### 1. Circular Import in `aiochainscan/__init__.py`
-**Problem**: 
+**Problem**:
 ```python
 # Line 26 - Circular import
 from aiochainscan.core.client import ChainscanClient
@@ -93,7 +93,7 @@ async with ChainscanClient.from_config('blockscout_v2', 'ethereum') as client:
 
 ## Impact
 
-**Before**: 
+**Before**:
 - Library failed to import with circular dependency error
 - Library crashed when aiohttp not installed
 - Pre-commit hooks failed with formatting issues
