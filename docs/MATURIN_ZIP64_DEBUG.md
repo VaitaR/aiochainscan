@@ -1,7 +1,12 @@
 # Maturin "Large File" ZIP64 Error - Debug Report
 
 **Date**: 2026-02-23
+**Updated**: 2026-02-23 16:40 (Local Reproduction Results Added)
 **Issue**: Wheel build fails in CI with ZIP64 error despite `strip = true`
+
+## 🎯 LOCAL REPRODUCTION: SUCCESS ✅
+
+**The error has been successfully reproduced on macOS!** See detailed findings in Section 7 below.
 
 ## 🔍 Investigation Summary
 
@@ -180,11 +185,109 @@ CIBW_BUILD_OPTIONS: "--compatibility manylinux2014"
 
 ---
 
+## 7. 🧪 LOCAL REPRODUCTION RESULTS (2026-02-23 16:40)
+
+### Environment
+- **OS**: macOS (Apple Silicon)
+- **Python**: 3.13.5 (Anaconda)
+- **Maturin**: 1.9.2
+- **Cargo**: 1.90.0
+- **Rustc**: 1.90.0
+
+### Build Results Matrix
+
+| Build Method | Result | Exit Code | Notes |
+|--------------|--------|-----------|-------|
+| `maturin build --release` | ✅ **SUCCESS** | 0 | Works perfectly |
+| `maturin build --release --strip` | ✅ **SUCCESS** | 0 | Works perfectly |
+| `python -m build` | ❌ **FAILED** | 1 | **ZIP64 error reproduced!** |
+| `uv build` | ❌ **FAILED** | 2 | **ZIP64 error reproduced!** |
+
+### Key Finding
+
+**The error ONLY occurs when building via `python -m build` or `uv build`** (PEP 517 isolated environment builds from sdist), but **NOT** when using direct `maturin build`.
+
+### Error Message (Reproduced Locally)
+```
+💥 maturin failed
+  Caused by: Failed to write to zip archive for "aiochainscan/fastabi/target/wheels/aiochainscan-0.4.0-cp313-cp313-macosx_11_0_arm64.whl"
+  Caused by: Large file option has not been set
+```
+
+### File Size Analysis
+
+The compiled `.so` file is only **690 KB** - nowhere near the 2 GB ZIP64 limit:
+
+```bash
+$ find aiochainscan/fastabi/target -name "libaiochainscan_fastabi.dylib" -exec ls -lh {} \;
+-rwxr-xr-x  690K  aiochainscan/fastabi/target/release/libaiochainscan_fastabi.dylib
+
+$ ls -lh aiochainscan/fastabi/target/wheels/aiochainscan-0.4.0-*.whl
+-rw-r--r--  485K  (successful direct maturin build)
+```
+
+### Partial Wheel Created by Failed Build
+
+A **partial wheel (72 KB)** was created before the error:
+
+```bash
+$ unzip -l ./target/wheels/aiochainscan-0.4.0-cp313-cp313-macosx_11_0_arm64.whl
+  Length  Name
+--------  ----
+  528866  aiochainscan-0.4.0.dist-info/sboms/aiochainscan_fastabi.cyclonedx.json
+   15938  aiochainscan-0.4.0.dist-info/METADATA
+     523  aiochainscan-0.4.0.dist-info/RECORD
+     105  aiochainscan-0.4.0.dist-info/WHEEL
+      53  aiochainscan-0.4.0.dist-info/entry_points.txt
+      45  aiochainscan.pth
+```
+
+**Observation**: The wheel contains metadata and SBOM, but **NO .so file**. The error occurred when trying to add the `.so` file to the zip archive.
+
+### Root Cause Analysis
+
+This appears to be a **bug in maturin's PEP 517 backend** where:
+
+1. **Direct `maturin build`** uses a code path that properly enables ZIP64
+2. **PEP 517 builds** (`python -m build`, `uv build`) use a different code path that fails to enable ZIP64 when writing the wheel archive
+3. The .so file is only 690 KB, so it should NOT require ZIP64 at all
+4. Something in maturin's zip writer is incorrectly triggering the ZIP64 requirement without actually enabling it
+
+### Why This Matters for CI
+
+The CI uses `python -m build` (PEP 517 standard), which triggers this bug. The workaround of using direct `maturin build` works but is not PEP 517 compliant for PyPI publishing.
+
+### Recommended Fix
+
+**Short-term**: In CI, replace `python -m build` with `maturin build`:
+
+```yaml
+- name: Build wheel
+  run: |
+    python -m pip install maturin>=1.8
+    maturin build --release --strip --out dist
+```
+
+**Long-term**: File an issue with maturin maintainers at https://github.com/PyO3/maturin with this reproduction case.
+
+---
+
 ## 📝 Summary
 
-**What was wrong**: cibuildwheel was using an older maturin version without proper ZIP64 support.
+**What was wrong**:
+1. cibuildwheel was using an older maturin version without proper ZIP64 support (initially)
+2. Even with maturin 1.9.2, there's a bug in the PEP 517 backend that fails to enable ZIP64 correctly when building from sdist
 
-**What we tried**: Adding `strip = true` (which was correct but didn't solve the real issue).
+**What we tried**:
+1. Adding `strip = true` (correct but didn't solve the real issue)
+2. Upgrading to maturin 1.9.2 (necessary but not sufficient)
+
+**What works**:
+- Direct `maturin build` command (not PEP 517 compliant)
+
+**What still fails**:
+- `python -m build` (PEP 517 standard)
+- `uv build` (PEP 517 standard)
 
 **What actually fixed it**: Forcing `maturin>=1.8` installation via `CIBW_BEFORE_BUILD`.
 
