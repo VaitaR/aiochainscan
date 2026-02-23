@@ -21,6 +21,7 @@ import aiohttp
 
 from ..core.endpoint import EndpointSpec
 from ..core.method import Method
+from ..exceptions import ChainscanClientApiError, ChainscanNetworkError
 from ..url_builder import UrlBuilder
 from . import register_scanner
 from .base import Scanner
@@ -323,6 +324,9 @@ class BlockScoutV2Scanner(Scanner):
             'Accept-Encoding': 'gzip, deflate',
         }
 
+        # TODO: ARCHITECTURAL ISSUE - This bypasses the Network layer's retry/rate-limit/pooling.
+        # A proper fix requires refactoring to use self._network_client with custom URL support.
+        # See: https://github.com/aiochainscan/aiochainscan/issues/XXX
         try:
             async with aiohttp.ClientSession() as session:
                 if spec.http_method == 'GET':
@@ -345,11 +349,20 @@ class BlockScoutV2Scanner(Scanner):
             return spec.parse_response(raw_response)
 
         except aiohttp.ClientResponseError as e:
-            raise Exception(
-                f'Blockscout V2 API error ({e.status}): {e.message} - URL: {url}'
+            raise ChainscanClientApiError(
+                f'Blockscout V2 API error ({e.status})',
+                f'{e.message} - URL: {url}',
+            ) from e
+        except aiohttp.ClientError as e:
+            raise ChainscanNetworkError(
+                f'Blockscout V2 network error for {self.base_url}: {e}',
+                retryable=True,
             ) from e
         except Exception as e:
-            raise Exception(f'Blockscout V2 API error for {self.base_url}: {e}') from e
+            raise ChainscanNetworkError(
+                f'Blockscout V2 unexpected error for {self.base_url}: {e}',
+                retryable=False,
+            ) from e
 
     # ========================================================================
     # Convenience methods for common operations

@@ -26,6 +26,18 @@ from aiochainscan.exceptions import (
 from aiochainscan.ports.rate_limiter import RateLimiter, RetryPolicy
 from aiochainscan.url_builder import UrlBuilder
 
+# Sensitive headers that should be redacted in logs
+SENSITIVE_HEADERS = {'authorization', 'x-api-key', 'apikey'}
+
+
+def _redact_headers(headers: dict[str, str] | None) -> dict[str, str] | None:
+    """Redact sensitive headers for safe logging."""
+    if headers is None:
+        return None
+    return {
+        k: ('***REDACTED***' if k.lower() in SENSITIVE_HEADERS else v) for k, v in headers.items()
+    }
+
 
 class Network:
     """HTTP transport layer for blockchain explorer APIs.
@@ -152,7 +164,7 @@ class Network:
 
         async def do_request() -> dict[str, Any] | list[Any] | str:
             # Acquire rate limit token before making request
-            await self._rate_limiter.acquire()
+            await self._rate_limiter.acquire('network:request')
 
             client = await self._ensure_client()
 
@@ -175,7 +187,7 @@ class Network:
                 response.status_code,
                 str(response.url),
                 data,
-                headers,
+                _redact_headers(headers),
             )
 
             return self._handle_response(response)

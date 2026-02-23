@@ -19,7 +19,7 @@ class SimpleRateLimiter(RateLimiter):
         self._burst: int = max(1, int(burst))
         self._slots: dict[str, int] = {}
 
-    async def acquire(self, key: str) -> None:
+    async def acquire(self, key: str = 'default') -> None:
         if self._min_interval <= 0.0:
             return
         now = time.monotonic()

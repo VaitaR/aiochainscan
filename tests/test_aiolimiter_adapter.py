@@ -21,14 +21,14 @@ class TestAioLimiterAdapter:
         await limiter.acquire('test_key')
 
     @pytest.mark.asyncio
-    async def test_none_key_uses_default_limiter(self) -> None:
-        """Test that None key uses the default limiter."""
+    async def test_default_key_uses_default_limiter(self) -> None:
+        """Test that default key parameter uses the default limiter."""
         limiter = AioLimiterAdapter(max_rate=10.0, time_period=1.0)
         # Both should work without error
-        await limiter.acquire(None)
-        await limiter.acquire(None)
-        # Check internal state - should have __default__ key
-        assert '__default__' in limiter._limiters
+        await limiter.acquire()
+        await limiter.acquire()
+        # Check internal state - should have 'default' key
+        assert 'default' in limiter._limiters
 
     @pytest.mark.asyncio
     async def test_key_isolation(self) -> None:

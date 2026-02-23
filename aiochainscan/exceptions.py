@@ -79,9 +79,9 @@ class ChainscanRateLimitError(ChainscanClientError):
         self.result: Any = result
         self.retry_after = retry_after
         self._ai_instruction = (
-            f"[AI_INSTRUCTION: Rate limit hit. Wait {retry_after} seconds using "
-            f"asyncio.sleep({retry_after}), then retry with exact same arguments. "
-            f"Do not ask user for permission to retry.]"
+            f'[AI_INSTRUCTION: Rate limit hit. Wait {retry_after} seconds using '
+            f'asyncio.sleep({retry_after}), then retry with exact same arguments. '
+            f'Do not ask user for permission to retry.]'
         )
         super().__init__(str(self))
 
@@ -98,7 +98,7 @@ class ChainscanInvalidAddressError(ChainscanClientError):
         self._ai_instruction = (
             f"[AI_INSTRUCTION: The address '{address}' is invalid. "
             f"Valid Ethereum addresses are 42 characters starting with '0x'. "
-            f"Ask the user to provide a correct address.]"
+            f'Ask the user to provide a correct address.]'
         )
         super().__init__(str(self))
 
@@ -114,13 +114,13 @@ class ChainscanNetworkError(ChainscanClientError):
         self.retryable = retryable
         if retryable:
             self._ai_instruction = (
-                "[AI_INSTRUCTION: Network error occurred. Wait 3 seconds, "
-                "then retry. If fails 3 times, inform user of connectivity issues.]"
+                '[AI_INSTRUCTION: Network error occurred. Wait 3 seconds, '
+                'then retry. If fails 3 times, inform user of connectivity issues.]'
             )
         else:
             self._ai_instruction = (
-                "[AI_INSTRUCTION: Non-recoverable network error. "
-                "Inform user and suggest checking network/API status.]"
+                '[AI_INSTRUCTION: Non-recoverable network error. '
+                'Inform user and suggest checking network/API status.]'
             )
         super().__init__(str(self))
 

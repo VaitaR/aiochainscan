@@ -26,13 +26,12 @@ class AioLimiterAdapter(RateLimiter):
         self._limiters: dict[str, AsyncLimiter] = {}
         self._lock = asyncio.Lock()
 
-    async def acquire(self, key: str | None = None) -> None:
+    async def acquire(self, key: str = 'default') -> None:
         """Acquire a rate limit slot for the given key.
 
         Each unique key has its own isolated rate limiter.
-        If key is None, uses a default limiter.
         """
-        effective_key = key or '__default__'
+        effective_key = key
 
         # Fast path: limiter already exists
         if effective_key in self._limiters:
