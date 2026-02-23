@@ -12,7 +12,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP as FastMCPType
 else:
-    FastMCPType = Any
+    FastMCPType = Any  # type: ignore[misc,assignment]
+    FastMCP = Any  # type: ignore[misc,assignment]
 
 try:
     from mcp.server.fastmcp import FastMCP
@@ -20,7 +21,6 @@ try:
     MCP_AVAILABLE = True
 except ImportError:
     MCP_AVAILABLE = False
-    FastMCP = None  # type: ignore[assignment, misc]
 
 from aiochainscan.core.client import ChainscanClient
 from aiochainscan.core.method import Method
