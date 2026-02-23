@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     import polars as pl
+else:
+    pl = Any  # type: ignore[misc,assignment]
 
 # Check for Polars availability
 try:
@@ -18,7 +20,6 @@ try:
     POLARS_AVAILABLE = True
 except ImportError:
     POLARS_AVAILABLE = False
-    pl = None  # type: ignore[assignment]
 
 
 class PolarsNotAvailableError(ImportError):
