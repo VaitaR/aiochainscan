@@ -1,12 +1,20 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import aiohttp
+if TYPE_CHECKING:
+    import aiohttp
 
 from aiochainscan.exceptions import ChainscanClientError
 from aiochainscan.ports.graphql_client import GraphQLClient
+
+try:
+    import aiohttp
+except ImportError:
+    raise ImportError(
+        'aiohttp is required for AiohttpGraphQLClient. Install with: pip install aiohttp'
+    ) from None
 
 
 class AiohttpGraphQLClient(GraphQLClient):

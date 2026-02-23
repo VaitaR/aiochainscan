@@ -32,6 +32,9 @@ jobs:
           CIBW_BUILD: "cp310-* cp311-* cp312-* cp313-*"
           CIBW_SKIP: "pp* *-musllinux*"  # Skip PyPy and musllinux
 
+          # Explicitly install maturin>=1.8 (fixes ZIP64 "Large file" error)
+          CIBW_BEFORE_BUILD: "pip install 'maturin>=1.8,<2.0'"
+
           # Install Rust on Linux before build
           CIBW_BEFORE_ALL_LINUX: >
             curl https://sh.rustup.rs -sSf | sh -s -- -y &&
