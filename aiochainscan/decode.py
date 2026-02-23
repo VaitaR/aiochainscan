@@ -184,9 +184,12 @@ def _decode_transaction_input_python(
                 )
             )
             transaction['decoded_data'] = decoded_transaction
-        except (ValueError, TypeError) as e:
+        except (ValueError, TypeError, KeyError, IndexError, AttributeError) as e:
             # ValueError: invalid hex input data
             # TypeError: ABI decoding type errors
+            # KeyError: missing dict keys during decode
+            # IndexError: tuple unpacking errors
+            # AttributeError: method call errors
             transaction['decoded_func'] = ''
             transaction['decoded_data'] = {}
             # Log at debug level to help with troubleshooting

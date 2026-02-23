@@ -235,7 +235,7 @@ class ChainscanClient:
             scanner_name=actual_scanner_name,
             scanner_version=scanner_version,
             api_kind=api_kind,  # Use mapped api_kind for UrlBuilder compatibility
-            network=network_str,  # Use original network string for client property
+            network=config_network,  # Use normalized network for scanner compatibility
             api_key=api_key,
             chain_id=chain_id,  # Pass chain_id to scanner
             timeout=timeout,
@@ -477,43 +477,107 @@ class ChainscanClient:
             async for tx in client.iter_transactions(address):
                 await db.save(tx)
             ```
-
-        Note:
-            For blockscout_v2, fetches all transactions in one call (no pagination support).
         """
-        # For non-Etherscan scanners, just fetch once (they may not support pagination)
-        if self.scanner_name != 'etherscan':
-            txs = await self.call(
-                Method.ACCOUNT_TRANSACTIONS,
-                address=address,
-            )
-            items = txs if isinstance(txs, list) else txs.get('items', [])
-            for tx in items:
-                yield tx
+        # BlockScout V2 has special pagination with next_page_params
+        if self.scanner_name == 'blockscout' and self.scanner_version == 'v2':
+            # Import here to avoid circular dependency
+            from ..exceptions import ChainscanClientApiError, ChainscanNetworkError
+            from ..scanners.blockscout_v2 import BlockScoutV2Scanner
+
+            scanner = self._scanner
+            if not isinstance(scanner, BlockScoutV2Scanner):
+                raise TypeError(f'Expected BlockScoutV2Scanner, got {type(scanner).__name__}')
+
+            # Build initial request params
+            spec = scanner.SPECS[Method.ACCOUNT_TRANSACTIONS]
+            url = scanner._build_url(spec, address=address)
+            query_params = scanner._build_query_params(spec, address=address)
+
+            # Import aiohttp for raw API calls
+            import aiohttp
+
+            headers = {
+                'Accept': 'application/json',
+                'Accept-Encoding': 'gzip, deflate',
+            }
+
+            # Pagination loop using next_page_params
+            while True:
+                try:
+                    async with (
+                        aiohttp.ClientSession() as session,
+                        session.get(
+                            url,
+                            params=query_params if query_params else None,
+                            headers=headers,
+                        ) as response,
+                    ):
+                        response.raise_for_status()
+                        raw_response = await response.json()
+                except aiohttp.ClientResponseError as e:
+                    raise ChainscanClientApiError(
+                        f'BlockScout V2 API error ({e.status})',
+                        f'{e.message} - URL: {url}',
+                    ) from e
+                except aiohttp.ClientError as e:
+                    raise ChainscanNetworkError(
+                        f'BlockScout V2 network error: {e}',
+                        retryable=True,
+                    ) from e
+                except Exception as e:
+                    raise ChainscanNetworkError(
+                        f'BlockScout V2 unexpected error: {e}',
+                        retryable=False,
+                    ) from e
+
+                # Extract items from response
+                items = raw_response.get('items', [])
+                for tx in items:
+                    yield tx
+
+                # Check for next page
+                next_page_params = raw_response.get('next_page_params')
+                if not next_page_params:
+                    break
+
+                # Update query params with next_page_params for next iteration
+                query_params = {**query_params, **next_page_params}
+
             return
 
-        # For Etherscan, use pagination
-        page = 1
-        while True:
-            txs = await self.call(
-                Method.ACCOUNT_TRANSACTIONS,
-                address=address,
-                page=page,
-                offset=batch_size,
-            )
+        # For Etherscan, use page-based pagination
+        if self.scanner_name == 'etherscan':
+            page = 1
+            while True:
+                txs = await self.call(
+                    Method.ACCOUNT_TRANSACTIONS,
+                    address=address,
+                    page=page,
+                    offset=batch_size,
+                )
 
-            # Handle both list and dict responses
-            items = txs if isinstance(txs, list) else txs.get('items', [])
-            if not items:
-                break
+                # Handle both list and dict responses
+                items = txs if isinstance(txs, list) else txs.get('items', [])
+                if not items:
+                    break
 
-            for tx in items:
-                yield tx
+                for tx in items:
+                    yield tx
 
-            if len(items) < batch_size:
-                break
+                if len(items) < batch_size:
+                    break
 
-            page += 1
+                page += 1
+            return
+
+        # For other scanners (e.g., blockscout_v1), fetch once (no pagination)
+        txs = await self.call(
+            Method.ACCOUNT_TRANSACTIONS,
+            address=address,
+        )
+        items = txs if isinstance(txs, list) else txs.get('items', [])
+        for tx in items:
+            yield tx
 
     @classmethod
     def get_available_scanners(cls) -> dict[tuple[str, str], type[Scanner]]:

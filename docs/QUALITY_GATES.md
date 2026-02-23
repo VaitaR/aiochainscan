@@ -10,7 +10,7 @@
 
 **Вопрос**: Почему pre-commit не выловил эти проблемы?
 
-**Ответ**: 
+**Ответ**:
 - Pre-commit проверяет только линтинг/форматирование
 - Не было тестов на базовые импорты
 - Git hooks не были установлены локально
@@ -32,7 +32,7 @@ def test_basic_import():
 def test_core_exports():
     """Проверка доступности основных классов"""
     from aiochainscan import ChainscanClient, Method
-    
+
 def test_scanners_registry():
     """Проверка работы реестра сканеров"""
     from aiochainscan.scanners import get_scanner_class, list_scanners
@@ -40,7 +40,7 @@ def test_scanners_registry():
 def test_optional_dependencies_graceful():
     """Проверка graceful degradation для опциональных зависимостей"""
     # aiohttp должен быть опциональным
-    
+
 def test_no_import_side_effects():
     """Проверка отсутствия side effects при импорте"""
     # Не должно быть network requests, file I/O при импорте
@@ -71,7 +71,7 @@ def test_no_import_side_effects():
 
 **Теперь workflow:**
 1. `git add .`
-2. `git commit -m "..."` 
+2. `git commit -m "..."`
 3. ✅ Ruff format
 4. ✅ Ruff lint
 5. ✅ **Test imports** ← НОВОЕ!
@@ -221,8 +221,8 @@ test imports (detect circular deps)..................Failed
 - exit code: 1
 
 tests/test_imports.py::test_basic_import FAILED
-ImportError: cannot import name 'ChainscanClient' from partially 
-initialized module 'aiochainscan.core.client' (most likely due to 
+ImportError: cannot import name 'ChainscanClient' from partially
+initialized module 'aiochainscan.core.client' (most likely due to
 a circular import)
 
 ❌ Commit blocked! Fix the circular import first.

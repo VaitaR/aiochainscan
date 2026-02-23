@@ -125,11 +125,14 @@ async def token_portfolio_to_dataframe(tokens: list[dict[str, Any]]) -> 'pl.Data
         decimals = int(token_info.get('decimals', 18))
         value = int(item.get('value', 0))
 
+        # Handle both Etherscan (uses 'address') and BlockScout V2 (uses 'address_hash')
+        contract_addr = token_info.get('address_hash') or token_info.get('address', '')
+
         normalized.append(
             {
                 'symbol': token_info.get('symbol', ''),
                 'name': token_info.get('name', ''),
-                'contract_address': token_info.get('address', ''),
+                'contract_address': contract_addr,
                 'balance': value / (10**decimals) if decimals > 0 else float(value),
                 'decimals': decimals,
             }

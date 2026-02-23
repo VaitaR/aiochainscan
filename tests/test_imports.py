@@ -5,7 +5,6 @@ These tests run before any complex logic to ensure the library can be imported.
 """
 
 import sys
-from importlib import import_module
 
 
 def test_basic_import():
@@ -103,16 +102,12 @@ def test_no_import_side_effects():
     # New modules should only be aiochainscan-related
     new_modules = modules_after - modules_before
     external_modules = [
-        m
-        for m in new_modules
-        if not m.startswith('aiochainscan') and not m.startswith('_')
+        m for m in new_modules if not m.startswith('aiochainscan') and not m.startswith('_')
     ]
 
     # Some external dependencies are expected (httpx, pydantic, etc.)
     # But we shouldn't be importing heavy things like numpy, pandas unexpectedly
-    unexpected = [
-        m for m in external_modules if m.startswith(('numpy', 'pandas', 'scipy'))
-    ]
+    unexpected = [m for m in external_modules if m.startswith(('numpy', 'pandas', 'scipy'))]
     assert len(unexpected) == 0, f'Unexpected heavy imports: {unexpected}'
 
 

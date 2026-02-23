@@ -438,9 +438,10 @@ class TestCallMethod:
             'coin_balance': '12345678901234567890',
         }
 
-        with patch(
-            'aiochainscan.scanners.blockscout_v2.aiohttp.ClientSession'
-        ) as mock_session_class:
+        # Mock aiohttp module import
+        mock_aiohttp = MagicMock()
+        with patch.dict('sys.modules', {'aiohttp': mock_aiohttp}):
+            mock_session_class = mock_aiohttp.ClientSession
             # Set up the async context manager chain
             mock_response_obj = MagicMock()
             mock_response_obj.json = AsyncMock(return_value=mock_response)
@@ -481,9 +482,10 @@ class TestCallMethod:
             'next_page_params': None,
         }
 
-        with patch(
-            'aiochainscan.scanners.blockscout_v2.aiohttp.ClientSession'
-        ) as mock_session_class:
+        # Mock aiohttp module import
+        mock_aiohttp = MagicMock()
+        with patch.dict('sys.modules', {'aiohttp': mock_aiohttp}):
+            mock_session_class = mock_aiohttp.ClientSession
             # Set up the async context manager chain
             mock_response_obj = MagicMock()
             mock_response_obj.json = AsyncMock(return_value=mock_response)

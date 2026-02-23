@@ -9,7 +9,7 @@ else:
 
 try:
     from .aiohttp_client import AiohttpClient
-except ModuleNotFoundError:
+except ImportError:
     AiohttpClient = None  # type: ignore[misc, assignment]
 
 from .aiolimiter_adapter import AioLimiterAdapter
