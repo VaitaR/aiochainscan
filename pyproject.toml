@@ -260,6 +260,10 @@ module = ["aiohttp", "aiohttp.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
+module = ["rich", "rich.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
 module = ["mcp", "mcp.*", "mcp.server.*", "mcp.server.fastmcp"]
 ignore_missing_imports = true
 
