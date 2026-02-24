@@ -244,7 +244,6 @@ module = [
   "aiochainscan.aiochainscan_fastabi",
   "aiochainscan_fastabi",
   "eth_abi.*",
-  "requests",
   "structlog",
 ]
 ignore_missing_imports = true

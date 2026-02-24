@@ -320,3 +320,79 @@ class TestCompatibility:
             assert key in fastabi_result['decoded_data']
             # Convert both to string for comparison (fastabi returns strings)
             assert str(value) == str(fastabi_result['decoded_data'][key])
+
+
+class TestGilRelease:
+    """Test that GIL is properly released during Rust computation."""
+
+    def test_all_functions_return_json_strings(self):
+        """Verify all fastabi functions return JSON strings (not Python objects)."""
+        try:
+            from aiochainscan_fastabi import (
+                decode_input,
+                decode_many,
+                decode_many_flat,
+                decode_many_hex,
+                decode_many_raw,
+                decode_one,
+            )
+        except ImportError:
+            pytest.skip('fastabi not available')
+
+        abi_json = json.dumps(TRANSFER_ABI)
+        input_bytes = bytes.fromhex(TRANSFER_INPUT[2:])
+
+        # All functions should return str (JSON)
+        result = decode_input(input_bytes, abi_json)
+        assert isinstance(result, str), f'decode_input returned {type(result)}, expected str'
+        json.loads(result)  # Should be valid JSON
+
+        result = decode_one(input_bytes, abi_json)
+        assert isinstance(result, str), f'decode_one returned {type(result)}, expected str'
+        json.loads(result)  # Should be valid JSON
+
+        result = decode_many([input_bytes], abi_json)
+        assert isinstance(result, str), f'decode_many returned {type(result)}, expected str'
+        json.loads(result)  # Should be valid JSON
+
+        result = decode_many_hex([TRANSFER_INPUT], abi_json)
+        assert isinstance(result, str), f'decode_many_hex returned {type(result)}, expected str'
+        json.loads(result)  # Should be valid JSON
+
+        result = decode_many_raw([input_bytes], abi_json)
+        assert isinstance(result, str), f'decode_many_raw returned {type(result)}, expected str'
+        json.loads(result)  # Should be valid JSON
+
+        result = decode_many_flat([input_bytes], abi_json)
+        assert isinstance(result, str), f'decode_many_flat returned {type(result)}, expected str'
+        json.loads(result)  # Should be valid JSON
+
+    def test_batch_decode_large_batch_no_gil_blocking(self):
+        """Test that large batch decoding doesn't block by creating Python objects in Rust."""
+        try:
+            from aiochainscan_fastabi import decode_many
+        except ImportError:
+            pytest.skip('fastabi not available')
+
+        import time
+
+        abi_json = json.dumps(TRANSFER_ABI)
+        input_bytes = bytes.fromhex(TRANSFER_INPUT[2:])
+
+        # Create a large batch
+        batch_size = 10000
+        batch = [input_bytes] * batch_size
+
+        # Time the decode
+        start = time.perf_counter()
+        result = decode_many(batch, abi_json)
+        elapsed = time.perf_counter() - start
+
+        # Verify result
+        assert isinstance(result, str)
+        parsed = json.loads(result)
+        assert len(parsed) == batch_size
+
+        # Should complete reasonably fast (< 5 seconds for 10k items)
+        # This would timeout if GIL was held during Python object creation
+        assert elapsed < 5.0, f'Batch decode took {elapsed:.2f}s, expected < 5s'

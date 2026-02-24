@@ -1,3 +1,4 @@
+import warnings
 from collections.abc import Mapping
 from datetime import date
 from typing import Any
@@ -28,6 +29,11 @@ from aiochainscan.config import config_manager as _config_manager
 # (it imports scanners which register themselves during import)
 from aiochainscan.core.client import ChainscanClient  # noqa: E402
 from aiochainscan.core.method import Method  # unified method enum
+from aiochainscan.domain.contract import (  # Smart contract abstraction
+    DecodedEvent,
+    DecodedTransaction,
+    SmartContract,
+)
 from aiochainscan.domain.dto import (
     AddressBalanceDTO,
     BeaconWithdrawalDTO,
@@ -62,6 +68,9 @@ from aiochainscan.domain.models import Address, BlockNumber, Page, TxHash  # re-
 from aiochainscan.ports.cache import Cache
 from aiochainscan.ports.endpoint_builder import EndpointBuilder
 from aiochainscan.ports.http_client import HttpClient
+
+# Progress callback support
+from aiochainscan.ports.progress import ProgressCallback
 from aiochainscan.ports.rate_limiter import RateLimiter, RetryPolicy
 from aiochainscan.ports.telemetry import Telemetry
 from aiochainscan.services.account import (
@@ -123,6 +132,7 @@ from aiochainscan.services.contract import (
 from aiochainscan.services.contract import (
     verify_proxy_contract as verify_proxy_contract_service,
 )
+from aiochainscan.services.ens_resolver import ENSResolver  # ENS integration
 from aiochainscan.services.gas import get_gas_oracle as get_gas_oracle_service
 from aiochainscan.services.gas import normalize_gas_oracle
 from aiochainscan.services.logs import get_logs_page as get_logs_page_service
@@ -173,6 +183,14 @@ from aiochainscan.services.transaction import (
     get_transaction_by_hash,  # facade use-case
     normalize_transaction,
 )
+from aiochainscan.utils.progress_helpers import (
+    callback_with_interval,
+    console_progress,
+    logging_progress,
+    rich_progress,
+    silent_progress,
+    tqdm_progress,
+)
 
 __all__ = [
     'ChainscanClient',
@@ -185,6 +203,20 @@ __all__ = [
     'BlockNumber',
     'TxHash',
     'Page',
+    # Smart Contract API
+    'SmartContract',
+    'DecodedEvent',
+    'DecodedTransaction',
+    # ENS Integration
+    'ENSResolver',
+    # Progress Callbacks
+    'ProgressCallback',
+    'console_progress',
+    'tqdm_progress',
+    'rich_progress',
+    'logging_progress',
+    'silent_progress',
+    'callback_with_interval',
     # Services (facade)
     'get_address_balance',
     'get_address_balances',
@@ -330,6 +362,45 @@ __all__ = [
 ]
 
 
+# =============================================================================
+# DEPRECATION WARNING HELPER
+# =============================================================================
+
+
+def _warn_facade_deprecation(function_name: str) -> None:
+    """Issue deprecation warning for facade functions with connection pooling issues.
+
+    Facade functions create and close HTTP clients on every call, which prevents
+    connection pooling and causes performance issues in bulk operations.
+
+    Users should migrate to ChainscanClient for proper connection pooling.
+    """
+    warnings.warn(
+        f'{function_name}() is deprecated and will be removed in v0.5.0. '
+        f'This function creates a new HTTP client on every call, preventing connection pooling. '
+        f'For bulk operations (e.g., asyncio.gather with 100+ calls), this causes:\n'
+        f'  - 100+ TCP connection establishments\n'
+        f'  - 100+ TLS handshakes\n'
+        f'  - Loss of HTTP/2 multiplexing\n'
+        f'  - High CPU load and API rate limits\n\n'
+        f'Migrate to ChainscanClient:\n'
+        f'  from aiochainscan import ChainscanClient\n'
+        f'  from aiochainscan.core.method import Method\n\n'
+        f"  client = ChainscanClient.from_config('blockscout_v2', 'ethereum')\n"
+        f'  try:\n'
+        f'      # Single persistent connection pool for all calls\n'
+        f'      results = await asyncio.gather(*[\n'
+        f'          client.call(Method.ACCOUNT_BALANCE, address=addr)\n'
+        f'          for addr in addresses\n'
+        f'      ])\n'
+        f'  finally:\n'
+        f'      await client.close()\n\n'
+        f'See: https://github.com/VaitaR/aiochainscan/blob/main/docs/MIGRATION_GUIDE.md',
+        DeprecationWarning,
+        stacklevel=3,
+    )
+
+
 async def get_balance(
     *,
     address: str,
@@ -345,8 +416,30 @@ async def get_balance(
 ) -> int:
     """Fetch address balance using the default aiohttp adapter.
 
+    .. deprecated:: 0.4.0
+        This facade function creates a new HTTP client on every call, preventing
+        connection pooling. Use :class:`ChainscanClient` instead for bulk operations.
+        Will be removed in v0.5.0.
+
     Convenience facade for simple use without manual client wiring.
+
+    **WARNING**: This function has a critical architectural flaw. Each call creates
+    and closes an HTTP client, preventing connection pooling. If you use this in
+    bulk operations like ``asyncio.gather(*[get_balance(...) for _ in range(100)])``,
+    you will create 100 separate HTTP clients, causing TCP exhaustion and poor performance.
+
+    **Recommended Migration**::
+
+        from aiochainscan import ChainscanClient
+        from aiochainscan.core.method import Method
+
+        client = ChainscanClient.from_config('blockscout_v2', 'ethereum')
+        try:
+            balance = await client.call(Method.ACCOUNT_BALANCE, address='0x...')
+        finally:
+            await client.close()
     """
+    _warn_facade_deprecation('get_balance')
 
     http = http or HttpxClientAdapter()
     endpoint = endpoint_builder or UrlBuilderEndpoint()
@@ -425,7 +518,13 @@ async def get_block(
     cache: Cache | None = None,
     telemetry: Telemetry | None = None,
 ) -> dict[str, Any]:
-    """Fetch block by number via default adapter."""
+    """Fetch block by number via default adapter.
+
+    .. deprecated:: 0.4.0
+        This facade function creates a new HTTP client on every call.
+        Use :class:`ChainscanClient` instead. Will be removed in v0.5.0.
+    """
+    _warn_facade_deprecation('get_block')
 
     http = http or HttpxClientAdapter()
     endpoint = endpoint_builder or UrlBuilderEndpoint()
@@ -953,6 +1052,13 @@ async def get_address_balances(
     retry: RetryPolicy | None = None,
     telemetry: Telemetry | None = None,
 ) -> list[dict[str, Any]]:
+    """Get balances for multiple addresses.
+
+    .. deprecated:: 0.4.0
+        Use :class:`ChainscanClient` instead. Will be removed in v0.5.0.
+    """
+    _warn_facade_deprecation('get_address_balances')
+
     http = http or HttpxClientAdapter()
     endpoint = endpoint_builder or UrlBuilderEndpoint()
     telemetry = telemetry or StructlogTelemetry()
@@ -1414,7 +1520,12 @@ async def get_transaction(
     cache: Cache | None = None,
     telemetry: Telemetry | None = None,
 ) -> dict[str, Any]:
-    """Fetch transaction by hash via default adapter."""
+    """Fetch transaction by hash via default adapter.
+
+    .. deprecated:: 0.4.0
+        Use :class:`ChainscanClient` instead. Will be removed in v0.5.0.
+    """
+    _warn_facade_deprecation('get_transaction')
 
     http = http or HttpxClientAdapter()
     endpoint = endpoint_builder or UrlBuilderEndpoint()
@@ -1532,7 +1643,12 @@ async def get_logs(
     retry: RetryPolicy | None = None,
     telemetry: Telemetry | None = None,
 ) -> list[dict[str, Any]]:
-    """Fetch logs via default adapter."""
+    """Fetch logs via default adapter.
+
+    .. deprecated:: 0.4.0
+        Use :class:`ChainscanClient` instead. Will be removed in v0.5.0.
+    """
+    _warn_facade_deprecation('get_logs')
 
     from aiochainscan.services.logs import get_logs as get_logs_service
 

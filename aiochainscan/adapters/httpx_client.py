@@ -6,19 +6,22 @@ from collections.abc import Mapping
 from typing import Any
 
 import httpx
+import orjson
 
 from aiochainscan.ports.http_client import HttpClient
 
 
 class HttpxClientAdapter(HttpClient):
-    """Modern HTTP client using httpx with HTTP/2 support.
+    """Modern HTTP client using httpx.
 
-    This adapter provides HTTP/2 multiplexing which allows hundreds of
-    concurrent requests over a single TCP connection, improving performance
-    for high-throughput API scenarios.
+    Note: HTTP/2 is disabled by default because API endpoints behind
+    Cloudflare (Etherscan, BlockScout) interpret HTTP/2 multiplexed
+    streams as Layer 7 DDoS attacks, resulting in GOAWAY/RST_STREAM
+    instead of HTTP 429 responses. HTTP/1.1 is more reliable for
+    rate-limited blockchain APIs.
 
     Example usage:
-        async with HttpxClientAdapter(http2=True) as client:
+        async with HttpxClientAdapter() as client:
             result = await client.get("https://api.example.com/data")
     """
 
@@ -26,17 +29,17 @@ class HttpxClientAdapter(HttpClient):
         self,
         *,
         timeout: float | None = 30.0,
-        http2: bool = True,
+        http2: bool = False,
         headers: Mapping[str, str] | None = None,
-        max_connections: int | None = 100,
-        max_keepalive_connections: int | None = 20,
+        max_connections: int | None = 10,
+        max_keepalive_connections: int | None = 5,
         proxy: str | None = None,
     ) -> None:
-        """Create httpx-based client with HTTP/2 support.
+        """Create httpx-based client.
 
         Args:
             timeout: Request timeout in seconds. None disables timeout.
-            http2: Whether to use HTTP/2 (default True).
+            http2: Whether to use HTTP/2 (default False for API stability).
             headers: Default headers to include in all requests.
             max_connections: Maximum number of connections in the pool.
             max_keepalive_connections: Maximum keepalive connections.
@@ -157,10 +160,13 @@ class HttpxClientAdapter(HttpClient):
     def _maybe_json(response: httpx.Response) -> Any:
         """Parse response as JSON if content type indicates JSON, else return text.
 
-        Note: httpx's response.json() is SYNCHRONOUS (no await needed),
-        unlike aiohttp's async response.json().
+        Uses orjson for 3-5x faster parsing compared to stdlib json.
+        This is critical for large API responses (megabytes of transactions)
+        to avoid blocking the event loop.
         """
         content_type = response.headers.get('content-type', '')
         if 'application/json' in content_type:
-            return response.json()  # Synchronous in httpx!
+            # Use orjson for ultra-fast JSON parsing
+            # response.content returns bytes, which orjson handles directly
+            return orjson.loads(response.content)
         return response.text

@@ -31,6 +31,12 @@ python examples/04_etherscan_with_api_key.py
 | 04 | [04_etherscan_with_api_key.py](04_etherscan_with_api_key.py) | Using Etherscan with API key | ⭐⭐ Intermediate |
 | 05 | [05_pydantic_typed_responses.py](05_pydantic_typed_responses.py) | Type-safe data with Pydantic | ⭐⭐⭐ Advanced |
 | 06 | [06_multichain_comparison.py](06_multichain_comparison.py) | Cross-chain portfolio analysis | ⭐⭐⭐ Advanced |
+| 07 | [07_handling_whale_blocks.py](07_handling_whale_blocks.py) | Handle large transaction sets | ⭐⭐⭐ Advanced |
+| 🆕 | [streaming_decode_demo.py](streaming_decode_demo.py) | **Memory-efficient streaming for millions of txs** | ⭐⭐⭐ Advanced |
+| 🆕 | [smart_contract_demo.py](smart_contract_demo.py) | Smart contract interaction and decoding | ⭐⭐⭐ Advanced |
+| 🆕 | [ens_simple_demo.py](ens_simple_demo.py) | **ENS reverse lookup (address → name)** | ⭐ Beginner |
+| 🆕 | [ens_demo.py](ens_demo.py) | **Complete ENS integration guide** | ⭐⭐ Intermediate |
+| ✨ | [progress_callback_demo.py](progress_callback_demo.py) | **Progress bars and tracking for long operations** | ⭐⭐ Intermediate |
 
 ---
 

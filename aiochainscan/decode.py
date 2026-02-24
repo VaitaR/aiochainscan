@@ -4,18 +4,80 @@ import json
 from collections.abc import Sequence
 from typing import Any, cast
 
-import requests
 from eth_abi.abi import decode
 from eth_utils import keccak  # type: ignore[attr-defined]
 
+from aiochainscan.ports.http_client import HttpClient
+
+# Try to import orjson for fast JSON parsing (always available as dependency)
+try:
+    import orjson
+
+    ORJSON_AVAILABLE = True
+except ImportError:
+    ORJSON_AVAILABLE = False
+
+
+def _parse_json(json_str: str) -> Any:
+    """Parse JSON string using orjson if available, else stdlib json."""
+    if ORJSON_AVAILABLE:
+        return orjson.loads(json_str)
+    return json.loads(json_str)
+
+
 # Try to import fastabi Rust backend
 try:
-    from aiochainscan_fastabi import decode_input as _fast_decode_input
-    from aiochainscan_fastabi import decode_many as _fast_decode_many
-    from aiochainscan_fastabi import decode_many_direct as _fast_decode_many_direct
-    from aiochainscan_fastabi import decode_many_hex as _fast_decode_many_hex
+    from aiochainscan_fastabi import decode_input as _fast_decode_input_json
+    from aiochainscan_fastabi import decode_many as _fast_decode_many_json
+    from aiochainscan_fastabi import decode_many_direct as _fast_decode_many_direct_json
+    from aiochainscan_fastabi import decode_many_flat as _fast_decode_many_flat_json
+    from aiochainscan_fastabi import decode_many_hex as _fast_decode_many_hex_json
+    from aiochainscan_fastabi import decode_many_raw as _fast_decode_many_raw_json
+    from aiochainscan_fastabi import decode_one as _fast_decode_one_json
+    from aiochainscan_fastabi import decode_one_direct as _fast_decode_one_direct_json
 
     FASTABI_AVAILABLE = True
+
+    # Wrapper functions that parse JSON returned from Rust
+    # This avoids GIL blocking - orjson is optimized for fast object creation
+    def _fast_decode_input(input_bytes: bytes, abi_json: str) -> dict[str, Any]:
+        """Decode single transaction using Rust + orjson for Python object creation."""
+        return cast(dict[str, Any], _parse_json(_fast_decode_input_json(input_bytes, abi_json)))
+
+    def _fast_decode_one(calldata: bytes, abi_json: str) -> dict[str, Any]:
+        """Decode single transaction using Rust + orjson for Python object creation."""
+        return cast(dict[str, Any], _parse_json(_fast_decode_one_json(calldata, abi_json)))
+
+    def _fast_decode_one_direct(calldata: bytes, abi: list[dict[str, Any]]) -> dict[str, Any]:
+        """Decode single transaction using Rust + orjson for Python object creation."""
+        return cast(dict[str, Any], _parse_json(_fast_decode_one_direct_json(calldata, abi)))
+
+    def _fast_decode_many(calldatas: list[bytes], abi_json: str) -> list[dict[str, Any]]:
+        """Decode many transactions using Rust + orjson for Python object creation."""
+        return cast(list[dict[str, Any]], _parse_json(_fast_decode_many_json(calldatas, abi_json)))
+
+    def _fast_decode_many_direct(
+        calldatas: list[bytes], abi: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Decode many transactions using Rust + orjson for Python object creation."""
+        return cast(
+            list[dict[str, Any]], _parse_json(_fast_decode_many_direct_json(calldatas, abi))
+        )
+
+    def _fast_decode_many_hex(hex_inputs: list[str], abi_json: str) -> list[dict[str, Any]]:
+        """Decode many hex transactions using Rust + orjson for Python object creation."""
+        return cast(
+            list[dict[str, Any]], _parse_json(_fast_decode_many_hex_json(hex_inputs, abi_json))
+        )
+
+    def _fast_decode_many_raw(calldatas: list[bytes], abi_json: str) -> list[list[Any]]:
+        """Decode many transactions as raw tuples using Rust + orjson."""
+        return cast(list[list[Any]], _parse_json(_fast_decode_many_raw_json(calldatas, abi_json)))
+
+    def _fast_decode_many_flat(calldatas: list[bytes], abi_json: str) -> list[list[Any]]:
+        """Decode many transactions as flat lists using Rust + orjson."""
+        return cast(list[list[Any]], _parse_json(_fast_decode_many_flat_json(calldatas, abi_json)))
+
 except ImportError:
     FASTABI_AVAILABLE = False
 
@@ -29,21 +91,22 @@ class SignatureDatabase:
         self.cache: dict[str, str] = {}
         self.api_url: str = 'https://www.4byte.directory/api/v1/signatures/?hex_signature='
 
-    def get_function_signature(self, selector: str) -> str | None:
+    async def get_function_signature(self, selector: str, http_client: HttpClient) -> str | None:
         if selector in self.cache:
             return self.cache[selector]
 
         try:
-            response = requests.get(f'{self.api_url}{selector}', timeout=5)
-            if response.status_code == 200:
-                data = cast(dict[str, Any], response.json())
+            response = await http_client.get(f'{self.api_url}{selector}')
+            # Response is already parsed as JSON by HttpClient
+            if isinstance(response, dict):
+                data = cast(dict[str, Any], response)
                 results = cast(list[dict[str, Any]] | None, data.get('results'))
                 if results:
                     signature = cast(str, results[0]['text_signature'])
                     self.cache[selector] = signature  # Save to cache
                     return signature
-        except requests.RequestException:
-            pass  # Ignore network errors, we just can't find the signature
+        except Exception:  # noqa: BLE001 - Network errors can be of many types (aiohttp, httpx, etc.)
+            pass  # Ignore network/parsing errors, we just can't find the signature
 
         return None
 
@@ -132,16 +195,15 @@ def _decode_transaction_input_fast(
         # Convert ABI to JSON string
         abi_json = json.dumps(abi)
 
-        # Call Rust decoder
-        result_json = _fast_decode_input(input_bytes, abi_json)
-        result = cast(dict[str, Any], json.loads(result_json))
+        # Call Rust decoder - returns parsed dict via orjson
+        result = _fast_decode_input(input_bytes, abi_json)
 
         # Map Rust result format to Python format
         transaction['decoded_func'] = result['function_name']
         transaction['decoded_data'] = result['decoded_data']
 
         return transaction
-    except Exception:
+    except (ValueError, KeyError, TypeError, RuntimeError):
         # Fallback to Python implementation on any error
         return _decode_transaction_input_python(transaction, abi)
 
@@ -357,7 +419,7 @@ def decode_transaction_inputs_batch_zero_copy(
             return transactions
 
         # Call ultimate optimized Rust function (NO JSON!)
-        decoded_results = cast(list[dict[str, Any]], _fast_decode_many_direct(calldatas, abi))
+        decoded_results = _fast_decode_many_direct(calldatas, abi)
 
         # Map results back (minimal overhead)
         result_idx = 0
@@ -373,7 +435,7 @@ def decode_transaction_inputs_batch_zero_copy(
 
         return transactions
 
-    except Exception:
+    except (ValueError, KeyError, TypeError, RuntimeError):
         # Fallback to regular batch on any error
         return decode_transaction_inputs_batch(transactions, abi)
 
@@ -412,7 +474,7 @@ def decode_transaction_inputs_batch_optimized(
         abi_json = json.dumps(abi)
 
         # Call ultimate optimized Rust function
-        decoded_results = cast(list[dict[str, Any]], _fast_decode_many_hex(hex_inputs, abi_json))
+        decoded_results = _fast_decode_many_hex(hex_inputs, abi_json)
 
         # Map results back (minimal overhead)
         result_idx = 0
@@ -428,7 +490,7 @@ def decode_transaction_inputs_batch_optimized(
 
         return transactions
 
-    except Exception:
+    except (ValueError, KeyError, TypeError, RuntimeError):
         # Fallback to regular batch on any error
         return decode_transaction_inputs_batch(transactions, abi)
 
@@ -478,7 +540,7 @@ def decode_transaction_inputs_batch(
         abi_json = json.dumps(abi)
 
         # Call optimized Rust batch decoder with GIL release
-        decoded_results = cast(list[dict[str, Any]], _fast_decode_many(calldatas, abi_json))
+        decoded_results = _fast_decode_many(calldatas, abi_json)
 
         # Map results back to transactions (optimized)
         result_idx = 0
@@ -496,16 +558,25 @@ def decode_transaction_inputs_batch(
 
         return transactions
 
-    except Exception:
+    except (ValueError, KeyError, TypeError, RuntimeError):
         # Fallback to Python implementation on any error
         return [decode_transaction_input(tx, abi) for tx in transactions]
 
 
-def decode_input_with_online_lookup(transaction: dict[str, Any]) -> dict[str, Any]:
+async def decode_input_with_online_lookup(
+    transaction: dict[str, Any], http_client: HttpClient
+) -> dict[str, Any]:
     """
     Attempts to decode transaction input using an online signature database.
     This function makes a network request and may be slower.
     Use it when an ABI is not available.
+
+    Args:
+        transaction: Transaction dictionary with 'input' field
+        http_client: HttpClient instance for making async HTTP requests
+
+    Returns:
+        Transaction dictionary with decoded_func and decoded_data fields
     """
     tx_copy = transaction.copy()
     func_selector = tx_copy.get('input', '')[:FUNCTION_SELECTOR_LENGTH]
@@ -516,7 +587,7 @@ def decode_input_with_online_lookup(transaction: dict[str, Any]) -> dict[str, An
         return tx_copy
 
     # 1. Find signature via online database
-    signature_text = sig_db.get_function_signature(func_selector)
+    signature_text = await sig_db.get_function_signature(func_selector, http_client)
 
     if signature_text:
         # 2. If found, generate a temporary ABI

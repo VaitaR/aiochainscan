@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, Protocol
+from typing import Any, Protocol, runtime_checkable
 
 
+@runtime_checkable
 class HttpClient(Protocol):
     async def aclose(self) -> None:  # noqa: D401 - simple protocol
         """Close any underlying resources."""
