@@ -20,14 +20,12 @@ class UrlBuilder:
         'linea': ('lineascan.build', 'LINEA'),
         'blast': ('blastscan.io', 'BLAST'),
         'base': ('etherscan.io', 'BASE'),  # Base network via Etherscan V2
-        'routscan_mode': ('api.routescan.io/v2/network/mainnet/evm/34443', 'ETH'),
         'blockscout_eth': ('eth.blockscout.com', 'ETH'),
         'blockscout_sepolia': ('eth-sepolia.blockscout.com', 'ETH'),
         'blockscout_gnosis': ('gnosis.blockscout.com', 'xDAI'),
         'blockscout_polygon': ('polygon.blockscout.com', 'MATIC'),
         'blockscout_base': ('base.blockscout.com', 'ETH'),
         'blockscout_bsc': ('bsc.blockscout.com', 'BNB'),
-        'moralis': ('deep-index.moralis.io', 'Multi-chain'),
     }
 
     # API kinds that use Etherscan V2 header-based authentication.
@@ -132,8 +130,6 @@ class UrlBuilder:
         elif self._api_kind == 'chiliz':
             prefix = 'scan'
 
-        elif self._api_kind == 'routscan_mode':
-            prefix = 'etherscan'
         elif self._api_kind.startswith('blockscout_'):
             prefix = None  # BlockScout uses direct /api path
 
@@ -197,15 +193,9 @@ class UrlBuilder:
         if not self._API_KEY:
             return params, headers
 
-        if self._api_kind in self._HEADER_AUTH_API_KINDS or self._api_kind == 'moralis':
+        if self._api_kind in self._HEADER_AUTH_API_KINDS:
             headers.setdefault('X-API-Key', self._API_KEY)
         else:
             params.setdefault('apikey', self._API_KEY)
 
         return params, headers
-
-    # Legacy compatibility shim for code that still calls the old private helper.
-    def _sign(
-        self, params: dict[str, Any] | None, headers: dict[str, Any] | None
-    ) -> tuple[dict[str, Any], dict[str, Any]]:
-        return self.filter_and_sign(params, headers)

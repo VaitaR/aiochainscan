@@ -11,6 +11,7 @@ import asyncio
 from collections.abc import AsyncIterator
 from typing import Any
 
+from aiochainscan.constants import MAX_BLOCK_NUMBER
 from aiochainscan.decode import (
     decode_log_data,
     decode_transaction_inputs_batch,
@@ -444,7 +445,7 @@ class StreamingDecoder:
             if latest_hex.isdigit():
                 return int(latest_hex)
 
-        return 99_999_999
+        return MAX_BLOCK_NUMBER
 
     @staticmethod
     def _decode_log_batch(

@@ -1584,10 +1584,6 @@ async def get_token_balance(
         await http.aclose()
 
 
-# Backward-compatible alias
-get_token_balance_facade = get_token_balance
-
-
 async def get_gas_oracle(
     *,
     api_kind: str,
@@ -1619,10 +1615,6 @@ async def get_gas_oracle(
         )
     finally:
         await http.aclose()
-
-
-# Backward-compatible alias
-get_gas_oracle_facade = get_gas_oracle
 
 
 async def get_logs(

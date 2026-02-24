@@ -11,10 +11,12 @@ from aiochainscan.constants import (
     BATCH_DEFAULT_CONCURRENCY,
     BATCH_MAX_CONCURRENT_CHUNKS,
 )
+from aiochainscan.domain.dto_v2 import parse_hex_or_int_zero as _to_int
 from aiochainscan.ports.endpoint_builder import EndpointBuilder
 from aiochainscan.ports.http_client import HttpClient
 from aiochainscan.ports.rate_limiter import RateLimiter, RetryPolicy
 from aiochainscan.ports.telemetry import Telemetry
+from aiochainscan.services._block_utils import _resolve_end_block_factory
 from aiochainscan.services.account import (
     get_internal_transactions,
     get_normal_transactions,
@@ -41,50 +43,6 @@ DataType = Literal[
 ]
 
 Strategy = Literal['basic', 'fast', 'chunked']
-
-
-def _to_int(value: Any) -> int:
-    try:
-        if isinstance(value, str):
-            s = value.strip()
-            if s.startswith('0x'):
-                return int(s, 16)
-            return int(s)
-        return int(value)
-    except Exception:  # noqa: BLE001
-        return 0
-
-
-def _resolve_end_block_factory(
-    *,
-    api_kind: str,
-    network: str,
-    api_key: str,
-    http: HttpClient,
-    endpoint_builder: EndpointBuilder,
-    rate_limiter: RateLimiter | None,
-    retry: RetryPolicy | None,
-) -> ResolveEndBlock:
-    async def _resolve() -> int:
-        endpoint = endpoint_builder.open(api_key=api_key, api_kind=api_kind, network=network)
-        url: str = endpoint.api_url
-        params_proxy: dict[str, Any] = {'module': 'proxy', 'action': 'eth_blockNumber'}
-        signed_params, headers = endpoint.filter_and_sign(params_proxy, headers=None)
-
-        async def _do() -> Any:
-            if rate_limiter is not None:
-                await rate_limiter.acquire(key=f'{api_kind}:{network}:proxy.blockNumber')
-            return await http.get(url, params=signed_params, headers=headers)
-
-        response: Any = await (retry.run(_do) if retry is not None else _do())
-        latest_hex = response.get('result') if isinstance(response, dict) else None
-        return (
-            int(latest_hex, 16)
-            if isinstance(latest_hex, str) and latest_hex.startswith('0x')
-            else int(latest_hex)  # type: ignore[arg-type]
-        )
-
-    return _resolve
 
 
 def _is_blockscout(api_kind: str) -> bool:
