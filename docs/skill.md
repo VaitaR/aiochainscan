@@ -4,14 +4,61 @@
 
 ## What is this?
 
-`aiochainscan` is a Python library that lets you query blockchain data (balances, transactions, tokens, logs, contracts, gas) from multiple networks (Ethereum, Polygon, Arbitrum, etc.) using a unified API.
+`aiochainscan` is a Python library that lets you query blockchain data (balances, transactions, tokens, logs, contracts, gas) from multiple networks using a unified API.
 
-**Key Feature**: Works without API keys using BlockScout V2!
+**Key Facts:**
+- `blockscout_v2` — **no API key**, but only supports **6 methods** (balance, transactions, token portfolio, contract ABI, ENS reverse lookup, ENS batch reverse)
+- `blockscout` (v1) — **no API key**, supports ~20 methods, but some endpoints may return 400 on certain networks
+- `etherscan` — **requires `ETHERSCAN_KEY` env var**, supports ~12 methods, most reliable
+
+---
+
+## ⚠️ CRITICAL: Scanner Support Matrix
+
+**Choose the right scanner for your task:**
+
+| Method | `blockscout_v2` | `blockscout` (v1) | `etherscan` |
+|--------|:--------------:|:-----------------:|:-----------:|
+| `get_balance()` | ✅ | ✅ | ✅ |
+| `get_transactions()` / `get_all_transactions()` | ✅ | ✅ | ✅ |
+| `get_token_portfolio()` | ✅ | ✅ | ✅ |
+| `get_nft_portfolio()` | ❌ | ✅ | ✅ |
+| `get_contract_abi()` | ✅ | ✅ | ✅ |
+| `get_internal_transactions()` | ❌ | ✅ | ✅ |
+| `get_token_transfers()` | ❌ | ✅ | ✅ |
+| `get_transaction()` | ❌ | ✅ | ✅ |
+| `get_transaction_status()` | ❌ | ❌ | ✅ |
+| `get_block()` | ❌ | ✅* | ✅ |
+| `get_block_reward()` | ❌ | ✅* | ❌ |
+| `get_block_countdown()` | ❌ | ❌ | ✅ |
+| `get_block_by_timestamp()` | ❌ | ❌ | ✅ |
+| `get_contract_source()` | ❌ | ✅ | ✅ |
+| `get_token_balance()` | ❌ | ✅ | ✅ |
+| `get_token_supply()` | ❌ | ✅ | ✅ |
+| `get_token_info()` | ❌ | ✅ | ✅ |
+| `get_eth_price()` | ❌ | ✅* | ✅ |
+| `get_gas_oracle()` | ❌ | ✅* | ✅ |
+| `get_eth_supply()` | ❌ | ✅* | ❌ |
+| `get_logs()` / `get_all_logs()` | ❌ | ✅ | ✅ |
+| `eth_call()` / `eth_get_balance()` | ❌ | ✅ | ✅ |
+| `get_contract()` (SmartContract) | ✅ ABI only | ✅ | ✅ |
+| `iter_events()` via SmartContract | ❌ | ✅ | ✅ |
+| ENS: `lookup_address()` | ✅ | ❌ | ❌ |
+| ENS: `resolve_name()` | ❌ | ❌ | ✅ |
+
+> *`blockscout` (v1) works on Ethereum mainnet for these, but may return HTTP 400 on block proxy calls.
+
+**Rule of thumb:**
+- Need only balance/transactions/token portfolio? → `blockscout_v2` (no key needed)
+- Need full data without API key? → `blockscout` (v1)
+- Need gas oracle, logs, blocks, event decoding? → `etherscan` (set `ETHERSCAN_KEY`)
+- Need ENS reverse lookup? → `blockscout_v2`
 
 ---
 
 ## Quick Start (Copy-Paste Ready)
 
+### Basic — Balance & Transactions (no API key)
 ```python
 import asyncio
 from aiochainscan.core.client import ChainscanClient
@@ -20,16 +67,33 @@ async def get_wallet_info(address: str):
     async with ChainscanClient.from_config("blockscout_v2", "ethereum") as client:
         balance_wei = await client.get_balance(address)
         balance_eth = int(balance_wei) / 10**18
-        txs = await client.get_transactions(address)
-        tokens = await client.get_token_portfolio(address)
+        txs = await client.get_transactions(address)          # single page (~50)
+        tokens = await client.get_token_portfolio(address)    # all ERC-20 holdings
         return {
             "balance_eth": balance_eth,
-            "transaction_count": len(txs),
+            "recent_tx_count": len(txs),
             "token_count": len(tokens),
         }
 
 result = asyncio.run(get_wallet_info("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"))
 print(result)
+```
+
+### Full data — Gas, Logs, Blocks (requires ETHERSCAN_KEY)
+```python
+import asyncio, os
+from aiochainscan.core.client import ChainscanClient
+
+# Set: export ETHERSCAN_KEY="your_key_here"
+async def full_data():
+    async with ChainscanClient.from_config("etherscan", "ethereum") as client:
+        price = await client.get_eth_price()        # {'ethusd': '1825.33', ...}
+        gas = await client.get_gas_oracle()         # {'SafeGasPrice': '1', ...}
+        block = await client.get_block(22000000)
+        all_txs = await client.get_all_transactions("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")
+        return price, gas, block, len(all_txs)
+
+asyncio.run(full_data())
 ```
 
 ---
@@ -40,22 +104,22 @@ print(result)
 | Method | Description | Returns |
 |--------|-------------|---------|
 | `get_balance(address)` | Native token balance | `str` (Wei) |
-| `get_transactions(address)` | Normal transactions (single page) | `list[dict]` |
+| `get_transactions(address)` | Normal transactions (**single page ~50 items**) | `list[dict]` |
 | `get_all_transactions(address)` | **ALL** transactions (auto-paginated) | `list[dict]` |
-| `get_internal_transactions(address)` | Internal transactions (single page) | `list[dict]` |
-| `get_all_internal_transactions(address)` | **ALL** internal txs (auto-paginated) | `list[dict]` |
+| `get_internal_transactions(address)` | Internal transactions | `list[dict]` |
+| `get_all_internal_transactions(address)` | **ALL** internal txs | `list[dict]` |
 | `get_token_transfers(address)` | ERC-20 transfers (single page) | `list[dict]` |
-| `get_all_token_transfers(address)` | **ALL** ERC-20 transfers (auto-paginated) | `list[dict]` |
+| `get_all_token_transfers(address)` | **ALL** ERC-20 transfers | `list[dict]` |
 | `get_erc721_transfers(address)` | ERC-721 (NFT) transfers | `list[dict]` |
-| `get_erc1155_transfers(address)` | ERC-1155 (multi-token) transfers | `list[dict]` |
-| `get_token_portfolio(address)` | All ERC-20 token holdings | `list[dict]` |
+| `get_erc1155_transfers(address)` | ERC-1155 transfers | `list[dict]` |
+| `get_token_portfolio(address)` | All ERC-20 holdings | `list[dict]` |
 | `get_nft_portfolio(address)` | All NFT holdings | `list[dict]` |
 
 ### Transaction Data
 | Method | Description | Returns |
 |--------|-------------|---------|
 | `get_transaction(tx_hash)` | Transaction details by hash | `dict` |
-| `get_transaction_status(tx_hash)` | Receipt status (success/fail) | `dict` |
+| `get_transaction_status(tx_hash)` | Receipt status | `dict` |
 | `check_transaction_status(tx_hash)` | Execution status (isError) | `dict` |
 
 ### Block Data
@@ -63,7 +127,7 @@ print(result)
 |--------|-------------|---------|
 | `get_block(block_number)` | Block info by number | `dict` |
 | `get_block_reward(block_number)` | Mining reward info | `dict` |
-| `get_block_countdown(target_block)` | Estimated time to target block | `dict` |
+| `get_block_countdown(target_block)` | ETA to block | `dict` |
 | `get_block_by_timestamp(timestamp)` | Nearest block to timestamp | `dict` |
 
 ### Contract Data
@@ -71,7 +135,7 @@ print(result)
 |--------|-------------|---------|
 | `get_contract_abi(address)` | Contract ABI | `str` (JSON) |
 | `get_contract_source(address)` | Verified source code | `dict` |
-| `get_contract_creation(addresses)` | Creator address + creation tx | `list[dict]` |
+| `get_contract_creation(addresses)` | Creator + creation tx | `list[dict]` |
 | `get_contract(address)` | High-level SmartContract object | `SmartContract` |
 
 ### Token Data
@@ -84,7 +148,7 @@ print(result)
 ### Event Logs
 | Method | Description | Returns |
 |--------|-------------|---------|
-| `get_logs(address, from_block, ...)` | Logs (single page, ≤1000) | `list[dict]` |
+| `get_logs(address, from_block, ...)` | Logs (≤1000, single page) | `list[dict]` |
 | `get_all_logs(address, from_block, ...)` | **ALL** logs (auto-paginated) | `list[dict]` |
 
 ### Gas & Statistics
@@ -102,21 +166,18 @@ print(result)
 | `eth_get_balance(address, tag)` | Balance via JSON-RPC | `str` (hex Wei) |
 
 ### ENS (Ethereum Name Service)
-| Method | Description | Returns |
+| Method | Description | Scanner |
 |--------|-------------|---------|
-| `resolve_name("vitalik.eth")` | Name → address | `str \| None` |
-| `lookup_address("0x...")` | Address → name | `str \| None` |
-| `resolve_names(["a.eth", ...])` | Batch forward resolution | `dict[str, str]` |
-| `lookup_addresses(["0x...", ...])` | Batch reverse lookup | `dict[str, str]` |
+| `lookup_address("0x...")` | Address → name (reverse) | `blockscout_v2` |
+| `resolve_name("vitalik.eth")` | Name → address (forward) | `etherscan` |
+| `lookup_addresses(["0x...", ...])` | Batch reverse | `blockscout_v2` |
+| `resolve_names(["a.eth", ...])` | Batch forward | `etherscan` |
 
-### Streaming (Memory Efficient)
+### Streaming (Memory Efficient — large datasets)
 ```python
-# For large wallets — constant ~10MB RAM regardless of data size
-async for tx in client.iter_transactions(address, batch_size=1000):
-    process(tx)  # One transaction at a time
-
+# Requires: any scanner that supports ACCOUNT_TRANSACTIONS
 async for batch in client.iter_transactions_streaming(address, batch_size=1000):
-    bulk_insert(batch)  # Batches of dicts
+    bulk_insert(batch)   # ~10MB RAM regardless of total size
 
 async for batch in client.iter_logs_streaming(address, from_block=0, batch_size=1000):
     analyze(batch)
@@ -125,7 +186,7 @@ async for batch in client.iter_logs_streaming(address, from_block=0, batch_size=
 ### DataFrame Export (Polars)
 ```python
 # Requires: pip install aiochainscan[data]
-df = await client.get_transactions_df(address)       # ALL txs (auto-paginated!)
+df = await client.get_transactions_df(address)    # ALL txs (auto-paginated!)
 df = await client.get_token_portfolio_df(address)
 ```
 
@@ -135,11 +196,15 @@ df = await client.get_token_portfolio_df(address)
 
 | Pitfall | Solution |
 |---------|----------|
-| `get_transactions()` returns only ~50-100 items | Use `get_all_transactions()` for complete data |
+| `get_transactions()` returns only ~50 items | Use `get_all_transactions()` for complete data |
 | `get_logs()` returns ≤1000 logs | Use `get_all_logs()` for complete data |
+| Method raises `ValueError: not supported` | Wrong scanner — check support matrix above |
 | Balance is a huge number | It's Wei — divide by `10**18` for ETH |
-| Token balance is a huge number | Divide by `10 ** decimals` (get decimals from `get_token_info()`) |
-| BlockScout V2 wraps in `{items: [...]}` | Convenience methods handle this — use them instead of `client.call()` |
+| Token balance is a huge number | Divide by `10**decimals` (get from `get_token_info()`) |
+| BlockScout V2 `from`/`to` are dicts | Use `tx["from"]["hash"]` not `tx["from"]` |
+| `get_eth_price()` fails on `blockscout_v2` | Use `etherscan` or `blockscout` (v1) |
+| `get_block()` fails on `blockscout_v2` | Use `etherscan` or `blockscout` (v1) |
+| `iter_events()` fails on `blockscout_v2` | Use `etherscan` (EVENT_LOGS not in blockscout_v2) |
 
 ---
 
@@ -150,8 +215,8 @@ df = await client.get_token_portfolio_df(address)
 {
     "hash": "0x47223a920c214b38...",
     "block_number": 24507269,
-    "from": {"hash": "0xF8fc9A91349eBd..."},  # Note: nested object!
-    "to": {"hash": "0xd8dA6BF26964aF..."},    # Note: nested object!
+    "from": {"hash": "0xF8fc9A91349eBd..."},  # ⚠️ nested dict!
+    "to": {"hash": "0xd8dA6BF26964aF..."},    # ⚠️ nested dict!
     "value": "50500000000000",                 # Wei as string
     "timestamp": "2026-02-21T19:15:35.000000Z",
     "gas_used": "21062",
@@ -160,7 +225,20 @@ df = await client.get_token_portfolio_df(address)
 }
 ```
 
-### Token Holding Object
+### Transaction Object (Etherscan V2)
+```python
+{
+    "hash": "0x...",
+    "blockNumber": "22000000",       # string, not int
+    "from": "0xF8fc9A91...",         # flat string (not nested!)
+    "to": "0xd8dA6BF2...",           # flat string
+    "value": "1000000000000000000",  # Wei as string
+    "timeStamp": "1771935642",       # Unix timestamp string
+    "isError": "0",                  # "0" = success, "1" = failed
+}
+```
+
+### Token Holding Object (blockscout_v2 `get_token_portfolio()`)
 ```python
 {
     "token": {
@@ -169,7 +247,7 @@ df = await client.get_token_portfolio_df(address)
         "decimals": "6",
         "address": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
     },
-    "value": "1000000000",  # Raw amount (divide by 10^decimals)
+    "value": "1000000000",  # Raw amount (divide by 10**decimals)
 }
 ```
 
@@ -177,114 +255,131 @@ df = await client.get_token_portfolio_df(address)
 
 ## Supported Networks
 
-| Network | Scanner | API Key Required? |
-|---------|---------|-------------------|
-| `ethereum` | blockscout_v2 | ❌ No |
-| `polygon` | blockscout_v2 | ❌ No |
-| `arbitrum` | blockscout_v2 | ❌ No |
-| `optimism` | blockscout_v2 | ❌ No |
-| `base` | blockscout_v2 | ❌ No |
-| `gnosis` | blockscout_v2 | ❌ No |
-| `ethereum` | etherscan | ✅ Yes |
+### blockscout_v2 (no API key — 6 methods only)
+`"ethereum"`, `"arbitrum"`, `"base"`, `"gnosis"` — reliably working
+
+> ⚠️ `"polygon"` may return HTTP 500; `"optimism"` has moved to `explorer.optimism.io` (library may get 301). Treat these as best-effort.
+
+### blockscout / v1 (no API key — ~20 methods)
+`"ethereum"` (others may vary)
+
+### etherscan (requires `ETHERSCAN_KEY` — 12 methods, most reliable)
+`"ethereum"`, `"base"`, `"polygon"`, `"arbitrum"`, `"optimism"`, and more
 
 ---
 
 ## Error Handling for Agents
 
-Errors include `[AI_INSTRUCTION]` blocks with recovery guidance:
-
 ```python
-from aiochainscan.exceptions import ChainscanRateLimitError
+from aiochainscan.exceptions import (
+    ChainscanRateLimitError,
+    ChainscanNetworkError,
+    PaginationDataLossError,
+)
 
 try:
     result = await client.get_balance(address)
 except ChainscanRateLimitError as e:
-    await asyncio.sleep(e.retry_after)
+    await asyncio.sleep(3)
     result = await client.get_balance(address)  # Retry
+except ChainscanNetworkError:
+    pass  # Network issue, try another scanner
 ```
 
-### Exception Types
-- `ChainscanRateLimitError` - Rate limit hit, retry after `e.retry_after` seconds
-- `ChainscanInvalidAddressError` - Invalid Ethereum address format
-- `ChainscanNetworkError` - Network/connectivity issue
-- `PaginationDataLossError` - Whale block detected, data may be incomplete
+Errors include `[AI_INSTRUCTION]` hints in their messages.
 
 ---
 
 ## Common Patterns
 
-### 1. Get ALL Logs for a Contract
-```python
-# ✅ CORRECT — auto-paginated, handles all edge cases
-all_logs = await client.get_all_logs(
-    address="0xdAC17F958D2ee523a2206206994597C13D831ec7",
-    from_block=0,
-    topic0="0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",  # Transfer
-)
-
-# ❌ WRONG — capped at ~1000 logs, silently truncated
-logs = await client.get_logs(address="0x...", from_block=0)
-```
-
-### 2. Check Multiple Wallets
-```python
-async def check_wallets(addresses: list[str]):
-    async with ChainscanClient.from_config("blockscout_v2", "ethereum") as client:
-        tasks = [client.get_balance(addr) for addr in addresses]
-        balances = await asyncio.gather(*tasks)
-        return dict(zip(addresses, balances))
-```
-
-### 3. Multi-Chain Portfolio
+### 1. Multi-Chain ETH Balance (no API key)
 ```python
 async def get_multichain_balance(address: str):
     networks = ["ethereum", "polygon", "arbitrum", "optimism", "base"]
     results = {}
     for network in networks:
         async with ChainscanClient.from_config("blockscout_v2", network) as client:
-            balance = await client.get_balance(address)
-            results[network] = int(balance) / 10**18
+            try:
+                balance = await client.get_balance(address)
+                results[network] = int(balance) / 10**18
+            except Exception as e:
+                results[network] = f"error: {e}"
     return results
 ```
 
-### 4. Export Transactions to CSV
+### 2. Token Portfolio Summary
+```python
+async def token_summary(address: str):
+    async with ChainscanClient.from_config("blockscout_v2", "ethereum") as client:
+        holdings = await client.get_token_portfolio(address)
+        for h in holdings[:5]:
+            token = h["token"]
+            decimals = int(token.get("decimals", 18))
+            balance = int(h["value"]) / 10**decimals
+            print(f"{token['symbol']}: {balance:,.4f}")
+```
+
+### 3. Gas + ETH Price (requires etherscan key OR blockscout v1)
+```python
+# Option A: etherscan (requires ETHERSCAN_KEY)
+async with ChainscanClient.from_config("etherscan", "ethereum") as client:
+    price = await client.get_eth_price()    # {'ethusd': '1825.33', ...}
+    gas = await client.get_gas_oracle()     # {'SafeGasPrice': '1', ...}
+
+# Option B: blockscout v1 (no key, but may be unreliable)
+async with ChainscanClient.from_config("blockscout", "ethereum") as client:
+    price = await client.get_eth_price()
+```
+
+### 4. ALL Transactions — Complete History
+```python
+async with ChainscanClient.from_config("blockscout_v2", "ethereum") as client:
+    # ✅ get_all_transactions handles pagination automatically
+    all_txs = await client.get_all_transactions(address)
+    print(f"Total: {len(all_txs)} transactions")
+
+    # ✅ For large wallets (1M+ txs) use streaming to save RAM
+    count = 0
+    async for batch in client.iter_transactions_streaming(address, batch_size=1000):
+        count += len(batch)
+    print(f"Streamed: {count} transactions")
+```
+
+### 5. Export to CSV
 ```python
 import csv
 
 async def export_transactions(address: str, filename: str):
     async with ChainscanClient.from_config("blockscout_v2", "ethereum") as client:
-        txs = await client.get_all_transactions(address)  # ALL txs!
-        with open(filename, 'w', newline='') as f:
-            writer = csv.DictWriter(f, fieldnames=["hash", "value", "from", "to"])
+        txs = await client.get_all_transactions(address)
+        with open(filename, "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=["hash", "value_eth", "from", "to", "timestamp"])
             writer.writeheader()
             for tx in txs:
                 writer.writerow({
                     "hash": tx.get("hash"),
-                    "value": int(tx.get("value", 0)) / 10**18,
-                    "from": tx.get("from", {}).get("hash"),
-                    "to": tx.get("to", {}).get("hash") if tx.get("to") else "",
+                    "value_eth": int(tx.get("value", 0)) / 10**18,
+                    "from": tx.get("from", {}).get("hash"),   # blockscout_v2: nested dict
+                    "to": (tx.get("to") or {}).get("hash", ""),
+                    "timestamp": tx.get("timestamp"),
                 })
 ```
 
-### 5. Decode Smart Contract Events
+### 6. ENS Name Lookup
 ```python
 async with ChainscanClient.from_config("blockscout_v2", "ethereum") as client:
-    contract = await client.get_contract("0xdAC17F958D2ee523a2206206994597C13D831ec7")
-    async for event in contract.iter_events("Transfer", limit=100):
-        print(f"{event.args['from']} → {event.args['to']}: {event.args['value']}")
+    name = await client.lookup_address("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")
+    print(f"ENS: {name}")  # "vitalik.eth"
 ```
 
----
-
-## Tips for AI Agents
-
-1. **Always use `async with`** — Ensures proper resource cleanup
-2. **Balance is in Wei** — Divide by `10**18` for ETH/MATIC
-3. **Use BlockScout V2** — No API key required, works immediately
-4. **Use `get_all_*` methods** — `get_transactions()` and `get_logs()` are single-page only!
-5. **Handle rate limits** — Check for `ChainscanRateLimitError` and retry
-6. **For large data** — Use `iter_transactions_streaming()` or `get_transactions_df()` for Polars
-7. **Don't reinvent pagination** — The library handles it in `get_all_*` and `iter_*_streaming` methods
+### 7. Decode Smart Contract Events (requires etherscan)
+```python
+# iter_events() uses EVENT_LOGS — only available on etherscan or blockscout v1
+async with ChainscanClient.from_config("etherscan", "ethereum") as client:
+    contract = await client.get_contract("0xdAC17F958D2ee523a2206206994597C13D831ec7")
+    async for event in contract.iter_events("Transfer", limit=10):
+        print(f"{event.args['from']} → {event.args['to']}: {event.args['value']}")
+```
 
 ---
 
@@ -294,8 +389,27 @@ async with ChainscanClient.from_config("blockscout_v2", "ethereum") as client:
 pip install aiochainscan                 # Basic (BlockScout V2, no API key)
 pip install aiochainscan[data]           # + Polars DataFrames
 pip install aiochainscan[mcp]            # + MCP server support
-pip install aiochainscan[data,mcp]       # Everything
 ```
+
+## Environment Setup
+
+```bash
+export ETHERSCAN_KEY="your_key_here"     # Required for etherscan scanner
+```
+
+---
+
+## Tips for AI Agents
+
+1. **Check the support matrix first** — most methods are NOT available on `blockscout_v2`
+2. **Use `blockscout_v2` for**: balance, recent transactions, token portfolio, ENS reverse lookup
+3. **Use `etherscan` for**: gas oracle, ETH price, blocks, logs, full method coverage
+4. **Balance is in Wei** — divide by `10**18` for ETH/MATIC
+5. **Use `get_all_*` methods** — `get_transactions()` and `get_logs()` are single-page only
+6. **BlockScout V2 tx schema**: `from`/`to` are dicts → use `tx["from"]["hash"]`
+7. **Etherscan tx schema**: `from`/`to` are flat strings → use `tx["from"]` directly
+8. **For large data** — use `iter_transactions_streaming()` (~10MB RAM) or `get_transactions_df()`
+9. **Handle network errors** — blockscout endpoints sometimes return 400/500; wrap in try/except
 
 ---
 
