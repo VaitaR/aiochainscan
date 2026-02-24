@@ -150,7 +150,10 @@ async def test_memory_streaming_vs_bulk():
     print('\nStreaming (process batches):')
     print(f'  Peak memory delta: {max_memory_delta:.2f} MB')
     print(f'  Items processed: {processed_count:,}')
-    print(f'\nMemory savings: {bulk_memory_delta / max_memory_delta:.1f}x')
+    if max_memory_delta > 0:
+        print(f'\nMemory savings: {bulk_memory_delta / max_memory_delta:.1f}x')
+    else:
+        print('\nMemory savings: N/A (memory delta too small to measure)')
 
     # Streaming should use significantly less memory
     # Note: This is a soft assertion since memory behavior can vary
