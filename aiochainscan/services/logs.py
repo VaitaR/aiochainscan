@@ -403,13 +403,33 @@ async def get_all_logs_optimized(
                 break
             try:
                 last_block_str = items[-1].get('blockNumber')
+                first_block_str = items[0].get('blockNumber')
                 last_block = (
                     int(last_block_str, 16)
                     if isinstance(last_block_str, str) and last_block_str.startswith('0x')
                     else int(str(last_block_str))
                 )
+                first_block = (
+                    int(first_block_str, 16)
+                    if isinstance(first_block_str, str) and first_block_str.startswith('0x')
+                    else int(str(first_block_str))
+                )
             except Exception:
                 break
+            # Whale block detection: if all items are from the same block
+            # and the batch is full, logs beyond the API limit are silently
+            # dropped. Warn loudly so callers know data may be incomplete.
+            if first_block == last_block and len(items) >= max_offset:
+                import warnings
+
+                warnings.warn(
+                    f'Block {last_block} returned {len(items)} logs '
+                    f'(API limit={max_offset}). '
+                    f'Logs beyond the limit are DROPPED. '
+                    f'Use a smaller block range or the streaming API '
+                    f'to avoid data loss.',
+                    stacklevel=2,
+                )
             current_start = max(current_start, last_block + 1)
     else:
         page = 1

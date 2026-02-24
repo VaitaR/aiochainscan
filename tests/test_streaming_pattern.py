@@ -231,7 +231,7 @@ async def test_streaming_batch_size_control():
             return []
         return [
             {
-                'hash': f'0x{(page-1)*100+i:064x}',
+                'hash': f'0x{(page - 1) * 100 + i:064x}',
                 'blockNumber': (page - 1) * 100 + i,
                 'transactionIndex': 0,
             }
@@ -290,7 +290,7 @@ async def test_streaming_early_termination():
             return []
         return [
             {
-                'hash': f'0x{(page-1)*100+i:064x}',
+                'hash': f'0x{(page - 1) * 100 + i:064x}',
                 'blockNumber': (page - 1) * 100 + i,
                 'transactionIndex': 0,
             }
@@ -360,7 +360,7 @@ async def test_streaming_progress_callback():
             return []
         return [
             {
-                'hash': f'0x{(page-1)*100+i:064x}',
+                'hash': f'0x{(page - 1) * 100 + i:064x}',
                 'blockNumber': (page - 1) * 100 + i,
                 'transactionIndex': 0,
             }

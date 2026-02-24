@@ -60,7 +60,7 @@ async def fetch_transactions_with_whale_handling():
                 Method.GET_BLOCK_BY_NUMBER,
                 block_number=e.block_number,
             )
-            print(f"✅ Block fetch successful: {len(block.get('transactions', []))} transactions")
+            print(f'✅ Block fetch successful: {len(block.get("transactions", []))} transactions')
         except Exception as block_error:
             print(f'❌ Block fetch failed: {block_error}')
 

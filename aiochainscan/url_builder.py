@@ -25,6 +25,8 @@ class UrlBuilder:
         'blockscout_sepolia': ('eth-sepolia.blockscout.com', 'ETH'),
         'blockscout_gnosis': ('gnosis.blockscout.com', 'xDAI'),
         'blockscout_polygon': ('polygon.blockscout.com', 'MATIC'),
+        'blockscout_base': ('base.blockscout.com', 'ETH'),
+        'blockscout_bsc': ('bsc.blockscout.com', 'BNB'),
         'moralis': ('deep-index.moralis.io', 'Multi-chain'),
     }
 

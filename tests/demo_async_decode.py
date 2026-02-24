@@ -43,7 +43,7 @@ async def test_concurrent_decoding():
         print('Results:')
         for i, (item, result) in enumerate(zip(transactions, results, strict=False)):
             print(
-                f"  {i+1}. Expected: {item['name']}, Got: {result.get('decoded_func', 'NOT_DECODED')}"
+                f'  {i + 1}. Expected: {item["name"]}, Got: {result.get("decoded_func", "NOT_DECODED")}'
             )
 
         # Test that it would have taken longer sequentially
