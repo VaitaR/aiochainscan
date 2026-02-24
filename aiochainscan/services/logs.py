@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from time import monotonic
 from typing import Any
 
+from aiochainscan.constants import MAX_BLOCK_NUMBER
 from aiochainscan.domain.dto import LogEntryDTO
 from aiochainscan.exceptions import ChainscanClientApiError
 from aiochainscan.ports.cache import Cache
@@ -361,11 +362,11 @@ async def get_all_logs_optimized(
                 elif latest_hex.isdigit():
                     end_block = int(latest_hex)
                 else:
-                    end_block = 99_999_999
+                    end_block = MAX_BLOCK_NUMBER
             else:
-                end_block = 99_999_999
+                end_block = MAX_BLOCK_NUMBER
         except Exception:
-            end_block = 99_999_999
+            end_block = MAX_BLOCK_NUMBER
 
     if start_block is None:
         start_block = 0

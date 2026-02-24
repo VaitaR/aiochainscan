@@ -10,8 +10,6 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     import polars as pl
-else:
-    pl = Any  # type: ignore[misc,assignment]
 
 # Check for Polars availability
 try:

@@ -91,16 +91,15 @@ EMPTY_VALUE=
             # Load the file
             manager._load_env_file(env_file)
 
-            # Check that variables were loaded
-            assert os.getenv('ETH_KEY') == 'test_eth_key_123'
-            assert os.getenv('BSC_KEY') == 'test_bsc_key_456'
+            # Variables should be stored in _env_state, NOT mutating os.environ
+            assert manager._env_state.get('ETH_KEY') == 'test_eth_key_123'
+            assert manager._env_state.get('BSC_KEY') == 'test_bsc_key_456'
+            # Verify os.environ is NOT mutated (this was the old buggy behavior)
+            assert 'ETH_KEY' not in os.environ or os.environ['ETH_KEY'] != 'test_eth_key_123'
 
         finally:
             # Clean up
             env_file.unlink()
-            # Clean up environment
-            for key in ['ETH_KEY', 'BSC_KEY', 'EMPTY_VALUE']:
-                os.environ.pop(key, None)
 
     def test_api_key_fallback_strategies(self):
         """Test multiple API key fallback strategies."""

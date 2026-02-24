@@ -1,28 +1,21 @@
 from __future__ import annotations
 
-import json
 from collections.abc import Sequence
 from typing import Any, cast
 
+import orjson
 from eth_abi.abi import decode
 from eth_utils import keccak  # type: ignore[attr-defined]
 
 from aiochainscan.ports.http_client import HttpClient
 
-# Try to import orjson for fast JSON parsing (always available as dependency)
-try:
-    import orjson
-
-    ORJSON_AVAILABLE = True
-except ImportError:
-    ORJSON_AVAILABLE = False
+# orjson is a required dependency — always available
+ORJSON_AVAILABLE = True
 
 
 def _parse_json(json_str: str) -> Any:
-    """Parse JSON string using orjson if available, else stdlib json."""
-    if ORJSON_AVAILABLE:
-        return orjson.loads(json_str)
-    return json.loads(json_str)
+    """Parse JSON string using orjson."""
+    return orjson.loads(json_str)
 
 
 # Try to import fastabi Rust backend
@@ -193,7 +186,7 @@ def _decode_transaction_input_fast(
         input_bytes = bytes.fromhex(input_hex)
 
         # Convert ABI to JSON string
-        abi_json = json.dumps(abi)
+        abi_json = orjson.dumps(abi).decode()
 
         # Call Rust decoder - returns parsed dict via orjson
         result = _fast_decode_input(input_bytes, abi_json)
@@ -471,7 +464,7 @@ def decode_transaction_inputs_batch_optimized(
             return transactions
 
         # Convert ABI to JSON once
-        abi_json = json.dumps(abi)
+        abi_json = orjson.dumps(abi).decode()
 
         # Call ultimate optimized Rust function
         decoded_results = _fast_decode_many_hex(hex_inputs, abi_json)
@@ -537,7 +530,7 @@ def decode_transaction_inputs_batch(
             return transactions
 
         # Convert ABI to JSON string
-        abi_json = json.dumps(abi)
+        abi_json = orjson.dumps(abi).decode()
 
         # Call optimized Rust batch decoder with GIL release
         decoded_results = _fast_decode_many(calldatas, abi_json)

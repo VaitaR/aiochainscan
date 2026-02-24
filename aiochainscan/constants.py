@@ -105,3 +105,13 @@ ETH_WORD_BYTES: int = 32
 
 #: Maximum reasonable string length for ENS names (sanity check)
 ENS_MAX_NAME_LENGTH: int = 1_000
+
+# =============================================================================
+# BLOCK NUMBER SENTINEL
+# =============================================================================
+
+#: Sentinel "latest" block number used when the real latest block cannot be
+#: resolved.  Must be larger than any block number that will ever exist on any
+#: EVM chain.  2**63-1 is the maximum signed 64-bit integer and comfortably
+#: exceeds any realistic block height.
+MAX_BLOCK_NUMBER: int = 2**63 - 1

@@ -6,6 +6,7 @@ from time import monotonic
 from typing import Any
 
 from aiochainscan.domain.dto import DailySeriesDTO, EthPriceDTO
+from aiochainscan.domain.dto_v2 import parse_hex_or_int
 from aiochainscan.ports.cache import Cache
 from aiochainscan.ports.endpoint_builder import EndpointBuilder
 from aiochainscan.ports.http_client import HttpClient
@@ -330,13 +331,6 @@ async def _get_daily_series(
     return items if isinstance(items, list) else []
 
 
-def _to_int(value: Any) -> int | None:
-    try:
-        return int(value)
-    except Exception:
-        return None
-
-
 def _to_float(value: Any) -> float | None:
     try:
         return float(value)
@@ -357,7 +351,7 @@ def normalize_daily_series(raw: list[dict[str, Any]], *, value_key: str) -> list
         normalized.append(
             {
                 'utc_date': str(item.get('UTCDate')) if item.get('UTCDate') is not None else None,
-                'unix_timestamp': _to_int(item.get('unixTimeStamp')),
+                'unix_timestamp': parse_hex_or_int(item.get('unixTimeStamp')),
                 'value': _to_float(item.get(value_key)),
             }
         )

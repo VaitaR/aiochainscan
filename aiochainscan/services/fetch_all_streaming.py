@@ -10,11 +10,13 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any
 
+from aiochainscan.domain.dto_v2 import parse_hex_or_int_zero as _to_int
 from aiochainscan.ports.endpoint_builder import EndpointBuilder
 from aiochainscan.ports.http_client import HttpClient
 from aiochainscan.ports.progress import ProgressCallback
 from aiochainscan.ports.rate_limiter import RateLimiter, RetryPolicy
 from aiochainscan.ports.telemetry import Telemetry
+from aiochainscan.services._block_utils import _resolve_end_block_factory
 from aiochainscan.services.account import (
     get_internal_transactions,
     get_normal_transactions,
@@ -23,58 +25,12 @@ from aiochainscan.services.account import (
 from aiochainscan.services.logs import get_logs
 from aiochainscan.services.paging_engine import (
     FetchSpec,
-    ResolveEndBlock,
     resolve_policy_for_provider,
 )
 from aiochainscan.services.paging_streaming import fetch_all_generic_streaming
 
 if TYPE_CHECKING:
     from aiochainscan.scanners.base import Scanner
-
-
-def _to_int(value: Any) -> int:
-    try:
-        if isinstance(value, str):
-            s = value.strip()
-            if s.startswith('0x'):
-                return int(s, 16)
-            return int(s)
-        return int(value)
-    except Exception:
-        return 0
-
-
-def _resolve_end_block_factory(
-    *,
-    api_kind: str,
-    network: str,
-    api_key: str,
-    http: HttpClient,
-    endpoint_builder: EndpointBuilder,
-    rate_limiter: RateLimiter | None,
-    retry: RetryPolicy | None,
-) -> ResolveEndBlock:
-    async def _resolve() -> int:
-        endpoint = endpoint_builder.open(api_key=api_key, api_kind=api_kind, network=network)
-        url: str = endpoint.api_url
-        params_proxy: dict[str, Any] = {'module': 'proxy', 'action': 'eth_blockNumber'}
-        signed_params, headers = endpoint.filter_and_sign(params_proxy, headers=None)
-
-        async def _do() -> Any:
-            if rate_limiter is not None:
-                await rate_limiter.acquire(key=f'{api_kind}:{network}:proxy.blockNumber')
-            return await http.get(url, params=signed_params, headers=headers)
-
-        response: Any = await (retry.run(_do) if retry is not None else _do())
-        latest_hex = response.get('result') if isinstance(response, dict) else None
-        if isinstance(latest_hex, str):
-            if latest_hex.startswith('0x'):
-                return int(latest_hex, 16)
-            if latest_hex.isdigit():
-                return int(latest_hex)
-        return 99_999_999
-
-    return _resolve
 
 
 def _is_blockscout_v2(api_kind: str, scanner: Scanner | None) -> bool:

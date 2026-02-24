@@ -16,55 +16,6 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class ScannerCapabilities:
-    """Describes which API actions are supported by each scanner network."""
-
-    # Block module actions
-    block_reward: bool = True
-    block_countdown: bool = True
-    block_number_by_timestamp: bool = True
-    daily_block_stats: bool = True
-
-    # Account module actions
-    account_balance: bool = True
-    account_transactions: bool = True
-    account_internal_txs: bool = True
-    account_erc20_transfers: bool = True
-    account_erc721_transfers: bool = True
-    account_erc1155_transfers: bool = True
-
-    # Contract module actions
-    contract_abi: bool = True
-    contract_source_code: bool = True
-    contract_creation: bool = True
-    contract_verification: bool = False  # Most networks don't support verification
-
-    # Transaction module actions
-    tx_receipt_status: bool = True
-    tx_status_check: bool = True
-
-    # Stats module actions
-    eth_supply: bool = True
-    eth_price: bool = True
-    nodes_size: bool = False  # Not supported by most networks
-
-    # Gas tracker actions
-    gas_estimate: bool = True
-    gas_oracle: bool = True
-
-    # Logs actions
-    event_logs: bool = True
-
-    # Token actions
-    token_supply: bool = True
-    token_balance: bool = True
-    token_info: bool = True
-
-    # Proxy actions
-    proxy_eth_calls: bool = True
-
-
-@dataclass
 class ScannerConfig:
     """Configuration for a blockchain scanner."""
 
@@ -75,7 +26,6 @@ class ScannerConfig:
     requires_api_key: bool = True
     special_config: dict[str, Any] = field(default_factory=dict)
     api_key: str | None = field(default=None, init=False)
-    capabilities: ScannerCapabilities = field(default_factory=ScannerCapabilities)
 
 
 class ConfigurationManager:
@@ -107,6 +57,7 @@ class ConfigurationManager:
     _env_loaded: bool
     _builtin_loaded: bool
     _config_files_loaded: bool
+    _env_state: dict[str, str]
     config_dir: Path
 
     def __new__(cls, config_dir: Path | None = None) -> ConfigurationManager:
@@ -122,6 +73,7 @@ class ConfigurationManager:
                     instance._env_loaded = False
                     instance._builtin_loaded = False
                     instance._config_files_loaded = False
+                    instance._env_state = {}
                     instance.config_dir = config_dir or Path.cwd()
                     cls._instance = instance
         return cls._instance
@@ -161,6 +113,7 @@ class ConfigurationManager:
             if config_dir is not None:
                 self.config_dir = config_dir
             self._scanners.clear()
+            self._env_state.clear()
             self._env_loaded = False
             self._builtin_loaded = False
             self._config_files_loaded = False
@@ -367,35 +320,6 @@ class ConfigurationManager:
                 requires_api_key=False,
                 special_config={'public_api': True},
             ),
-            'moralis': ScannerConfig(
-                name='Moralis Web3 Data API',
-                base_domain='deep-index.moralis.io',
-                currency='Multi-chain',
-                supported_networks={
-                    'eth',
-                    'bsc',
-                    'polygon',
-                    'arbitrum',
-                    'base',
-                    'optimism',
-                    'avalanche',
-                },
-                requires_api_key=True,
-                special_config={
-                    'api_version': 'v2.2',
-                    'auth_mode': 'header',
-                    'auth_field': 'X-API-Key',
-                    'chain_mappings': {
-                        'eth': '0x1',
-                        'bsc': '0x38',
-                        'polygon': '0x89',
-                        'arbitrum': '0xa4b1',
-                        'base': '0x2105',
-                        'optimism': '0xa',
-                        'avalanche': '0xa86a',
-                    },
-                },
-            ),
         }
 
     def _load_env_files(self) -> None:
@@ -412,7 +336,11 @@ class ConfigurationManager:
                 logger.debug(f'Loaded environment from {env_file}')
 
     def _load_env_file(self, env_file: Path) -> None:
-        """Load variables from a specific .env file."""
+        """Load variables from a specific .env file into internal state.
+
+        Variables are stored in ``_env_state`` so that the host process's
+        ``os.environ`` is never mutated.
+        """
         try:
             with open(env_file) as f:
                 for line in f:
@@ -422,9 +350,9 @@ class ConfigurationManager:
                         key = key.strip()
                         value = value.strip().strip('"\'')
 
-                        # Only set if not already set in environment
-                        if key not in os.environ:
-                            os.environ[key] = value
+                        # Only set if not already in env_state or real environment
+                        if key not in self._env_state and key not in os.environ:
+                            self._env_state[key] = value
         except OSError as e:
             logger.warning(f'Failed to load {env_file}: {e}')
 
@@ -466,9 +394,31 @@ class ConfigurationManager:
     def _load_api_keys(self) -> None:
         """Load API keys from various sources with priority order."""
         for scanner_id, scanner_config in self._scanners.items():
+            # First: apply keys loaded from .env files (lower priority)
+            env_key = self._resolve_env_state_key(scanner_id)
+            if env_key and not scanner_config.api_key:
+                scanner_config.api_key = env_key
+            # Then: check os.environ (higher priority, overrides .env)
             api_key = self._get_api_key_for_scanner(scanner_id)
             if api_key:
                 scanner_config.api_key = api_key
+
+    def _resolve_env_state_key(self, scanner_id: str) -> str | None:
+        """Resolve an API key for *scanner_id* from internal ``.env`` state only."""
+        if scanner_id not in self._scanners:
+            return None
+        name = self._scanners[scanner_id].name.upper().replace(' ', '_')
+        for pattern in (
+            f'{name}_KEY',
+            f'{scanner_id.upper()}_KEY',
+            f'{scanner_id.upper()}_API_KEY',
+            f'SCANNER_{scanner_id.upper()}_KEY',
+            f'API_KEY_{scanner_id.upper()}',
+        ):
+            val = self._env_state.get(pattern)
+            if val:
+                return val
+        return None
 
     def _get_api_key_for_scanner(self, scanner_id: str) -> str | None:
         """Get API key for scanner with multiple fallback strategies."""
@@ -517,7 +467,11 @@ class ConfigurationManager:
 
             self._scanners[scanner_id] = scanner_config
 
-            # Try to load API key for new scanner
+            # Try to load API key for new scanner from .env state first
+            env_key = self._resolve_env_state_key(scanner_id)
+            if env_key and not scanner_config.api_key:
+                scanner_config.api_key = env_key
+            # Then check os.environ (overrides .env values)
             api_key = self._get_api_key_for_scanner(scanner_id)
             if api_key:
                 scanner_config.api_key = api_key
@@ -570,9 +524,7 @@ class ConfigurationManager:
         v2_scanners = {'bsc', 'polygon', 'arbitrum', 'base', 'optimism'}
         if scanner_id in v2_scanners:
             # Try ETHERSCAN_KEY as fallback for V2 API scanners
-            import os
-
-            etherscan_key = os.getenv('ETHERSCAN_KEY')
+            etherscan_key = os.getenv('ETHERSCAN_KEY') or self._env_state.get('ETHERSCAN_KEY')
             if etherscan_key:
                 return etherscan_key
 

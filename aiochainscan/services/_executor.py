@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import hashlib
-import json
 from collections.abc import Awaitable, Callable, Mapping
 from time import monotonic
 from typing import Any
+
+import orjson
 
 from aiochainscan.ports.rate_limiter import RateLimiter, RetryPolicy
 from aiochainscan.ports.telemetry import Telemetry
@@ -60,6 +61,6 @@ def make_hashed_cache_key(*, prefix: str, payload: Mapping[str, Any], length: in
     - Returned format: ``"{prefix}:{short_hash}"``
     """
 
-    payload_str = json.dumps(dict(payload), sort_keys=True, separators=(',', ':'))
+    payload_str = orjson.dumps(dict(payload), option=orjson.OPT_SORT_KEYS).decode()
     digest = hashlib.sha256(payload_str.encode('utf-8')).hexdigest()
     return f'{prefix}:{digest[:length]}'
