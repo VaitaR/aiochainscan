@@ -32,6 +32,7 @@ def test_facade_function_deprecation_warning():
 @pytest.mark.asyncio
 async def test_get_balance_emits_deprecation():
     """Test that get_balance actually emits the deprecation warning."""
+    import aiochainscan._facade as _facade_mod
     from aiochainscan import get_balance
     from aiochainscan.adapters.httpx_client import HttpxClientAdapter
 
@@ -39,6 +40,9 @@ async def test_get_balance_emits_deprecation():
     http = HttpxClientAdapter()
 
     with warnings.catch_warnings(record=True) as w:
+        # Clear any cached warning suppressions from prior test runs
+        if hasattr(_facade_mod, '__warningregistry__'):
+            _facade_mod.__warningregistry__.clear()
         warnings.simplefilter('always')
 
         try:
@@ -68,12 +72,16 @@ async def test_get_balance_emits_deprecation():
 @pytest.mark.asyncio
 async def test_get_block_emits_deprecation():
     """Test that get_block emits the deprecation warning."""
+    import aiochainscan._facade as _facade_mod
     from aiochainscan import get_block
     from aiochainscan.adapters.httpx_client import HttpxClientAdapter
 
     http = HttpxClientAdapter()
 
     with warnings.catch_warnings(record=True) as w:
+        # Clear any cached warning suppressions from prior test runs
+        if hasattr(_facade_mod, '__warningregistry__'):
+            _facade_mod.__warningregistry__.clear()
         warnings.simplefilter('always')
 
         try:
