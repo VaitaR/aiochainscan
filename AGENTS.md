@@ -257,6 +257,15 @@ export ETHERSCAN_KEY="your_key"  # Optional
 
 ## Contact / Contributing
 
-- Run `ruff check . && pytest tests/` before PRs
+**Pre-Commit Validation (MANDATORY - run before git commit):**
+```bash
+pytest tests/ -q                    # Verify all 549 tests pass
+mypy aiochainscan --strict          # Type safety check (80 files)
+pre-commit run --all-files          # All linters (ruff, format, etc.)
+```
+Only proceed to `git commit` when ALL checks pass. Do NOT rely on post-commit hook to catch errors.
+
+**Code Quality:**
 - Follow hexagonal architecture - never bypass Network layer
 - All Wei values as strings, all addresses as EIP-55 checksum
+- Add `# noqa: CODE` pragmas only when error is unavoidable (document why)
