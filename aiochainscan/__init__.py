@@ -3,7 +3,7 @@ from collections.abc import Mapping
 from datetime import date
 from typing import Any
 
-__version__ = '0.4.0'
+__version__ = '0.4.1'
 
 from aiochainscan.adapters.aiolimiter_adapter import AioLimiterAdapter
 from aiochainscan.adapters.endpoint_builder_urlbuilder import UrlBuilderEndpoint

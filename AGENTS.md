@@ -14,35 +14,127 @@ Async Python wrapper for blockchain explorer APIs (Etherscan, BlockScout). Unifi
 ### Primary Interface (USE THIS)
 ```python
 from aiochainscan.core.client import ChainscanClient
-from aiochainscan.core.method import Method
 
-# Create client (BlockScout V2 - no API key needed)
-client = ChainscanClient.from_config('blockscout_v2', 'ethereum')
+async with ChainscanClient.from_config('blockscout_v2', 'ethereum') as client:
+    # ── Account ──────────────────────────────────────────────
+    balance = await client.get_balance('0x...')                   # Wei string
+    txs     = await client.get_transactions('0x...')              # single page
+    all_txs = await client.get_all_transactions('0x...')          # ALL (paginated)
+    itxs    = await client.get_internal_transactions('0x...')     # single page
+    erc20   = await client.get_token_transfers('0x...')           # single page
+    erc721  = await client.get_erc721_transfers('0x...')          # single page
+    erc1155 = await client.get_erc1155_transfers('0x...')         # single page
+    tokens  = await client.get_token_portfolio('0x...')           # ERC-20 holdings
+    nfts    = await client.get_nft_portfolio('0x...')             # NFT holdings
 
-# Make API calls
-balance = await client.call(Method.ACCOUNT_BALANCE, address='0x...')
-txs = await client.call(Method.ACCOUNT_TRANSACTIONS, address='0x...')
-portfolio = await client.call(Method.ACCOUNT_TOKEN_PORTFOLIO, address='0x...')
+    # ── Transactions ─────────────────────────────────────────
+    tx     = await client.get_transaction('0xHASH...')            # by hash
+    status = await client.get_transaction_status('0xHASH...')     # receipt status
+    check  = await client.check_transaction_status('0xHASH...')   # execution status
 
-# High-level SmartContract API (NEW in v0.4.1)
-contract = await client.get_contract("0xdac17f958d2ee523a2206206994597c13d831ec7")
-async for event in contract.iter_events("Transfer", limit=1000):
-    print(event.args['from'], event.args['to'], event.args['value'])
+    # ── Blocks ───────────────────────────────────────────────
+    block     = await client.get_block(12345678)                  # by number
+    reward    = await client.get_block_reward(12345678)           # mining reward
+    countdown = await client.get_block_countdown(99999999)        # ETA to block
+    by_ts     = await client.get_block_by_timestamp(1609459200)   # nearest block
 
-# ENS resolution (NEW in v0.4.1)
-address = await client.resolve_name("vitalik.eth")
-name = await client.lookup_address("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")
+    # ── Contracts ────────────────────────────────────────────
+    abi     = await client.get_contract_abi('0x...')              # JSON ABI
+    source  = await client.get_contract_source('0x...')           # verified source
+    created = await client.get_contract_creation(['0x...'])       # creator + tx
 
-# Streaming for large datasets (NEW in v0.4.1) - constant ~10MB RAM
-async for batch in client.iter_transactions_streaming(address, batch_size=1000):
-    process(batch)
+    # ── Tokens ───────────────────────────────────────────────
+    bal     = await client.get_token_balance('0xWALLET', '0xTOKEN')  # raw units
+    supply  = await client.get_token_supply('0xTOKEN')               # total supply
+    info    = await client.get_token_info('0xTOKEN')                 # name/symbol/decimals
 
-# Always close when done
-await client.close()
+    # ── Gas & Stats ──────────────────────────────────────────
+    price   = await client.get_eth_price()                        # USD/BTC
+    gas     = await client.get_gas_oracle()                       # safe/propose/fast
+    est     = await client.get_gas_estimate(2_000_000_000)        # ETA in seconds
+    eth_sup = await client.get_eth_supply()                       # total ETH supply
+
+    # ── Event Logs ───────────────────────────────────────────
+    logs     = await client.get_logs('0x...', from_block=0)       # single page (≤1000)
+    all_logs = await client.get_all_logs('0x...', from_block=0)   # ALL (paginated)
+
+    # ── Proxy / JSON-RPC ─────────────────────────────────────
+    result  = await client.eth_call('0xTO', '0xDATA')             # eth_call
+    bal_hex = await client.eth_get_balance('0x...')                # hex Wei
+
+    # ── High-level APIs ──────────────────────────────────────
+    contract = await client.get_contract('0x...')                  # SmartContract
+    async for event in contract.iter_events("Transfer", limit=100):
+        print(event.args['from'], event.args['to'], event.args['value'])
+
+    name    = await client.lookup_address('0x...')                 # ENS reverse
+    address = await client.resolve_name('vitalik.eth')             # ENS forward
+
+    # ── Streaming (large datasets, constant ~10MB RAM) ───────
+    async for batch in client.iter_transactions_streaming('0x...', batch_size=1000):
+        process(batch)
+
+    # ── DataFrame export ─────────────────────────────────────
+    df = await client.get_transactions_df('0x...')                 # Polars (ALL txs!)
+    df = await client.get_token_portfolio_df('0x...')              # Polars
 ```
 
+### ⚠️ Key Gotchas
+- `get_transactions()` returns **one page** (~50-100 items). Use `get_all_transactions()` for complete data.
+- `get_logs()` returns **≤1000 logs**. Use `get_all_logs()` for complete data.
+- `get_transactions_df()` auto-paginates (uses `iter_transactions` internally).
+- Balance/value/supply values are **Wei strings** — divide by `10**18` for ETH.
+
 > **Note:** Legacy `Client` class and `modules/` were removed in v0.3.0.
-> Facade functions (`get_balance`, etc.) are **DEPRECATED** in v0.4.0 - use `ChainscanClient`.
+> Facade functions (`get_balance`, etc.) are **DEPRECATED** in v0.4.0 — use `ChainscanClient`.
+
+---
+
+## Complete Method Reference
+
+Every `Method` enum value (28 total) maps to typed convenience methods on `ChainscanClient`:
+
+| Method Enum | Convenience Method(s) | Returns |
+|---|---|---|
+| `ACCOUNT_BALANCE` | `get_balance(address)` | `str` (Wei) |
+| `ACCOUNT_TRANSACTIONS` | `get_transactions(address)` / `get_all_transactions(address)` | `list[dict]` |
+| `ACCOUNT_INTERNAL_TXS` | `get_internal_transactions(address)` / `get_all_internal_transactions(address)` | `list[dict]` |
+| `ACCOUNT_ERC20_TRANSFERS` | `get_token_transfers(address)` / `get_all_token_transfers(address)` | `list[dict]` |
+| `ACCOUNT_ERC721_TRANSFERS` | `get_erc721_transfers(address)` | `list[dict]` |
+| `ACCOUNT_ERC1155_TRANSFERS` | `get_erc1155_transfers(address)` | `list[dict]` |
+| `ACCOUNT_TOKEN_PORTFOLIO` | `get_token_portfolio(address)` | `list[dict]` |
+| `ACCOUNT_NFT_PORTFOLIO` | `get_nft_portfolio(address)` | `list[dict]` |
+| `TX_BY_HASH` | `get_transaction(tx_hash)` | `dict` |
+| `TX_RECEIPT_STATUS` | `get_transaction_status(tx_hash)` | `dict` |
+| `TX_STATUS_CHECK` | `check_transaction_status(tx_hash)` | `dict` |
+| `BLOCK_BY_NUMBER` | `get_block(block_number)` | `dict` |
+| `BLOCK_REWARD` | `get_block_reward(block_number)` | `dict` |
+| `BLOCK_COUNTDOWN` | `get_block_countdown(target_block)` | `dict` |
+| `BLOCK_NUMBER_BY_TIMESTAMP` | `get_block_by_timestamp(timestamp, closest)` | `dict` |
+| `CONTRACT_ABI` | `get_contract_abi(address)` | `str` (JSON) |
+| `CONTRACT_SOURCE` | `get_contract_source(address)` | `dict` |
+| `CONTRACT_CREATION` | `get_contract_creation(addresses)` | `list[dict]` |
+| `CONTRACT_VERIFY` | `client.call(Method.CONTRACT_VERIFY, ...)` | *(multi-step workflow)* |
+| `CONTRACT_VERIFY_STATUS` | `client.call(Method.CONTRACT_VERIFY_STATUS, ...)` | *(multi-step workflow)* |
+| `TOKEN_BALANCE` | `get_token_balance(address, contract_address)` | `str` |
+| `TOKEN_SUPPLY` | `get_token_supply(contract_address)` | `str` |
+| `TOKEN_INFO` | `get_token_info(contract_address)` | `dict` |
+| `GAS_ESTIMATE` | `get_gas_estimate(gas_price)` | `str` |
+| `GAS_ORACLE` | `get_gas_oracle()` | `dict` |
+| `EVENT_LOGS` | `get_logs(address, ...)` / `get_all_logs(address, ...)` | `list[dict]` |
+| `ETH_SUPPLY` | `get_eth_supply()` | `str` |
+| `ETH_PRICE` | `get_eth_price()` | `dict` |
+| `PROXY_ETH_CALL` | `eth_call(to, data, tag)` | `str` |
+| `PROXY_GET_BALANCE` | `eth_get_balance(address, tag)` | `str` |
+
+### Paginated (get_all_*) vs Single-Page Methods
+
+| Pattern | Use When | Memory |
+|---|---|---|
+| `get_transactions(address)` | Quick look, small wallets | Low |
+| `get_all_transactions(address)` | Need ALL data, moderate wallets | Grows with data |
+| `iter_transactions_streaming(address)` | Large wallets (1M+ txs) | Constant ~10MB |
+| `get_transactions_df(address)` | Data analysis (Polars) | Grows with data |
 
 ---
 
@@ -105,6 +197,8 @@ await client.close()
 ### Pagination & Retry
 | ❌ DON'T | ✅ DO | Why |
 |----------|-------|-----|
+| Use `get_transactions()` for all data | Use `get_all_transactions()` or `iter_transactions_streaming()` | Single page returns ~50-100 items only! |
+| Use `get_logs()` for complete data | Use `get_all_logs()` or `iter_logs_streaming()` | Single page capped at ~1000 logs! |
 | Wrap async generator with `@retry` | Apply retry inside generator at page-fetch level | Tenacity completes when generator is created, not exhausted |
 | Reset adaptive offset per page | Persist offset state across all pages | "Yo-yo effect" doubles API requests |
 | Skip whale blocks silently | Raise `PaginationDataLossError` | Silent data loss is unacceptable |
@@ -122,8 +216,8 @@ await client.close()
 ### Core (Source of Truth)
 | File | Purpose | Source of Truth For |
 |------|---------|---------------------|
-| `core/client.py` | **ChainscanClient** | All API interactions |
-| `core/method.py` | **Method** enum | Supported operations |
+| `core/client.py` | **ChainscanClient** (~1800 lines) | All API interactions, 30+ convenience methods |
+| `core/method.py` | **Method** enum (28 values) | Supported operations |
 | `domain/contract.py` | **SmartContract** | High-level contract API |
 | `domain/models.py` | **Address**, **TxHash** | Data validation, EIP-55 |
 | `config.py` | **ConfigurationManager** | Scanner configs (lazy-loaded) |
@@ -136,6 +230,7 @@ await client.close()
 | `services/chunked_fetcher.py` | Block range splitting | Prevents DB timeouts |
 | `services/ens_resolver.py` | ENS name resolution | Cache + BlockScout V2 |
 | `services/analytics.py` | Polars DataFrames | Column-oriented, Utf8 for Wei |
+| `services/logs.py` | Event log fetching | Whale block warning, sliding window |
 
 ### Infrastructure
 | File | Purpose | Key Pattern |
@@ -182,10 +277,14 @@ await client.close()
 
 ### Session Lifecycle
 ```python
+# Option 1: async context manager (preferred)
+async with ChainscanClient.from_config('blockscout_v2', 'ethereum') as client:
+    await client.get_balance('0x...')
+
+# Option 2: manual close
 client = ChainscanClient.from_config('blockscout_v2', 'ethereum')
 try:
-    # All calls reuse same HTTP session (connection pooling)
-    await client.call(Method.ACCOUNT_BALANCE, address='0x...')
+    await client.get_balance('0x...')
 finally:
     await client.close()
 ```
@@ -196,6 +295,15 @@ finally:
 async for batch in client.iter_transactions_streaming(address, batch_size=1000):
     # Each batch decoded in thread pool (non-blocking)
     await database.bulk_insert(batch)
+```
+
+### Get ALL Data (Paginated)
+```python
+# These handle pagination automatically:
+all_txs = await client.get_all_transactions(address)
+all_logs = await client.get_all_logs(address, from_block=0, topic0='0xddf252...')
+all_transfers = await client.get_all_token_transfers(address)
+all_internal = await client.get_all_internal_transactions(address)
 ```
 
 ### Progress Callbacks
@@ -223,7 +331,7 @@ from aiochainscan.exceptions import (
 ## Testing
 
 ```bash
-# Run all tests (549+ tests)
+# Run all tests (587+ tests)
 pytest tests/ -q
 
 # Type checking (strict)
@@ -255,17 +363,17 @@ export ETHERSCAN_KEY="your_key"  # Optional
 
 ---
 
-## Contact / Contributing
+## Pre-Commit Validation (MANDATORY)
 
-**Pre-Commit Validation (MANDATORY - run before git commit):**
+**Run BEFORE `git commit` — not after:**
 ```bash
-pytest tests/ -q                    # Verify all 549 tests pass
+pytest tests/ -q                    # Verify all 587+ tests pass
 mypy aiochainscan --strict          # Type safety check (80 files)
 pre-commit run --all-files          # All linters (ruff, format, etc.)
 ```
-Only proceed to `git commit` when ALL checks pass. Do NOT rely on post-commit hook to catch errors.
+Only proceed to `git commit` when ALL three checks pass. Do NOT rely on post-commit hook to catch errors.
 
 **Code Quality:**
-- Follow hexagonal architecture - never bypass Network layer
+- Follow hexagonal architecture — never bypass Network layer
 - All Wei values as strings, all addresses as EIP-55 checksum
 - Add `# noqa: CODE` pragmas only when error is unavoidable (document why)
