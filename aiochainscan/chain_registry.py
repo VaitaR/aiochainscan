@@ -145,6 +145,12 @@ STANDARD_CHAINS = {
         'moralis_hex': '0x82750',
     },
     534351: {'name': 'scroll-sepolia', 'aliases': ['scroll-sepolia'], 'moralis_hex': '0x8274f'},
+    # Sonic
+    146: {
+        'name': 'sonic',
+        'aliases': ['sonic'],
+        'moralis_hex': '0x92',
+    },
 }
 
 

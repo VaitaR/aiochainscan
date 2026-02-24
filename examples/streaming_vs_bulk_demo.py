@@ -82,7 +82,7 @@ async def demo_bulk_fetch():
     # Now process the data (all in memory)
     print(f'\nProcessing {len(transactions):,} transactions...')
     for tx in transactions[:10]:
-        print(f"  {tx['hash']}")
+        print(f'  {tx["hash"]}')
     print(f'  ... and {len(transactions) - 10:,} more')
 
     # Cleanup
@@ -185,16 +185,16 @@ async def demo_comparison():
     print('COMPARISON RESULTS')
     print('=' * 60)
 
-    print(f"\nDataset: {bulk_results['count']:,} transactions")
+    print(f'\nDataset: {bulk_results["count"]:,} transactions')
 
     print('\n┌─────────────────────┬──────────────┬──────────────┐')
     print('│ Metric              │ Bulk Fetch   │ Streaming    │')
     print('├─────────────────────┼──────────────┼──────────────┤')
     print(
-        f"│ Time                │ {bulk_results['time']:>10.2f}s │ {stream_results['time']:>10.2f}s │"
+        f'│ Time                │ {bulk_results["time"]:>10.2f}s │ {stream_results["time"]:>10.2f}s │'
     )
     print(
-        f"│ Memory Used         │ {bulk_results['memory']:>10.2f}MB │ {stream_results['memory']:>10.2f}MB │"
+        f'│ Memory Used         │ {bulk_results["memory"]:>10.2f}MB │ {stream_results["memory"]:>10.2f}MB │'
     )
     print('└─────────────────────┴──────────────┴──────────────┘')
 
@@ -212,9 +212,9 @@ async def demo_comparison():
         print(f'\n⚡ Streaming is {abs(time_diff):.1f}s faster!')
 
     print('\n💡 Key Takeaway:')
-    print(f"   For {bulk_results['count']:,} transactions:")
-    print(f"   - Bulk: Uses {bulk_results['memory']:.0f}MB RAM (all in memory)")
-    print(f"   - Streaming: Uses {stream_results['memory']:.0f}MB RAM (constant)")
+    print(f'   For {bulk_results["count"]:,} transactions:')
+    print(f'   - Bulk: Uses {bulk_results["memory"]:.0f}MB RAM (all in memory)')
+    print(f'   - Streaming: Uses {stream_results["memory"]:.0f}MB RAM (constant)')
     print('   - For whale addresses with millions of transactions,')
     print('     streaming prevents OOM errors!')
 

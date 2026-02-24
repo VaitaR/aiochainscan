@@ -63,7 +63,7 @@ async def test_memory_streaming_vs_bulk():
                 'blockNumber': i // 100,
                 'transactionIndex': i % 100,
                 'from': f'0x{i:040x}',
-                'to': f'0x{(i+1):040x}',
+                'to': f'0x{(i + 1):040x}',
                 'value': str(i * 1000000000000000000),
                 'gas': '21000',
                 'gasPrice': str(20000000000),

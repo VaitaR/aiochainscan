@@ -211,6 +211,8 @@ class ChainscanClient:
                 'gnosis': 'blockscout_gnosis',
                 'optimism': 'blockscout_optimism',
                 'base': 'blockscout_base',
+                'bsc': 'blockscout_bsc',
+                'bnb': 'blockscout_bsc',
             }
             scanner_id = blockscout_config_map.get(network_str, f'blockscout_{network_str}')
         else:
@@ -225,7 +227,23 @@ class ChainscanClient:
         # Normalize network aliases for different scanners (for config lookup only)
         # Different scanners use different naming conventions for the same networks
         network_aliases: dict[str, dict[str, str]] = {
-            'etherscan': {'ethereum': 'main', 'eth': 'main', 'base': 'main'},
+            'etherscan': {
+                # All EtherscanV2 networks route through the single unified endpoint
+                # (api.etherscan.io/v2/api?chainid=...), so all map to 'main' for config lookup
+                'ethereum': 'main',
+                'eth': 'main',
+                'base': 'main',
+                'bsc': 'main',
+                'bnb': 'main',
+                'binance': 'main',
+                'polygon': 'main',
+                'matic': 'main',
+                'arbitrum': 'main',
+                'arb': 'main',
+                'optimism': 'main',
+                'op': 'main',
+                'sonic': 'main',
+            },
             'blockscout': {'ethereum': 'eth', 'main': 'eth'},
             'blockscout_v2': {'main': 'ethereum'},
         }
@@ -470,6 +488,43 @@ class ChainscanClient:
         result: list[dict[Any, Any]] = await self.call(Method.ACCOUNT_ERC20_TRANSFERS, **params)
         return result
 
+    async def get_internal_transactions(
+        self,
+        address: str,
+        start_block: int = 0,
+        end_block: int | None = None,
+        page: int = 1,
+        offset: int = 100,
+        sort: str = 'asc',
+    ) -> list[dict[str, Any]]:
+        """Get internal transactions for an address (single page).
+
+        For complete data, use ``get_all_internal_transactions()``
+        or ``iter_internal_transactions_streaming()``.
+
+        Args:
+            address: Wallet address
+            start_block: Starting block number
+            end_block: Ending block number (None for latest)
+            page: Page number for pagination
+            offset: Number of results per page
+            sort: Sort order ('asc' or 'desc')
+
+        Returns:
+            List of internal transaction dicts
+        """
+        params: dict[str, Any] = {
+            'address': address,
+            'startblock': start_block,
+            'page': page,
+            'offset': offset,
+            'sort': sort,
+        }
+        if end_block is not None:
+            params['endblock'] = end_block
+        result: Any = await self.call(Method.ACCOUNT_INTERNAL_TXS, **params)
+        return result if isinstance(result, list) else []
+
     async def get_token_portfolio(self, address: str) -> list[dict[Any, Any]]:
         """Get all ERC20 tokens held by address.
 
@@ -495,6 +550,507 @@ class ChainscanClient:
         """
         result: str = await self.call(Method.CONTRACT_ABI, address=address)
         return result
+
+    async def get_contract_source(self, address: str) -> dict[str, Any]:
+        """Get verified contract source code.
+
+        Args:
+            address: Contract address
+
+        Returns:
+            Dict with source code, compiler version, optimization settings, etc.
+        """
+        result: dict[str, Any] = await self.call(Method.CONTRACT_SOURCE, address=address)
+        return result
+
+    async def get_transaction(self, tx_hash: str) -> dict[str, Any]:
+        """Get transaction details by hash.
+
+        Args:
+            tx_hash: Transaction hash (0x...)
+
+        Returns:
+            Transaction dict with from, to, value, gas, input, etc.
+        """
+        result: dict[str, Any] = await self.call(Method.TX_BY_HASH, txhash=tx_hash)
+        return result
+
+    async def get_transaction_status(self, tx_hash: str) -> dict[str, Any]:
+        """Check transaction receipt status (success/fail).
+
+        Args:
+            tx_hash: Transaction hash (0x...)
+
+        Returns:
+            Dict with status field ('1' = success, '0' = fail)
+        """
+        result: dict[str, Any] = await self.call(Method.TX_RECEIPT_STATUS, txhash=tx_hash)
+        return result
+
+    async def get_logs(
+        self,
+        address: str,
+        from_block: int = 0,
+        to_block: int | str | None = None,
+        topic0: str | None = None,
+        topic1: str | None = None,
+        topic2: str | None = None,
+        topic3: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Get event logs (single page, max ~1000 results).
+
+        ⚠️ WARNING: This returns at most ~1000 logs. For complete data use
+        ``get_all_logs()`` or ``iter_logs_streaming()`` which handle pagination.
+
+        Args:
+            address: Contract address
+            from_block: Starting block number (default: 0)
+            to_block: Ending block number (default: latest)
+            topic0: Event signature hash (optional)
+            topic1-topic3: Indexed parameter filters (optional)
+
+        Returns:
+            List of log dicts (may be truncated at API limit)
+        """
+        params: dict[str, Any] = {
+            'address': address,
+            'fromBlock': from_block,
+            'toBlock': to_block or 'latest',
+        }
+        if topic0:
+            params['topic0'] = topic0
+        if topic1:
+            params['topic1'] = topic1
+        if topic2:
+            params['topic2'] = topic2
+        if topic3:
+            params['topic3'] = topic3
+        result: list[dict[str, Any]] = await self.call(Method.EVENT_LOGS, **params)
+        return result if isinstance(result, list) else []
+
+    async def get_all_logs(
+        self,
+        address: str,
+        from_block: int = 0,
+        to_block: int | str | None = None,
+        topic0: str | None = None,
+        topic1: str | None = None,
+        topic2: str | None = None,
+        topic3: str | None = None,
+        on_progress: 'ProgressCallback | None' = None,
+    ) -> list[dict[str, Any]]:
+        """Get ALL event logs with automatic pagination (handles API limits).
+
+        Unlike ``get_logs()`` which returns at most ~1000 results, this method
+        fetches every log in the specified range using paginated requests.
+
+        Args:
+            address: Contract address
+            from_block: Starting block number (default: 0)
+            to_block: Ending block number (default: latest)
+            topic0: Event signature hash (optional)
+            topic1-topic3: Indexed parameter filters (optional)
+            on_progress: Progress callback for tracking fetch progress
+
+        Returns:
+            Complete list of all log dicts, deduplicated and sorted by block/logIndex
+        """
+        all_logs: list[dict[str, Any]] = []
+        async for batch in self.iter_logs_streaming(
+            address=address,
+            from_block=from_block,
+            to_block=to_block,
+            topic0=topic0,
+            topic1=topic1,
+            topic2=topic2,
+            topic3=topic3,
+            batch_size=1000,
+            on_progress=on_progress,
+        ):
+            all_logs.extend(batch)
+        return all_logs
+
+    async def get_all_transactions(
+        self,
+        address: str,
+        from_block: int = 0,
+        to_block: int | str | None = None,
+        on_progress: 'ProgressCallback | None' = None,
+    ) -> list[dict[str, Any]]:
+        """Get ALL transactions with automatic pagination.
+
+        Unlike ``get_transactions()`` which returns a single page, this method
+        fetches every transaction using streaming pagination.
+
+        Args:
+            address: Wallet address
+            from_block: Starting block number (default: 0)
+            to_block: Ending block number (default: latest)
+            on_progress: Progress callback for tracking fetch progress
+
+        Returns:
+            Complete list of all transaction dicts
+        """
+        all_txs: list[dict[str, Any]] = []
+        async for batch in self.iter_transactions_streaming(
+            address=address,
+            from_block=from_block,
+            to_block=to_block,
+            batch_size=1000,
+            on_progress=on_progress,
+        ):
+            all_txs.extend(batch)
+        return all_txs
+
+    async def get_all_token_transfers(
+        self,
+        address: str,
+        contract_address: str | None = None,
+        from_block: int = 0,
+        to_block: int | str | None = None,
+        on_progress: 'ProgressCallback | None' = None,
+    ) -> list[dict[str, Any]]:
+        """Get ALL ERC20 token transfers with automatic pagination.
+
+        Args:
+            address: Wallet address
+            contract_address: Filter by specific token contract (optional)
+            from_block: Starting block number (default: 0)
+            to_block: Ending block number (default: latest)
+            on_progress: Progress callback for tracking fetch progress
+
+        Returns:
+            Complete list of all token transfer dicts
+        """
+        all_transfers: list[dict[str, Any]] = []
+        async for batch in self.iter_token_transfers_streaming(
+            address=address,
+            from_block=from_block,
+            to_block=to_block,
+            contract_address=contract_address,
+            batch_size=1000,
+            on_progress=on_progress,
+        ):
+            all_transfers.extend(batch)
+        return all_transfers
+
+    async def get_all_internal_transactions(
+        self,
+        address: str,
+        from_block: int = 0,
+        to_block: int | str | None = None,
+        on_progress: 'ProgressCallback | None' = None,
+    ) -> list[dict[str, Any]]:
+        """Get ALL internal transactions with automatic pagination.
+
+        Args:
+            address: Wallet address
+            from_block: Starting block number (default: 0)
+            to_block: Ending block number (default: latest)
+            on_progress: Progress callback for tracking fetch progress
+
+        Returns:
+            Complete list of all internal transaction dicts
+        """
+        all_txs: list[dict[str, Any]] = []
+        async for batch in self.iter_internal_transactions_streaming(
+            address=address,
+            from_block=from_block,
+            to_block=to_block,
+            batch_size=1000,
+            on_progress=on_progress,
+        ):
+            all_txs.extend(batch)
+        return all_txs
+
+    async def get_eth_price(self) -> dict[str, Any]:
+        """Get current ETH price (USD, BTC).
+
+        Returns:
+            Dict with 'ethusd', 'ethbtc', 'ethusd_timestamp', etc.
+        """
+        result: dict[str, Any] = await self.call(Method.ETH_PRICE)
+        return result
+
+    async def get_gas_oracle(self) -> dict[str, Any]:
+        """Get current gas price recommendations.
+
+        Returns:
+            Dict with 'SafeGasPrice', 'ProposeGasPrice', 'FastGasPrice' in Gwei
+        """
+        result: dict[str, Any] = await self.call(Method.GAS_ORACLE)
+        return result
+
+    async def get_token_balance(
+        self, address: str, contract_address: str, tag: str = 'latest'
+    ) -> str:
+        """Get ERC-20 token balance for a specific token.
+
+        Args:
+            address: Wallet address
+            contract_address: Token contract address
+            tag: Block tag ('latest', 'earliest', or block number)
+
+        Returns:
+            Token balance in raw units (divide by 10^decimals for human-readable)
+        """
+        result: str = await self.call(
+            Method.TOKEN_BALANCE, address=address, contractaddress=contract_address, tag=tag
+        )
+        return str(result)
+
+    async def get_token_info(self, contract_address: str) -> dict[str, Any]:
+        """Get token metadata (name, symbol, decimals, supply).
+
+        Args:
+            contract_address: Token contract address
+
+        Returns:
+            Dict with name, symbol, decimals, totalSupply, etc.
+        """
+        result: dict[str, Any] = await self.call(
+            Method.TOKEN_INFO, contractaddress=contract_address
+        )
+        return result
+
+    async def get_block(self, block_number: int | str) -> dict[str, Any]:
+        """Get block information by number.
+
+        Args:
+            block_number: Block number or 'latest'
+
+        Returns:
+            Block dict with transactions, timestamp, miner, etc.
+        """
+        result: dict[str, Any] = await self.call(Method.BLOCK_BY_NUMBER, blockno=block_number)
+        return result
+
+    async def get_block_reward(self, block_number: int) -> dict[str, Any]:
+        """Get block mining reward information.
+
+        Args:
+            block_number: Block number
+
+        Returns:
+            Dict with blockMiner, blockReward, uncles, etc.
+        """
+        result: dict[str, Any] = await self.call(Method.BLOCK_REWARD, blockno=block_number)
+        return result
+
+    async def get_block_countdown(self, target_block: int) -> dict[str, Any]:
+        """Get estimated time to a target block number.
+
+        Args:
+            target_block: Target block number
+
+        Returns:
+            Dict with EstimateTimeInSec, CurrentBlock, CountdownBlock, etc.
+        """
+        result: dict[str, Any] = await self.call(Method.BLOCK_COUNTDOWN, blockno=target_block)
+        return result
+
+    async def get_block_by_timestamp(
+        self, timestamp: int, closest: str = 'before'
+    ) -> dict[str, Any]:
+        """Get block number by Unix timestamp.
+
+        Args:
+            timestamp: Unix timestamp (seconds)
+            closest: 'before' or 'after' the timestamp
+
+        Returns:
+            Dict with block number closest to the given timestamp
+        """
+        result: dict[str, Any] = await self.call(
+            Method.BLOCK_NUMBER_BY_TIMESTAMP, timestamp=timestamp, closest=closest
+        )
+        return result
+
+    async def get_erc721_transfers(
+        self,
+        address: str,
+        contract_address: str | None = None,
+        start_block: int = 0,
+        end_block: int | str = 99999999,
+        page: int = 1,
+        offset: int = 100,
+        sort: str = 'asc',
+    ) -> list[dict[str, Any]]:
+        """Get ERC-721 (NFT) token transfers for an address.
+
+        Args:
+            address: Wallet address
+            contract_address: Filter by specific NFT contract (optional)
+            start_block: Starting block number
+            end_block: Ending block number
+            page: Page number for pagination
+            offset: Number of results per page
+            sort: Sort order ('asc' or 'desc')
+
+        Returns:
+            List of ERC-721 transfer dicts
+        """
+        params: dict[str, Any] = {
+            'address': address,
+            'startblock': start_block,
+            'endblock': end_block,
+            'page': page,
+            'offset': offset,
+            'sort': sort,
+        }
+        if contract_address:
+            params['contractaddress'] = contract_address
+        result: Any = await self.call(Method.ACCOUNT_ERC721_TRANSFERS, **params)
+        return result if isinstance(result, list) else []
+
+    async def get_erc1155_transfers(
+        self,
+        address: str,
+        contract_address: str | None = None,
+        start_block: int = 0,
+        end_block: int | str = 99999999,
+        page: int = 1,
+        offset: int = 100,
+        sort: str = 'asc',
+    ) -> list[dict[str, Any]]:
+        """Get ERC-1155 (multi-token) transfers for an address.
+
+        Args:
+            address: Wallet address
+            contract_address: Filter by specific contract (optional)
+            start_block: Starting block number
+            end_block: Ending block number
+            page: Page number for pagination
+            offset: Number of results per page
+            sort: Sort order ('asc' or 'desc')
+
+        Returns:
+            List of ERC-1155 transfer dicts
+        """
+        params: dict[str, Any] = {
+            'address': address,
+            'startblock': start_block,
+            'endblock': end_block,
+            'page': page,
+            'offset': offset,
+            'sort': sort,
+        }
+        if contract_address:
+            params['contractaddress'] = contract_address
+        result: Any = await self.call(Method.ACCOUNT_ERC1155_TRANSFERS, **params)
+        return result if isinstance(result, list) else []
+
+    async def get_nft_portfolio(self, address: str) -> list[dict[str, Any]]:
+        """Get all NFTs owned by an address.
+
+        Args:
+            address: Wallet address
+
+        Returns:
+            List of NFT dicts with token_id, contract, metadata, etc.
+        """
+        result: Any = await self.call(Method.ACCOUNT_NFT_PORTFOLIO, address=address)
+        items: list[dict[str, Any]] = (
+            result
+            if isinstance(result, list)
+            else result.get('items', [])
+            if isinstance(result, dict)
+            else []
+        )
+        return items
+
+    async def check_transaction_status(self, tx_hash: str) -> dict[str, Any]:
+        """Check execution status of a transaction (Etherscan specific).
+
+        Unlike ``get_transaction_status()`` which checks receipt status,
+        this checks internal execution status (e.g., contract call success/fail).
+
+        Args:
+            tx_hash: Transaction hash (0x...)
+
+        Returns:
+            Dict with isError and errDescription fields
+        """
+        result: dict[str, Any] = await self.call(Method.TX_STATUS_CHECK, txhash=tx_hash)
+        return result
+
+    async def get_contract_creation(self, addresses: list[str]) -> list[dict[str, Any]]:
+        """Get contract creator and creation tx hash.
+
+        Args:
+            addresses: List of contract addresses (max 5)
+
+        Returns:
+            List of dicts with contractAddress, contractCreator, txHash
+        """
+        result: Any = await self.call(
+            Method.CONTRACT_CREATION,
+            contractaddresses=','.join(addresses),
+        )
+        return result if isinstance(result, list) else []
+
+    async def get_token_supply(self, contract_address: str) -> str:
+        """Get total supply of an ERC-20 token.
+
+        Args:
+            contract_address: Token contract address
+
+        Returns:
+            Total supply in raw units (divide by 10^decimals for human-readable)
+        """
+        result: str = await self.call(Method.TOKEN_SUPPLY, contractaddress=contract_address)
+        return str(result)
+
+    async def get_gas_estimate(self, gas_price: int) -> str:
+        """Get estimated confirmation time for a gas price.
+
+        Args:
+            gas_price: Gas price in Wei
+
+        Returns:
+            Estimated confirmation time in seconds
+        """
+        result: str = await self.call(Method.GAS_ESTIMATE, gasprice=gas_price)
+        return str(result)
+
+    async def get_eth_supply(self) -> str:
+        """Get total ETH supply.
+
+        Returns:
+            Total ETH supply in Wei (as string to prevent overflow)
+        """
+        result: str = await self.call(Method.ETH_SUPPLY)
+        return str(result)
+
+    async def eth_call(self, to: str, data: str, tag: str = 'latest') -> str:
+        """Execute a read-only contract call via eth_call JSON-RPC proxy.
+
+        Args:
+            to: Contract address
+            data: ABI-encoded function call data (hex string)
+            tag: Block tag ('latest', 'earliest', or hex block number)
+
+        Returns:
+            ABI-encoded return data (hex string)
+        """
+        result: str = await self.call(Method.PROXY_ETH_CALL, to=to, data=data, tag=tag)
+        return str(result)
+
+    async def eth_get_balance(self, address: str, tag: str = 'latest') -> str:
+        """Get ETH balance via eth_getBalance JSON-RPC proxy.
+
+        Unlike ``get_balance()``, this returns the raw hex balance via the
+        JSON-RPC proxy endpoint, not the human-formatted balance.
+
+        Args:
+            address: Wallet address
+            tag: Block tag ('latest', 'earliest', or hex block number)
+
+        Returns:
+            Balance in Wei as hex string
+        """
+        result: str = await self.call(Method.PROXY_GET_BALANCE, address=address, tag=tag)
+        return str(result)
 
     async def get_contract(self, address: str) -> SmartContract:
         """
@@ -1195,7 +1751,7 @@ class ChainscanClient:
 
     async def get_transactions_df(self, address: str) -> 'pl.DataFrame':
         """
-        Get transactions as a Polars DataFrame.
+        Get ALL transactions as a Polars DataFrame (auto-paginated).
 
         Perfect for data analysis and AI agents.
         Requires: pip install aiochainscan[data]
@@ -1206,9 +1762,7 @@ class ChainscanClient:
         """
         from aiochainscan.services.analytics import transactions_to_dataframe
 
-        txs = await self.call(Method.ACCOUNT_TRANSACTIONS, address=address)
-        items = txs if isinstance(txs, list) else txs.get('items', [])
-        return await transactions_to_dataframe(items)
+        return await transactions_to_dataframe(self.iter_transactions(address))
 
     async def get_token_portfolio_df(self, address: str) -> 'pl.DataFrame':
         """

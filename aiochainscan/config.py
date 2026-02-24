@@ -351,6 +351,22 @@ class ConfigurationManager:
                 requires_api_key=False,
                 special_config={'public_api': True},
             ),
+            'blockscout_base': ScannerConfig(
+                name='BlockScout Base',
+                base_domain='base.blockscout.com',
+                currency='ETH',
+                supported_networks={'base'},
+                requires_api_key=False,
+                special_config={'public_api': True},
+            ),
+            'blockscout_bsc': ScannerConfig(
+                name='BlockScout BSC',
+                base_domain='bsc.blockscout.com',
+                currency='BNB',
+                supported_networks={'bsc'},
+                requires_api_key=False,
+                special_config={'public_api': True},
+            ),
             'moralis': ScannerConfig(
                 name='Moralis Web3 Data API',
                 base_domain='deep-index.moralis.io',

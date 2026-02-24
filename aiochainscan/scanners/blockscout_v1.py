@@ -55,6 +55,7 @@ class BlockScoutV1(EtherscanLikeScanner):
         'base',  # Base mainnet
         'scroll',  # Scroll mainnet
         'linea',  # Linea mainnet
+        'bsc',  # BNB Smart Chain
     }
 
     # BlockScout typically doesn't require API keys
@@ -72,6 +73,7 @@ class BlockScoutV1(EtherscanLikeScanner):
         'base': 'base.blockscout.com',
         'scroll': 'scroll.blockscout.com',
         'linea': 'linea.blockscout.com',
+        'bsc': 'bsc.blockscout.com',  # BNB Smart Chain
     }
 
     def __init__(

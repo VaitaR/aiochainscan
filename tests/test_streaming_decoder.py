@@ -551,7 +551,7 @@ class TestStreamingIntegration:
             for i in range(0, total_items, batch_size):
                 batches_fetched += 1
                 # Yield a minimal batch representation
-                batch = [{'hash': f'0x{i+j}'} for j in range(min(batch_size, total_items - i))]
+                batch = [{'hash': f'0x{i + j}'} for j in range(min(batch_size, total_items - i))]
                 yield batch
 
         monkeypatch.setattr(

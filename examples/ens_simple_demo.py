@@ -82,7 +82,7 @@ async def main():
     print(f'   First lookup (cache miss):  {time1:.4f}s → {name1}')
     print(f'   Second lookup (cache hit):  {time2:.4f}s → {name2}')
     if time2 > 0:
-        print(f'   Speedup: {time1/time2:.0f}x faster with cache')
+        print(f'   Speedup: {time1 / time2:.0f}x faster with cache')
 
     await client.close()
 
