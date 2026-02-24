@@ -248,13 +248,9 @@ async def get_logs_page(
                             'provider_type': 'graphql',
                         },
                     )
-                if _federator is not None:
-                    _federator.report_success('logs', api_kind=api_kind, network=network)
                 return items, next_cursor
             except Exception as exc:  # noqa: BLE001
                 last_exc = exc
-                if _federator is not None:
-                    _federator.report_failure('logs', api_kind=api_kind, network=network)
                 continue
         # If all candidates failed, record and raise
         if _telemetry is not None and last_exc is not None:

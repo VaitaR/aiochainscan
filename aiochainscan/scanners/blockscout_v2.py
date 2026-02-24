@@ -15,6 +15,7 @@ Base URL example: https://eth.blockscout.com/api/v2/
 
 from __future__ import annotations
 
+import urllib.parse
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from ..core.endpoint import EndpointSpec
@@ -250,7 +251,7 @@ class BlockScoutV2Scanner(Scanner):
         for param_name, value in params.items():
             placeholder = f'{{{param_name}}}'
             if placeholder in path:
-                path = path.replace(placeholder, str(value))
+                path = path.replace(placeholder, urllib.parse.quote(str(value), safe=''))
 
         return f'{self.base_url}{path}'
 

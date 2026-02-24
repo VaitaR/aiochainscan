@@ -20,14 +20,3 @@ class SimpleProviderFederator(ProviderFederator):
         if preferred is True:
             return True
         return supported
-
-    # naive in-memory health map; per-process only
-    _failures: dict[tuple[str, str, str], int] = {}
-
-    def report_success(self, feature: str, *, api_kind: str, network: str) -> None:
-        key = (feature, api_kind, network)
-        self._failures.pop(key, None)
-
-    def report_failure(self, feature: str, *, api_kind: str, network: str) -> None:
-        key = (feature, api_kind, network)
-        self._failures[key] = self._failures.get(key, 0) + 1
