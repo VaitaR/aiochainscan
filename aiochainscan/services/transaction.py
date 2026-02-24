@@ -101,19 +101,11 @@ async def get_transaction_by_hash(
                             'transaction.get_transaction_by_hash.ok',
                             {'api_kind': api_kind, 'network': network, 'provider_type': 'graphql'},
                         )
-                    if _federator is not None:
-                        _federator.report_success(
-                            'transaction_by_hash', api_kind=api_kind, network=network
-                        )
                     if _cache is not None:
                         await _cache.set(cache_key, mapped, ttl_seconds=10)
                     return mapped
             except Exception as exc:  # noqa: BLE001
                 last_exc = exc
-                if _federator is not None:
-                    _federator.report_failure(
-                        'transaction_by_hash', api_kind=api_kind, network=network
-                    )
                 continue
         if last_exc is not None and _telemetry is not None:
             await _telemetry.record_error(
