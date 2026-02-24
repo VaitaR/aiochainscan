@@ -11,7 +11,7 @@ Tests cover:
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -438,29 +438,21 @@ class TestCallMethod:
             'coin_balance': '12345678901234567890',
         }
 
-        # Mock httpx module import (we now use httpx instead of aiohttp)
-        mock_httpx = MagicMock()
-        with patch.dict('sys.modules', {'httpx': mock_httpx}):
-            # Set up the async client mock
-            mock_response_obj = MagicMock()
-            mock_response_obj.json = MagicMock(return_value=mock_response)
-            mock_response_obj.raise_for_status = MagicMock()
+        # Mock _network_client.request() (scanner now uses Network layer)
+        scanner._network_client = MagicMock()
+        scanner._network_client.request = AsyncMock(return_value=mock_response)
 
-            mock_client = MagicMock()
-            mock_client.get = AsyncMock(return_value=mock_response_obj)
+        result = await scanner.call(
+            Method.ACCOUNT_BALANCE,
+            address='0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045',
+        )
 
-            mock_client_context = MagicMock()
-            mock_client_context.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client_context.__aexit__ = AsyncMock(return_value=None)
-
-            mock_httpx.AsyncClient.return_value = mock_client_context
-
-            result = await scanner.call(
-                Method.ACCOUNT_BALANCE,
-                address='0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045',
-            )
-
-            assert result == '12345678901234567890'
+        assert result == '12345678901234567890'
+        # Verify request was made with correct parameters
+        scanner._network_client.request.assert_called_once()
+        call_args = scanner._network_client.request.call_args
+        assert call_args.kwargs['method'] == 'GET'
+        assert 'addresses' in call_args.kwargs['url']
 
     @pytest.mark.asyncio
     async def test_call_token_portfolio_with_mocked_response(
@@ -477,32 +469,20 @@ class TestCallMethod:
             'next_page_params': None,
         }
 
-        # Mock httpx module import (we now use httpx instead of aiohttp)
-        mock_httpx = MagicMock()
-        with patch.dict('sys.modules', {'httpx': mock_httpx}):
-            # Set up the async client mock
-            mock_response_obj = MagicMock()
-            mock_response_obj.json = MagicMock(return_value=mock_response)
-            mock_response_obj.raise_for_status = MagicMock()
+        # Mock _network_client.request() (scanner now uses Network layer)
+        scanner._network_client = MagicMock()
+        scanner._network_client.request = AsyncMock(return_value=mock_response)
 
-            mock_client = MagicMock()
-            mock_client.get = AsyncMock(return_value=mock_response_obj)
+        result = await scanner.call(
+            Method.ACCOUNT_TOKEN_PORTFOLIO,
+            address='0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045',
+        )
 
-            mock_client_context = MagicMock()
-            mock_client_context.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client_context.__aexit__ = AsyncMock(return_value=None)
-
-            mock_httpx.AsyncClient.return_value = mock_client_context
-
-            result = await scanner.call(
-                Method.ACCOUNT_TOKEN_PORTFOLIO,
-                address='0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045',
-            )
-
-            assert len(result) == 1
-            assert result[0]['token']['symbol'] == 'USDC'
-            assert result[0]['value'] == '1000000'
-            assert result[0]['token']['symbol'] == 'USDC'
+        assert len(result) == 1
+        assert result[0]['token']['symbol'] == 'USDC'
+        assert result[0]['value'] == '1000000'
+        # Verify request was made
+        scanner._network_client.request.assert_called_once()
 
 
 # ============================================================================

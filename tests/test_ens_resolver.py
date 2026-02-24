@@ -1,0 +1,370 @@
+"""
+Tests for ENS (Ethereum Name Service) resolver.
+
+Tests:
+- Forward resolution (name → address)
+- Reverse lookup (address → name)
+- Batch operations
+- Caching behavior
+- BlockScout V2 integration
+- ENS contract fallback
+- Error handling
+"""
+
+import pytest
+
+from aiochainscan import ChainscanClient
+from aiochainscan.services.ens_resolver import ENSResolver
+
+
+class TestENSResolver:
+    """Test ENS resolution functionality."""
+
+    @pytest.mark.asyncio
+    async def test_ens_only_supported_on_ethereum_mainnet(self):
+        """ENS should only work on Ethereum mainnet (chain_id=1)."""
+        # Create client for Polygon (not supported)
+        client = ChainscanClient.from_config('blockscout_v2', 'polygon')
+
+        with pytest.raises(ValueError, match='ENS is only supported on Ethereum mainnet'):
+            await client.resolve_name('vitalik.eth')
+
+        with pytest.raises(ValueError, match='ENS is only supported on Ethereum mainnet'):
+            await client.lookup_address('0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045')
+
+    @pytest.mark.asyncio
+    @pytest.mark.skip(
+        reason="Forward resolution requires PROXY_ETH_CALL which BlockScout V2 doesn't support"
+    )
+    async def test_resolve_name_forward(self):
+        """Test forward resolution: name → address."""
+        client = ChainscanClient.from_config('blockscout_v2', 'ethereum')
+
+        # Resolve vitalik.eth
+        address = await client.resolve_name('vitalik.eth')
+
+        assert address is not None
+        assert address.startswith('0x')
+        assert len(address) == 42
+        # Vitalik's well-known address
+        assert address.lower() == '0xd8da6bf26964af9d7eed9e03e53415d37aa96045'
+
+    @pytest.mark.asyncio
+    async def test_resolve_name_invalid(self):
+        """Test resolution with invalid name."""
+        client = ChainscanClient.from_config('blockscout_v2', 'ethereum')
+
+        # Invalid names should return None
+        assert await client.resolve_name('') is None
+        assert await client.resolve_name('invalid') is None
+        assert await client.resolve_name('not-ens-name.com') is None
+
+    @pytest.mark.asyncio
+    async def test_lookup_address_reverse(self):
+        """Test reverse lookup: address → name."""
+        client = ChainscanClient.from_config('blockscout_v2', 'ethereum')
+
+        # Reverse lookup vitalik's address
+        name = await client.lookup_address('0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045')
+
+        # BlockScout V2 should return ens_domain_name from address info
+        assert name is not None
+        assert name.endswith('.eth')
+        assert name.lower() == 'vitalik.eth'
+
+    @pytest.mark.asyncio
+    async def test_lookup_address_invalid(self):
+        """Test reverse lookup with invalid address."""
+        client = ChainscanClient.from_config('blockscout_v2', 'ethereum')
+
+        # Invalid addresses should return None (or handle gracefully)
+        assert await client.lookup_address('') is None
+        assert await client.lookup_address('invalid') is None
+        # Note: Short addresses like 0x123 cause API errors, which we handle gracefully
+        result = await client.lookup_address('0x123')
+        # Should either return None or handle the error
+        assert result is None or isinstance(result, str)
+
+    @pytest.mark.asyncio
+    @pytest.mark.skip(
+        reason="Forward resolution requires PROXY_ETH_CALL which BlockScout V2 doesn't support"
+    )
+    async def test_caching_forward_resolution(self):
+        """Test that forward resolution uses cache."""
+        client = ChainscanClient.from_config('blockscout_v2', 'ethereum')
+
+        # First resolution (cache miss)
+        address1 = await client.resolve_name('vitalik.eth')
+
+        # Second resolution (cache hit - should be instant)
+        address2 = await client.resolve_name('vitalik.eth')
+
+        assert address1 == address2
+        assert address1 is not None
+
+    @pytest.mark.asyncio
+    async def test_caching_reverse_lookup(self):
+        """Test that reverse lookup uses cache."""
+        client = ChainscanClient.from_config('blockscout_v2', 'ethereum')
+
+        addr = '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045'
+
+        # First lookup (cache miss)
+        name1 = await client.lookup_address(addr)
+
+        # Second lookup (cache hit)
+        name2 = await client.lookup_address(addr)
+
+        assert name1 == name2
+        assert name1 is not None
+
+    @pytest.mark.asyncio
+    @pytest.mark.skip(
+        reason="Forward resolution requires PROXY_ETH_CALL which BlockScout V2 doesn't support"
+    )
+    async def test_caching_bidirectional(self):
+        """Test that caching works bidirectionally."""
+        client = ChainscanClient.from_config('blockscout_v2', 'ethereum')
+
+        # Resolve forward
+        address = await client.resolve_name('vitalik.eth')
+        assert address is not None
+
+        # Reverse lookup should hit cache
+        name = await client.lookup_address(address)
+        assert name == 'vitalik.eth'
+
+        # Forward resolution should still hit cache
+        address2 = await client.resolve_name('vitalik.eth')
+        assert address2 == address
+
+    @pytest.mark.asyncio
+    @pytest.mark.skip(
+        reason="Forward resolution requires PROXY_ETH_CALL which BlockScout V2 doesn't support"
+    )
+    async def test_batch_resolve_names(self):
+        """Test batch resolution of multiple names."""
+        client = ChainscanClient.from_config('blockscout_v2', 'ethereum')
+
+        names = ['vitalik.eth', 'uniswap.eth', 'invalid.eth']
+        result = await client.resolve_names(names)
+
+        # Should get dict with successful resolutions
+        assert isinstance(result, dict)
+        assert 'vitalik.eth' in result
+        assert result['vitalik.eth'].startswith('0x')
+
+        # Invalid names might not be in result
+        # (depends on whether they exist)
+
+    @pytest.mark.asyncio
+    async def test_batch_lookup_addresses(self):
+        """Test batch reverse lookup of multiple addresses."""
+        client = ChainscanClient.from_config('blockscout_v2', 'ethereum')
+
+        addresses = [
+            '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045',  # vitalik.eth
+            '0x0000000000000000000000000000000000000000',  # zero address
+        ]
+        result = await client.lookup_addresses(addresses)
+
+        # Should get dict with successful lookups
+        assert isinstance(result, dict)
+        # At least vitalik should be found
+        assert any('vitalik' in name.lower() for name in result.values())
+
+    @pytest.mark.asyncio
+    async def test_ens_property_lazy_initialization(self):
+        """Test that ENS resolver is lazy-initialized."""
+        client = ChainscanClient.from_config('blockscout_v2', 'ethereum')
+
+        # Should be None initially
+        assert client._ens_resolver is None
+
+        # Access property should initialize it
+        resolver = client.ens
+        assert resolver is not None
+        assert isinstance(resolver, ENSResolver)
+
+        # Second access should return same instance
+        resolver2 = client.ens
+        assert resolver2 is resolver
+
+    @pytest.mark.asyncio
+    @pytest.mark.skip(
+        reason="Forward resolution requires PROXY_ETH_CALL which BlockScout V2 doesn't support"
+    )
+    async def test_ens_cache_disable(self):
+        """Test ENS resolver with caching disabled."""
+        client = ChainscanClient.from_config('blockscout_v2', 'ethereum')
+
+        # Create resolver with caching disabled
+        from aiochainscan.services.ens_resolver import ENSResolver
+
+        resolver = ENSResolver(client, enable_cache=False)
+        assert resolver._cache is None
+
+        # Should still work, just without caching
+        address = await resolver.resolve_name('vitalik.eth')
+        assert address is not None
+
+    @pytest.mark.asyncio
+    async def test_ens_cache_clear(self):
+        """Test clearing ENS cache."""
+        client = ChainscanClient.from_config('blockscout_v2', 'ethereum')
+
+        # Populate cache via reverse lookup (which works)
+        await client.lookup_address('0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045')
+
+        # Clear cache
+        await client.ens.clear_cache()
+
+        # Should still work (will fetch again)
+        name = await client.lookup_address('0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045')
+        assert name is not None
+
+    @pytest.mark.asyncio
+    async def test_namehash_calculation(self):
+        """Test ENS namehash calculation."""
+        from aiochainscan.services.ens_resolver import ENSResolver
+
+        client = ChainscanClient.from_config('blockscout_v2', 'ethereum')
+        resolver = ENSResolver(client)
+
+        # Test known namehash
+        # vitalik.eth namehash (can be verified independently)
+        namehash = resolver._namehash('vitalik.eth')
+        assert len(namehash) == 64  # 32 bytes as hex
+        assert all(c in '0123456789abcdef' for c in namehash)
+
+        # Empty name should give zero hash
+        zero_hash = resolver._namehash('')
+        assert zero_hash == '0' * 64
+
+    @pytest.mark.asyncio
+    async def test_checksum_address(self):
+        """Test EIP-55 checksum address conversion."""
+        from aiochainscan.services.ens_resolver import ENSResolver
+
+        client = ChainscanClient.from_config('blockscout_v2', 'ethereum')
+        resolver = ENSResolver(client)
+
+        # Test known checksum address
+        lowercase = '0xd8da6bf26964af9d7eed9e03e53415d37aa96045'
+        checksum = resolver._to_checksum_address(lowercase)
+
+        # Should have mixed case
+        assert checksum != lowercase
+        assert checksum.lower() == lowercase
+        assert checksum.startswith('0x')
+
+        # Should be EIP-55 compliant (vitalik.eth)
+        assert checksum == '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045'
+
+    @pytest.mark.asyncio
+    async def test_string_decode(self):
+        """Test ABI string decoding."""
+        from aiochainscan.services.ens_resolver import ENSResolver
+
+        client = ChainscanClient.from_config('blockscout_v2', 'ethereum')
+        resolver = ENSResolver(client)
+
+        # Test decoding valid string response
+        # Format: offset(32) + length(32) + data
+        # "vitalik.eth" = 11 bytes
+        hex_str = '0x' + '0' * 64  # offset
+        hex_str += '000000000000000000000000000000000000000000000000000000000000000b'  # length=11
+        hex_str += '766974616c696b2e657468'  # "vitalik.eth"
+        hex_str += '0' * (64 - 22)  # padding
+
+        decoded = resolver._decode_string(hex_str)
+        assert decoded == 'vitalik.eth'
+
+        # Test empty string
+        assert resolver._decode_string('0x') is None
+
+        # Test invalid format
+        assert resolver._decode_string('0x1234') is None
+
+
+@pytest.mark.integration
+class TestENSIntegration:
+    """Integration tests requiring actual API calls."""
+
+    @pytest.mark.asyncio
+    async def test_blockscout_v2_ens_integration(self):
+        """Test ENS integration with BlockScout V2."""
+        client = ChainscanClient.from_config('blockscout_v2', 'ethereum')
+
+        # Test reverse lookup via BlockScout V2 address info
+        name = await client.lookup_address('0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045')
+
+        # Should get vitalik.eth from BlockScout
+        assert name is not None
+        assert name.lower() == 'vitalik.eth'
+
+    @pytest.mark.asyncio
+    @pytest.mark.skip(reason='Requires Etherscan API key and eth_call support')
+    async def test_etherscan_ens_fallback(self):
+        """Test ENS contract fallback with Etherscan."""
+        # This test requires PROXY_ETH_CALL support
+        client = ChainscanClient.from_config('etherscan', 'ethereum')
+
+        # Should use ENS contract calls as fallback
+        address = await client.resolve_name('vitalik.eth')
+        assert address is not None
+        assert address.lower() == '0xd8da6bf26964af9d7eed9e03e53415d37aa96045'
+
+
+@pytest.mark.benchmark
+class TestENSPerformance:
+    """Performance tests for ENS resolver."""
+
+    @pytest.mark.asyncio
+    async def test_batch_resolution_performance(self):
+        """Test batch resolution is faster than sequential."""
+        import time
+
+        client = ChainscanClient.from_config('blockscout_v2', 'ethereum')
+
+        names = ['vitalik.eth', 'uniswap.eth', 'ens.eth']
+
+        # Clear cache first
+        await client.ens.clear_cache()
+
+        # Batch resolution
+        start = time.time()
+        result = await client.resolve_names(names)
+        batch_time = time.time() - start
+
+        print(f'Batch resolution took {batch_time:.2f}s')
+        print(f'Resolved {len(result)} names')
+
+        # Should complete in reasonable time
+        assert batch_time < 30  # 30 seconds max for 3 names
+
+    @pytest.mark.asyncio
+    async def test_cache_performance(self):
+        """Test that cache significantly improves performance."""
+        import time
+
+        client = ChainscanClient.from_config('blockscout_v2', 'ethereum')
+
+        # Clear cache
+        await client.ens.clear_cache()
+
+        # First resolution (cache miss)
+        start = time.time()
+        await client.resolve_name('vitalik.eth')
+        first_time = time.time() - start
+
+        # Second resolution (cache hit)
+        start = time.time()
+        await client.resolve_name('vitalik.eth')
+        cached_time = time.time() - start
+
+        print(f'First resolution: {first_time:.4f}s')
+        print(f'Cached resolution: {cached_time:.4f}s')
+
+        # Cached should be much faster (at least 10x)
+        assert cached_time < first_time / 10

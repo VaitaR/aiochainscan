@@ -126,3 +126,65 @@ class ChainscanNetworkError(ChainscanClientError):
 
     def __str__(self) -> str:
         return f'{self.message} {self._ai_instruction}'
+
+
+class ChainscanDataError(ChainscanClientError):
+    """Data quality or contract violation in API responses.
+
+    This exception is raised when API data cannot be processed due to:
+    - Invalid data types (e.g., None where int expected)
+    - Missing required fields
+    - Sorting failures due to malformed data
+    - Data that violates expected contracts
+    """
+
+    def __init__(self, message: str, details: Any = None) -> None:
+        self.message = message
+        self.details = details
+        super().__init__(str(self))
+
+    def __str__(self) -> str:
+        if self.details:
+            return f'{self.message} | Details: {self.details}'
+        return self.message
+
+
+class PaginationDataLossError(ChainscanClientError):
+    """Raised when a single block contains more transactions than the API's pagination limit.
+
+    This is the "whale block" problem: when a block has 10,000+ transactions and the API
+    only allows fetching 10,000 items per request. Without per-transaction pagination
+    or GraphQL support, we cannot retrieve all data without loss.
+
+    This exception prevents silent data loss by failing loudly when this scenario is detected.
+
+    Attributes:
+        block_number: The block that contains too many transactions.
+        items_fetched: Number of items successfully fetched (limited by API).
+        api_limit: The API's maximum items per request.
+        suggested_action: Human-readable guidance on how to resolve the issue.
+    """
+
+    def __init__(
+        self,
+        block_number: int,
+        items_fetched: int,
+        api_limit: int,
+        suggested_action: str = 'Use GraphQL API, transaction index pagination, or topic filters.',
+    ) -> None:
+        self.block_number = block_number
+        self.items_fetched = items_fetched
+        self.api_limit = api_limit
+        self.suggested_action = suggested_action
+        message = (
+            f'PAGINATION DATA LOSS DETECTED: Block {block_number} contains >={items_fetched} '
+            f'transactions, exceeding API limit of {api_limit}. Cannot fetch all data with REST API. '
+            f'Suggested action: {suggested_action}'
+        )
+        super().__init__(message)
+
+    def __str__(self) -> str:
+        return (
+            f'Block {self.block_number} has >={self.items_fetched} transactions '
+            f'(limit: {self.api_limit}). {self.suggested_action}'
+        )

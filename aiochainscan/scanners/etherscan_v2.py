@@ -30,6 +30,7 @@ class EtherscanV2(Scanner):
         'arbitrum',
         'optimism',
         'base',
+        'sonic',
     }
     auth_mode = 'query'
     auth_field = 'apikey'
@@ -169,6 +170,23 @@ class EtherscanV2(Scanner):
                 'chainid': '{chain_id}',
             },
             param_map={'guid': 'guid'},
+            parser=PARSERS['etherscan'],
+        ),
+        Method.EVENT_LOGS: EndpointSpec(
+            http_method='GET',
+            path='/api',
+            query={'module': 'logs', 'action': 'getLogs', 'chainid': '{chain_id}'},
+            param_map={
+                'address': 'address',
+                'from_block': 'fromBlock',
+                'to_block': 'toBlock',
+                'topic0': 'topic0',
+                'topic1': 'topic1',
+                'topic2': 'topic2',
+                'topic3': 'topic3',
+                'page': 'page',
+                'offset': 'offset',
+            },
             parser=PARSERS['etherscan'],
         ),
     }

@@ -1,14 +1,20 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from dataclasses import dataclass
 from time import monotonic
 from typing import Any, Literal, Protocol
 
+from aiochainscan.constants import API_MAX_OFFSET_ETHERSCAN
+from aiochainscan.exceptions import PaginationDataLossError
+from aiochainscan.ports.progress import ProgressCallback
 from aiochainscan.ports.rate_limiter import RateLimiter, RetryPolicy
 from aiochainscan.ports.telemetry import Telemetry
+
+logger = logging.getLogger(__name__)
 
 Item = dict[str, Any]
 
@@ -54,7 +60,7 @@ class ProviderPolicy:
     Attributes:
         mode: 'paged' to request pages p..p+N; 'sliding' to keep page=1 and slide start_block.
         prefetch: Number of pages to prefetch in parallel (effective for paged mode).
-        window_cap: Optional provider page window cap (e.g., Etherscan 10_000). Informational.
+        window_cap: Optional provider page window cap (e.g., Etherscan API_MAX_OFFSET_ETHERSCAN). Informational.
         rps_key: Key to use with RateLimiter.acquire before outbound calls.
     """
 
@@ -69,14 +75,17 @@ def resolve_policy_for_provider(
 ) -> ProviderPolicy:
     """Return a reasonable default paging policy for a given provider string.
 
-    - Etherscan family ('eth'): sliding window, window_cap=10_000, prefetch=1
+    - Etherscan family ('eth'): sliding window, window_cap=API_MAX_OFFSET_ETHERSCAN, prefetch=1
     - Blockscout (api_kind startswith 'blockscout_'): paged, prefetch=max_concurrent
     - Others: paged, prefetch=1
     """
 
     if api_kind == 'eth':
         return ProviderPolicy(
-            mode='sliding', prefetch=1, window_cap=10_000, rps_key=f'{api_kind}:{network}:fetch'
+            mode='sliding',
+            prefetch=1,
+            window_cap=API_MAX_OFFSET_ETHERSCAN,
+            rps_key=f'{api_kind}:{network}:fetch',
         )
     if isinstance(api_kind, str) and api_kind.startswith('blockscout_'):
         prefetch = max(1, int(max_concurrent))
@@ -99,6 +108,7 @@ async def fetch_all_generic(
     telemetry: Telemetry | None,
     max_concurrent: int,
     stats: dict[str, int] | None = None,
+    on_progress: ProgressCallback | None = None,
 ) -> list[Item]:
     """Generic paging engine that drives page fetching by policy and spec.
 
@@ -117,7 +127,7 @@ async def fetch_all_generic(
         if fetch_spec.resolve_end_block is not None:
             try:
                 effective_end_block = int(await fetch_spec.resolve_end_block())
-            except Exception:
+            except (ValueError, TypeError):
                 effective_end_block = 99_999_999
         else:
             effective_end_block = 99_999_999
@@ -130,7 +140,7 @@ async def fetch_all_generic(
 
     pages_processed: int = 0
     all_items: list[Item] = []
-    # Respect provider window caps (e.g., Etherscan 10_000) by clamping requested offset
+    # Respect provider window caps (e.g., Etherscan API_MAX_OFFSET_ETHERSCAN) by clamping requested offset
     base_offset: int = max(1, int(fetch_spec.max_offset))
     effective_offset_for_provider: int = (
         min(base_offset, int(policy.window_cap)) if policy.window_cap is not None else base_offset
@@ -147,6 +157,24 @@ async def fetch_all_generic(
         if retry is not None:
             return await retry.run(lambda: _inner())
         return await _inner()
+
+    async def _notify_progress(
+        fetched: int, current_page: int | None, current_block: int | None = None
+    ) -> None:
+        """Safely invoke the progress callback, catching any exceptions."""
+        if on_progress is None:
+            return
+        try:
+            await on_progress(
+                fetched=fetched,
+                total_expected=None,  # Total is unknown during paging
+                current_block=current_block,
+                current_page=current_page,
+                operation='fetch',
+            )
+        except Exception as exc:  # noqa: BLE001
+            # Progress callback errors should not interrupt fetching
+            logger.debug('Progress callback raised exception: %s', exc)
 
     start_ts = monotonic() if telemetry is not None else 0.0
 
@@ -202,7 +230,7 @@ async def fetch_all_generic(
                         try:
                             last_block_asc = int(fetch_spec.order_fn(items_asc[-1])[0])
                             new_low = max(curr_low, last_block_asc + 1)
-                        except Exception:
+                        except (ValueError, TypeError, IndexError):
                             new_low = curr_low
                     else:
                         asc_short = True
@@ -223,7 +251,7 @@ async def fetch_all_generic(
                         try:
                             oldest_block_desc = int(fetch_spec.order_fn(items_desc[-1])[0])
                             new_up = min(curr_up, oldest_block_desc - 1)
-                        except Exception:
+                        except (ValueError, TypeError, IndexError):
                             new_up = curr_up
                     else:
                         desc_short = True
@@ -231,6 +259,10 @@ async def fetch_all_generic(
 
                     # Apply new window and stop conditions
                     low, up = new_low, new_up
+                    # Notify progress after bidirectional step
+                    await _notify_progress(
+                        len(all_items), current_page=pages_processed, current_block=None
+                    )
                     if low > up or (asc_short and desc_short):
                         break
         elif policy.mode == 'sliding':
@@ -247,6 +279,14 @@ async def fetch_all_generic(
                     break
                 all_items.extend(items)
                 if len(items) < effective_offset_for_provider:
+                    # Notify progress for the last page before breaking
+                    try:
+                        _last_block = int(fetch_spec.order_fn(items[-1])[0])
+                    except (ValueError, TypeError, IndexError):
+                        _last_block = None
+                    await _notify_progress(
+                        len(all_items), current_page=pages_processed, current_block=_last_block
+                    )
                     break
                 # Advance to the next block after last item; order_fn's first element must be block number
                 try:
@@ -254,16 +294,20 @@ async def fetch_all_generic(
                     first_item = items[0]
                     last_block = int(fetch_spec.order_fn(last_item)[0])
                     first_block = int(fetch_spec.order_fn(first_item)[0])
-                except Exception:
+                except (ValueError, TypeError, IndexError):
+                    await _notify_progress(
+                        len(all_items), current_page=pages_processed, current_block=None
+                    )
                     break
+                # Notify progress after each page with current block info
+                await _notify_progress(
+                    len(all_items), current_page=pages_processed, current_block=last_block
+                )
 
                 # CRITICAL: Detect "whale problem" - when all items are in the same block
                 # and we've hit the API limit. This means data loss is occurring because
                 # we can't paginate within a single block.
                 if len(items) >= effective_offset_for_provider and first_block == last_block:
-                    import logging
-
-                    logger = logging.getLogger(__name__)
                     logger.critical(
                         'PAGINATION DATA LOSS: Block %d contains >= %d items. '
                         'API limit prevents fetching all items from this block. '
@@ -273,7 +317,7 @@ async def fetch_all_generic(
                     )
                     if telemetry is not None:
                         await telemetry.record_event(
-                            'paging.data_loss_warning',
+                            'paging.whale_block_detected',
                             {
                                 'mode': 'sliding',
                                 'block': last_block,
@@ -281,6 +325,19 @@ async def fetch_all_generic(
                                 'limit': effective_offset_for_provider,
                             },
                         )
+                    # FAIL FAST - prevent data loss
+                    raise PaginationDataLossError(
+                        block_number=last_block,
+                        items_fetched=len(items),
+                        api_limit=effective_offset_for_provider,
+                        suggested_action=(
+                            'This block contains more transactions than the API limit. '
+                            'Options: (1) Use GraphQL API if supported (BlockScout), '
+                            '(2) Apply topic/address filters to reduce result set, '
+                            '(3) Use a different data provider, or '
+                            '(4) Fetch this block separately via block-by-number endpoint.'
+                        ),
+                    )
 
                 current_start = max(current_start, last_block + 1)
         else:  # paged
@@ -308,6 +365,10 @@ async def fetch_all_generic(
                         next_page = 0  # sentinel to exit outer loop
                         break
                     all_items.extend(items)
+                    # Notify progress after each page
+                    await _notify_progress(
+                        len(all_items), current_page=page_index, current_block=None
+                    )
                     if len(items) < effective_offset_for_provider:
                         next_page = 0
                         break
@@ -415,7 +476,7 @@ async def fetch_all_sliding_bi(
         if fetch_spec.resolve_end_block is not None:
             try:
                 effective_end = int(await fetch_spec.resolve_end_block())
-            except Exception:
+            except (ValueError, TypeError):
                 effective_end = 99_999_999
         else:
             effective_end = 99_999_999
@@ -459,7 +520,7 @@ async def fetch_all_sliding_bi(
         try:
             # order_fn first element is block number
             last_block = int(fetch_spec.order_fn(asc_items[-1])[0])
-        except Exception:
+        except (ValueError, TypeError, IndexError):
             break
         low = max(low, last_block + 1)
         if low > up:
@@ -481,7 +542,7 @@ async def fetch_all_sliding_bi(
             break
         try:
             oldest_block = int(fetch_spec.order_fn(desc_items[-1])[0])
-        except Exception:
+        except (ValueError, TypeError, IndexError):
             break
         up = min(up, oldest_block - 1)
 

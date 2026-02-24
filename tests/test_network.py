@@ -1,10 +1,10 @@
 """Tests for Network transport layer using httpx/tenacity/aiolimiter."""
 
-import json
 import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
+import orjson
 import pytest
 import pytest_asyncio
 
@@ -139,7 +139,7 @@ async def test_request_with_mocked_httpx():
             mock_response = MagicMock(spec=httpx.Response)
             mock_response.status_code = 200
             mock_response.headers = {'content-type': 'application/json'}
-            mock_response.json.return_value = mock_response_data
+            mock_response.content = orjson.dumps(mock_response_data)
             mock_response.raise_for_status = MagicMock()
             mock_get.return_value = mock_response
 
@@ -153,7 +153,7 @@ async def test_request_with_mocked_httpx():
             mock_response = MagicMock(spec=httpx.Response)
             mock_response.status_code = 200
             mock_response.headers = {'content-type': 'application/json'}
-            mock_response.json.return_value = mock_response_data
+            mock_response.content = orjson.dumps(mock_response_data)
             mock_response.raise_for_status = MagicMock()
             mock_post.return_value = mock_response
 
@@ -180,16 +180,13 @@ async def test_handle_response(nw):
         mock.status_code = status_code
         mock.headers = {'content-type': content_type}
         mock.text = data
+        # Set content as bytes for orjson parsing
+        mock.content = data.encode('utf-8')
 
         if raise_for_status_error:
             mock.raise_for_status.side_effect = raise_for_status_error
         else:
             mock.raise_for_status = MagicMock()
-
-        try:
-            mock.json.return_value = json.loads(data)
-        except json.JSONDecodeError:
-            mock.json.side_effect = json.JSONDecodeError('Invalid JSON', data, 0)
 
         return mock
 

@@ -1,6 +1,6 @@
 [project]
 name = "aiochainscan"
-version = "0.4.0"
+version = "0.4.1"
 description = "Chainscan API async Python wrapper"
 authors = [
     { name = "VaitaR", email = "andrey.shivalin@gmail.com" }
@@ -28,6 +28,7 @@ dependencies = [
     "structlog>=23.1.0",
     "orjson>=3.10.0",
     "pydantic>=2.7.0",
+    "pycryptodome>=3.23.0",
 ]
 
 [project.optional-dependencies]
@@ -244,7 +245,6 @@ module = [
   "aiochainscan.aiochainscan_fastabi",
   "aiochainscan_fastabi",
   "eth_abi.*",
-  "requests",
   "structlog",
 ]
 ignore_missing_imports = true
@@ -258,6 +258,10 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = ["aiohttp", "aiohttp.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["rich", "rich.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
