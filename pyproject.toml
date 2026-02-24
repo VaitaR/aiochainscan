@@ -28,6 +28,7 @@ dependencies = [
     "structlog>=23.1.0",
     "orjson>=3.10.0",
     "pydantic>=2.7.0",
+    "pycryptodome>=3.23.0",
 ]
 
 [project.optional-dependencies]
