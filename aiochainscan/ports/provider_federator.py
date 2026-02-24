@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 
+@runtime_checkable
 class ProviderFederator(Protocol):
     """Decide whether to use REST or GraphQL for a given feature and provider."""
 

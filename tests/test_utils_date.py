@@ -1,46 +1,43 @@
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 from aiochainscan.utils.date import default_range
 
 
 def test_default_range():
     """Test default_range function with various parameters."""
-    # Fixed historical end date: January 31, 2024
-    fixed_end = date(2024, 1, 31)
+    # Expected end date: yesterday UTC
+    yesterday_utc = (datetime.now(timezone.utc) - timedelta(days=1)).date()
 
     # Test default 30 days
     start, end = default_range()
-    expected_start = fixed_end - timedelta(days=30)
+    expected_start = yesterday_utc - timedelta(days=30)
 
-    assert end == fixed_end
+    assert end == yesterday_utc
     assert start == expected_start
-    assert start == date(2024, 1, 1)  # Jan 1, 2024
 
     # Test custom days
     start, end = default_range(days=7)
-    expected_start = fixed_end - timedelta(days=7)
+    expected_start = yesterday_utc - timedelta(days=7)
 
-    assert end == fixed_end
+    assert end == yesterday_utc
     assert start == expected_start
-    assert start == date(2024, 1, 24)  # Jan 24, 2024
 
     # Test with 0 days (should give same date)
     start, end = default_range(days=0)
-    assert start == fixed_end
-    assert end == fixed_end
+    assert start == yesterday_utc
+    assert end == yesterday_utc
 
     # Test with 1 day
     start, end = default_range(days=1)
-    expected_start = fixed_end - timedelta(days=1)
+    expected_start = yesterday_utc - timedelta(days=1)
     assert start == expected_start
-    assert end == fixed_end
-    assert start == date(2024, 1, 30)  # Jan 30, 2024
+    assert end == yesterday_utc
 
     # Test with large number of days
     start, end = default_range(days=365)
-    expected_start = fixed_end - timedelta(days=365)
+    expected_start = yesterday_utc - timedelta(days=365)
     assert start == expected_start
-    assert end == fixed_end
+    assert end == yesterday_utc
 
 
 def test_default_range_return_type():

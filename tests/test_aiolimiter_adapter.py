@@ -54,8 +54,8 @@ class TestAioLimiterAdapter:
     @pytest.mark.asyncio
     async def test_rate_limiting_throttles_requests(self) -> None:
         """Test that rate limiting actually throttles rapid requests."""
-        # 2 requests per second max
-        limiter = AioLimiterAdapter(max_rate=2.0, time_period=1.0)
+        # 2 requests per second max, with higher burst to test rate limiting
+        limiter = AioLimiterAdapter(max_rate=2.0, time_period=1.0, max_burst=2.0)
 
         start = time.monotonic()
 
@@ -65,7 +65,7 @@ class TestAioLimiterAdapter:
 
         elapsed = time.monotonic() - start
 
-        # With max_rate=2 per second, 4 requests should take ~1 second
+        # With max_rate=2 per second and burst=2, 4 requests should take ~1 second
         # (first 2 immediate, then wait ~1s for next 2)
         assert elapsed >= 0.9, f'Expected >= 0.9s for 4 requests at 2/s, got {elapsed}s'
 
@@ -91,9 +91,10 @@ class TestAioLimiterAdapter:
     @pytest.mark.asyncio
     async def test_properties(self) -> None:
         """Test that properties return correct values."""
-        limiter = AioLimiterAdapter(max_rate=7.5, time_period=2.0)
+        limiter = AioLimiterAdapter(max_rate=7.5, time_period=2.0, max_burst=3.0)
         assert limiter.max_rate == 7.5
         assert limiter.time_period == 2.0
+        assert limiter.max_burst == 3.0
 
     @pytest.mark.asyncio
     async def test_default_values(self) -> None:
@@ -101,6 +102,50 @@ class TestAioLimiterAdapter:
         limiter = AioLimiterAdapter()
         assert limiter.max_rate == 5.0
         assert limiter.time_period == 1.0
+        assert limiter.max_burst == 1.0  # Default burst=1 for WAF compatibility
+
+    @pytest.mark.asyncio
+    async def test_max_burst_prevents_simultaneous_requests(self) -> None:
+        """Test that max_burst=1 prevents burst requests.
+
+        This is critical for API stability with Cloudflare WAF.
+        With max_burst=1, only 1 request can fire at a time.
+        """
+        # max_burst=1 means only 1 request can proceed immediately
+        limiter = AioLimiterAdapter(max_rate=10.0, time_period=1.0, max_burst=1.0)
+
+        start = time.monotonic()
+
+        # Try to make 3 requests - with burst=1, they should be serialized
+        for _ in range(3):
+            await limiter.acquire('burst_test')
+
+        elapsed = time.monotonic() - start
+
+        # With rate=10/s and burst=1, 3 requests should take ~0.2s (2 waits of 0.1s)
+        # Allow some margin for timing variance
+        assert elapsed >= 0.15, f'Expected >= 0.15s for 3 requests with burst=1, got {elapsed}s'
+
+    @pytest.mark.asyncio
+    async def test_high_burst_allows_immediate_requests(self) -> None:
+        """Test that high max_burst allows burst of requests.
+
+        With max_burst > 1, multiple requests can proceed immediately
+        before rate limiting kicks in.
+        """
+        # max_burst=5 means 5 requests can proceed immediately
+        limiter = AioLimiterAdapter(max_rate=5.0, time_period=1.0, max_burst=5.0)
+
+        start = time.monotonic()
+
+        # Make 3 requests - with burst=5, they should all proceed quickly
+        for _ in range(3):
+            await limiter.acquire('high_burst_test')
+
+        elapsed = time.monotonic() - start
+
+        # With burst=5, first 3 requests should complete almost instantly
+        assert elapsed < 0.3, f'Expected < 0.3s for 3 requests with burst=5, got {elapsed}s'
 
     @pytest.mark.asyncio
     async def test_double_checked_locking(self) -> None:

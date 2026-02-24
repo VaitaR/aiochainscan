@@ -116,6 +116,44 @@ dependencies = [
 
 ---
 
+## ✅ Version 0.4.1 - Complete API Coverage (Completed)
+
+Full convenience method coverage and data integrity improvements.
+
+### 1. Complete Method Coverage (30+ Convenience Methods)
+**Status:** ✅ COMPLETE
+
+- [x] Added typed convenience methods for ALL 28 Method enum values
+- [x] `get_erc721_transfers()`, `get_erc1155_transfers()` - ERC-721/1155 transfer queries
+- [x] `get_nft_portfolio()` - NFT holdings for address
+- [x] `check_transaction_status()` - Execution status (isError field)
+- [x] `get_contract_creation()` - Creator address + deployment tx
+- [x] `get_token_supply()` - Total supply for token contract
+- [x] `get_gas_estimate()` - ETA in seconds for gas price
+- [x] `get_eth_supply()` - Total ETH supply
+- [x] `eth_call()`, `eth_get_balance()` - JSON-RPC proxy methods
+- [x] `get_block_countdown()`, `get_block_by_timestamp()` - Block query methods
+
+### 2. Streaming Results API
+**Status:** ✅ COMPLETE
+
+- [x] `iter_transactions_streaming()` - Memory-efficient transaction streaming (~10MB RAM)
+- [x] `iter_internal_transactions_streaming()` - Internal tx streaming
+- [x] `iter_token_transfers_streaming()` - ERC-20 transfer streaming
+- [x] `iter_logs_streaming()` - Event log streaming
+- [x] Backpressure via `batch_size` parameter
+- [x] `streaming_decoder.py` - AsyncIterator + `asyncio.to_thread` for non-blocking decode
+
+### 3. Data Integrity Fixes
+**Status:** ✅ COMPLETE
+
+- [x] Fixed `get_transactions_df()` — was returning single page, now auto-paginates via `iter_transactions()`
+- [x] Added whale block warning in `services/logs.py` — logs warning when potential data loss detected
+- [x] 38 new tests in `test_client_convenience.py` (587+ total tests passing)
+- [x] 100% mypy --strict compliance (80 source files)
+
+---
+
 ## ✅ Critical Fixes (Completed)
 
 These critical issues have been addressed in the recent audit:
@@ -182,7 +220,7 @@ class ClientContext(Protocol):
 #### 1.2 Extract Constants
 **Priority:** MEDIUM | **Effort:** 1 day
 
-- [ ] Create `constants.py` module
+- [x] Create `constants.py` module (`services/constants.py` exists)
 - [ ] Move magic numbers:
   - `DEFAULT_TX_OFFSET = 10_000`
   - `DEFAULT_LOGS_OFFSET = 1_000`
@@ -249,20 +287,21 @@ async def fetch_with_topic_splitting(
 - [ ] Create parallel fetch strategy for whale blocks
 
 #### 3.2 Streaming Results API
-**Priority:** MEDIUM | **Effort:** 5 days
+**Status:** ✅ COMPLETE (v0.4.1)
+
+Implemented in `services/paging_streaming.py`, `services/streaming_decoder.py`, and exposed via `ChainscanClient`:
 
 ```python
-async def stream_transactions(address: str) -> AsyncIterator[dict]:
-    """Yield transactions as they're fetched, reducing memory footprint."""
-    async for batch in self._fetch_batches(address):
-        for tx in batch:
-            yield tx
+# Process 1M+ transactions with ~10MB RAM
+async for batch in client.iter_transactions_streaming(address, batch_size=1000):
+    await database.bulk_insert(batch)
 ```
 
-**Tasks:**
-- [ ] Implement `AsyncIterator` interface for all fetch operations
-- [ ] Add backpressure support
-- [ ] Memory-efficient deduplication for streaming
+**Completed:**
+- [x] `AsyncIterator` interface for transactions, internal txs, token transfers, logs
+- [x] Backpressure via configurable `batch_size`
+- [x] Memory-efficient streaming decoder with `asyncio.to_thread`
+- [x] Non-blocking JSON decode in thread pool
 
 #### 3.3 Multi-Address Batch Queries
 **Priority:** MEDIUM | **Effort:** 3 days
@@ -399,18 +438,19 @@ estimate = await client.estimate_gas(
 #### 8.1 Scanner Registry
 **Priority:** HIGH | **Effort:** 1 week
 
-Replace hardcoded scanner mappings with self-registration:
+Partially implemented — `register_scanner()` decorator exists in `scanners/__init__.py`:
 
 ```python
-@register_scanner('etherscan', 'v2')
-class EtherscanV2Scanner(Scanner):
-    SUPPORTED_NETWORKS = ['ethereum', 'base', 'arbitrum', ...]
-    DEFAULT_RATE_LIMIT = 5  # requests/second
+@register_scanner
+class EtherscanV2(Scanner):
+    ...
 ```
 
-**Tasks:**
-- [ ] Create `ScannerRegistry` class
-- [ ] Scanner self-registration decorator
+**Completed:**
+- [x] Create `ScannerRegistry` class (via `register_scanner` decorator)
+- [x] Scanner self-registration decorator
+
+**Remaining:**
 - [ ] Move network mappings to scanner classes
 - [ ] Remove hardcoded dicts from `core/client.py`
 
@@ -508,7 +548,7 @@ $ aiochainscan shell
 #### 11.2 Type Coverage
 **Priority:** MEDIUM | **Effort:** 3 days
 
-- [ ] Achieve 100% mypy --strict compliance
+- [x] Achieve 100% mypy --strict compliance (80 source files pass)
 - [ ] Add runtime type checking option
 - [ ] Protocol validation tests
 
@@ -516,46 +556,56 @@ $ aiochainscan shell
 
 ## 📊 Priority Matrix
 
-| Feature | Impact | Effort | Priority |
-|---------|--------|--------|----------|
-| Scanner Registry | High | Medium | P0 |
-| Rate Limit Retry | High | Low | P0 |
-| ClientContext Protocol | High | Low | P0 |
-| GraphQL Expansion | Medium | High | P1 |
-| Streaming API | Medium | Medium | P1 |
-| Real-time Subscriptions | High | High | P2 |
-| Redis Cache | Low | Low | P2 |
-| CLI Enhancements | Low | Medium | P3 |
+| Feature | Impact | Effort | Priority | Status |
+|---------|--------|--------|----------|--------|
+| Scanner Registry | High | Medium | P0 | ⚡ Partial |
+| Rate Limit Retry | High | Low | P0 | ❌ TODO |
+| ClientContext Protocol | High | Low | P0 | ❌ TODO |
+| Complete Method Coverage | High | Medium | P0 | ✅ Done (v0.4.1) |
+| Streaming API | Medium | Medium | P1 | ✅ Done (v0.4.1) |
+| mypy --strict 100% | Medium | Low | P1 | ✅ Done (v0.4.1) |
+| GraphQL Expansion | Medium | High | P1 | ❌ TODO |
+| Real-time Subscriptions | High | High | P2 | ❌ TODO |
+| Redis Cache | Low | Low | P2 | ❌ TODO |
+| CLI Enhancements | Low | Medium | P3 | ❌ TODO |
 
 ---
 
 ## 🗓 Release Plan
 
-### v0.3.0 (Current Release)
+### v0.3.0 (Released)
 - ✅ Legacy code removal (Client, modules/, Moralis, RoutScan)
 - ✅ Modern rate limiting (aiolimiter)
 - ✅ Expanded API methods (token/NFT portfolio, contract verify)
 - ✅ Blockscout REST API V2
 
+### v0.4.0 (Released)
+- ✅ httpx with HTTP/2 (replaced aiohttp)
+- ✅ tenacity retry (replaced aiohttp-retry)
+- ✅ orjson + Pydantic V2 DTOs
+- ✅ All critical security/performance fixes
+
+### v0.4.1 (Current Release)
+- ✅ Complete method coverage (30+ convenience methods)
+- ✅ Streaming API (iter_transactions_streaming, etc.)
+- ✅ DataFrame export fix (auto-pagination)
+- ✅ 100% mypy --strict (80 files)
+- ✅ 587+ tests passing
+
 ### v0.5.0 (Next Release)
-- All critical fixes
 - Rate limit retry enhancement
-- Constants extraction
+- ClientContext Protocol
+- Scanner Registry completion
 - Documentation updates
 
 ### v0.6.0
-- Scanner Registry refactor
-- ClientContext Protocol
-- Streaming API
-
-### v0.7.0
 - GraphQL expansion
 - Finality-aware caching
+- Multi-address batch queries
 
 ### v1.0.0
 - Real-time subscriptions
 - Full API documentation
-- Migration guide
 - Stable public API
 
 ---

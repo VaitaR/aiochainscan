@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, Protocol
+from typing import Any, Protocol, runtime_checkable
 
 
+@runtime_checkable
 class EndpointSession(Protocol):
     @property
     def api_url(self) -> str:  # noqa: D401 - simple protocol
@@ -21,6 +22,7 @@ class EndpointSession(Protocol):
         """Filter params and sign with API key if required; return (params, headers)."""
 
 
+@runtime_checkable
 class EndpointBuilder(Protocol):
     def open(self, *, api_key: str, api_kind: str, network: str) -> EndpointSession:  # noqa: D401
         """Create an endpoint session bound to api_key/api_kind/network."""

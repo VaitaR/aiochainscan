@@ -1,0 +1,192 @@
+name: Test Installation
+
+on:
+  push:
+    branches: [main, develop, real-using-test]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  test-wheel-install:
+    name: Test Wheel Installation (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.10', '3.11', '3.12', '3.13']
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install build tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install 'maturin>=1.8,<2.0' build wheel setuptools
+
+      - name: Build wheel
+        run: |
+          maturin build --release --out dist/
+          python -m build --sdist
+
+      - name: Test wheel installation in clean environment
+        run: |
+          # Create a fresh virtual environment
+          python -m venv /tmp/test-env
+          source /tmp/test-env/bin/activate
+
+          # Install the built wheel
+          pip install dist/*.whl
+
+          # Verify package can be imported
+          python -c "import aiochainscan; print('✓ Package imported successfully')"
+
+          # Verify version
+          python -c "import aiochainscan; print(f'✓ Version: {aiochainscan.__version__}')"
+
+          # Verify main modules
+          python -c "from aiochainscan import ChainscanClient, Method; print('✓ Main classes imported')"
+
+          # Verify facade imports
+          python -c "from aiochainscan import get_balance, get_block, get_transaction; print('✓ Facades imported')"
+
+          # Verify CLI is available
+          which aiochainscan || echo "⚠ CLI not found"
+          aiochainscan --help || echo "⚠ CLI help failed"
+
+          deactivate
+
+      - name: Test source distribution installation
+        run: |
+          # Verify sdist was created correctly
+          ls -la dist/*.tar.gz
+          python -c "
+          import tarfile, sys
+          sdist = sorted(__import__('glob').glob('dist/*.tar.gz'))[0]
+          with tarfile.open(sdist) as t:
+              names = t.getnames()
+              print(f'✓ Source distribution created: {sdist}')
+              print(f'  Contains {len(names)} files')
+              has_pyproject = any('pyproject.toml' in n for n in names)
+              has_cargo = any('Cargo.toml' in n for n in names)
+              has_rust = any('.rs' in n for n in names)
+              print(f'  pyproject.toml present: {has_pyproject}')
+              print(f'  Cargo.toml present: {has_cargo}')
+              print(f'  Rust sources present: {has_rust}')
+              if not (has_pyproject and has_cargo and has_rust):
+                  print('✗ Source distribution is incomplete!')
+                  sys.exit(1)
+              print('✓ Source distribution structure is valid')
+          "
+
+      - name: Test editable install
+        run: |
+          # Test development install
+          python -m venv /tmp/test-editable
+          source /tmp/test-editable/bin/activate
+
+          # Install maturin first (for Rust extension build)
+          pip install 'maturin>=1.8,<2.0'
+
+          pip install -e .
+
+          # Verify editable install
+          python -c "import aiochainscan; print('✓ Editable install works')"
+
+          deactivate
+
+  test-git-install:
+    name: Test Git Installation (Python 3.11)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Test direct git install
+        run: |
+          # Build wheel directly with maturin (avoids PEP 517 isolation ZIP64 issue)
+          python -m pip install --upgrade pip 'maturin>=1.8,<2.0'
+          maturin build --release --out /tmp/git-wheels/
+
+          # Simulate user installing the built wheel
+          python -m venv /tmp/test-git
+          source /tmp/test-git/bin/activate
+          pip install /tmp/git-wheels/*.whl
+
+          # Verify installation
+          python -c "import aiochainscan; print('✓ Git install successful')"
+          python -c "from aiochainscan import *; print('✓ All imports successful')"
+
+          # List installed files to verify Python modules are present
+          pip show -f aiochainscan | grep -E '(aiochainscan/.*\.py|Location:)' | head -20
+
+          deactivate
+
+  test-dependencies:
+    name: Test Dependencies (Python 3.11)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Build and install
+        run: |
+          python -m pip install --upgrade pip 'maturin>=1.8,<2.0'
+          # Use maturin directly to avoid pip PEP 517 isolation which triggers ZIP64 issue
+          maturin build --release --out dist/
+          pip install dist/*.whl
+
+      - name: Check dependencies are installed
+        run: |
+          python -c "import httpx; print('✓ httpx')"
+          python -c "import aiolimiter; print('✓ aiolimiter')"
+          python -c "import tenacity; print('✓ tenacity')"
+          python -c "import eth_abi; print('✓ eth_abi')"
+          python -c "import structlog; print('✓ structlog')"
+          python -c "import orjson; print('✓ orjson')"
+          python -c "import pydantic; print('✓ pydantic')"
+
+      - name: Verify package structure
+        run: |
+          python -c "
+          import aiochainscan
+          import os
+          pkg_path = os.path.dirname(aiochainscan.__file__)
+          print(f'Package location: {pkg_path}')
+
+          # Check for key modules
+          modules = ['client', 'config', 'network', 'core', 'services', 'adapters', 'ports', 'domain']
+          for mod in modules:
+              mod_path = os.path.join(pkg_path, mod + '.py')
+              dir_path = os.path.join(pkg_path, mod)
+              if os.path.exists(mod_path) or os.path.isdir(dir_path):
+                  print(f'✓ {mod} exists')
+              else:
+                  print(f'✗ {mod} missing')
+          "

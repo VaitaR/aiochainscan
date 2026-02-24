@@ -184,6 +184,7 @@ examples/*_results.json
 examples/*_summary.md
 examples/*_detailed.md
 !examples/README.md
+exports/
 
 # Dump files and directories
 dumps/

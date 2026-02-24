@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-from typing import Any
+import logging
+from typing import TYPE_CHECKING, Any
 
 from aiochainscan.ports.endpoint_builder import EndpointBuilder
 from aiochainscan.ports.http_client import HttpClient
+from aiochainscan.ports.progress import ProgressCallback
 from aiochainscan.ports.rate_limiter import RateLimiter, RetryPolicy
 from aiochainscan.ports.telemetry import Telemetry
 from aiochainscan.services.account import (
@@ -19,6 +21,9 @@ from aiochainscan.services.paging_engine import (
     fetch_all_generic,
     resolve_policy_for_provider,
 )
+
+if TYPE_CHECKING:
+    from aiochainscan.scanners.base import Scanner
 
 
 def _to_int(value: Any) -> int:
@@ -66,6 +71,116 @@ def _resolve_end_block_factory(
     return _resolve
 
 
+def _is_blockscout_v2(api_kind: str, scanner: Scanner | None) -> bool:
+    """Check if we should use BlockScout V2 API.
+
+    V2 API should be used when:
+    1. Scanner is explicitly BlockScoutV2Scanner, OR
+    2. api_kind indicates blockscout_v2
+
+    This fixes the "split-brain" bug where users configure blockscout_v2
+    but bulk fetching silently uses V1 API endpoints.
+    """
+    if scanner is not None:
+        # Check if scanner is BlockScoutV2Scanner
+        scanner_name = getattr(scanner, 'name', '')
+        scanner_version = getattr(scanner, 'version', '')
+        if scanner_name == 'blockscout' and scanner_version == 'v2':
+            return True
+    # Also check api_kind for cases where scanner isn't passed
+    return api_kind == 'blockscout_v2'
+
+
+async def _fetch_all_transactions_via_v2_scanner(
+    *,
+    address: str,
+    scanner: Scanner,
+    telemetry: Telemetry | None = None,
+) -> list[dict[str, Any]]:
+    """Fetch all transactions using BlockScout V2 scanner's native API.
+
+    This function uses the scanner's call() method to leverage the modern
+    V2 API with proper cursor-based pagination (next_page_params).
+
+    Args:
+        address: Wallet address to fetch transactions for
+        scanner: BlockScoutV2Scanner instance
+        telemetry: Optional telemetry for tracking
+
+    Returns:
+        List of all transactions for the address
+
+    Raises:
+        TypeError: If scanner is not BlockScoutV2Scanner
+    """
+    from aiochainscan.core.method import Method
+    from aiochainscan.scanners.blockscout_v2 import BlockScoutV2Scanner
+
+    if not isinstance(scanner, BlockScoutV2Scanner):
+        raise TypeError(f'Expected BlockScoutV2Scanner, got {type(scanner).__name__}')
+
+    all_items: list[dict[str, Any]] = []
+    seen_keys: set[str] = set()
+
+    # Build initial request
+    spec = scanner.SPECS[Method.ACCOUNT_TRANSACTIONS]
+    url = scanner._build_url(spec, address=address)
+    query_params = scanner._build_query_params(spec, address=address)
+
+    headers = {
+        'Accept': 'application/json',
+        'Accept-Encoding': 'gzip, deflate',
+    }
+
+    # Use scanner's network client
+    if scanner._network_client is None:
+        from aiochainscan.network import Network
+
+        scanner._network_client = Network(scanner.url_builder)
+
+    # Pagination loop using next_page_params
+    page_count = 0
+    while True:
+        raw_response = await scanner._network_client.request(
+            method='GET',
+            url=url,
+            params=query_params if query_params else None,
+            headers=headers,
+        )
+
+        # Extract items and pagination cursor
+        if isinstance(raw_response, dict):
+            items = raw_response.get('items', [])
+            next_page_params = raw_response.get('next_page_params')
+        else:
+            items = raw_response if isinstance(raw_response, list) else []
+            next_page_params = None
+
+        # Deduplicate by hash
+        for item in items:
+            tx_hash = item.get('hash')
+            if tx_hash and tx_hash not in seen_keys:
+                seen_keys.add(tx_hash)
+                all_items.append(item)
+
+        page_count += 1
+
+        if telemetry:
+            await telemetry.record_event(
+                'fetch_all.v2_page',
+                {'page': page_count, 'items': len(items), 'total': len(all_items)},
+            )
+
+        # Stop if no more pages
+        if not next_page_params:
+            break
+
+        # Update query params for next page
+        query_params = {**query_params, **next_page_params}
+
+    return all_items
+
+
 async def fetch_all_transactions_basic(
     *,
     address: str,
@@ -80,8 +195,46 @@ async def fetch_all_transactions_basic(
     retry: RetryPolicy | None = None,
     telemetry: Telemetry | None = None,
     max_offset: int = 10_000,
+    on_progress: ProgressCallback | None = None,
+    # Scanner-aware fetching (fixes V2 bypass bug)
+    scanner: Scanner | None = None,
 ) -> list[dict[str, Any]]:
-    """Provider-agnostic paged fetch. Deduplicated and stably sorted."""
+    """Provider-agnostic paged fetch. Deduplicated and stably sorted.
+
+    Args:
+        address: Wallet address to fetch transactions for
+        start_block: Starting block number
+        end_block: Ending block number
+        api_kind: API kind for URL building
+        network: Network name
+        api_key: API key for authentication
+        http: HTTP client instance
+        endpoint_builder: Endpoint builder for URL construction
+        rate_limiter: Rate limiter for API requests
+        retry: Retry policy for failed requests
+        telemetry: Telemetry for tracking metrics
+        max_offset: Maximum items per API page
+        on_progress: Optional callback for progress updates
+        scanner: Optional scanner instance for proper V2 API routing.
+            When provided and scanner is BlockScoutV2Scanner, uses the
+            modern V2 API with cursor-based pagination instead of V1.
+            This fixes the "split-brain" bug where blockscout_v2 config
+            silently uses V1 endpoints.
+
+    Returns:
+        List of transactions, deduplicated and sorted by block/index.
+    """
+    # Route to V2 scanner when appropriate (fixes split-brain bug)
+    if _is_blockscout_v2(api_kind, scanner) and scanner is not None:
+        try:
+            return await _fetch_all_transactions_via_v2_scanner(
+                address=address,
+                scanner=scanner,
+                telemetry=telemetry,
+            )
+        except (NotImplementedError, TypeError):
+            # Fall back to legacy fetching
+            pass
 
     async def _fetch_page(
         *, page: int, start_block: int, end_block: int, offset: int
@@ -153,8 +306,46 @@ async def fetch_all_transactions_fast(
     telemetry: Telemetry | None = None,
     max_offset: int = 10_000,
     max_concurrent: int = 8,
+    on_progress: ProgressCallback | None = None,
+    # Scanner-aware fetching (fixes V2 bypass bug)
+    scanner: Scanner | None = None,
 ) -> list[dict[str, Any]]:
-    """Provider-aware fast fetch using the generic paging engine."""
+    """Provider-aware fast fetch using the generic paging engine.
+
+    Args:
+        address: Wallet address to fetch transactions for
+        start_block: Starting block number
+        end_block: Ending block number
+        api_kind: API kind for URL building
+        network: Network name
+        api_key: API key for authentication
+        http: HTTP client instance
+        endpoint_builder: Endpoint builder for URL construction
+        rate_limiter: Rate limiter for API requests
+        retry: Retry policy for failed requests
+        telemetry: Telemetry for tracking metrics
+        max_offset: Maximum items per API page
+        max_concurrent: Maximum concurrent requests
+        on_progress: Optional callback for progress updates
+        scanner: Optional scanner instance for proper V2 API routing.
+            When provided and scanner is BlockScoutV2Scanner, uses the
+            modern V2 API with cursor-based pagination instead of V1.
+            This fixes the \"split-brain\" bug.
+
+    Returns:
+        List of transactions, deduplicated and sorted.
+    """
+    # Route to V2 scanner when appropriate (fixes split-brain bug)
+    if _is_blockscout_v2(api_kind, scanner) and scanner is not None:
+        try:
+            return await _fetch_all_transactions_via_v2_scanner(
+                address=address,
+                scanner=scanner,
+                telemetry=telemetry,
+            )
+        except (NotImplementedError, TypeError):
+            # Fall back to legacy fetching
+            pass
 
     async def _fetch_page(
         *, page: int, start_block: int, end_block: int, offset: int
@@ -226,14 +417,34 @@ async def fetch_all_internal_basic(
     retry: RetryPolicy | None = None,
     telemetry: Telemetry | None = None,
     max_offset: int = 10_000,
+    on_progress: ProgressCallback | None = None,
 ) -> list[dict[str, Any]]:
     """Provider-agnostic paged fetch for internal transactions."""
+
+    # Persistent state for adaptive offset reduction across all page fetches
+    class _AdaptiveOffsetState:
+        def __init__(self, initial_offset: int):
+            self.current_offset = initial_offset
+            self.reduction_count = 0
+
+        def reduce_offset(self) -> None:
+            old_offset = self.current_offset
+            self.current_offset = max(1000, self.current_offset // 2)
+            self.reduction_count += 1
+            logging.debug(
+                'adaptive_offset_reduction: %d -> %d (reduction #%d)',
+                old_offset,
+                self.current_offset,
+                self.reduction_count,
+            )
+
+    offset_state = _AdaptiveOffsetState(max_offset)
 
     async def _fetch_page(
         *, page: int, start_block: int, end_block: int, offset: int
     ) -> list[dict[str, Any]]:
-        # Some Blockscout endpoints time out with very large offsets; adaptively reduce
-        current_offset = int(offset)
+        # Use persistent offset state; ignore the 'offset' parameter from engine after first reduction
+        effective_offset = offset_state.current_offset
         attempts_left = 3
         while True:
             try:
@@ -243,7 +454,7 @@ async def fetch_all_internal_basic(
                     end_block=end_block,
                     sort='asc',
                     page=page,
-                    offset=current_offset,
+                    offset=effective_offset,
                     txhash=None,
                     api_kind=api_kind,
                     network=network,
@@ -264,7 +475,8 @@ async def fetch_all_internal_basic(
                     and attempts_left > 0
                 ):
                     attempts_left -= 1
-                    current_offset = max(1000, current_offset // 2)
+                    offset_state.reduce_offset()
+                    effective_offset = offset_state.current_offset
                     continue
                 raise
 
@@ -318,6 +530,7 @@ async def fetch_all_internal_fast(
     telemetry: Telemetry | None = None,
     max_offset: int = 10_000,
     max_concurrent: int = 8,
+    on_progress: ProgressCallback | None = None,
 ) -> list[dict[str, Any]]:
     """Provider-aware fast fetch for internal transactions using the generic engine."""
 

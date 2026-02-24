@@ -98,7 +98,7 @@ async def get_token_balance(
     else:
         try:
             value = int(response)  # best-effort coercion
-        except Exception:
+        except (ValueError, TypeError):
             value = 0
 
     if _telemetry is not None:

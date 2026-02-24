@@ -502,3 +502,162 @@ class TestIterTransactionsValidation:
             pytest.fail('batch_size=10000 should be valid')
 
         await client.close()
+
+
+class TestBlockScoutV2SplitBrainFix:
+    """Test the split-brain fix for BlockScout V2.
+
+    This tests that when a user configures blockscout_v2, bulk fetching
+    actually uses the V2 API endpoints instead of silently falling back
+    to V1 legacy endpoints.
+    """
+
+    def test_is_blockscout_v2_detection_by_api_kind(self):
+        """Test that _is_blockscout_v2 detects V2 from api_kind."""
+        from aiochainscan.services.fetch_all import _is_blockscout_v2
+
+        # api_kind 'blockscout_v2' should trigger V2 routing
+        assert _is_blockscout_v2('blockscout_v2', None) is True
+
+        # Other api_kinds should not trigger V2
+        assert _is_blockscout_v2('blockscout_eth', None) is False
+        assert _is_blockscout_v2('eth', None) is False
+        assert _is_blockscout_v2('blockscout', None) is False
+
+    def test_is_blockscout_v2_detection_by_scanner(self):
+        """Test that _is_blockscout_v2 detects V2 from scanner instance."""
+        from aiochainscan.services.fetch_all import _is_blockscout_v2
+
+        # Mock scanner with V2 attributes
+        class MockV2Scanner:
+            name = 'blockscout'
+            version = 'v2'
+
+        class MockV1Scanner:
+            name = 'blockscout'
+            version = 'v1'
+
+        class MockEtherscan:
+            name = 'etherscan'
+            version = 'v2'
+
+        # V2 scanner should trigger V2 routing even with non-V2 api_kind
+        assert _is_blockscout_v2('blockscout_eth', MockV2Scanner()) is True
+
+        # V1 scanner should not trigger V2 routing
+        assert _is_blockscout_v2('blockscout_eth', MockV1Scanner()) is False
+
+        # Other scanners should not trigger V2 routing
+        assert _is_blockscout_v2('eth', MockEtherscan()) is False
+
+    @pytest.mark.asyncio
+    async def test_fetch_all_transactions_basic_routes_to_v2(self):
+        """Test that fetch_all_transactions_basic routes to V2 when scanner is V2."""
+        from unittest.mock import AsyncMock, Mock, patch
+
+        from aiochainscan.services.fetch_all import fetch_all_transactions_basic
+
+        # Create a mock V2 scanner that will be detected
+        mock_v2_scanner = Mock()
+        mock_v2_scanner.name = 'blockscout'
+        mock_v2_scanner.version = 'v2'
+
+        # Mock the V2 fetch function to verify it gets called
+        mock_v2_result = [{'hash': '0xabc', 'blockNumber': '123'}]
+
+        with patch(
+            'aiochainscan.services.fetch_all._fetch_all_transactions_via_v2_scanner',
+            new_callable=AsyncMock,
+            return_value=mock_v2_result,
+        ) as mock_v2_fetch:
+            result = await fetch_all_transactions_basic(
+                address='0x742d35Cc6634C0532925a3b8D9Fa7a3D91',
+                start_block=0,
+                end_block=None,
+                api_kind='blockscout_v2',
+                network='ethereum',
+                api_key='',
+                http=Mock(),
+                endpoint_builder=Mock(),
+                scanner=mock_v2_scanner,
+            )
+
+            # Should have called V2 function
+            mock_v2_fetch.assert_called_once()
+
+            # Result should be from V2 function
+            assert result == mock_v2_result
+
+    @pytest.mark.asyncio
+    async def test_fetch_all_transactions_fast_routes_to_v2(self):
+        """Test that fetch_all_transactions_fast routes to V2 when scanner is V2."""
+        from unittest.mock import AsyncMock, Mock, patch
+
+        from aiochainscan.services.fetch_all import fetch_all_transactions_fast
+
+        # Create a mock V2 scanner
+        mock_v2_scanner = Mock()
+        mock_v2_scanner.name = 'blockscout'
+        mock_v2_scanner.version = 'v2'
+
+        mock_v2_result = [{'hash': '0xdef', 'blockNumber': '456'}]
+
+        with patch(
+            'aiochainscan.services.fetch_all._fetch_all_transactions_via_v2_scanner',
+            new_callable=AsyncMock,
+            return_value=mock_v2_result,
+        ) as mock_v2_fetch:
+            result = await fetch_all_transactions_fast(
+                address='0x742d35Cc6634C0532925a3b8D9Fa7a3D91',
+                start_block=0,
+                end_block=None,
+                api_kind='blockscout_v2',
+                network='ethereum',
+                api_key='',
+                http=Mock(),
+                endpoint_builder=Mock(),
+                scanner=mock_v2_scanner,
+            )
+
+            mock_v2_fetch.assert_called_once()
+            assert result == mock_v2_result
+
+    @pytest.mark.asyncio
+    async def test_fetch_all_falls_back_on_v2_error(self):
+        """Test that fetch_all falls back to V1 if V2 raises an error."""
+        from unittest.mock import AsyncMock, Mock, patch
+
+        from aiochainscan.services.fetch_all import fetch_all_transactions_basic
+
+        mock_v2_scanner = Mock()
+        mock_v2_scanner.name = 'blockscout'
+        mock_v2_scanner.version = 'v2'
+
+        # V2 function raises NotImplementedError
+        with patch(
+            'aiochainscan.services.fetch_all._fetch_all_transactions_via_v2_scanner',
+            new_callable=AsyncMock,
+            side_effect=NotImplementedError('V2 not supported for this'),
+        ):
+            # Mock the V1 path (fetch_all_generic)
+            v1_result = [{'hash': '0xv1', 'blockNumber': '789'}]
+            with patch(
+                'aiochainscan.services.fetch_all.fetch_all_generic',
+                new_callable=AsyncMock,
+                return_value=v1_result,
+            ) as mock_v1:
+                result = await fetch_all_transactions_basic(
+                    address='0x742d35Cc',
+                    start_block=0,
+                    end_block=None,
+                    api_kind='blockscout_v2',
+                    network='ethereum',
+                    api_key='',
+                    http=Mock(),
+                    endpoint_builder=Mock(),
+                    scanner=mock_v2_scanner,
+                )
+
+                # Should have fallen back to V1
+                mock_v1.assert_called_once()
+                assert result == v1_result

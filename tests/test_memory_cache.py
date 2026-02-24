@@ -134,3 +134,79 @@ async def test_expired_keys_cleared_before_eviction():
 
     # Cache should only have 1 entry (valid), not 3
     assert len(cache) == 1
+
+
+@pytest.mark.asyncio
+async def test_concurrent_access_thread_safety():
+    """Test that concurrent get/set operations don't cause race conditions.
+
+    This is a regression test for the race condition bug where async methods
+    used plain OrderedDict without locks, potentially causing inconsistent
+    cache state during concurrent eviction operations.
+    """
+    import asyncio
+
+    cache = InMemoryCache(max_size=10)
+
+    # Concurrent writes to different keys
+    async def write_task(key_prefix: str, count: int):
+        for i in range(count):
+            await cache.set(f'{key_prefix}_{i}', f'value_{i}')
+
+    # Concurrent reads
+    async def read_task(key: str, iterations: int):
+        for _ in range(iterations):
+            await cache.get(key)
+
+    # Run concurrent operations
+    tasks = [
+        write_task('task1', 20),
+        write_task('task2', 20),
+        write_task('task3', 20),
+        read_task('task1_5', 10),
+        read_task('task2_5', 10),
+    ]
+
+    await asyncio.gather(*tasks)
+
+    # Cache should be at max size due to evictions
+    assert len(cache) == 10
+
+    # All operations should complete without errors (lock prevents race conditions)
+    # If there was a race condition, we might see:
+    # - Inconsistent cache state
+    # - KeyError during eviction
+    # - Corrupted LRU ordering
+
+
+@pytest.mark.asyncio
+async def test_concurrent_eviction_safety():
+    """Test that concurrent operations triggering eviction are safe.
+
+    Specifically tests the eviction loop:
+        while len(self._store) >= self._max_size:
+            self._store.popitem(...)
+
+    Without lock protection, this loop could be interrupted by another
+    coroutine, causing inconsistent state.
+    """
+    import asyncio
+
+    cache = InMemoryCache(max_size=5)
+
+    # Fill cache to capacity
+    for i in range(5):
+        await cache.set(f'init_{i}', i)
+
+    # Concurrent set operations that all trigger eviction
+    async def concurrent_set(key: str):
+        await cache.set(key, 'value')
+
+    keys = [f'concurrent_{i}' for i in range(20)]
+    await asyncio.gather(*[concurrent_set(k) for k in keys])
+
+    # Cache should be at max size
+    assert len(cache) == 5
+
+    # No race condition errors should occur
+    # Without lock, we might see KeyError or size > max_size

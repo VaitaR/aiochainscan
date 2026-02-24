@@ -3,6 +3,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
+import orjson
+
 if TYPE_CHECKING:
     import aiohttp
 
@@ -45,7 +47,9 @@ class AiohttpGraphQLClient(GraphQLClient):
         payload = {'query': query, 'variables': dict(variables or {})}
         async with session.post(url, json=payload, headers=dict(headers or {})) as resp:
             resp.raise_for_status()
-            data = await resp.json()
+            # Use orjson for 3-5x faster parsing compared to stdlib json
+            raw_bytes = await resp.read()
+            data = orjson.loads(raw_bytes)
         if not isinstance(data, dict):
             raise ChainscanClientError('Invalid GraphQL response: not a JSON object')
         if 'errors' in data and data['errors']:

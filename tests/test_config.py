@@ -349,6 +349,53 @@ class TestAdvancedFeatures:
         assert optimism_config.special_config['subdomain_pattern'] == 'optimistic'
 
 
+class TestLazyLoading:
+    """Test lazy loading behavior of ConfigurationManager."""
+
+    def test_no_config_loaded_at_import(self):
+        """Test that configurations are not loaded until first access."""
+        # Reset to get a fresh instance
+        ConfigurationManager.reset_instance()
+
+        # Create fresh instance
+        manager = ConfigurationManager()
+
+        # Verify nothing is loaded at instantiation
+        assert manager._builtin_loaded is False
+        assert manager._env_loaded is False
+        assert manager._config_files_loaded is False
+        assert manager._scanners == {}
+
+    def test_single_scanner_lazy_load(self):
+        """Test that accessing a single scanner only loads that scanner."""
+        # Reset to get a fresh instance
+        ConfigurationManager.reset_instance()
+
+        manager = ConfigurationManager()
+
+        # Access single scanner config
+        config = manager.get_scanner_config('eth')
+
+        # Verify only the requested scanner is loaded
+        assert 'eth' in manager._scanners
+        assert config.name == 'Etherscan'
+        # Builtin_loaded remains False because we used lazy single-scanner path
+        assert manager._builtin_loaded is False
+        assert manager._env_loaded is True  # Env is loaded for API keys
+
+    def test_get_supported_scanners_triggers_full_init(self):
+        """Test that get_supported_scanners() triggers full initialization."""
+        ConfigurationManager.reset_instance()
+        manager = ConfigurationManager()
+
+        # This should trigger full initialization
+        scanners = manager.get_supported_scanners()
+
+        assert manager._builtin_loaded is True
+        assert manager._config_files_loaded is True
+        assert len(scanners) > 10  # We have many builtin scanners
+
+
 class TestErrorHandling:
     """Test error handling and edge cases."""
 
