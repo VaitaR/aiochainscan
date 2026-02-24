@@ -4,27 +4,45 @@ This module provides the Network class for making HTTP requests to blockchain
 explorer APIs with automatic rate limiting and retry functionality.
 
 v0.4.0: Migrated from aiohttp/aiohttp-retry/asyncio-throttle to httpx/tenacity/aiolimiter
-for better HTTP/2 support, cleaner retry semantics, and token-bucket rate limiting.
+for cleaner retry semantics and token-bucket rate limiting.
+
+v0.4.1: Disabled HTTP/2 by default and added comprehensive retry exceptions.
+HTTP/2 multiplexing triggers Cloudflare WAF blocks on rate-limited APIs (Etherscan,
+BlockScout). Added httpx.NetworkError and httpx.RemoteProtocolError to retry on
+connection resets and protocol errors.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import httpx
+import orjson
 
-from aiochainscan.adapters.aiolimiter_adapter import AioLimiterAdapter
-from aiochainscan.adapters.tenacity_retry import TenacityRetryAdapter
+from aiochainscan.constants import (
+    NETWORK_DEFAULT_TIMEOUT,
+    NETWORK_MAX_CONNECTIONS,
+    RATE_DEFAULT_BURST,
+    RATE_DEFAULT_RPS,
+    RATE_TIME_PERIOD,
+    RETRY_MAX_ATTEMPTS,
+    RETRY_MAX_WAIT,
+    RETRY_MIN_WAIT,
+)
 from aiochainscan.exceptions import (
     ChainscanClientApiError,
     ChainscanClientContentTypeError,
     ChainscanClientError,
     ChainscanClientProxyError,
+    ChainscanNetworkError,
     ChainscanRateLimitError,
 )
 from aiochainscan.ports.rate_limiter import RateLimiter, RetryPolicy
 from aiochainscan.url_builder import UrlBuilder
+
+if TYPE_CHECKING:
+    pass
 
 # Sensitive headers that should be redacted in logs
 SENSITIVE_HEADERS = {'authorization', 'x-api-key', 'apikey'}
@@ -43,9 +61,13 @@ class Network:
     """HTTP transport layer for blockchain explorer APIs.
 
     Uses modern async libraries:
-    - httpx for HTTP/2 support and connection pooling
+    - httpx for HTTP/1.1 connection pooling (HTTP/2 disabled by default)
     - tenacity for flexible retry logic (including business-logic errors)
     - aiolimiter for token-bucket rate limiting
+
+    Note: HTTP/2 is disabled by default because rate-limited APIs behind
+    Cloudflare (Etherscan, BlockScout) interpret HTTP/2 multiplexed streams
+    as Layer 7 DDoS attacks, resulting in GOAWAY/RST_STREAM instead of HTTP 429.
 
     The public interface (get, post, close) remains unchanged from previous versions.
     """
@@ -53,12 +75,12 @@ class Network:
     def __init__(
         self,
         url_builder: UrlBuilder,
-        timeout: float | httpx.Timeout | None = 10.0,
+        timeout: float | httpx.Timeout | None = None,
         proxy: str | None = None,
         rate_limiter: RateLimiter | None = None,
         retry_policy: RetryPolicy | None = None,
-        http2: bool = True,
-        max_connections: int = 100,
+        http2: bool = False,
+        max_connections: int | None = None,
     ) -> None:
         """Initialize Network transport.
 
@@ -68,27 +90,52 @@ class Network:
             proxy: Optional proxy URL (e.g., "http://localhost:8080").
             rate_limiter: Rate limiter implementation (default: AioLimiterAdapter).
             retry_policy: Retry policy implementation (default: TenacityRetryAdapter).
-            http2: Whether to use HTTP/2 (default True).
-            max_connections: Maximum connections in the pool (default 100).
+            http2: Whether to use HTTP/2 (default False for API stability).
+            max_connections: Maximum connections in the pool (default 10).
         """
         self._url_builder = url_builder
         self._timeout = self._prepare_timeout(timeout)
         self._proxy = proxy
         self._http2 = http2
-        self._max_connections = max_connections
-
-        # Rate limiting with token bucket algorithm (default: 5 req/s)
-        self._rate_limiter: RateLimiter = rate_limiter or AioLimiterAdapter(
-            max_rate=5.0, time_period=1.0
+        self._max_connections = (
+            max_connections if max_connections is not None else NETWORK_MAX_CONNECTIONS
         )
 
-        # Retry policy with exponential backoff (retries on rate limit errors)
-        self._retry_policy: RetryPolicy = retry_policy or TenacityRetryAdapter(
-            max_attempts=5,
-            min_wait=1.0,
-            max_wait=30.0,
-            retry_exceptions=(ChainscanRateLimitError, httpx.TimeoutException),
-        )
+        # Rate limiting with token bucket algorithm (default: 5 req/s, burst=1)
+        # Lazy import to avoid circular dependency and support DI
+        # max_burst=1 prevents burst requests that trigger Cloudflare WAF/DDoS
+        if rate_limiter is not None:
+            self._rate_limiter: RateLimiter = rate_limiter
+        else:
+            from aiochainscan.adapters.aiolimiter_adapter import AioLimiterAdapter
+
+            self._rate_limiter = AioLimiterAdapter(
+                max_rate=RATE_DEFAULT_RPS,
+                time_period=RATE_TIME_PERIOD,
+                max_burst=RATE_DEFAULT_BURST,
+            )
+
+        # Retry policy with exponential backoff (retries on rate limit and network errors)
+        # NetworkError covers ConnectError, ReadError, WriteError, CloseError
+        # RemoteProtocolError covers HTTP/2 protocol errors (GOAWAY, RST_STREAM)
+        # ChainscanNetworkError is our domain exception for retryable network errors
+        if retry_policy is not None:
+            self._retry_policy: RetryPolicy = retry_policy
+        else:
+            from aiochainscan.adapters.tenacity_retry import TenacityRetryAdapter
+
+            self._retry_policy = TenacityRetryAdapter(
+                max_attempts=RETRY_MAX_ATTEMPTS,
+                min_wait=RETRY_MIN_WAIT,
+                max_wait=RETRY_MAX_WAIT,
+                retry_exceptions=(
+                    ChainscanRateLimitError,
+                    ChainscanNetworkError,
+                    httpx.TimeoutException,
+                    httpx.NetworkError,
+                    httpx.RemoteProtocolError,
+                ),
+            )
 
         self._client: httpx.AsyncClient | None = None
         self._logger = logging.getLogger(__name__)
@@ -100,7 +147,7 @@ class Network:
         elif isinstance(timeout, int | float):
             return httpx.Timeout(float(timeout))
         else:
-            return httpx.Timeout(10.0)  # Default timeout
+            return httpx.Timeout(NETWORK_DEFAULT_TIMEOUT)
 
     async def _ensure_client(self) -> httpx.AsyncClient:
         """Lazily initialize the httpx client."""
@@ -152,6 +199,62 @@ class Network:
         """
         data, headers = self._url_builder.filter_and_sign(data, headers)
         return await self._request('POST', data=data, headers=headers)
+
+    async def request(
+        self,
+        method: str,
+        url: str,
+        params: dict[str, Any] | None = None,
+        data: dict[str, Any] | None = None,
+        json_data: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> dict[str, Any] | list[Any] | str:
+        """Perform HTTP request to custom URL with rate limiting and retries.
+
+        This method allows scanners to make requests to custom URLs while
+        still benefiting from connection pooling, rate limiting, and retry logic.
+
+        Args:
+            method: HTTP method ('GET', 'POST', etc.)
+            url: Full URL to request (not using url_builder.API_URL)
+            params: Query parameters (for GET)
+            data: Form data (for POST with form encoding)
+            json_data: JSON data (for POST with JSON encoding)
+            headers: Request headers
+
+        Returns:
+            Parsed response data (JSON decoded).
+        """
+
+        async def do_request() -> dict[str, Any] | list[Any] | str:
+            # Acquire rate limit token before making request
+            await self._rate_limiter.acquire('network:request')
+
+            client = await self._ensure_client()
+
+            if method == 'GET':
+                response = await client.get(url, params=params, headers=headers)
+            elif method == 'POST':
+                if json_data is not None:
+                    response = await client.post(url, json=json_data, headers=headers)
+                else:
+                    response = await client.post(url, data=data, headers=headers)
+            else:
+                raise ValueError(f'Unsupported HTTP method: {method}')
+
+            self._logger.debug(
+                '[%s %s] url=%r params=%r headers=%r',
+                method,
+                response.status_code,
+                str(response.url),
+                params,
+                _redact_headers(headers),
+            )
+
+            return self._handle_response(response)
+
+        # Use retry policy to handle transient errors
+        return await self._retry_policy.run(do_request)
 
     async def _request(
         self,
@@ -227,8 +330,10 @@ class Network:
             raise ChainscanClientContentTypeError(status_code, response.text)
 
         try:
-            response_json = response.json()
-        except Exception as e:
+            # Use orjson for 3-5x faster parsing compared to stdlib json
+            # response.content returns bytes, which orjson handles directly
+            response_json = orjson.loads(response.content)
+        except orjson.JSONDecodeError as e:
             raise ChainscanClientContentTypeError(status_code, response.text) from e
 
         self._logger.debug('Response: %r', str(response_json)[0:200])

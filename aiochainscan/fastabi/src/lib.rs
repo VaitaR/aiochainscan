@@ -1,18 +1,20 @@
 use ethers::abi::{Abi, Function, Token};
 use ethers::utils::keccak256;
+use lru::LruCache;
 use once_cell::sync::OnceCell;
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyDict, PyList, PyTuple, PyAny, PyMemoryView};
+use pyo3::types::{PyBytes, PyAny};
 use pythonize::depythonize;
 use rayon::prelude::*;
-use dashmap::DashMap;
 use twox_hash::XxHash64;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
+use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex};
 use thiserror::Error;
 
 const BATCH_PAR_THRESHOLD: usize = 256;
+const ABI_CACHE_CAPACITY: usize = 1000;  // Maximum number of ABIs to cache
 
 #[derive(Error, Debug)]
 pub enum FastAbiError {
@@ -30,15 +32,21 @@ impl From<FastAbiError> for PyErr {
     }
 }
 
-// Global ABI cache with selector maps for multiple ABIs
-static ABI_CACHE: OnceCell<DashMap<u64, Arc<AbiData>>> = OnceCell::new();
+// Global ABI cache with LRU eviction to prevent unbounded memory growth
+static ABI_CACHE: OnceCell<Mutex<LruCache<u64, Arc<AbiData>>>> = OnceCell::new();
 // Micro-caches to avoid repeated work on hot paths
 static LAST_ABI_HASH: OnceCell<Mutex<Option<(usize, usize, u64)>>> = OnceCell::new();
-static LAST_INPUT_JSON: OnceCell<Mutex<Option<(usize, usize, u64, String)>>> = OnceCell::new();
+// Cache stores (data_hash, abi_hash, json_result) - never use raw pointers as cache keys!
+static LAST_INPUT_JSON: OnceCell<Mutex<Option<(u64, u64, String)>>> = OnceCell::new();
+
+fn get_abi_cache() -> &'static Mutex<LruCache<u64, Arc<AbiData>>> {
+    ABI_CACHE.get_or_init(|| {
+        Mutex::new(LruCache::new(NonZeroUsize::new(ABI_CACHE_CAPACITY).unwrap()))
+    })
+}
 
 #[derive(Clone)]
 struct AbiData {
-    abi: Arc<Abi>,
     selector_map: HashMap<[u8; 4], Function>,
 }
 
@@ -76,12 +84,15 @@ fn calculate_function_selector(function: &Function) -> [u8; 4] {
 }
 
 fn get_abi_data_from_json(abi_json: &str) -> PyResult<Arc<AbiData>> {
-    let cache = ABI_CACHE.get_or_init(|| DashMap::new());
+    let cache = get_abi_cache();
     let abi_hash = calculate_abi_hash_memoized(abi_json);
 
-    // Check cache first
-    if let Some(cached) = cache.get(&abi_hash) {
-        return Ok(Arc::clone(&cached));
+    // Check cache first (LRU get also promotes entry)
+    {
+        let mut cache_guard = cache.lock().unwrap();
+        if let Some(cached) = cache_guard.get(&abi_hash) {
+            return Ok(Arc::clone(cached));
+        }
     }
 
     // Parse ABI and build selector map
@@ -96,17 +107,19 @@ fn get_abi_data_from_json(abi_json: &str) -> PyResult<Arc<AbiData>> {
     }
 
     let abi_data = Arc::new(AbiData {
-        abi: Arc::new(abi),
         selector_map,
     });
 
-    // Cache it
-    cache.insert(abi_hash, Arc::clone(&abi_data));
+    // Cache it (LRU automatically evicts oldest when at capacity)
+    {
+        let mut cache_guard = cache.lock().unwrap();
+        cache_guard.put(abi_hash, Arc::clone(&abi_data));
+    }
     Ok(abi_data)
 }
 
 fn get_abi_data_direct(py_abi: &Bound<'_, PyAny>) -> PyResult<Arc<AbiData>> {
-    let cache = ABI_CACHE.get_or_init(|| DashMap::new());
+    let cache = get_abi_cache();
 
     // Parse ABI directly from Python object
     let abi: Abi = depythonize(py_abi).map_err(|e| {
@@ -129,9 +142,12 @@ fn get_abi_data_direct(py_abi: &Bound<'_, PyAny>) -> PyResult<Arc<AbiData>> {
     let abi_key = canonical_sigs.join(";");
     let abi_hash = calculate_abi_hash(&abi_key);
 
-    // Check cache first
-    if let Some(cached) = cache.get(&abi_hash) {
-        return Ok(Arc::clone(&cached));
+    // Check cache first (LRU get also promotes entry)
+    {
+        let mut cache_guard = cache.lock().unwrap();
+        if let Some(cached) = cache_guard.get(&abi_hash) {
+            return Ok(Arc::clone(cached));
+        }
     }
 
     // Build selector map
@@ -142,283 +158,135 @@ fn get_abi_data_direct(py_abi: &Bound<'_, PyAny>) -> PyResult<Arc<AbiData>> {
     }
 
     let abi_data = Arc::new(AbiData {
-        abi: Arc::new(abi),
         selector_map,
     });
 
-    // Cache it
-    cache.insert(abi_hash, Arc::clone(&abi_data));
+    // Cache it (LRU automatically evicts oldest when at capacity)
+    {
+        let mut cache_guard = cache.lock().unwrap();
+        cache_guard.put(abi_hash, Arc::clone(&abi_data));
+    }
     Ok(abi_data)
 }
 
-// Convert token to raw Python types (optimized)
-fn token_to_raw_py(py: Python<'_>, token: Token) -> PyResult<PyObject> {
-    match token {
-        Token::Address(addr) => {
-            // Return addresses as bytes for compatibility and low overhead
-            let addr_bytes = addr.as_bytes();
-            Ok(PyBytes::new_bound(py, addr_bytes).into())
-        }
-        Token::Uint(uint) => {
-            // Return native int when possible, string for very large numbers
-            if let Ok(as_u64) = u64::try_from(uint) {
-                Ok(as_u64.into_py(py))
-            } else {
-                Ok(uint.to_string().into_py(py))
-            }
-        }
-        Token::Int(int) => {
-            // Return native int when possible
-            if let Ok(as_i64) = i64::try_from(int) {
-                Ok(as_i64.into_py(py))
-            } else {
-                Ok(int.to_string().into_py(py))
-            }
-        }
-        Token::Bool(b) => Ok(b.into_py(py)),
-        Token::String(s) => Ok(s.into_py(py)),
-        Token::Bytes(bytes) => {
-            // Return as memoryview for large byte arrays
-            if bytes.len() > 256 {  // Only for larger arrays to avoid overhead
-                let py_bytes = PyBytes::new_bound(py, &bytes);
-                let memoryview = PyMemoryView::from_bound(py_bytes.as_any())?;
-                Ok(memoryview.into())
-            } else {
-                Ok(PyBytes::new_bound(py, &bytes).into())
-            }
-        }
-        Token::FixedBytes(bytes) => {
-            // Return as memoryview for large byte arrays
-            if bytes.len() > 256 {
-                let py_bytes = PyBytes::new_bound(py, &bytes);
-                let memoryview = PyMemoryView::from_bound(py_bytes.as_any())?;
-                Ok(memoryview.into())
-            } else {
-                Ok(PyBytes::new_bound(py, &bytes).into())
-            }
-        }
-        Token::Array(tokens) => {
-            let py_items: Result<Vec<_>, _> = tokens.into_iter()
-                .map(|token| token_to_raw_py(py, token))
-                .collect();
-            Ok(PyTuple::new_bound(py, py_items?).into())
-        }
-        Token::FixedArray(tokens) => {
-            let py_items: Result<Vec<_>, _> = tokens.into_iter()
-                .map(|token| token_to_raw_py(py, token))
-                .collect();
-            Ok(PyTuple::new_bound(py, py_items?).into())
-        }
-        Token::Tuple(tokens) => {
-            let py_items: Result<Vec<_>, _> = tokens.into_iter()
-                .map(|token| token_to_raw_py(py, token))
-                .collect();
-            Ok(PyTuple::new_bound(py, py_items?).into())
-        }
-    }
-}
-
-fn token_to_py(py: Python<'_>, token: Token) -> PyResult<PyObject> {
-    match token {
-        Token::Address(addr) => Ok(format!("0x{:x}", addr).into_py(py)),
-        Token::Uint(uint) => {
-            // Try to convert to u64 first
-            if let Ok(as_u64) = u64::try_from(uint) {
-                // If it fits in i64 range, return as int, otherwise as string
-                if as_u64 <= i64::MAX as u64 {
-                    Ok(as_u64.into_py(py))
-                } else {
-                    Ok(uint.to_string().into_py(py))
-                }
-            } else {
-                Ok(uint.to_string().into_py(py))
-            }
-        }
-        Token::Int(int) => {
-            // For signed integers, try to fit in i64
-            if let Ok(as_u64) = u64::try_from(int) {
-                if as_u64 <= i64::MAX as u64 {
-                    Ok((as_u64 as i64).into_py(py))
-                } else {
-                    Ok(int.to_string().into_py(py))
-                }
-            } else {
-                Ok(int.to_string().into_py(py))
-            }
-        }
-        Token::Bool(b) => Ok(b.into_py(py)),
-        Token::String(s) => Ok(s.into_py(py)),
-        Token::Bytes(bytes) => Ok(format!("0x{}", hex::encode(bytes)).into_py(py)),
-        Token::FixedBytes(bytes) => Ok(format!("0x{}", hex::encode(bytes)).into_py(py)),
-        Token::Array(tokens) => {
-            let py_list = PyList::new_bound(py, Vec::<PyObject>::new());
-            for token in tokens {
-                py_list.append(token_to_py(py, token)?)?;
-            }
-            Ok(py_list.into())
-        }
-        Token::FixedArray(tokens) => {
-            let py_list = PyList::new_bound(py, Vec::<PyObject>::new());
-            for token in tokens {
-                py_list.append(token_to_py(py, token)?)?;
-            }
-            Ok(py_list.into())
-        }
-        Token::Tuple(tokens) => {
-            let py_items: Result<Vec<_>, _> = tokens.into_iter()
-                .map(|token| token_to_py(py, token))
-                .collect();
-            Ok(PyTuple::new_bound(py, py_items?).into())
-        }
-    }
-}
-
 /// Decode a single transaction input (cached ABI)
+/// Returns JSON string to avoid GIL blocking during Python object creation
 #[pyfunction]
-fn decode_one<'p>(
-    py: Python<'p>,
+fn decode_one(
+    py: Python<'_>,
     calldata: &[u8],
     abi_json: &str,
-) -> PyResult<Py<PyDict>> {
+) -> PyResult<String> {
     if calldata.len() < 4 {
-        let result = PyDict::new_bound(py);
-        result.set_item("function_name", "")?;
-        result.set_item("decoded_data", PyDict::new_bound(py))?;
-        return Ok(result.unbind());
+        return Ok(serde_json::json!({
+            "function_name": "",
+            "decoded_data": {}
+        }).to_string());
     }
 
     let abi_data = get_abi_data_from_json(abi_json)?;
-    let selector = &calldata[..4];
-    let mut selector_array = [0u8; 4];
-    selector_array.copy_from_slice(selector);
 
-    // O(1) lookup using cached selector map
-    let function = abi_data.selector_map.get(&selector_array)
-        .ok_or(FastAbiError::UnknownSelector)?;
+    // Release GIL for computation and JSON serialization
+    let json_result: Result<String, FastAbiError> = py.allow_threads(|| {
+        let selector = &calldata[..4];
+        let mut selector_array = [0u8; 4];
+        selector_array.copy_from_slice(selector);
 
-    let tokens = function.decode_input(&calldata[4..])
-        .map_err(|e| FastAbiError::DecodeError(e.to_string()))?;
+        // O(1) lookup using cached selector map
+        let function = abi_data.selector_map.get(&selector_array)
+            .ok_or(FastAbiError::UnknownSelector)?;
 
-    let result = PyDict::new_bound(py);
-    result.set_item("function_name", &function.name)?;
+        let tokens = function.decode_input(&calldata[4..])
+            .map_err(|e| FastAbiError::DecodeError(e.to_string()))?;
 
-    // Decode parameters
-    let py_params = PyDict::new_bound(py);
-    for (param, token) in function.inputs.iter().zip(tokens) {
-        let param_name = if param.name.is_empty() {
-            format!("param_{}", py_params.len())
-        } else {
-            param.name.clone()
-        };
-        py_params.set_item(param_name, token_to_py(py, token)?)?;
-    }
-    result.set_item("decoded_data", py_params)?;
+        // Build decoded_data map
+        let mut decoded_data = serde_json::Map::new();
+        for (i, (param, token)) in function.inputs.iter().zip(tokens.iter()).enumerate() {
+            let param_name = if param.name.is_empty() {
+                format!("param_{}", i)
+            } else {
+                param.name.clone()
+            };
+            decoded_data.insert(param_name, convert_token_to_json(token));
+        }
 
-    Ok(result.unbind())
+        let result = serde_json::json!({
+            "function_name": function.name,
+            "decoded_data": decoded_data
+        });
+
+        Ok(result.to_string())
+    });
+
+    json_result.map_err(|e| e.into())
 }
 
-/// ULTRA-FAST: Decode many transactions returning raw tuples (function_name, raw_params_tuple)
+/// ULTRA-FAST: Decode many transactions returning raw tuples as JSON
+/// Returns JSON string: [[function_name, [param1, param2, ...]], ...]
 #[pyfunction]
-fn decode_many_raw<'p>(
-    py: Python<'p>,
+fn decode_many_raw(
+    py: Python<'_>,
     calldatas: Vec<Vec<u8>>,
     abi_json: &str,
-) -> PyResult<Vec<Py<PyTuple>>> {
+) -> PyResult<String> {
     let abi_data = get_abi_data_from_json(abi_json)?;
 
     // Release GIL and process (parallel for large batches)
     let use_par = calldatas.len() >= BATCH_PAR_THRESHOLD;
-    let results: Result<Vec<_>, FastAbiError> = py.allow_threads(|| {
-        if use_par {
-            calldatas
-                .par_iter()
-                .map(|calldata| {
-                    if calldata.len() < 4 {
-                        return Ok((String::new(), Vec::new()));
-                    }
-                    let selector = &calldata[..4];
-                    let mut selector_array = [0u8; 4];
-                    selector_array.copy_from_slice(selector);
-                    let function = match abi_data.selector_map.get(&selector_array) {
-                        Some(f) => f,
-                        None => return Ok((String::new(), Vec::new())),
-                    };
-                    let tokens = match function.decode_input(&calldata[4..]) {
-                        Ok(t) => t,
-                        Err(_e) => return Ok((String::new(), Vec::new())),
-                    };
-                    Ok((function.name.clone(), tokens))
-                })
-                .collect()
-        } else {
-            calldatas
-                .iter()
-                .map(|calldata| {
-                    if calldata.len() < 4 {
-                        return Ok((String::new(), Vec::new()));
-                    }
-                    let selector = &calldata[..4];
-                    let mut selector_array = [0u8; 4];
-                    selector_array.copy_from_slice(selector);
-                    let function = match abi_data.selector_map.get(&selector_array) {
-                        Some(f) => f,
-                        None => return Ok((String::new(), Vec::new())),
-                    };
-                    let tokens = match function.decode_input(&calldata[4..]) {
-                        Ok(t) => t,
-                        Err(_e) => return Ok((String::new(), Vec::new())),
-                    };
-                    Ok((function.name.clone(), tokens))
-                })
-                .collect()
-        }
-    });
+    let json_result: Result<String, FastAbiError> = py.allow_threads(|| {
+        let process_calldata = |calldata: &[u8]| -> serde_json::Value {
+            if calldata.len() < 4 {
+                return serde_json::json!(["", []]);
+            }
+            let selector = &calldata[..4];
+            let mut selector_array = [0u8; 4];
+            selector_array.copy_from_slice(selector);
+            let function = match abi_data.selector_map.get(&selector_array) {
+                Some(f) => f,
+                None => return serde_json::json!(["", []]),
+            };
+            let tokens = match function.decode_input(&calldata[4..]) {
+                Ok(t) => t,
+                Err(_) => return serde_json::json!(["", []]),
+            };
 
-    // Convert results to raw Python tuples (minimal overhead)
-    let decoded_results = results.map_err(FastAbiError::from)?;
-    let mut py_results = Vec::new();
-
-    for (func_name, tokens) in decoded_results {
-        if !func_name.is_empty() {
-            // Convert tokens to raw Python objects
-            let raw_params: Result<Vec<_>, _> = tokens.into_iter()
-                .map(|token| token_to_raw_py(py, token))
+            let params: Vec<serde_json::Value> = tokens.iter()
+                .map(convert_token_to_json)
                 .collect();
 
-            let result_tuple = PyTuple::new_bound(py, [
-                func_name.into_py(py),
-                PyTuple::new_bound(py, raw_params?).into(),
-            ]);
-            py_results.push(result_tuple.unbind());
-        } else {
-            // Empty result
-            let result_tuple = PyTuple::new_bound(py, [
-                "".to_string().into_py(py),
-                PyTuple::new_bound(py, Vec::<PyObject>::new()).into(),
-            ]);
-            py_results.push(result_tuple.unbind());
-        }
-    }
+            serde_json::json!([function.name, params])
+        };
 
-    Ok(py_results)
+        let results: Vec<serde_json::Value> = if use_par {
+            calldatas.par_iter().map(|c| process_calldata(c)).collect()
+        } else {
+            calldatas.iter().map(|c| process_calldata(c)).collect()
+        };
+
+        serde_json::to_string(&results)
+            .map_err(|e| FastAbiError::DecodeError(format!("JSON serialization failed: {}", e)))
+    });
+
+    json_result.map_err(|e| e.into())
 }
 
-/// ULTIMATE PERFORMANCE: Return ready list[list] without PyTuple wrapping
+/// ULTIMATE PERFORMANCE: Return flat lists as JSON
+/// Returns JSON string: [[function_name, param1, param2, ...], ...]
 #[pyfunction]
-fn decode_many_flat<'p>(
-    py: Python<'p>,
+fn decode_many_flat(
+    py: Python<'_>,
     calldatas: Vec<Vec<u8>>,
     abi_json: &str,
-) -> PyResult<Vec<Py<PyList>>> {
+) -> PyResult<String> {
     let abi_data = get_abi_data_from_json(abi_json)?;
 
-    // Release GIL and do ALL computation in parallel
-    let results: Result<Vec<_>, FastAbiError> = py.allow_threads(|| {
-        calldatas
+    // Release GIL and do ALL computation in parallel including JSON serialization
+    let json_result: Result<String, FastAbiError> = py.allow_threads(|| {
+        let results: Vec<serde_json::Value> = calldatas
             .par_iter()  // PARALLEL processing with rayon
             .map(|calldata| {
                 if calldata.len() < 4 {
-                    return Ok((String::new(), Vec::new()));
+                    return serde_json::json!([""]);
                 }
 
                 let selector = &calldata[..4];
@@ -426,103 +294,105 @@ fn decode_many_flat<'p>(
                 selector_array.copy_from_slice(selector);
 
                 // O(1) lookup using cached selector map
-                let function = abi_data.selector_map.get(&selector_array)
-                    .ok_or(FastAbiError::UnknownSelector)?;
+                let function = match abi_data.selector_map.get(&selector_array) {
+                    Some(f) => f,
+                    None => return serde_json::json!([""]),
+                };
 
-                let tokens = function.decode_input(&calldata[4..])
-                    .map_err(|e| FastAbiError::DecodeError(e.to_string()))?;
+                let tokens = match function.decode_input(&calldata[4..]) {
+                    Ok(t) => t,
+                    Err(_) => return serde_json::json!([""]),
+                };
 
-                Ok((function.name.clone(), tokens))
+                // Build flat array: [function_name, param1, param2, ...]
+                let mut result = vec![serde_json::Value::String(function.name.clone())];
+                for token in tokens.iter() {
+                    result.push(convert_token_to_json(token));
+                }
+
+                serde_json::Value::Array(result)
             })
-            .collect()
+            .collect();
+
+        serde_json::to_string(&results)
+            .map_err(|e| FastAbiError::DecodeError(format!("JSON serialization failed: {}", e)))
     });
 
-    // Convert results to flat Python lists (minimal overhead)
-    let decoded_results = results.map_err(FastAbiError::from)?;
-    let mut py_results = Vec::new();
-
-    for (func_name, tokens) in decoded_results {
-        if !func_name.is_empty() {
-            // Create flat list: [function_name, param1, param2, ...]
-            let result_list = PyList::new_bound(py, Vec::<PyObject>::new());
-            result_list.append(func_name.into_py(py))?;
-
-            // Add parameters directly to the list
-            for token in tokens {
-                result_list.append(token_to_raw_py(py, token)?)?;
-            }
-
-            py_results.push(result_list.unbind());
-        } else {
-            // Empty result - just function name
-            let result_list = PyList::new_bound(py, [func_name.into_py(py)]);
-            py_results.push(result_list.unbind());
-        }
-    }
-
-    Ok(py_results)
+    json_result.map_err(|e| e.into())
 }
 
 /// Decode a single transaction input (NO JSON - direct Python ABI)
+/// Returns JSON string to avoid GIL blocking during Python object creation
 #[pyfunction]
-fn decode_one_direct<'p>(
-    py: Python<'p>,
+fn decode_one_direct(
+    py: Python<'_>,
     calldata: &[u8],
-    py_abi: &Bound<'p, PyAny>,
-) -> PyResult<Py<PyDict>> {
+    py_abi: &Bound<'_, PyAny>,
+) -> PyResult<String> {
     if calldata.len() < 4 {
-        let result = PyDict::new_bound(py);
-        result.set_item("function_name", "")?;
-        result.set_item("decoded_data", PyDict::new_bound(py))?;
-        return Ok(result.unbind());
+        return Ok(serde_json::json!({
+            "function_name": "",
+            "decoded_data": {}
+        }).to_string());
     }
 
     let abi_data = get_abi_data_direct(py_abi)?;
-    let selector = &calldata[..4];
-    let mut selector_array = [0u8; 4];
-    selector_array.copy_from_slice(selector);
 
-    // O(1) lookup using cached selector map
-    let function = abi_data.selector_map.get(&selector_array)
-        .ok_or(FastAbiError::UnknownSelector)?;
+    // Release GIL for computation and JSON serialization
+    let json_result: Result<String, FastAbiError> = py.allow_threads(|| {
+        let selector = &calldata[..4];
+        let mut selector_array = [0u8; 4];
+        selector_array.copy_from_slice(selector);
 
-    let tokens = function.decode_input(&calldata[4..])
-        .map_err(|e| FastAbiError::DecodeError(e.to_string()))?;
+        // O(1) lookup using cached selector map
+        let function = abi_data.selector_map.get(&selector_array)
+            .ok_or(FastAbiError::UnknownSelector)?;
 
-    let result = PyDict::new_bound(py);
-    result.set_item("function_name", &function.name)?;
+        let tokens = function.decode_input(&calldata[4..])
+            .map_err(|e| FastAbiError::DecodeError(e.to_string()))?;
 
-    // Decode parameters
-    let py_params = PyDict::new_bound(py);
-    for (param, token) in function.inputs.iter().zip(tokens) {
-        let param_name = if param.name.is_empty() {
-            format!("param_{}", py_params.len())
-        } else {
-            param.name.clone()
-        };
-        py_params.set_item(param_name, token_to_py(py, token)?)?;
-    }
-    result.set_item("decoded_data", py_params)?;
+        // Build decoded_data map
+        let mut decoded_data = serde_json::Map::new();
+        for (i, (param, token)) in function.inputs.iter().zip(tokens.iter()).enumerate() {
+            let param_name = if param.name.is_empty() {
+                format!("param_{}", i)
+            } else {
+                param.name.clone()
+            };
+            decoded_data.insert(param_name, convert_token_to_json(token));
+        }
 
-    Ok(result.unbind())
+        let result = serde_json::json!({
+            "function_name": function.name,
+            "decoded_data": decoded_data
+        });
+
+        Ok(result.to_string())
+    });
+
+    json_result.map_err(|e| e.into())
 }
 
 /// Decode multiple transaction inputs in batch with GIL release
+/// Returns JSON string to avoid GIL blocking during Python object creation
 #[pyfunction]
-fn decode_many<'p>(
-    py: Python<'p>,
+fn decode_many(
+    py: Python<'_>,
     calldatas: Vec<Vec<u8>>,
     abi_json: &str,
-) -> PyResult<Vec<Py<PyDict>>> {
+) -> PyResult<String> {
     let abi_data = get_abi_data_from_json(abi_json)?;
 
-    // Release GIL and do heavy computation in parallel
-    let results: Result<Vec<_>, FastAbiError> = py.allow_threads(|| {
-        calldatas
+    // Release GIL and do ALL computation in parallel, including JSON serialization
+    let json_result: Result<String, FastAbiError> = py.allow_threads(|| {
+        let results: Result<Vec<_>, FastAbiError> = calldatas
             .par_iter()  // PARALLEL processing
             .map(|calldata| {
                 if calldata.len() < 4 {
-                    return Ok((String::new(), Vec::new()));
+                    return Ok(serde_json::json!({
+                        "function_name": "",
+                        "decoded_data": {}
+                    }));
                 }
 
                 let selector = &calldata[..4];
@@ -530,211 +400,188 @@ fn decode_many<'p>(
                 selector_array.copy_from_slice(selector);
 
                 // O(1) lookup using cached selector map
-                let function = abi_data.selector_map.get(&selector_array)
-                    .ok_or(FastAbiError::UnknownSelector)?;
+                let function = match abi_data.selector_map.get(&selector_array) {
+                    Some(f) => f,
+                    None => return Ok(serde_json::json!({
+                        "function_name": "",
+                        "decoded_data": {}
+                    })),
+                };
 
-                let tokens = function.decode_input(&calldata[4..])
-                    .map_err(|e| FastAbiError::DecodeError(e.to_string()))?;
+                let tokens = match function.decode_input(&calldata[4..]) {
+                    Ok(t) => t,
+                    Err(_) => return Ok(serde_json::json!({
+                        "function_name": "",
+                        "decoded_data": {}
+                    })),
+                };
 
-                Ok((function.name.clone(), tokens))
+                // Build decoded_data map
+                let mut decoded_data = serde_json::Map::new();
+                for (i, (param, token)) in function.inputs.iter().zip(tokens.iter()).enumerate() {
+                    let param_name = if param.name.is_empty() {
+                        format!("param_{}", i)
+                    } else {
+                        param.name.clone()
+                    };
+                    decoded_data.insert(param_name, convert_token_to_json(token));
+                }
+
+                Ok(serde_json::json!({
+                    "function_name": function.name,
+                    "decoded_data": decoded_data
+                }))
             })
-            .collect()
+            .collect();
+
+        let json_values = results?;
+        serde_json::to_string(&json_values)
+            .map_err(|e| FastAbiError::DecodeError(format!("JSON serialization failed: {}", e)))
     });
 
-    // Convert results to Python objects (with GIL)
-    let decoded_results = results.map_err(FastAbiError::from)?;
-    let mut py_results = Vec::new();
-
-    for (func_name, tokens) in decoded_results {
-        let result = PyDict::new_bound(py);
-        result.set_item("function_name", &func_name)?;
-
-        if !func_name.is_empty() {
-            // Find function again to get parameter names
-            let function = abi_data.abi.functions()
-                .find(|f| f.name == func_name)
-                .ok_or(FastAbiError::UnknownSelector)?;
-
-            let py_params = PyDict::new_bound(py);
-            for (param, token) in function.inputs.iter().zip(tokens) {
-                let param_name = if param.name.is_empty() {
-                    format!("param_{}", py_params.len())
-                } else {
-                    param.name.clone()
-                };
-                py_params.set_item(param_name, token_to_py(py, token)?)?;
-            }
-            result.set_item("decoded_data", py_params)?;
-        } else {
-            result.set_item("decoded_data", PyDict::new_bound(py))?;
-        }
-
-        py_results.push(result.unbind());
-    }
-
-    Ok(py_results)
+    json_result.map_err(|e| e.into())
 }
 
 /// Decode multiple transaction inputs in batch (NO JSON - direct Python ABI)
+/// Returns JSON string to avoid GIL blocking during Python object creation
 #[pyfunction]
-fn decode_many_direct<'p>(
-    py: Python<'p>,
+fn decode_many_direct(
+    py: Python<'_>,
     calldatas: Vec<Vec<u8>>,
-    py_abi: &Bound<'p, PyAny>,
-) -> PyResult<Vec<Py<PyDict>>> {
+    py_abi: &Bound<'_, PyAny>,
+) -> PyResult<String> {
     let abi_data = get_abi_data_direct(py_abi)?;
 
-    // Release GIL and process with thresholded parallelism
+    // Release GIL and do ALL computation including JSON serialization
     let use_par = calldatas.len() >= BATCH_PAR_THRESHOLD;
-    let results: Result<Vec<_>, FastAbiError> = py.allow_threads(|| {
-        if use_par {
-            calldatas
-                .par_iter()
-                .map(|calldata| {
-                    let calldata = &calldata[..];
-                    if calldata.len() < 4 {
-                        return Ok((String::new(), Vec::new(), Vec::new()));
-                    }
-                    let selector = &calldata[..4];
-                    let mut selector_array = [0u8; 4];
-                    selector_array.copy_from_slice(selector);
-                    let function = match abi_data.selector_map.get(&selector_array) {
-                        Some(f) => f,
-                        None => return Ok((String::new(), Vec::new(), Vec::new())),
-                    };
-                    let tokens = match function.decode_input(&calldata[4..]) {
-                        Ok(t) => t,
-                        Err(_e) => return Ok((String::new(), Vec::new(), Vec::new())),
-                    };
-                    let mut param_names: Vec<String> = Vec::with_capacity(function.inputs.len());
-                    for param in &function.inputs { if param.name.is_empty() { param_names.push(String::new()); } else { param_names.push(param.name.clone()); } }
-                    Ok((function.name.clone(), tokens, param_names))
-                })
-                .collect()
+    let json_result: Result<String, FastAbiError> = py.allow_threads(|| {
+        let process_calldata = |calldata: &[u8]| -> serde_json::Value {
+            if calldata.len() < 4 {
+                return serde_json::json!({
+                    "function_name": "",
+                    "decoded_data": {}
+                });
+            }
+            let selector = &calldata[..4];
+            let mut selector_array = [0u8; 4];
+            selector_array.copy_from_slice(selector);
+            let function = match abi_data.selector_map.get(&selector_array) {
+                Some(f) => f,
+                None => return serde_json::json!({
+                    "function_name": "",
+                    "decoded_data": {}
+                }),
+            };
+            let tokens = match function.decode_input(&calldata[4..]) {
+                Ok(t) => t,
+                Err(_) => return serde_json::json!({
+                    "function_name": "",
+                    "decoded_data": {}
+                }),
+            };
+
+            let mut decoded_data = serde_json::Map::new();
+            for (i, (param, token)) in function.inputs.iter().zip(tokens.iter()).enumerate() {
+                let param_name = if param.name.is_empty() {
+                    format!("param_{}", i)
+                } else {
+                    param.name.clone()
+                };
+                decoded_data.insert(param_name, convert_token_to_json(token));
+            }
+
+            serde_json::json!({
+                "function_name": function.name,
+                "decoded_data": decoded_data
+            })
+        };
+
+        let results: Vec<serde_json::Value> = if use_par {
+            calldatas.par_iter().map(|c| process_calldata(c)).collect()
         } else {
-            calldatas
-                .iter()
-                .map(|calldata| {
-                    let calldata = &calldata[..];
-                    if calldata.len() < 4 {
-                        return Ok((String::new(), Vec::new(), Vec::new()));
-                    }
-                    let selector = &calldata[..4];
-                    let mut selector_array = [0u8; 4];
-                    selector_array.copy_from_slice(selector);
-                    let function = match abi_data.selector_map.get(&selector_array) {
-                        Some(f) => f,
-                        None => return Ok((String::new(), Vec::new(), Vec::new())),
-                    };
-                    let tokens = match function.decode_input(&calldata[4..]) {
-                        Ok(t) => t,
-                        Err(_e) => return Ok((String::new(), Vec::new(), Vec::new())),
-                    };
-                    let mut param_names: Vec<String> = Vec::with_capacity(function.inputs.len());
-                    for param in &function.inputs { if param.name.is_empty() { param_names.push(String::new()); } else { param_names.push(param.name.clone()); } }
-                    Ok((function.name.clone(), tokens, param_names))
-                })
-                .collect()
-        }
+            calldatas.iter().map(|c| process_calldata(c)).collect()
+        };
+
+        serde_json::to_string(&results)
+            .map_err(|e| FastAbiError::DecodeError(format!("JSON serialization failed: {}", e)))
     });
 
-    // Convert results to Python objects (with GIL)
-    let decoded_results = results.map_err(FastAbiError::from)?;
-    let mut py_results: Vec<Py<PyDict>> = Vec::with_capacity(decoded_results.len());
-
-    for (func_name, tokens, param_names) in decoded_results {
-        let result = PyDict::new_bound(py);
-        result.set_item("function_name", &func_name)?;
-
-        if !func_name.is_empty() {
-            let py_params = PyDict::new_bound(py);
-            for (idx, token) in tokens.into_iter().enumerate() {
-                let name = if let Some(n) = param_names.get(idx) { if n.is_empty() { format!("param_{}", idx) } else { n.clone() } } else { format!("param_{}", idx) };
-                py_params.set_item(name, token_to_py(py, token)?)?;
-            }
-            result.set_item("decoded_data", py_params)?;
-        } else {
-            result.set_item("decoded_data", PyDict::new_bound(py))?;
-        }
-
-        py_results.push(result.unbind());
-    }
-
-    Ok(py_results)
+    json_result.map_err(|e| e.into())
 }
 
 /// Decode multiple transaction inputs from hex strings (ultimate optimization)
+/// Returns JSON string to avoid GIL blocking during Python object creation
 #[pyfunction]
-fn decode_many_hex<'p>(
-    py: Python<'p>,
+fn decode_many_hex(
+    py: Python<'_>,
     hex_inputs: Vec<String>,
     abi_json: &str,
-) -> PyResult<Vec<Py<PyDict>>> {
+) -> PyResult<String> {
     let abi_data = get_abi_data_from_json(abi_json)?;
 
-    // Release GIL and do everything including hex parsing (with thresholded parallelism)
+    // Release GIL and do everything including hex parsing and JSON serialization
     let use_par = hex_inputs.len() >= BATCH_PAR_THRESHOLD;
-    let results: Result<Vec<_>, FastAbiError> = py.allow_threads(|| {
-        if use_par {
-            hex_inputs
-                .par_iter()
-                .map(|hex_input| {
-                    let hex_clean = if hex_input.starts_with("0x") { &hex_input[2..] } else { &hex_input };
-                    let calldata = match hex::decode(hex_clean) { Ok(b) => b, Err(_e) => return Ok((String::new(), Vec::new(), Vec::new())) };
-                    if calldata.len() < 4 { return Ok((String::new(), Vec::new(), Vec::new())); }
-                    let selector = &calldata[..4];
-                    let mut selector_array = [0u8; 4];
-                    selector_array.copy_from_slice(selector);
-                    let function = match abi_data.selector_map.get(&selector_array) { Some(f) => f, None => return Ok((String::new(), Vec::new(), Vec::new())) };
-                    let tokens = match function.decode_input(&calldata[4..]) { Ok(t) => t, Err(_e) => return Ok((String::new(), Vec::new(), Vec::new())) };
-                    let mut param_names: Vec<String> = Vec::with_capacity(function.inputs.len());
-                    for param in &function.inputs { if param.name.is_empty() { param_names.push(String::new()); } else { param_names.push(param.name.clone()); } }
-                    Ok((function.name.clone(), tokens, param_names))
-                })
-                .collect()
+    let json_result: Result<String, FastAbiError> = py.allow_threads(|| {
+        let process_hex = |hex_input: &str| -> serde_json::Value {
+            let hex_clean = if hex_input.starts_with("0x") { &hex_input[2..] } else { hex_input };
+            let calldata = match hex::decode(hex_clean) {
+                Ok(b) => b,
+                Err(_) => return serde_json::json!({
+                    "function_name": "",
+                    "decoded_data": {}
+                }),
+            };
+            if calldata.len() < 4 {
+                return serde_json::json!({
+                    "function_name": "",
+                    "decoded_data": {}
+                });
+            }
+            let selector = &calldata[..4];
+            let mut selector_array = [0u8; 4];
+            selector_array.copy_from_slice(selector);
+            let function = match abi_data.selector_map.get(&selector_array) {
+                Some(f) => f,
+                None => return serde_json::json!({
+                    "function_name": "",
+                    "decoded_data": {}
+                }),
+            };
+            let tokens = match function.decode_input(&calldata[4..]) {
+                Ok(t) => t,
+                Err(_) => return serde_json::json!({
+                    "function_name": "",
+                    "decoded_data": {}
+                }),
+            };
+
+            let mut decoded_data = serde_json::Map::new();
+            for (i, (param, token)) in function.inputs.iter().zip(tokens.iter()).enumerate() {
+                let param_name = if param.name.is_empty() {
+                    format!("param_{}", i)
+                } else {
+                    param.name.clone()
+                };
+                decoded_data.insert(param_name, convert_token_to_json(token));
+            }
+
+            serde_json::json!({
+                "function_name": function.name,
+                "decoded_data": decoded_data
+            })
+        };
+
+        let results: Vec<serde_json::Value> = if use_par {
+            hex_inputs.par_iter().map(|h| process_hex(h)).collect()
         } else {
-            hex_inputs
-                .iter()
-                .map(|hex_input| {
-                    let hex_clean = if hex_input.starts_with("0x") { &hex_input[2..] } else { &hex_input };
-                    let calldata = match hex::decode(hex_clean) { Ok(b) => b, Err(_e) => return Ok((String::new(), Vec::new(), Vec::new())) };
-                    if calldata.len() < 4 { return Ok((String::new(), Vec::new(), Vec::new())); }
-                    let selector = &calldata[..4];
-                    let mut selector_array = [0u8; 4];
-                    selector_array.copy_from_slice(selector);
-                    let function = match abi_data.selector_map.get(&selector_array) { Some(f) => f, None => return Ok((String::new(), Vec::new(), Vec::new())) };
-                    let tokens = match function.decode_input(&calldata[4..]) { Ok(t) => t, Err(_e) => return Ok((String::new(), Vec::new(), Vec::new())) };
-                    let mut param_names: Vec<String> = Vec::with_capacity(function.inputs.len());
-                    for param in &function.inputs { if param.name.is_empty() { param_names.push(String::new()); } else { param_names.push(param.name.clone()); } }
-                    Ok((function.name.clone(), tokens, param_names))
-                })
-                .collect()
-        }
+            hex_inputs.iter().map(|h| process_hex(h)).collect()
+        };
+
+        serde_json::to_string(&results)
+            .map_err(|e| FastAbiError::DecodeError(format!("JSON serialization failed: {}", e)))
     });
 
-    // Convert results to Python objects (with GIL)
-    let decoded_results = results.map_err(FastAbiError::from)?;
-    let mut py_results: Vec<Py<PyDict>> = Vec::with_capacity(decoded_results.len());
-
-    for (func_name, tokens, param_names) in decoded_results {
-        let result = PyDict::new_bound(py);
-        result.set_item("function_name", &func_name)?;
-
-        if !func_name.is_empty() {
-            let py_params = PyDict::new_bound(py);
-            for (idx, token) in tokens.into_iter().enumerate() {
-                let name = if let Some(n) = param_names.get(idx) { if n.is_empty() { format!("param_{}", idx) } else { n.clone() } } else { format!("param_{}", idx) };
-                py_params.set_item(name, token_to_py(py, token)?)?;
-            }
-            result.set_item("decoded_data", py_params)?;
-        } else {
-            result.set_item("decoded_data", PyDict::new_bound(py))?;
-        }
-
-        py_results.push(result.unbind());
-    }
-
-    Ok(py_results)
+    json_result.map_err(|e| e.into())
 }
 
 /// Legacy JSON-based function for backward compatibility
@@ -753,10 +600,14 @@ fn decode_input(input_data: &Bound<'_, PyBytes>, abi_json: &str) -> PyResult<Str
     let abi_hash = calculate_abi_hash_memoized(abi_json);
 
     // Fast-path: if exactly same input bytes and ABI as previous call, return cached JSON
-    let ptr = data.as_ptr() as usize;
-    let len = data.len();
-    if let Some((p, l, h, ref cached)) = *LAST_INPUT_JSON.get_or_init(|| Mutex::new(None)).lock().unwrap() {
-        if p == ptr && l == len && h == abi_hash {
+    // Hash the data instead of using raw pointer - Python can reuse memory addresses!
+    let data_hash = {
+        let mut hasher = XxHash64::default();
+        data.hash(&mut hasher);
+        hasher.finish()
+    };
+    if let Some((d_hash, a_hash, ref cached)) = *LAST_INPUT_JSON.get_or_init(|| Mutex::new(None)).lock().unwrap() {
+        if d_hash == data_hash && a_hash == abi_hash {
             return Ok(cached.clone());
         }
     }
@@ -785,8 +636,8 @@ fn decode_input(input_data: &Bound<'_, PyBytes>, abi_json: &str) -> PyResult<Str
                     "decoded_data": decoded_data
                 });
                 let out = result.to_string();
-                // Update micro-cache
-                *LAST_INPUT_JSON.get_or_init(|| Mutex::new(None)).lock().unwrap() = Some((ptr, len, abi_hash, out.clone()));
+                // Update micro-cache with data hash, not pointer
+                *LAST_INPUT_JSON.get_or_init(|| Mutex::new(None)).lock().unwrap() = Some((data_hash, abi_hash, out.clone()));
                 Ok(out)
             }
             Err(_e) => {

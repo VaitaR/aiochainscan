@@ -1,8 +1,172 @@
-# Migration Guide: v0.2.x to v0.3.0
+# Migration Guide
 
-This guide helps you migrate from the legacy `Client` class to the modern `ChainscanClient` architecture.
+This guide helps you migrate between versions of aiochainscan and understand architectural changes.
 
-## Breaking Changes in v0.3.0
+---
+
+## 🚨 v0.4.0 → v0.5.0: Facade Functions Deprecation (Connection Pooling Fix)
+
+### Critical Architectural Issue: Why Facade Functions Are Deprecated
+
+**The Problem**: All facade functions (`get_balance`, `get_logs`, `get_transaction`, etc.) create and destroy HTTP clients on every call:
+
+```python
+async def get_balance(...):
+    http = http or HttpxClientAdapter()  # ❌ New client every call
+    try:
+        return await get_address_balance(...)
+    finally:
+        await http.aclose()  # ❌ Closes connection immediately
+```
+
+**Impact on Bulk Operations**:
+```python
+# ❌ BAD - Creates 100 separate HTTP clients!
+balances = await asyncio.gather(*[
+    get_balance(address=addr, api_kind='eth', network='main', api_key=key)
+    for addr in addresses  # 100 addresses
+])
+```
+
+This causes:
+- **100 TCP connection establishments** (slow!)
+- **100 TLS handshakes** (expensive!)
+- **Loss of HTTP/2 multiplexing** (no connection reuse)
+- **High CPU load** (encryption overhead)
+- **API rate limits/blocks** (SNI/TCP limits per IP)
+- **Memory waste** (100 connection pools in memory)
+
+### ✅ Solution: Use ChainscanClient
+
+```python
+from aiochainscan import ChainscanClient
+from aiochainscan.core.method import Method
+
+# ✅ GOOD - Single persistent connection pool
+client = ChainscanClient.from_config('blockscout_v2', 'ethereum')
+try:
+    # All calls share the same HTTP client and connection pool
+    balances = await asyncio.gather(*[
+        client.call(Method.ACCOUNT_BALANCE, address=addr)
+        for addr in addresses  # 100 addresses
+    ])
+finally:
+    await client.close()
+```
+
+**Benefits**:
+- ✅ **1 TCP connection pool** shared across all calls
+- ✅ **HTTP/2 multiplexing** for concurrent requests
+- ✅ **Connection reuse** (keep-alive)
+- ✅ **Lower CPU usage** (persistent TLS session)
+- ✅ **Better rate limiting** (single client tracking)
+
+### Migration Examples
+
+#### Example 1: Single Balance Query
+
+**Before (Deprecated)**:
+```python
+from aiochainscan import get_balance
+
+balance = await get_balance(
+    address='0x742d35Cc6634C0532925a3b8D9fa7a3D91D1e9b3',
+    api_kind='blockscout_eth',
+    network='ethereum',
+    api_key=''
+)
+```
+
+**After (Recommended)**:
+```python
+from aiochainscan import ChainscanClient
+from aiochainscan.core.method import Method
+
+client = ChainscanClient.from_config('blockscout_v2', 'ethereum')
+try:
+    balance = await client.call(
+        Method.ACCOUNT_BALANCE,
+        address='0x742d35Cc6634C0532925a3b8D9fa7a3D91D1e9b3'
+    )
+finally:
+    await client.close()
+```
+
+#### Example 2: Bulk Operations (Critical!)
+
+**Before (Deprecated - Creates 100 HTTP clients!)**:
+```python
+from aiochainscan import get_balance
+import asyncio
+
+addresses = ['0x...' for _ in range(100)]
+
+# ❌ Creates 100 separate HTTP clients - VERY SLOW
+balances = await asyncio.gather(*[
+    get_balance(
+        address=addr,
+        api_kind='blockscout_eth',
+        network='ethereum',
+        api_key=''
+    )
+    for addr in addresses
+])
+```
+
+**After (Recommended - Shares 1 connection pool)**:
+```python
+from aiochainscan import ChainscanClient
+from aiochainscan.core.method import Method
+import asyncio
+
+addresses = ['0x...' for _ in range(100)]
+
+client = ChainscanClient.from_config('blockscout_v2', 'ethereum')
+try:
+    # ✅ All calls share the same connection pool
+    balances = await asyncio.gather(*[
+        client.call(Method.ACCOUNT_BALANCE, address=addr)
+        for addr in addresses
+    ])
+finally:
+    await client.close()
+```
+
+#### Example 3: Context Manager (Best Practice)
+
+```python
+from aiochainscan import ChainscanClient
+from aiochainscan.core.method import Method
+
+async with ChainscanClient.from_config('blockscout_v2', 'ethereum') as client:
+    # Multiple operations sharing connection pool
+    balance = await client.call(Method.ACCOUNT_BALANCE, address='0x...')
+    txs = await client.call(Method.ACCOUNT_TRANSACTIONS, address='0x...')
+    tokens = await client.call(Method.ACCOUNT_TOKEN_PORTFOLIO, address='0x...')
+    # Automatically closes on exit
+```
+
+### Facade Function Migration Map
+
+| Deprecated Facade Function | ChainscanClient Method |
+|----------------------------|------------------------|
+| `get_balance(...)` | `client.call(Method.ACCOUNT_BALANCE, address=...)` |
+| `get_block(...)` | `client.call(Method.BLOCK_BY_NUMBER, block_number=...)` |
+| `get_logs(...)` | `client.call(Method.LOGS, ...)` |
+| `get_transaction(...)` | `client.call(Method.TX_BY_HASH, txhash=...)` |
+| `get_normal_transactions(...)` | `client.call(Method.ACCOUNT_TRANSACTIONS, address=...)` |
+| `get_token_balance(...)` | `client.call(Method.TOKEN_BALANCE, ...)` |
+| `get_gas_oracle(...)` | `client.call(Method.GAS_ORACLE)` |
+| `get_contract_abi(...)` | `client.call(Method.CONTRACT_ABI, address=...)` |
+
+### Timeline
+
+- **v0.4.0** (Current): Facade functions emit `DeprecationWarning`
+- **v0.5.0** (Next): Facade functions will be removed
+
+---
+
+## v0.2.x → v0.3.0: Legacy Client Deprecation
 
 - **Removed**: Legacy `Client` class and module-based API (`.account`, `.proxy`, `.stats`, etc.)
 - **Removed**: Moralis and RoutScan scanner implementations

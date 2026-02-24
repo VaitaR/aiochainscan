@@ -143,43 +143,37 @@ class BlockScoutV1(EtherscanLikeScanner):
         base_url = f'https://{self.instance_domain}'
         full_url = base_url + spec.path
 
-        # TODO: ARCHITECTURAL ISSUE - This bypasses the Network layer's retry/rate-limit/pooling.
-        # A proper fix requires refactoring to use self._network_client with custom URL support.
-        # See: https://github.com/aiochainscan/aiochainscan/issues/XXX
-        # Use aiohttp directly for BlockScout requests
-        import aiohttp
+        # Use Network layer for proper connection pooling, rate limiting, and retries
+        # Create Network instance if not injected (backward compatibility)
+        if self._network_client is None:
+            from aiochainscan.network import Network
+
+            self._network_client = Network(self.url_builder)
 
         try:
-            async with aiohttp.ClientSession() as session:
-                if spec.http_method == 'GET':
-                    async with session.get(
-                        full_url,
-                        params=request_data.get('params'),
-                        headers=request_data.get('headers', {}),
-                    ) as response:
-                        raw_response = await response.json()
-                else:  # POST
-                    async with session.post(
-                        full_url,
-                        json=request_data.get('data'),
-                        headers=request_data.get('headers', {}),
-                    ) as response:
-                        raw_response = await response.json()
+            if spec.http_method == 'GET':
+                raw_response = await self._network_client.request(
+                    method='GET',
+                    url=full_url,
+                    params=request_data.get('params'),
+                    headers=request_data.get('headers', {}),
+                )
+            else:  # POST
+                raw_response = await self._network_client.request(
+                    method='POST',
+                    url=full_url,
+                    json_data=request_data.get('data'),
+                    headers=request_data.get('headers', {}),
+                )
 
             return spec.parse_response(raw_response)
 
-        except aiohttp.ClientResponseError as e:
-            # API-level errors (4xx, 5xx)
-            raise ChainscanClientApiError(
-                f'BlockScout API error ({e.status})',
-                f'{e.message} - URL: {full_url}',
-            ) from e
-        except aiohttp.ClientError as e:
-            # Network/connection errors
-            raise ChainscanNetworkError(
-                f'BlockScout network error for {self.instance_domain}: {e}',
-                retryable=True,
-            ) from e
+        except ChainscanClientApiError:
+            # Re-raise our own exceptions
+            raise
+        except ChainscanNetworkError:
+            # Re-raise our own exceptions
+            raise
         except Exception as e:
             # Unexpected errors
             raise ChainscanNetworkError(

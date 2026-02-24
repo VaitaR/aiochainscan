@@ -322,43 +322,37 @@ class BlockScoutV2Scanner(Scanner):
             'Accept-Encoding': 'gzip, deflate',
         }
 
-        # Use httpx (declared dependency) instead of aiohttp
-        import httpx
+        # Use Network layer for proper connection pooling, rate limiting, and retries
+        # Create Network instance if not injected (backward compatibility)
+        if self._network_client is None:
+            from aiochainscan.network import Network
 
-        # TODO: ARCHITECTURAL ISSUE - This bypasses the Network layer's retry/rate-limit/pooling.
-        # A proper fix requires refactoring to use self._network_client with custom URL support.
-        # See: https://github.com/aiochainscan/aiochainscan/issues/XXX
+            self._network_client = Network(self.url_builder)
+
         try:
-            async with httpx.AsyncClient() as client:
-                if spec.http_method == 'GET':
-                    response = await client.get(
-                        url,
-                        params=query_params if query_params else None,
-                        headers=headers,
-                    )
-                    response.raise_for_status()
-                    raw_response = response.json()
-                else:  # POST
-                    response = await client.post(
-                        url,
-                        json=query_params if query_params else None,
-                        headers={**headers, 'Content-Type': 'application/json'},
-                    )
-                    response.raise_for_status()
-                    raw_response = response.json()
+            if spec.http_method == 'GET':
+                raw_response = await self._network_client.request(
+                    method='GET',
+                    url=url,
+                    params=query_params if query_params else None,
+                    headers=headers,
+                )
+            else:  # POST
+                raw_response = await self._network_client.request(
+                    method='POST',
+                    url=url,
+                    json_data=query_params if query_params else None,
+                    headers={**headers, 'Content-Type': 'application/json'},
+                )
 
             return spec.parse_response(raw_response)
 
-        except httpx.HTTPStatusError as e:
-            raise ChainscanClientApiError(
-                f'Blockscout V2 API error ({e.response.status_code})',
-                f'{e.response.text} - URL: {url}',
-            ) from e
-        except httpx.HTTPError as e:
-            raise ChainscanNetworkError(
-                f'Blockscout V2 network error for {self.base_url}: {e}',
-                retryable=True,
-            ) from e
+        except ChainscanClientApiError:
+            # Re-raise our own exceptions
+            raise
+        except ChainscanNetworkError:
+            # Re-raise our own exceptions
+            raise
         except Exception as e:
             raise ChainscanNetworkError(
                 f'Blockscout V2 unexpected error for {self.base_url}: {e}',
@@ -444,19 +438,21 @@ class BlockScoutV2Scanner(Scanner):
         spec = self.SPECS[Method.ACCOUNT_BALANCE]
         url = self._build_url(spec, address=address)
 
-        # Use httpx (declared dependency) instead of aiohttp
-        import httpx
+        # Use Network layer for proper connection pooling
+        if self._network_client is None:
+            from aiochainscan.network import Network
+
+            self._network_client = Network(self.url_builder)
 
         headers = {
             'Accept': 'application/json',
             'Accept-Encoding': 'gzip, deflate',
         }
 
-        async with httpx.AsyncClient() as client:
-            response = await client.get(url, headers=headers)
-            response.raise_for_status()
-            result = response.json()
-            return dict(result) if result else {}
+        result = await self._network_client.request(method='GET', url=url, headers=headers)
+        if isinstance(result, dict):
+            return dict(result)
+        return {}
 
     def __str__(self) -> str:
         """String representation including instance info."""

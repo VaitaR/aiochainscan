@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
+import orjson
 import pytest
 
 from aiochainscan.adapters.httpx_client import HttpxClientAdapter
@@ -26,14 +27,18 @@ class TestHttpxClientAdapterInit:
     """Test HttpxClientAdapter initialization."""
 
     def test_default_init(self) -> None:
-        """Test default initialization values."""
+        """Test default initialization values.
+
+        HTTP/2 is disabled by default because rate-limited APIs behind
+        Cloudflare interpret multiplexed streams as DDoS attacks.
+        """
         adapter = HttpxClientAdapter()
-        assert adapter._http2 is True
+        assert adapter._http2 is False
         assert adapter._timeout is not None
         assert adapter._timeout.connect == 30.0
         assert adapter._headers == {}
-        assert adapter._max_connections == 100
-        assert adapter._max_keepalive_connections == 20
+        assert adapter._max_connections == 10
+        assert adapter._max_keepalive_connections == 5
         assert adapter._proxy is None
         assert adapter._client is None
 
@@ -107,7 +112,7 @@ class TestHttpxClientAdapterGet:
 
         mock_response = MagicMock()
         mock_response.headers = {'content-type': 'application/json'}
-        mock_response.json.return_value = {'status': '1', 'result': 'success'}
+        mock_response.content = orjson.dumps({'status': '1', 'result': 'success'})
         mock_response.raise_for_status = MagicMock()
 
         with patch.object(httpx.AsyncClient, 'get', new_callable=AsyncMock) as mock_get:
@@ -129,7 +134,7 @@ class TestHttpxClientAdapterGet:
 
         mock_response = MagicMock()
         mock_response.headers = {'content-type': 'application/json'}
-        mock_response.json.return_value = {'balance': '1000000'}
+        mock_response.content = orjson.dumps({'balance': '1000000'})
         mock_response.raise_for_status = MagicMock()
 
         with patch.object(httpx.AsyncClient, 'get', new_callable=AsyncMock) as mock_get:
@@ -152,7 +157,7 @@ class TestHttpxClientAdapterGet:
 
         mock_response = MagicMock()
         mock_response.headers = {'content-type': 'application/json'}
-        mock_response.json.return_value = {}
+        mock_response.content = orjson.dumps({})
         mock_response.raise_for_status = MagicMock()
 
         with patch.object(httpx.AsyncClient, 'get', new_callable=AsyncMock) as mock_get:
@@ -194,7 +199,7 @@ class TestHttpxClientAdapterPost:
 
         mock_response = MagicMock()
         mock_response.headers = {'content-type': 'application/json'}
-        mock_response.json.return_value = {'id': 1, 'result': 'created'}
+        mock_response.content = orjson.dumps({'id': 1, 'result': 'created'})
         mock_response.raise_for_status = MagicMock()
 
         with patch.object(httpx.AsyncClient, 'post', new_callable=AsyncMock) as mock_post:
@@ -217,7 +222,7 @@ class TestHttpxClientAdapterPost:
 
         mock_response = MagicMock()
         mock_response.headers = {'content-type': 'application/json'}
-        mock_response.json.return_value = {'success': True}
+        mock_response.content = orjson.dumps({'success': True})
         mock_response.raise_for_status = MagicMock()
 
         with patch.object(httpx.AsyncClient, 'post', new_callable=AsyncMock) as mock_post:
@@ -305,7 +310,7 @@ class TestHttpxClientAdapterConcurrency:
             await asyncio.sleep(0.01)  # Simulate network delay
             mock_response = MagicMock()
             mock_response.headers = {'content-type': 'application/json'}
-            mock_response.json.return_value = {'request': call_count}
+            mock_response.content = orjson.dumps({'request': call_count})
             mock_response.raise_for_status = MagicMock()
             return mock_response
 
@@ -328,7 +333,7 @@ class TestHttpxClientAdapterLazyInit:
 
         mock_response = MagicMock()
         mock_response.headers = {'content-type': 'application/json'}
-        mock_response.json.return_value = {'lazy': True}
+        mock_response.content = orjson.dumps({'lazy': True})
         mock_response.raise_for_status = MagicMock()
 
         with patch.object(httpx.AsyncClient, 'get', new_callable=AsyncMock) as mock_get:
@@ -351,15 +356,20 @@ class TestHttpxClientAdapterLazyInit:
 class TestHttpxClientAdapterHttp2:
     """Test HTTP/2 configuration."""
 
-    def test_http2_enabled_by_default(self) -> None:
-        """Test that HTTP/2 is enabled by default."""
-        adapter = HttpxClientAdapter()
-        assert adapter._http2 is True
+    def test_http2_disabled_by_default(self) -> None:
+        """Test that HTTP/2 is disabled by default.
 
-    def test_http2_can_be_disabled(self) -> None:
-        """Test that HTTP/2 can be disabled."""
-        adapter = HttpxClientAdapter(http2=False)
+        HTTP/2 multiplexing on rate-limited APIs behind Cloudflare
+        (Etherscan, BlockScout) triggers WAF blocks (GOAWAY/RST_STREAM)
+        instead of HTTP 429 responses.
+        """
+        adapter = HttpxClientAdapter()
         assert adapter._http2 is False
+
+    def test_http2_can_be_enabled(self) -> None:
+        """Test that HTTP/2 can be enabled when needed."""
+        adapter = HttpxClientAdapter(http2=True)
+        assert adapter._http2 is True
 
     async def test_client_created_with_http2(self) -> None:
         """Test that client is created with HTTP/2 config."""

@@ -8,6 +8,8 @@ Provides a single, consistent API for accessing blockchain data across multiple 
 
 ## Features
 
+- **🆕 SmartContract API** - High-level abstraction with automatic ABI fetching, proxy resolution, and decoded event/transaction iteration
+- **🆕 ENS Integration** - Native support for ENS name resolution and reverse lookup with caching
 - **🆕 Unified ChainscanClient** - Single interface for all blockchain scanners with logical method calls
 - **🔄 Easy Scanner Switching** - Switch between Etherscan, BlockScout, Moralis, etc. with one config change
 - **📡 Real-time Blockchain Data** - Access to 15+ networks including Ethereum, BSC, Polygon, Arbitrum, Optimism, Base
@@ -46,7 +48,103 @@ print("✓ Installation successful!")
 
 ## Quick Start
 
-### 1. Unified ChainscanClient (Recommended)
+### 1. SmartContract API (✨ NEW in v0.4.0)
+
+The **SmartContract API** provides the easiest way to interact with smart contracts - automatically fetching ABIs, resolving proxies, and decoding events/transactions:
+
+```python
+import asyncio
+from aiochainscan import ChainscanClient
+
+async def main():
+    # Create client
+    client = ChainscanClient.from_config('etherscan', 'ethereum')
+
+    # Get contract - automatically fetches ABI and resolves proxy
+    usdt = await client.get_contract("0xdac17f958d2ee523a2206206994597c13d831ec7")
+
+    print(f"Is Proxy: {usdt.is_proxy}")  # True - USDT is a proxy!
+    print(f"Implementation: {usdt.implementation_address}")
+
+    # Iterate through decoded Transfer events - so easy!
+    async for event in usdt.iter_events("Transfer", limit=10):
+        from_addr = event.args['from'][:10]
+        to_addr = event.args['to'][:10]
+        value = event.args['value'] / 1e6  # USDT has 6 decimals
+        print(f"Block {event.block_number}: {from_addr}... → {to_addr}... ${value:,.2f}")
+
+    # Iterate through decoded transactions
+    async for tx in usdt.iter_transactions(limit=5):
+        print(f"Function: {tx.function_name}()")
+        print(f"  Args: {tx.args}")
+        print(f"  From: {tx.from_address[:10]}...")
+
+    await client.close()
+
+asyncio.run(main())
+```
+
+**See [SmartContract API Documentation](docs/SMART_CONTRACT_API.md) for complete guide!**
+
+### 2. ENS Integration (✨ NEW in v0.4.0)
+
+**ENS (Ethereum Name Service)** integration makes it easy to resolve names to addresses and vice versa:
+
+```python
+import asyncio
+from aiochainscan import ChainscanClient
+
+async def main():
+    # Create client (ENS only works on Ethereum mainnet)
+    # Use BlockScout V2 for reverse lookup (no API key required)
+    client = ChainscanClient.from_config('blockscout_v2', 'ethereum')
+
+    # Reverse lookup: address → name (works with BlockScout V2)
+    name = await client.lookup_address("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")
+    print(f"vitalik's address → {name}")
+    # Output: vitalik's address → vitalik.eth
+
+    # Batch reverse lookup (parallel)
+    names = await client.lookup_addresses([
+        "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
+        "0xb8c2C29ee19D8307cb7255e1Cd9CbDE883A267d5"
+    ])
+    print(f"Found {len(names)} ENS names")
+    # Output: Found 2 ENS names
+
+    # Note: Forward resolution (name → address) requires Etherscan
+    # because BlockScout V2 doesn't expose eth_call needed for ENS contracts
+
+    # For forward resolution, use Etherscan (requires API key)
+    client_etherscan = ChainscanClient.from_config('etherscan', 'ethereum')
+    address = await client_etherscan.resolve_name("vitalik.eth")
+    print(f"vitalik.eth → {address}")
+    # Output: vitalik.eth → 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045
+
+    # Integrate with SmartContract API
+    # Enrich event data with ENS names
+    usdt = await client.get_contract("0xdac17f958d2ee523a2206206994597c13d831ec7")
+    async for event in usdt.iter_events("Transfer", limit=5):
+        # Lookup ENS names for addresses in Transfer events
+        from_name = await client.lookup_address(event.args['from'])
+        to_name = await client.lookup_address(event.args['to'])
+        print(f"Transfer: {from_name or event.args['from'][:10]+'...'} → {to_name or event.args['to'][:10]+'...'}")
+
+    await client.close()
+
+asyncio.run(main())
+```
+
+**Features:**
+- Reverse lookup (address → name) with `lookup_address()` - works with BlockScout V2 (no API key)
+- Forward resolution (name → address) with `resolve_name()` - requires Etherscan (API key needed)
+- Batch operations with `resolve_names()` and `lookup_addresses()`
+- Automatic caching with configurable TTL
+- Seamless integration with SmartContract API
+
+**See [ENS Integration Documentation](docs/ENS_INTEGRATION.md) for complete guide!**
+
+### 3. Unified ChainscanClient (Recommended)
 
 The **ChainscanClient** provides a unified interface for all blockchain scanners with logical method calls:
 
@@ -88,9 +186,34 @@ async def main():
 asyncio.run(main())
 ```
 
-### 2. Legacy Facade Functions
+### 4. ⚠️ Legacy Facade Functions (Deprecated)
 
-For simple use cases, you can also use the legacy facade functions (maintained for backward compatibility):
+**WARNING**: Facade functions are deprecated in v0.4.0 and will be removed in v0.5.0 due to critical connection pooling issues.
+
+<details>
+<summary>Why are facade functions deprecated? (Click to expand)</summary>
+
+**The Problem**: Each facade function call creates and destroys an HTTP client, preventing connection pooling:
+
+```python
+# ❌ AVOID - Creates 100 separate HTTP clients (very slow!)
+balances = await asyncio.gather(*[
+    get_balance(address=addr, api_kind='eth', network='main', api_key=key)
+    for addr in addresses  # 100 addresses
+])
+```
+
+This causes:
+- 100 TCP connection establishments
+- 100 TLS handshakes
+- Loss of HTTP/2 multiplexing
+- High CPU load and API rate limits
+
+**The Solution**: Use `ChainscanClient` which maintains a persistent connection pool (see examples above).
+
+</details>
+
+For simple use cases, you can still use facade functions (but expect deprecation warnings):
 
 ```python
 import asyncio
@@ -119,7 +242,37 @@ async def main():
 asyncio.run(main())
 ```
 
-### 2. Optimized Bulk Operations
+**Migration Path**: See [MIGRATION_GUIDE.md](docs/MIGRATION_GUIDE.md) for detailed migration instructions.
+
+### 5. Optimized Bulk Operations
+
+**Important**: For bulk operations, always use `ChainscanClient` to benefit from connection pooling:
+
+```python
+import asyncio
+from aiochainscan import ChainscanClient
+from aiochainscan.core.method import Method
+
+async def main():
+    addresses = ['0x...' for _ in range(100)]  # 100 addresses
+
+    # ✅ Efficient - Shares connection pool across all requests
+    client = ChainscanClient.from_config('blockscout_v2', 'ethereum')
+    try:
+        balances = await asyncio.gather(*[
+            client.call(Method.ACCOUNT_BALANCE, address=addr)
+            for addr in addresses
+        ])
+        print(f"Fetched {len(balances)} balances efficiently!")
+    finally:
+        await client.close()
+
+asyncio.run(main())
+```
+
+### 6. Legacy Optimized Functions (Also Deprecated)
+
+The library also provides optimized aggregation functions (also being deprecated):
 
 ```python
 import asyncio

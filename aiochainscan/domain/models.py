@@ -8,29 +8,57 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Generic, TypeVar
 
+from eth_utils.address import is_address, to_checksum_address
+
 
 @dataclass(slots=True, frozen=True)
 class Address:
-    """EVM address value object.
+    """EVM address value object with EIP-55 checksum normalization.
 
-    Stores a normalized, lowercase hex string with 0x prefix.
+    Stores addresses in EIP-55 checksum format for consistency and interoperability.
+    Comparison is case-insensitive to handle addresses from different sources.
+
+    Example:
+        >>> addr = Address('0xd8da6bf26964af9d7eed9e03e53415d37aa96045')
+        >>> str(addr)
+        '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045'  # EIP-55 checksum
+        >>> addr == '0xD8DA6BF26964AF9D7EED9E03E53415D37AA96045'  # Case-insensitive
+        True
     """
 
     value: str
 
     def __post_init__(self) -> None:
-        normalized: str = self.value.lower().strip()
-        if not (normalized.startswith('0x') and len(normalized) == 42):
-            raise ValueError('Address must be 0x-prefixed 40-hex string')
-        object.__setattr__(self, 'value', normalized)
+        stripped = self.value.strip()
+        if not is_address(stripped):
+            raise ValueError(f'Invalid EVM address: {stripped!r}')
+        # Normalize to EIP-55 checksum format
+        object.__setattr__(self, 'value', to_checksum_address(stripped))
 
     def __str__(self) -> str:
         return self.value
 
+    def __eq__(self, other: object) -> bool:
+        """Case-insensitive equality for cross-source compatibility."""
+        if isinstance(other, Address):
+            return self.value.lower() == other.value.lower()
+        if isinstance(other, str):
+            return self.value.lower() == other.lower()
+        return False
+
+    def __hash__(self) -> int:
+        """Hash based on lowercase for consistent hashing with __eq__."""
+        return hash(self.value.lower())
+
 
 @dataclass(slots=True, frozen=True)
 class TxHash:
-    """Transaction hash value object."""
+    """Transaction hash value object.
+
+    Stores normalized lowercase hex string with 0x prefix.
+    Transaction hashes don't use EIP-55 checksums (unlike addresses).
+    Comparison is case-insensitive for cross-source compatibility.
+    """
 
     value: str
 
@@ -42,6 +70,18 @@ class TxHash:
 
     def __str__(self) -> str:
         return self.value
+
+    def __eq__(self, other: object) -> bool:
+        """Case-insensitive equality for cross-source compatibility."""
+        if isinstance(other, TxHash):
+            return self.value.lower() == other.value.lower()
+        if isinstance(other, str):
+            return self.value.lower() == other.lower()
+        return False
+
+    def __hash__(self) -> int:
+        """Hash based on lowercase for consistent hashing with __eq__."""
+        return hash(self.value.lower())
 
 
 @dataclass(slots=True, frozen=True)

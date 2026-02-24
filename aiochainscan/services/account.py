@@ -23,6 +23,127 @@ from aiochainscan.services._executor import run_with_policies
 CACHE_TTL_SECONDS_BALANCE: int = 10
 
 
+# ============================================================================
+# DRY Helper Functions - Extracted common patterns for account module
+# ============================================================================
+
+
+async def _fetch_account_list_data(
+    *,
+    action: str,
+    params: dict[str, Any],
+    api_kind: str,
+    network: str,
+    api_key: str,
+    http: HttpClient,
+    _endpoint_builder: EndpointBuilder,
+    extra_params: Mapping[str, Any] | None = None,
+    _rate_limiter: RateLimiter | None = None,
+    _retry: RetryPolicy | None = None,
+    _telemetry: Telemetry | None = None,
+    telemetry_name: str | None = None,
+    preserve_none: bool = False,
+) -> list[dict[str, Any]]:
+    """
+    Generic helper for fetching account-related list data from blockchain explorers.
+
+    This consolidates the common pattern used across:
+    - get_normal_transactions
+    - get_internal_transactions
+    - get_token_transfers
+    - get_mined_blocks
+    - get_beacon_chain_withdrawals
+
+    Args:
+        action: The API action (e.g., 'txlist', 'txlistinternal', 'tokentx')
+        params: Base parameters dict (will be merged with module='account' and action)
+        api_kind: Scanner identifier (e.g., 'eth', 'bsc')
+        network: Network name (e.g., 'main', 'test')
+        api_key: API key for the scanner
+        http: HTTP client port
+        _endpoint_builder: Endpoint builder for URL construction
+        extra_params: Additional params to merge
+        _rate_limiter: Optional rate limiter
+        _retry: Optional retry policy
+        _telemetry: Optional telemetry recorder
+        telemetry_name: Name for telemetry events (defaults to f'account.{action}')
+        preserve_none: Whether to keep None values in params
+
+    Returns:
+        List of dict results from the API
+    """
+    endpoint = _endpoint_builder.open(api_key=api_key, api_kind=api_kind, network=network)
+    url: str = endpoint.api_url
+
+    # Build final params with module and action
+    final_params: dict[str, Any] = {'module': 'account', 'action': action, **params}
+
+    # Filter None values unless preserve_none is True
+    if not preserve_none:
+        final_params = {k: v for k, v in final_params.items() if v is not None}
+
+    # Merge extra params
+    if extra_params:
+        final_params.update({k: v for k, v in extra_params.items() if v is not None})
+
+    signed_params, headers = endpoint.filter_and_sign(final_params, headers=None)
+
+    # Determine telemetry name
+    telem_name = telemetry_name or f'account.{action}'
+    rate_limiter_key = f'{api_kind}:{network}:{action}'
+
+    response: Any = await run_with_policies(
+        do_call=lambda: http.get(url, params=signed_params, headers=headers),
+        telemetry=_telemetry,
+        telemetry_name=telem_name,
+        api_kind=api_kind,
+        network=network,
+        rate_limiter=_rate_limiter,
+        rate_limiter_key=rate_limiter_key,
+        retry_policy=_retry,
+    )
+
+    # Parse response - common pattern for all list endpoints
+    out = _parse_list_response(response=response)
+
+    # Record telemetry for successful list responses
+    if _telemetry is not None and out:
+        await _telemetry.record_event(
+            f'{telem_name}.ok',
+            {'api_kind': api_kind, 'network': network, 'items': len(out)},
+        )
+
+    return out
+
+
+def _parse_list_response(*, response: Any) -> list[dict[str, Any]]:
+    """
+    Parse API response for list endpoints with common logic.
+
+    Handles both:
+    - Etherscan-style: {"status": "1", "result": [...]}
+    - Direct list responses: [...]
+
+    Note: This is a synchronous helper. Telemetry recording is deferred
+    to the caller to maintain DRY principle while keeping this function simple.
+    """
+    out: list[dict[str, Any]] = []
+
+    if isinstance(response, dict):
+        result = response.get('result', response)
+        if isinstance(result, list):
+            out = [r for r in result if isinstance(r, dict)]
+    elif isinstance(response, list):
+        out = [r for r in response if isinstance(r, dict)]
+
+    return out
+
+
+# ============================================================================
+# Public API Functions
+# ============================================================================
+
+
 async def get_address_balance(
     *,
     address: Address | str,
@@ -86,7 +207,7 @@ async def get_address_balance(
         # Fallback: best-effort int conversion
         try:
             value = int(response)
-        except Exception:
+        except (ValueError, TypeError):
             value = 0
 
     if _telemetry is not None:
@@ -118,47 +239,23 @@ async def get_address_balances(
     _retry: RetryPolicy | None = None,
     _telemetry: Telemetry | None = None,
 ) -> list[dict[str, Any]]:
-    endpoint = _endpoint_builder.open(api_key=api_key, api_kind=api_kind, network=network)
-    url: str = endpoint.api_url
-    params: dict[str, Any] = {
-        'module': 'account',
-        'action': 'balancemulti',
-        'address': ','.join(addresses),
-        'tag': tag,
-    }
-    if extra_params:
-        params.update({k: v for k, v in extra_params.items() if v is not None})
-    signed_params, headers = endpoint.filter_and_sign(params, headers=None)
-
-    response: Any = await run_with_policies(
-        do_call=lambda: http.get(url, params=signed_params, headers=headers),
-        telemetry=_telemetry,
-        telemetry_name='account.get_address_balances',
+    return await _fetch_account_list_data(
+        action='balancemulti',
+        params={
+            'address': ','.join(addresses),
+            'tag': tag,
+        },
         api_kind=api_kind,
         network=network,
-        rate_limiter=_rate_limiter,
-        rate_limiter_key=f'{api_kind}:{network}:balancemulti',
-        retry_policy=_retry,
+        api_key=api_key,
+        http=http,
+        _endpoint_builder=_endpoint_builder,
+        extra_params=extra_params,
+        _rate_limiter=_rate_limiter,
+        _retry=_retry,
+        _telemetry=_telemetry,
+        telemetry_name='account.get_address_balances',
     )
-    if isinstance(response, dict):
-        result = response.get('result', response)
-        if isinstance(result, list):
-            out = [r for r in result if isinstance(r, dict)]
-            if _telemetry is not None:
-                await _telemetry.record_event(
-                    'account.get_address_balances.ok',
-                    {'api_kind': api_kind, 'network': network, 'items': len(out)},
-                )
-            return out
-    if isinstance(response, list):
-        out = [r for r in response if isinstance(r, dict)]
-        if _telemetry is not None:
-            await _telemetry.record_event(
-                'account.get_address_balances.ok',
-                {'api_kind': api_kind, 'network': network, 'items': len(out)},
-            )
-        return out
-    return []
 
 
 async def get_normal_transactions(
@@ -179,52 +276,27 @@ async def get_normal_transactions(
     _retry: RetryPolicy | None = None,
     _telemetry: Telemetry | None = None,
 ) -> list[dict[str, Any]]:
-    endpoint = _endpoint_builder.open(api_key=api_key, api_kind=api_kind, network=network)
-    url: str = endpoint.api_url
-    params: dict[str, Any] = {
-        'module': 'account',
-        'action': 'txlist',
-        'address': address,
-        'startblock': start_block,
-        'endblock': end_block,
-        'sort': sort,
-        'page': page,
-        'offset': offset,
-    }
-    if extra_params:
-        params.update({k: v for k, v in extra_params.items() if v is not None})
-    signed_params, headers = endpoint.filter_and_sign(params, headers=None)
-
-    response: Any = await run_with_policies(
-        do_call=lambda: http.get(url, params=signed_params, headers=headers),
-        telemetry=_telemetry,
-        telemetry_name='account.get_normal_transactions',
+    return await _fetch_account_list_data(
+        action='txlist',
+        params={
+            'address': address,
+            'startblock': start_block,
+            'endblock': end_block,
+            'sort': sort,
+            'page': page,
+            'offset': offset,
+        },
         api_kind=api_kind,
         network=network,
-        rate_limiter=_rate_limiter,
-        rate_limiter_key=f'{api_kind}:{network}:txlist',
-        retry_policy=_retry,
+        api_key=api_key,
+        http=http,
+        _endpoint_builder=_endpoint_builder,
+        extra_params=extra_params,
+        _rate_limiter=_rate_limiter,
+        _retry=_retry,
+        _telemetry=_telemetry,
+        telemetry_name='account.get_normal_transactions',
     )
-
-    if isinstance(response, dict):
-        result = response.get('result', response)
-        if isinstance(result, list):
-            out = [r for r in result if isinstance(r, dict)]
-            if _telemetry is not None:
-                await _telemetry.record_event(
-                    'account.get_normal_transactions.ok',
-                    {'api_kind': api_kind, 'network': network, 'items': len(out)},
-                )
-            return out
-    if isinstance(response, list):
-        out = [r for r in response if isinstance(r, dict)]
-        if _telemetry is not None:
-            await _telemetry.record_event(
-                'account.get_normal_transactions.ok',
-                {'api_kind': api_kind, 'network': network, 'items': len(out)},
-            )
-        return out
-    return []
 
 
 async def get_internal_transactions(
@@ -246,53 +318,28 @@ async def get_internal_transactions(
     _retry: RetryPolicy | None = None,
     _telemetry: Telemetry | None = None,
 ) -> list[dict[str, Any]]:
-    endpoint = _endpoint_builder.open(api_key=api_key, api_kind=api_kind, network=network)
-    url: str = endpoint.api_url
-    params: dict[str, Any] = {
-        'module': 'account',
-        'action': 'txlistinternal',
-        'address': address,
-        'startblock': start_block,
-        'endblock': end_block,
-        'sort': sort,
-        'page': page,
-        'offset': offset,
-        'txhash': txhash,
-    }
-    if extra_params:
-        params.update({k: v for k, v in extra_params.items() if v is not None})
-    signed_params, headers = endpoint.filter_and_sign(params, headers=None)
-
-    response: Any = await run_with_policies(
-        do_call=lambda: http.get(url, params=signed_params, headers=headers),
-        telemetry=_telemetry,
-        telemetry_name='account.get_internal_transactions',
+    return await _fetch_account_list_data(
+        action='txlistinternal',
+        params={
+            'address': address,
+            'startblock': start_block,
+            'endblock': end_block,
+            'sort': sort,
+            'page': page,
+            'offset': offset,
+            'txhash': txhash,
+        },
         api_kind=api_kind,
         network=network,
-        rate_limiter=_rate_limiter,
-        rate_limiter_key=f'{api_kind}:{network}:txlistinternal',
-        retry_policy=_retry,
+        api_key=api_key,
+        http=http,
+        _endpoint_builder=_endpoint_builder,
+        extra_params=extra_params,
+        _rate_limiter=_rate_limiter,
+        _retry=_retry,
+        _telemetry=_telemetry,
+        telemetry_name='account.get_internal_transactions',
     )
-
-    if isinstance(response, dict):
-        result = response.get('result', response)
-        if isinstance(result, list):
-            out = [r for r in result if isinstance(r, dict)]
-            if _telemetry is not None:
-                await _telemetry.record_event(
-                    'account.get_internal_transactions.ok',
-                    {'api_kind': api_kind, 'network': network, 'items': len(out)},
-                )
-            return out
-    if isinstance(response, list):
-        out = [r for r in response if isinstance(r, dict)]
-        if _telemetry is not None:
-            await _telemetry.record_event(
-                'account.get_internal_transactions.ok',
-                {'api_kind': api_kind, 'network': network, 'items': len(out)},
-            )
-        return out
-    return []
 
 
 async def get_token_transfers(
@@ -316,59 +363,32 @@ async def get_token_transfers(
     _telemetry: Telemetry | None = None,
     preserve_none: bool = False,
 ) -> list[dict[str, Any]]:
-    endpoint = _endpoint_builder.open(api_key=api_key, api_kind=api_kind, network=network)
-    url: str = endpoint.api_url
     actions = {'erc20': 'tokentx', 'erc721': 'tokennfttx', 'erc1155': 'token1155tx'}
-    params: dict[str, Any] = {
-        'module': 'account',
-        'action': actions.get(token_standard, 'tokentx'),
-        'address': address,
-        # Preserve legacy tests shape: omit keys with None to match expected params
-        # (contractaddress and sort are optional and should not appear when None)
-        'contractaddress': contract_address,
-        'startblock': start_block,
-        'endblock': end_block,
-        'sort': sort,
-        'page': page,
-        'offset': offset,
-    }
-    # Preserve or drop None-valued optional keys depending on caller needs
-    if not preserve_none:
-        params = {k: v for k, v in params.items() if v is not None}
-    if extra_params:
-        params.update({k: v for k, v in extra_params.items() if v is not None})
-    signed_params, headers = endpoint.filter_and_sign(params, headers=None)
+    action = actions.get(token_standard, 'tokentx')
 
-    response: Any = await run_with_policies(
-        do_call=lambda: http.get(url, params=signed_params, headers=headers),
-        telemetry=_telemetry,
-        telemetry_name='account.get_token_transfers',
+    return await _fetch_account_list_data(
+        action=action,
+        params={
+            'address': address,
+            'contractaddress': contract_address,
+            'startblock': start_block,
+            'endblock': end_block,
+            'sort': sort,
+            'page': page,
+            'offset': offset,
+        },
         api_kind=api_kind,
         network=network,
-        rate_limiter=_rate_limiter,
-        rate_limiter_key=f'{api_kind}:{network}:{params["action"]}',
-        retry_policy=_retry,
+        api_key=api_key,
+        http=http,
+        _endpoint_builder=_endpoint_builder,
+        extra_params=extra_params,
+        _rate_limiter=_rate_limiter,
+        _retry=_retry,
+        _telemetry=_telemetry,
+        telemetry_name='account.get_token_transfers',
+        preserve_none=preserve_none,
     )
-
-    if isinstance(response, dict):
-        result = response.get('result', response)
-        if isinstance(result, list):
-            out = [r for r in result if isinstance(r, dict)]
-            if _telemetry is not None:
-                await _telemetry.record_event(
-                    'account.get_token_transfers.ok',
-                    {'api_kind': api_kind, 'network': network, 'items': len(out)},
-                )
-            return out
-    if isinstance(response, list):
-        out = [r for r in response if isinstance(r, dict)]
-        if _telemetry is not None:
-            await _telemetry.record_event(
-                'account.get_token_transfers.ok',
-                {'api_kind': api_kind, 'network': network, 'items': len(out)},
-            )
-        return out
-    return []
 
 
 async def get_all_transactions_optimized(
@@ -420,7 +440,7 @@ async def get_all_transactions_optimized(
                 max_offset=max_offset,
                 max_concurrent=max_concurrent,
             )
-        except Exception:
+        except (ImportError, AttributeError):
             from aiochainscan.services.fetch_all import (
                 fetch_all_transactions_eth_sliding_fast,
                 fetch_all_transactions_fast,
@@ -1034,50 +1054,25 @@ async def get_mined_blocks(
     _retry: RetryPolicy | None = None,
     _telemetry: Telemetry | None = None,
 ) -> list[dict[str, Any]]:
-    endpoint = _endpoint_builder.open(api_key=api_key, api_kind=api_kind, network=network)
-    url: str = endpoint.api_url
-    params: dict[str, Any] = {
-        'module': 'account',
-        'action': 'getminedblocks',
-        'address': address,
-        'blocktype': blocktype,
-        'page': page,
-        'offset': offset,
-    }
-    if extra_params:
-        params.update({k: v for k, v in extra_params.items() if v is not None})
-    signed_params, headers = endpoint.filter_and_sign(params, headers=None)
-
-    response: Any = await run_with_policies(
-        do_call=lambda: http.get(url, params=signed_params, headers=headers),
-        telemetry=_telemetry,
-        telemetry_name='account.get_mined_blocks',
+    return await _fetch_account_list_data(
+        action='getminedblocks',
+        params={
+            'address': address,
+            'blocktype': blocktype,
+            'page': page,
+            'offset': offset,
+        },
         api_kind=api_kind,
         network=network,
-        rate_limiter=_rate_limiter,
-        rate_limiter_key=f'{api_kind}:{network}:getminedblocks',
-        retry_policy=_retry,
+        api_key=api_key,
+        http=http,
+        _endpoint_builder=_endpoint_builder,
+        extra_params=extra_params,
+        _rate_limiter=_rate_limiter,
+        _retry=_retry,
+        _telemetry=_telemetry,
+        telemetry_name='account.get_mined_blocks',
     )
-
-    if isinstance(response, dict):
-        result = response.get('result', response)
-        if isinstance(result, list):
-            out = [r for r in result if isinstance(r, dict)]
-            if _telemetry is not None:
-                await _telemetry.record_event(
-                    'account.get_mined_blocks.ok',
-                    {'api_kind': api_kind, 'network': network, 'items': len(out)},
-                )
-            return out
-    if isinstance(response, list):
-        out = [r for r in response if isinstance(r, dict)]
-        if _telemetry is not None:
-            await _telemetry.record_event(
-                'account.get_mined_blocks.ok',
-                {'api_kind': api_kind, 'network': network, 'items': len(out)},
-            )
-        return out
-    return []
 
 
 async def get_beacon_chain_withdrawals(
@@ -1098,52 +1093,27 @@ async def get_beacon_chain_withdrawals(
     _retry: RetryPolicy | None = None,
     _telemetry: Telemetry | None = None,
 ) -> list[dict[str, Any]]:
-    endpoint = _endpoint_builder.open(api_key=api_key, api_kind=api_kind, network=network)
-    url: str = endpoint.api_url
-    params: dict[str, Any] = {
-        'module': 'account',
-        'action': 'txsBeaconWithdrawal',
-        'address': address,
-        'startblock': start_block,
-        'endblock': end_block,
-        'sort': sort,
-        'page': page,
-        'offset': offset,
-    }
-    if extra_params:
-        params.update({k: v for k, v in extra_params.items() if v is not None})
-    signed_params, headers = endpoint.filter_and_sign(params, headers=None)
-
-    response: Any = await run_with_policies(
-        do_call=lambda: http.get(url, params=signed_params, headers=headers),
-        telemetry=_telemetry,
-        telemetry_name='account.get_beacon_chain_withdrawals',
+    return await _fetch_account_list_data(
+        action='txsBeaconWithdrawal',
+        params={
+            'address': address,
+            'startblock': start_block,
+            'endblock': end_block,
+            'sort': sort,
+            'page': page,
+            'offset': offset,
+        },
         api_kind=api_kind,
         network=network,
-        rate_limiter=_rate_limiter,
-        rate_limiter_key=f'{api_kind}:{network}:txsBeaconWithdrawal',
-        retry_policy=_retry,
+        api_key=api_key,
+        http=http,
+        _endpoint_builder=_endpoint_builder,
+        extra_params=extra_params,
+        _rate_limiter=_rate_limiter,
+        _retry=_retry,
+        _telemetry=_telemetry,
+        telemetry_name='account.get_beacon_chain_withdrawals',
     )
-
-    if isinstance(response, dict):
-        result = response.get('result', response)
-        if isinstance(result, list):
-            out = [r for r in result if isinstance(r, dict)]
-            if _telemetry is not None:
-                await _telemetry.record_event(
-                    'account.get_beacon_chain_withdrawals.ok',
-                    {'api_kind': api_kind, 'network': network, 'items': len(out)},
-                )
-            return out
-    if isinstance(response, list):
-        out = [r for r in response if isinstance(r, dict)]
-        if _telemetry is not None:
-            await _telemetry.record_event(
-                'account.get_beacon_chain_withdrawals.ok',
-                {'api_kind': api_kind, 'network': network, 'items': len(out)},
-            )
-        return out
-    return []
 
 
 async def get_account_balance_by_blockno(

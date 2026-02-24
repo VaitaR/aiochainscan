@@ -18,7 +18,7 @@ class StructlogTelemetry(Telemetry):
 
             self._logger = structlog.get_logger('aiochainscan')
             self._use_structlog = True
-        except Exception:
+        except ImportError:
             import logging
 
             self._logger = logging.getLogger('aiochainscan')

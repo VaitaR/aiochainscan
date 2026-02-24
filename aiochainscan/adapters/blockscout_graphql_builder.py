@@ -46,7 +46,7 @@ class BlockscoutGraphQLBuilder(GraphQLQueryBuilder):
                     return None
                 try:
                     return int(v, 0)
-                except Exception:
+                except ValueError:
                     return None
             return None
 
@@ -89,7 +89,7 @@ class BlockscoutGraphQLBuilder(GraphQLQueryBuilder):
                             'topics': [str(t) for t in topics],
                         }
                     )
-        except Exception:
+        except (KeyError, TypeError, AttributeError):
             # Be defensive; return what we have
             pass
         return items, next_cursor
@@ -109,7 +109,7 @@ class BlockscoutGraphQLBuilder(GraphQLQueryBuilder):
         tx: dict[str, Any] = {}
         try:
             tx = data.get('transaction', {}) if isinstance(data, dict) else {}
-        except Exception:
+        except (KeyError, TypeError, AttributeError):
             tx = {}
         if not isinstance(tx, dict):
             return {}
@@ -122,7 +122,7 @@ class BlockscoutGraphQLBuilder(GraphQLQueryBuilder):
                 if isinstance(v, str) and v.startswith('0x'):
                     return v
                 return hex(int(v))
-            except Exception:
+            except (ValueError, TypeError):
                 return None
 
         return {
@@ -262,6 +262,6 @@ class BlockscoutGraphQLBuilder(GraphQLQueryBuilder):
                             'confirmations': None,
                         }
                     )
-        except Exception:
+        except (KeyError, TypeError, AttributeError):
             pass
         return items, next_cursor
