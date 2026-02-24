@@ -323,12 +323,11 @@ class BlockScoutV2Scanner(Scanner):
             'Accept-Encoding': 'gzip, deflate',
         }
 
-        # Use Network layer for proper connection pooling, rate limiting, and retries
-        # Create Network instance if not injected (backward compatibility)
         if self._network_client is None:
-            from aiochainscan.network import Network
-
-            self._network_client = Network(self.url_builder)
+            raise RuntimeError(
+                f'{self.name} v{self.version}: network_client is required. '
+                'Create scanner via ChainscanClient.from_config() which injects it automatically.'
+            )
 
         try:
             if spec.http_method == 'GET':
@@ -439,11 +438,11 @@ class BlockScoutV2Scanner(Scanner):
         spec = self.SPECS[Method.ACCOUNT_BALANCE]
         url = self._build_url(spec, address=address)
 
-        # Use Network layer for proper connection pooling
         if self._network_client is None:
-            from aiochainscan.network import Network
-
-            self._network_client = Network(self.url_builder)
+            raise RuntimeError(
+                f'{self.name} v{self.version}: network_client is required. '
+                'Create scanner via ChainscanClient.from_config() which injects it automatically.'
+            )
 
         headers = {
             'Accept': 'application/json',
