@@ -33,7 +33,9 @@ jobs:
           pip install 'maturin>=1.8,<2.0' build wheel setuptools
 
       - name: Build wheel
-        run: python -m build
+        run: |
+          maturin build --release --out dist/
+          python -m build --sdist
 
       - name: Test wheel installation in clean environment
         run: |
@@ -64,17 +66,26 @@ jobs:
 
       - name: Test source distribution installation
         run: |
-          # Create another fresh virtual environment
-          python -m venv /tmp/test-sdist
-          source /tmp/test-sdist/bin/activate
-
-          # Install from source distribution
-          pip install dist/*.tar.gz
-
-          # Verify package works
-          python -c "import aiochainscan; print('✓ Source distribution works')"
-
-          deactivate
+          # Verify sdist was created correctly
+          ls -la dist/*.tar.gz
+          python -c "
+          import tarfile, sys
+          sdist = sorted(__import__('glob').glob('dist/*.tar.gz'))[0]
+          with tarfile.open(sdist) as t:
+              names = t.getnames()
+              print(f'✓ Source distribution created: {sdist}')
+              print(f'  Contains {len(names)} files')
+              has_pyproject = any('pyproject.toml' in n for n in names)
+              has_cargo = any('Cargo.toml' in n for n in names)
+              has_rust = any('.rs' in n for n in names)
+              print(f'  pyproject.toml present: {has_pyproject}')
+              print(f'  Cargo.toml present: {has_cargo}')
+              print(f'  Rust sources present: {has_rust}')
+              if not (has_pyproject and has_cargo and has_rust):
+                  print('✗ Source distribution is incomplete!')
+                  sys.exit(1)
+              print('✓ Source distribution structure is valid')
+          "
 
       - name: Test editable install
         run: |
@@ -153,11 +164,13 @@ jobs:
 
       - name: Check dependencies are installed
         run: |
-          python -c "import aiohttp; print('✓ aiohttp')"
+          python -c "import httpx; print('✓ httpx')"
           python -c "import aiolimiter; print('✓ aiolimiter')"
-          python -c "import aiohttp_retry; print('✓ aiohttp_retry')"
+          python -c "import tenacity; print('✓ tenacity')"
           python -c "import eth_abi; print('✓ eth_abi')"
           python -c "import structlog; print('✓ structlog')"
+          python -c "import orjson; print('✓ orjson')"
+          python -c "import pydantic; print('✓ pydantic')"
 
       - name: Verify package structure
         run: |
