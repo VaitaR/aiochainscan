@@ -56,9 +56,9 @@ class Scanner(ABC):
             network: Network name (must be in supported_networks)
             url_builder: UrlBuilder instance for URL construction
             chain_id: Chain ID (optional, will be resolved from network)
-            network_client: Optional Network instance for connection pooling.
-                If provided, Scanner will use it for requests (client owns lifecycle).
-                If None, Scanner creates a temporary Network per request (legacy behavior).
+            network_client: Network instance for connection pooling.
+                Scanner uses it for requests (client owns lifecycle).
+                Required at call time; raises RuntimeError if None when call() is invoked.
 
         Raises:
             ValueError: If network is not supported
@@ -102,30 +102,23 @@ class Scanner(ABC):
         spec = self.SPECS[method]
         request_data = self._build_request(spec, **params)
 
-        # Use injected network client if available, otherwise create temporary one
-        # (legacy behavior for backward compatibility)
-        if self._network_client is not None:
-            network = self._network_client
-            should_close = False
-        else:
-            network = Network(self.url_builder)
-            should_close = True
+        if self._network_client is None:
+            raise RuntimeError(
+                f'{self.name} v{self.version}: network_client is required. '
+                'Create scanner via ChainscanClient.from_config() which injects it automatically.'
+            )
+        network = self._network_client
 
-        try:
-            if spec.http_method == 'GET':
-                raw_response = await network.get(
-                    params=request_data.get('params'), headers=request_data.get('headers')
-                )
-            else:  # POST
-                raw_response = await network.post(
-                    data=request_data.get('data'), headers=request_data.get('headers')
-                )
+        if spec.http_method == 'GET':
+            raw_response = await network.get(
+                params=request_data.get('params'), headers=request_data.get('headers')
+            )
+        else:  # POST
+            raw_response = await network.post(
+                data=request_data.get('data'), headers=request_data.get('headers')
+            )
 
-            return spec.parse_response(raw_response)
-
-        finally:
-            if should_close:
-                await network.close()
+        return spec.parse_response(raw_response)
 
     def _build_request(self, spec: EndpointSpec, **params: Any) -> dict[str, Any]:
         """
