@@ -7,6 +7,7 @@ by fetching and decoding in batches, never holding the entire dataset in memory.
 
 from __future__ import annotations
 
+# mypy: disable-error-code=call-arg
 import asyncio
 from collections.abc import AsyncIterator
 from typing import Any
@@ -16,6 +17,7 @@ from aiochainscan.decode import (
     decode_log_data,
     decode_transaction_inputs_batch,
 )
+from aiochainscan.domain.models import Address
 from aiochainscan.ports.endpoint_builder import EndpointBuilder
 from aiochainscan.ports.http_client import HttpClient
 from aiochainscan.ports.rate_limiter import RateLimiter, RetryPolicy
@@ -218,6 +220,7 @@ class StreamingDecoder:
             effective_end_block = int(to_block)
 
         effective_start_block = int(from_block)
+        addr = Address(address)
 
         if effective_end_block <= effective_start_block:
             return
@@ -234,7 +237,7 @@ class StreamingDecoder:
             # Sliding window mode (Etherscan-style)
             async for batch in self._fetch_sliding_batches(
                 fetch_fn=lambda sb, eb, p, o: get_normal_transactions(
-                    address=address,
+                    address=addr,
                     start_block=sb,
                     end_block=eb,
                     sort='asc',
@@ -258,7 +261,7 @@ class StreamingDecoder:
             # Paged mode (Blockscout-style)
             async for batch in self._fetch_paged_batches(
                 fetch_fn=lambda sb, eb, p, o: get_normal_transactions(
-                    address=address,
+                    address=addr,
                     start_block=sb,
                     end_block=eb,
                     sort='asc',
@@ -301,6 +304,7 @@ class StreamingDecoder:
             effective_end_block = int(to_block)
 
         effective_start_block = int(from_block)
+        addr = Address(address)
 
         if effective_end_block <= effective_start_block:
             return
@@ -310,7 +314,7 @@ class StreamingDecoder:
             fetch_fn=lambda sb, eb, p, o: get_logs(
                 start_block=sb,
                 end_block=eb,
-                address=address,
+                address=addr,
                 api_kind=self.api_kind,
                 network=self.network,
                 api_key=self.api_key,

@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 
 from aiochainscan.core.client import ChainscanClient
+from aiochainscan.core.context import ProviderContext
 from aiochainscan.core.endpoint import PARSERS, EndpointSpec
 from aiochainscan.core.method import Method
 from aiochainscan.scanners import get_scanner_class, register_scanner
@@ -570,15 +571,18 @@ class TestBlockScoutV2SplitBrainFix:
             new_callable=AsyncMock,
             return_value=mock_v2_result,
         ) as mock_v2_fetch:
-            result = await fetch_all_transactions_basic(
-                address='0x742d35Cc6634C0532925a3b8D9Fa7a3D91',
-                start_block=0,
-                end_block=None,
+            ctx = ProviderContext(
                 api_kind='blockscout_v2',
                 network='ethereum',
                 api_key='',
                 http=Mock(),
                 endpoint_builder=Mock(),
+            )
+            result = await fetch_all_transactions_basic(
+                ctx=ctx,
+                address='0x742d35Cc6634C0532925a3b844Bc454e4438f44e',
+                start_block=0,
+                end_block=None,
                 scanner=mock_v2_scanner,
             )
 
@@ -607,15 +611,18 @@ class TestBlockScoutV2SplitBrainFix:
             new_callable=AsyncMock,
             return_value=mock_v2_result,
         ) as mock_v2_fetch:
-            result = await fetch_all_transactions_fast(
-                address='0x742d35Cc6634C0532925a3b8D9Fa7a3D91',
-                start_block=0,
-                end_block=None,
+            ctx = ProviderContext(
                 api_kind='blockscout_v2',
                 network='ethereum',
                 api_key='',
                 http=Mock(),
                 endpoint_builder=Mock(),
+            )
+            result = await fetch_all_transactions_fast(
+                ctx=ctx,
+                address='0x742d35Cc6634C0532925a3b844Bc454e4438f44e',
+                start_block=0,
+                end_block=None,
                 scanner=mock_v2_scanner,
             )
 
@@ -646,15 +653,18 @@ class TestBlockScoutV2SplitBrainFix:
                 new_callable=AsyncMock,
                 return_value=v1_result,
             ) as mock_v1:
-                result = await fetch_all_transactions_basic(
-                    address='0x742d35Cc',
-                    start_block=0,
-                    end_block=None,
+                ctx = ProviderContext(
                     api_kind='blockscout_v2',
                     network='ethereum',
                     api_key='',
                     http=Mock(),
                     endpoint_builder=Mock(),
+                )
+                result = await fetch_all_transactions_basic(
+                    ctx=ctx,
+                    address='0x742d35Cc6634C0532925a3b844Bc454e4438f44e',
+                    start_block=0,
+                    end_block=None,
                     scanner=mock_v2_scanner,
                 )
 

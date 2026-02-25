@@ -16,7 +16,13 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 
 from aiochainscan.core.client import ChainscanClient
+from aiochainscan.core.context import ProviderContext
 from aiochainscan.core.method import Method
+from aiochainscan.domain.models import Address, TxHash
+
+TEST_ADDRESS = '0x1111111111111111111111111111111111111111'
+TEST_CONTRACT = '0x2222222222222222222222222222222222222222'
+TEST_TX_HASH = '0x' + ('a' * 64)
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -49,14 +55,18 @@ class TestSinglePageConvenienceMethods:
     @pytest.mark.asyncio
     async def test_get_balance(self, client: ChainscanClient, mock_call: AsyncMock) -> None:
         mock_call.return_value = '1000000000000000000'
-        result = await client.get_balance('0xABC')
-        mock_call.assert_awaited_once_with(Method.ACCOUNT_BALANCE, address='0xABC', tag='latest')
+        result = await client.get_balance(TEST_ADDRESS)
+        mock_call.assert_awaited_once_with(
+            Method.ACCOUNT_BALANCE,
+            address=str(Address(TEST_ADDRESS)),
+            tag='latest',
+        )
         assert result == '1000000000000000000'
 
     @pytest.mark.asyncio
     async def test_get_transactions(self, client: ChainscanClient, mock_call: AsyncMock) -> None:
         mock_call.return_value = [{'hash': '0x1'}]
-        result = await client.get_transactions('0xABC')
+        result = await client.get_transactions(TEST_ADDRESS)
         assert mock_call.await_args is not None
         assert mock_call.await_args[0][0] == Method.ACCOUNT_TRANSACTIONS
         assert result == [{'hash': '0x1'}]
@@ -66,7 +76,7 @@ class TestSinglePageConvenienceMethods:
         self, client: ChainscanClient, mock_call: AsyncMock
     ) -> None:
         mock_call.return_value = [{'hash': '0xT'}]
-        result = await client.get_token_transfers('0xABC')
+        result = await client.get_token_transfers(TEST_ADDRESS)
         assert mock_call.await_args is not None
         assert mock_call.await_args[0][0] == Method.ACCOUNT_ERC20_TRANSFERS
         assert result == [{'hash': '0xT'}]
@@ -76,7 +86,7 @@ class TestSinglePageConvenienceMethods:
         self, client: ChainscanClient, mock_call: AsyncMock
     ) -> None:
         mock_call.return_value = [{'hash': '0xI'}]
-        result = await client.get_internal_transactions('0xABC')
+        result = await client.get_internal_transactions(TEST_ADDRESS)
         assert mock_call.await_args is not None
         assert mock_call.await_args[0][0] == Method.ACCOUNT_INTERNAL_TXS
         assert result == [{'hash': '0xI'}]
@@ -86,7 +96,7 @@ class TestSinglePageConvenienceMethods:
         self, client: ChainscanClient, mock_call: AsyncMock
     ) -> None:
         mock_call.return_value = 'No records found'
-        result = await client.get_internal_transactions('0xABC')
+        result = await client.get_internal_transactions(TEST_ADDRESS)
         assert result == []
 
     @pytest.mark.asyncio
@@ -94,7 +104,7 @@ class TestSinglePageConvenienceMethods:
         self, client: ChainscanClient, mock_call: AsyncMock
     ) -> None:
         mock_call.return_value = [{'tokenID': '42'}]
-        result = await client.get_erc721_transfers('0xABC')
+        result = await client.get_erc721_transfers(TEST_ADDRESS)
         assert mock_call.await_args is not None
         assert mock_call.await_args[0][0] == Method.ACCOUNT_ERC721_TRANSFERS
         assert result == [{'tokenID': '42'}]
@@ -104,7 +114,7 @@ class TestSinglePageConvenienceMethods:
         self, client: ChainscanClient, mock_call: AsyncMock
     ) -> None:
         mock_call.return_value = [{'tokenValue': '100'}]
-        result = await client.get_erc1155_transfers('0xABC')
+        result = await client.get_erc1155_transfers(TEST_ADDRESS)
         assert mock_call.await_args is not None
         assert mock_call.await_args[0][0] == Method.ACCOUNT_ERC1155_TRANSFERS
         assert result == [{'tokenValue': '100'}]
@@ -114,7 +124,7 @@ class TestSinglePageConvenienceMethods:
         self, client: ChainscanClient, mock_call: AsyncMock
     ) -> None:
         mock_call.return_value = [{'symbol': 'USDC'}]
-        result = await client.get_token_portfolio('0xABC')
+        result = await client.get_token_portfolio(TEST_ADDRESS)
         assert mock_call.await_args is not None
         assert mock_call.await_args[0][0] == Method.ACCOUNT_TOKEN_PORTFOLIO
         assert result == [{'symbol': 'USDC'}]
@@ -122,7 +132,7 @@ class TestSinglePageConvenienceMethods:
     @pytest.mark.asyncio
     async def test_get_nft_portfolio(self, client: ChainscanClient, mock_call: AsyncMock) -> None:
         mock_call.return_value = [{'token_id': '1'}]
-        result = await client.get_nft_portfolio('0xABC')
+        result = await client.get_nft_portfolio(TEST_ADDRESS)
         assert mock_call.await_args is not None
         assert mock_call.await_args[0][0] == Method.ACCOUNT_NFT_PORTFOLIO
         assert result == [{'token_id': '1'}]
@@ -133,14 +143,14 @@ class TestSinglePageConvenienceMethods:
     ) -> None:
         """BlockScout V2 wraps in {items: [...]}."""
         mock_call.return_value = {'items': [{'token_id': '1'}]}
-        result = await client.get_nft_portfolio('0xABC')
+        result = await client.get_nft_portfolio(TEST_ADDRESS)
         assert result == [{'token_id': '1'}]
 
     @pytest.mark.asyncio
     async def test_get_transaction(self, client: ChainscanClient, mock_call: AsyncMock) -> None:
         mock_call.return_value = {'hash': '0xT', 'value': '0'}
-        result = await client.get_transaction('0xTX')
-        mock_call.assert_awaited_once_with(Method.TX_BY_HASH, txhash='0xTX')
+        result = await client.get_transaction(TEST_TX_HASH)
+        mock_call.assert_awaited_once_with(Method.TX_BY_HASH, txhash=str(TxHash(TEST_TX_HASH)))
         assert result == {'hash': '0xT', 'value': '0'}
 
     @pytest.mark.asyncio
@@ -148,8 +158,11 @@ class TestSinglePageConvenienceMethods:
         self, client: ChainscanClient, mock_call: AsyncMock
     ) -> None:
         mock_call.return_value = {'status': '1'}
-        result = await client.get_transaction_status('0xTX')
-        mock_call.assert_awaited_once_with(Method.TX_RECEIPT_STATUS, txhash='0xTX')
+        result = await client.get_transaction_status(TEST_TX_HASH)
+        mock_call.assert_awaited_once_with(
+            Method.TX_RECEIPT_STATUS,
+            txhash=str(TxHash(TEST_TX_HASH)),
+        )
         assert result == {'status': '1'}
 
     @pytest.mark.asyncio
@@ -157,8 +170,11 @@ class TestSinglePageConvenienceMethods:
         self, client: ChainscanClient, mock_call: AsyncMock
     ) -> None:
         mock_call.return_value = {'isError': '0', 'errDescription': ''}
-        result = await client.check_transaction_status('0xTX')
-        mock_call.assert_awaited_once_with(Method.TX_STATUS_CHECK, txhash='0xTX')
+        result = await client.check_transaction_status(TEST_TX_HASH)
+        mock_call.assert_awaited_once_with(
+            Method.TX_STATUS_CHECK,
+            txhash=str(TxHash(TEST_TX_HASH)),
+        )
         assert result == {'isError': '0', 'errDescription': ''}
 
     @pytest.mark.asyncio
@@ -198,8 +214,10 @@ class TestSinglePageConvenienceMethods:
     @pytest.mark.asyncio
     async def test_get_contract_abi(self, client: ChainscanClient, mock_call: AsyncMock) -> None:
         mock_call.return_value = '[{"type":"function"}]'
-        result = await client.get_contract_abi('0xC')
-        mock_call.assert_awaited_once_with(Method.CONTRACT_ABI, address='0xC')
+        result = await client.get_contract_abi(TEST_CONTRACT)
+        mock_call.assert_awaited_once_with(
+            Method.CONTRACT_ABI, address=str(Address(TEST_CONTRACT))
+        )
         assert result == '[{"type":"function"}]'
 
     @pytest.mark.asyncio
@@ -207,8 +225,11 @@ class TestSinglePageConvenienceMethods:
         self, client: ChainscanClient, mock_call: AsyncMock
     ) -> None:
         mock_call.return_value = {'SourceCode': 'pragma solidity'}
-        result = await client.get_contract_source('0xC')
-        mock_call.assert_awaited_once_with(Method.CONTRACT_SOURCE, address='0xC')
+        result = await client.get_contract_source(TEST_CONTRACT)
+        mock_call.assert_awaited_once_with(
+            Method.CONTRACT_SOURCE,
+            address=str(Address(TEST_CONTRACT)),
+        )
         assert result == {'SourceCode': 'pragma solidity'}
 
     @pytest.mark.asyncio
@@ -216,7 +237,7 @@ class TestSinglePageConvenienceMethods:
         self, client: ChainscanClient, mock_call: AsyncMock
     ) -> None:
         mock_call.return_value = [{'contractAddress': '0xC', 'txHash': '0xT'}]
-        result = await client.get_contract_creation(['0xC'])
+        result = await client.get_contract_creation([TEST_CONTRACT])
         assert mock_call.await_args is not None
         assert mock_call.await_args[0][0] == Method.CONTRACT_CREATION
         assert result == [{'contractAddress': '0xC', 'txHash': '0xT'}]
@@ -224,7 +245,7 @@ class TestSinglePageConvenienceMethods:
     @pytest.mark.asyncio
     async def test_get_token_balance(self, client: ChainscanClient, mock_call: AsyncMock) -> None:
         mock_call.return_value = '1000000'
-        result = await client.get_token_balance('0xW', '0xT')
+        result = await client.get_token_balance(TEST_ADDRESS, TEST_CONTRACT)
         assert mock_call.await_args is not None
         assert mock_call.await_args[0][0] == Method.TOKEN_BALANCE
         assert result == '1000000'
@@ -232,15 +253,18 @@ class TestSinglePageConvenienceMethods:
     @pytest.mark.asyncio
     async def test_get_token_supply(self, client: ChainscanClient, mock_call: AsyncMock) -> None:
         mock_call.return_value = '1000000000000'
-        result = await client.get_token_supply('0xT')
-        mock_call.assert_awaited_once_with(Method.TOKEN_SUPPLY, contractaddress='0xT')
+        result = await client.get_token_supply(TEST_CONTRACT)
+        mock_call.assert_awaited_once_with(Method.TOKEN_SUPPLY, contractaddress=TEST_CONTRACT)
         assert result == '1000000000000'
 
     @pytest.mark.asyncio
     async def test_get_token_info(self, client: ChainscanClient, mock_call: AsyncMock) -> None:
         mock_call.return_value = {'symbol': 'USDT', 'decimals': '6'}
-        result = await client.get_token_info('0xT')
-        mock_call.assert_awaited_once_with(Method.TOKEN_INFO, contractaddress='0xT')
+        result = await client.get_token_info(TEST_CONTRACT)
+        mock_call.assert_awaited_once_with(
+            Method.TOKEN_INFO,
+            contractaddress=str(Address(TEST_CONTRACT)),
+        )
         assert result == {'symbol': 'USDT', 'decimals': '6'}
 
     @pytest.mark.asyncio
@@ -276,7 +300,7 @@ class TestSinglePageConvenienceMethods:
         self, client: ChainscanClient, mock_call: AsyncMock
     ) -> None:
         mock_call.return_value = [{'logIndex': '0'}]
-        result = await client.get_logs('0xC', from_block=100, to_block=200)
+        result = await client.get_logs(TEST_CONTRACT, from_block=100, to_block=200)
         assert mock_call.await_args is not None
         assert mock_call.await_args[0][0] == Method.EVENT_LOGS
         assert result == [{'logIndex': '0'}]
@@ -286,23 +310,30 @@ class TestSinglePageConvenienceMethods:
         self, client: ChainscanClient, mock_call: AsyncMock
     ) -> None:
         mock_call.return_value = 'No records found'
-        result = await client.get_logs('0xC')
+        result = await client.get_logs(TEST_CONTRACT)
         assert result == []
 
     @pytest.mark.asyncio
     async def test_eth_call(self, client: ChainscanClient, mock_call: AsyncMock) -> None:
         mock_call.return_value = '0x0000000000000000000000000000000000000001'
-        result = await client.eth_call('0xC', '0x70a08231...')
+        result = await client.eth_call(TEST_CONTRACT, '0x70a08231...')
         mock_call.assert_awaited_once_with(
-            Method.PROXY_ETH_CALL, to='0xC', data='0x70a08231...', tag='latest'
+            Method.PROXY_ETH_CALL,
+            to=TEST_CONTRACT,
+            data='0x70a08231...',
+            tag='latest',
         )
         assert result == '0x0000000000000000000000000000000000000001'
 
     @pytest.mark.asyncio
     async def test_eth_get_balance(self, client: ChainscanClient, mock_call: AsyncMock) -> None:
         mock_call.return_value = '0xde0b6b3a7640000'
-        result = await client.eth_get_balance('0xABC')
-        mock_call.assert_awaited_once_with(Method.PROXY_GET_BALANCE, address='0xABC', tag='latest')
+        result = await client.eth_get_balance(TEST_ADDRESS)
+        mock_call.assert_awaited_once_with(
+            Method.PROXY_GET_BALANCE,
+            address=TEST_ADDRESS,
+            tag='latest',
+        )
         assert result == '0xde0b6b3a7640000'
 
 
@@ -433,14 +464,23 @@ class TestWhaleBlockWarning:
         ):
             warnings.simplefilter('always')
             await get_all_logs_optimized(
+                ctx=ProviderContext(
+                    api_kind='eth',  # triggers sliding-window mode
+                    network='ethereum',
+                    api_key='key',
+                    http=Mock(),
+                    endpoint_builder=Mock(),
+                    rate_limiter=None,
+                    retry=None,
+                    telemetry=None,
+                    cache=None,
+                    gql=None,
+                    gql_builder=None,
+                    federator=None,
+                ),
                 start_block=0,
                 end_block=99999999,
                 address='0xC',
-                api_kind='eth',  # triggers sliding-window mode
-                network='ethereum',
-                api_key='key',
-                http=Mock(),
-                _endpoint_builder=Mock(),
                 max_concurrent=1,
                 max_offset=1000,
             )

@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
+from aiochainscan.core.context import ProviderContext
 from aiochainscan.services.fetch_all import fetch_all_internal_basic
 from aiochainscan.services.unified_fetch import fetch_all
 
@@ -92,16 +93,19 @@ async def test_adaptive_offset_multiple_page_scenario():
 
         mock_http = AsyncMock()
         mock_endpoint_builder = MagicMock()
-
-        result = await fetch_all_internal_basic(  # noqa: F841
-            address='0x1234567890123456789012345678901234567890',
-            start_block=None,
-            end_block=None,
+        ctx = ProviderContext(
             api_kind='blockscout_base',
             network='base',
             api_key='',
             http=mock_http,
             endpoint_builder=mock_endpoint_builder,
+        )
+
+        result = await fetch_all_internal_basic(  # noqa: F841
+            ctx=ctx,
+            address='0x1234567890123456789012345678901234567890',
+            start_block=None,
+            end_block=None,
             max_offset=10000,
         )
 
@@ -179,17 +183,20 @@ async def test_adaptive_offset_unified_fetch_multi_page():
 
         mock_http = AsyncMock()
         mock_endpoint_builder = MagicMock()
-
-        result = await fetch_all(  # noqa: F841
-            data_type='internal_transactions',
-            address='0x1234567890123456789012345678901234567890',
-            start_block=None,
-            end_block=None,
+        ctx = ProviderContext(
             api_kind='blockscout_base',
             network='base',
             api_key='',
             http=mock_http,
             endpoint_builder=mock_endpoint_builder,
+        )
+
+        result = await fetch_all(  # noqa: F841
+            ctx=ctx,
+            data_type='internal_transactions',
+            address='0x1234567890123456789012345678901234567890',
+            start_block=None,
+            end_block=None,
             strategy='basic',
             max_offset=10000,
         )
@@ -234,16 +241,19 @@ async def test_adaptive_offset_reduction_multiple_levels():
 
         mock_http = AsyncMock()
         mock_endpoint_builder = MagicMock()
-
-        result = await fetch_all_internal_basic(  # noqa: F841
-            address='0x1234567890123456789012345678901234567890',
-            start_block=None,
-            end_block=None,
+        ctx = ProviderContext(
             api_kind='blockscout_base',
             network='base',
             api_key='',
             http=mock_http,
             endpoint_builder=mock_endpoint_builder,
+        )
+
+        result = await fetch_all_internal_basic(  # noqa: F841
+            ctx=ctx,
+            address='0x1234567890123456789012345678901234567890',
+            start_block=None,
+            end_block=None,
             max_offset=10000,
         )
 
@@ -303,16 +313,19 @@ async def test_adaptive_offset_telemetry_logging(caplog):
 
         mock_http = AsyncMock()
         mock_endpoint_builder = MagicMock()
-
-        result = await fetch_all_internal_basic(  # noqa: F841
-            address='0x1234567890123456789012345678901234567890',
-            start_block=None,
-            end_block=None,
+        ctx = ProviderContext(
             api_kind='blockscout_base',
             network='base',
             api_key='',
             http=mock_http,
             endpoint_builder=mock_endpoint_builder,
+        )
+
+        result = await fetch_all_internal_basic(  # noqa: F841
+            ctx=ctx,
+            address='0x1234567890123456789012345678901234567890',
+            start_block=None,
+            end_block=None,
             max_offset=10000,
         )
 

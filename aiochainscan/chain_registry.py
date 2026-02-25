@@ -4,6 +4,209 @@ Chain Registry - unified chain information and provider mappings.
 
 from typing import Any
 
+# ---------------------------------------------------------------------------
+# UrlBuilder registry-backed topology
+# ---------------------------------------------------------------------------
+
+URL_BUILDER_CHAIN_IDS: dict[tuple[str, str], str] = {
+    ('eth', 'main'): '1',
+    ('eth', 'goerli'): '5',
+    ('eth', 'sepolia'): '11155111',
+    ('eth', 'holesky'): '17000',
+    ('eth', 'test'): '5',
+    ('eth', 'ropsten'): '3',
+    ('eth', 'rinkeby'): '4',
+    ('eth', 'kovan'): '42',
+    ('optimism', 'main'): '10',
+    ('optimism', 'goerli'): '420',
+    ('optimism', 'test'): '420',
+    ('bsc', 'main'): '56',
+    ('bsc', 'test'): '97',
+    ('bsc', 'testnet'): '97',
+    ('polygon', 'main'): '137',
+    ('polygon', 'mumbai'): '80001',
+    ('polygon', 'test'): '80001',
+    ('polygon', 'testnet'): '80001',
+    ('arbitrum', 'main'): '42161',
+    ('arbitrum', 'nova'): '42170',
+    ('arbitrum', 'goerli'): '421613',
+    ('arbitrum', 'test'): '421613',
+    ('base', 'main'): '8453',
+    ('base', 'goerli'): '84531',
+    ('base', 'sepolia'): '84532',
+    ('linea', 'main'): '59144',
+    ('linea', 'test'): '59140',
+    ('gnosis', 'main'): '100',
+    ('gnosis', 'chiado'): '10200',
+    ('fantom', 'main'): '250',
+    ('fantom', 'test'): '4002',
+    ('fantom', 'testnet'): '4002',
+    ('mode', 'main'): '34443',
+    ('blast', 'main'): '81457',
+    ('blast', 'sepolia'): '168587773',
+}
+
+
+URL_BUILDER_CURRENCIES: dict[str, str] = {
+    'eth': 'ETH',
+    'bsc': 'BNB',
+    'polygon': 'MATIC',
+    'optimism': 'ETH',
+    'arbitrum': 'ETH',
+    'fantom': 'FTM',
+    'gnosis': 'GNO',
+    'flare': 'FLR',
+    'wemix': 'WEMIX',
+    'chiliz': 'CHZ',
+    'mode': 'MODE',
+    'linea': 'LINEA',
+    'blast': 'BLAST',
+    'base': 'BASE',
+    'blockscout_eth': 'ETH',
+    'blockscout_sepolia': 'ETH',
+    'blockscout_gnosis': 'xDAI',
+    'blockscout_polygon': 'MATIC',
+    'blockscout_base': 'ETH',
+    'blockscout_bsc': 'BNB',
+}
+
+
+BLOCKSCOUT_HOSTS: dict[str, str] = {
+    'blockscout_eth': 'eth.blockscout.com',
+    'blockscout_sepolia': 'eth-sepolia.blockscout.com',
+    'blockscout_gnosis': 'gnosis.blockscout.com',
+    'blockscout_polygon': 'polygon.blockscout.com',
+    'blockscout_base': 'base.blockscout.com',
+    'blockscout_bsc': 'bsc.blockscout.com',
+}
+
+
+V2_HEADER_AUTH_API_KINDS: set[str] = {'eth', 'optimism', 'arbitrum', 'bsc', 'polygon', 'base'}
+
+
+def get_url_builder_profile(api_kind: str, network: str) -> dict[str, str | None]:
+    """Resolve URL builder profile for ``(api_kind, network)``.
+
+    Returns keys:
+    - ``base_url``
+    - ``api_url``
+    - ``currency``
+    - ``auth_mode``: ``header`` or ``query``
+    - ``chainid``: optional
+    """
+
+    kind = api_kind.lower().strip()
+    net = network.lower().strip()
+
+    if kind not in URL_BUILDER_CURRENCIES:
+        supported = ', '.join(sorted(URL_BUILDER_CURRENCIES))
+        raise ValueError(f'Incorrect api_kind {kind!r}, supported only: {supported}')
+
+    currency = URL_BUILDER_CURRENCIES[kind]
+    chainid = URL_BUILDER_CHAIN_IDS.get((kind, net))
+
+    if kind in V2_HEADER_AUTH_API_KINDS:
+        return {
+            'base_url': 'https://etherscan.io',
+            'api_url': 'https://api.etherscan.io/v2/api',
+            'currency': currency,
+            'auth_mode': 'header',
+            'chainid': chainid,
+        }
+
+    if kind in BLOCKSCOUT_HOSTS:
+        host = BLOCKSCOUT_HOSTS[kind]
+        return {
+            'base_url': f'https://{host}',
+            'api_url': f'https://{host}/api',
+            'currency': currency,
+            'auth_mode': 'query',
+            'chainid': chainid,
+        }
+
+    if kind == 'fantom':
+        net = 'testnet' if net in {'test', 'testnet'} else 'main'
+        if net == 'main':
+            base_url = 'https://ftmscan.com'
+            api_url = 'https://api.ftmscan.com/api'
+        else:
+            base_url = 'https://testnet.ftmscan.com'
+            api_url = 'https://api-testnet.ftmscan.com/api'
+        return {
+            'base_url': base_url,
+            'api_url': api_url,
+            'currency': currency,
+            'auth_mode': 'query',
+            'chainid': chainid,
+        }
+
+    if kind == 'gnosis':
+        return {
+            'base_url': 'https://gnosisscan.io',
+            'api_url': 'https://api.gnosisscan.io/api',
+            'currency': currency,
+            'auth_mode': 'query',
+            'chainid': chainid,
+        }
+
+    if kind == 'flare':
+        return {
+            'base_url': 'https://flare.network',
+            'api_url': 'https://flare-explorer.flare.network/api',
+            'currency': currency,
+            'auth_mode': 'query',
+            'chainid': chainid,
+        }
+
+    if kind == 'linea':
+        return {
+            'base_url': 'https://lineascan.build',
+            'api_url': 'https://api.lineascan.build/api',
+            'currency': currency,
+            'auth_mode': 'query',
+            'chainid': chainid,
+        }
+
+    if kind == 'blast':
+        return {
+            'base_url': 'https://blastscan.io',
+            'api_url': 'https://api.blastscan.io/api',
+            'currency': currency,
+            'auth_mode': 'query',
+            'chainid': chainid,
+        }
+
+    if kind == 'wemix':
+        return {
+            'base_url': 'https://wemixscan.com',
+            'api_url': 'https://api.wemixscan.com/api',
+            'currency': currency,
+            'auth_mode': 'query',
+            'chainid': chainid,
+        }
+
+    if kind == 'chiliz':
+        return {
+            'base_url': 'https://chiliz.com',
+            'api_url': 'https://scan.chiliz.com/api',
+            'currency': currency,
+            'auth_mode': 'query',
+            'chainid': chainid,
+        }
+
+    if kind == 'mode':
+        base = 'https://routescan.io/v2/network/mainnet/evm/34443/etherscan'
+        return {
+            'base_url': base,
+            'api_url': f'{base}/api',
+            'currency': currency,
+            'auth_mode': 'query',
+            'chainid': chainid,
+        }
+
+    raise ValueError(f'Unsupported api_kind for url profile: {kind!r}')
+
+
 # Стандартизированные chain_id с алиасами и provider mappings
 STANDARD_CHAINS = {
     # Ethereum ecosystem

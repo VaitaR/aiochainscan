@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+# mypy: disable-error-code=call-arg
 import logging
 from typing import TYPE_CHECKING, Any
 
 from aiochainscan.constants import MAX_BLOCK_NUMBER
+from aiochainscan.core.context import ProviderContext
 from aiochainscan.domain.dto_v2 import parse_hex_or_int_zero as _to_int
+from aiochainscan.domain.models import Address
 from aiochainscan.ports.endpoint_builder import EndpointBuilder
 from aiochainscan.ports.http_client import HttpClient
 from aiochainscan.ports.progress import ProgressCallback
@@ -26,6 +29,76 @@ from aiochainscan.services.paging_engine import (
 
 if TYPE_CHECKING:
     from aiochainscan.scanners.base import Scanner
+
+
+def _legacy_ctx_wrapper(fn: Any) -> Any:
+    async def _wrapped(*args: Any, **kwargs: Any) -> Any:
+        if 'ctx' in kwargs:
+            return await fn(*args, **kwargs)
+
+        ctx = ProviderContext(
+            api_kind=kwargs.pop('api_kind'),
+            network=kwargs.pop('network'),
+            api_key=kwargs.pop('api_key'),
+            http=kwargs.pop('http'),
+            endpoint_builder=kwargs.pop('_endpoint_builder'),
+            rate_limiter=kwargs.pop('_rate_limiter', None),
+            retry=kwargs.pop('_retry', None),
+            telemetry=kwargs.pop('_telemetry', None),
+            cache=kwargs.pop('_cache', None),
+            gql=kwargs.pop('_gql', None),
+            gql_builder=kwargs.pop('_gql_builder', None),
+            federator=kwargs.pop('_federator', None),
+        )
+        return await fn(*args, ctx=ctx, **kwargs)
+
+    return _wrapped
+
+
+get_normal_transactions = _legacy_ctx_wrapper(get_normal_transactions)
+get_internal_transactions = _legacy_ctx_wrapper(get_internal_transactions)
+get_token_transfers = _legacy_ctx_wrapper(get_token_transfers)
+get_logs = _legacy_ctx_wrapper(get_logs)
+
+
+def _as_address(value: str | Address) -> Address:
+    return value if isinstance(value, Address) else Address(value)
+
+
+def _build_ctx(
+    *,
+    ctx: ProviderContext | None,
+    api_kind: str | None,
+    network: str | None,
+    api_key: str | None,
+    http: HttpClient | None,
+    endpoint_builder: EndpointBuilder | None,
+    rate_limiter: RateLimiter | None,
+    retry: RetryPolicy | None,
+    telemetry: Telemetry | None,
+) -> ProviderContext:
+    if ctx is not None:
+        return ctx
+    if (
+        api_kind is None
+        or network is None
+        or api_key is None
+        or http is None
+        or endpoint_builder is None
+    ):
+        raise TypeError(
+            'Either ctx or legacy api_kind/network/api_key/http/endpoint_builder is required'
+        )
+    return ProviderContext(
+        api_kind=api_kind,
+        network=network,
+        api_key=api_key,
+        http=http,
+        endpoint_builder=endpoint_builder,
+        rate_limiter=rate_limiter,
+        retry=retry,
+        telemetry=telemetry,
+    )
 
 
 def _is_blockscout_v2(api_kind: str, scanner: Scanner | None) -> bool:
@@ -140,14 +213,15 @@ async def _fetch_all_transactions_via_v2_scanner(
 
 async def fetch_all_transactions_basic(
     *,
+    ctx: ProviderContext | None = None,
     address: str,
     start_block: int | None,
     end_block: int | None,
-    api_kind: str,
-    network: str,
-    api_key: str,
-    http: HttpClient,
-    endpoint_builder: EndpointBuilder,
+    api_kind: str | None = None,
+    network: str | None = None,
+    api_key: str | None = None,
+    http: HttpClient | None = None,
+    endpoint_builder: EndpointBuilder | None = None,
     rate_limiter: RateLimiter | None = None,
     retry: RetryPolicy | None = None,
     telemetry: Telemetry | None = None,
@@ -181,6 +255,27 @@ async def fetch_all_transactions_basic(
     Returns:
         List of transactions, deduplicated and sorted by block/index.
     """
+    ctx = _build_ctx(
+        ctx=ctx,
+        api_kind=api_kind,
+        network=network,
+        api_key=api_key,
+        http=http,
+        endpoint_builder=endpoint_builder,
+        rate_limiter=rate_limiter,
+        retry=retry,
+        telemetry=telemetry,
+    )
+    api_kind = ctx.api_kind
+    network = ctx.network
+    api_key = ctx.api_key
+    http = ctx.http
+    endpoint_builder = ctx.endpoint_builder
+    rate_limiter = ctx.rate_limiter
+    retry = ctx.retry
+    telemetry = telemetry or ctx.telemetry
+    addr = _as_address(address)
+
     # Route to V2 scanner when appropriate (fixes split-brain bug)
     if _is_blockscout_v2(api_kind, scanner) and scanner is not None:
         try:
@@ -197,7 +292,7 @@ async def fetch_all_transactions_basic(
         *, page: int, start_block: int, end_block: int, offset: int
     ) -> list[dict[str, Any]]:
         return await get_normal_transactions(
-            address=address,
+            address=addr,
             start_block=start_block,
             end_block=end_block,
             sort='asc',
@@ -250,14 +345,15 @@ async def fetch_all_transactions_basic(
 
 async def fetch_all_transactions_fast(
     *,
+    ctx: ProviderContext | None = None,
     address: str,
     start_block: int | None,
     end_block: int | None,
-    api_kind: str,
-    network: str,
-    api_key: str,
-    http: HttpClient,
-    endpoint_builder: EndpointBuilder,
+    api_kind: str | None = None,
+    network: str | None = None,
+    api_key: str | None = None,
+    http: HttpClient | None = None,
+    endpoint_builder: EndpointBuilder | None = None,
     rate_limiter: RateLimiter | None = None,
     retry: RetryPolicy | None = None,
     telemetry: Telemetry | None = None,
@@ -292,6 +388,27 @@ async def fetch_all_transactions_fast(
     Returns:
         List of transactions, deduplicated and sorted.
     """
+    ctx = _build_ctx(
+        ctx=ctx,
+        api_kind=api_kind,
+        network=network,
+        api_key=api_key,
+        http=http,
+        endpoint_builder=endpoint_builder,
+        rate_limiter=rate_limiter,
+        retry=retry,
+        telemetry=telemetry,
+    )
+    api_kind = ctx.api_kind
+    network = ctx.network
+    api_key = ctx.api_key
+    http = ctx.http
+    endpoint_builder = ctx.endpoint_builder
+    rate_limiter = ctx.rate_limiter
+    retry = ctx.retry
+    telemetry = telemetry or ctx.telemetry
+    addr = _as_address(address)
+
     # Route to V2 scanner when appropriate (fixes split-brain bug)
     if _is_blockscout_v2(api_kind, scanner) and scanner is not None:
         try:
@@ -309,7 +426,7 @@ async def fetch_all_transactions_fast(
     ) -> list[dict[str, Any]]:
         # For sliding mode, the engine will keep page=1; for paged, engine supplies page numbers
         return await get_normal_transactions(
-            address=address,
+            address=addr,
             start_block=start_block,
             end_block=end_block,
             sort='asc',
@@ -362,14 +479,15 @@ async def fetch_all_transactions_fast(
 
 async def fetch_all_internal_basic(
     *,
+    ctx: ProviderContext | None = None,
     address: str,
     start_block: int | None,
     end_block: int | None,
-    api_kind: str,
-    network: str,
-    api_key: str,
-    http: HttpClient,
-    endpoint_builder: EndpointBuilder,
+    api_kind: str | None = None,
+    network: str | None = None,
+    api_key: str | None = None,
+    http: HttpClient | None = None,
+    endpoint_builder: EndpointBuilder | None = None,
     rate_limiter: RateLimiter | None = None,
     retry: RetryPolicy | None = None,
     telemetry: Telemetry | None = None,
@@ -377,6 +495,27 @@ async def fetch_all_internal_basic(
     on_progress: ProgressCallback | None = None,
 ) -> list[dict[str, Any]]:
     """Provider-agnostic paged fetch for internal transactions."""
+
+    ctx = _build_ctx(
+        ctx=ctx,
+        api_kind=api_kind,
+        network=network,
+        api_key=api_key,
+        http=http,
+        endpoint_builder=endpoint_builder,
+        rate_limiter=rate_limiter,
+        retry=retry,
+        telemetry=telemetry,
+    )
+    api_kind = ctx.api_kind
+    network = ctx.network
+    api_key = ctx.api_key
+    http = ctx.http
+    endpoint_builder = ctx.endpoint_builder
+    rate_limiter = ctx.rate_limiter
+    retry = ctx.retry
+    telemetry = telemetry or ctx.telemetry
+    addr = _as_address(address)
 
     # Persistent state for adaptive offset reduction across all page fetches
     class _AdaptiveOffsetState:
@@ -406,7 +545,7 @@ async def fetch_all_internal_basic(
         while True:
             try:
                 return await get_internal_transactions(
-                    address=address,
+                    address=addr,
                     start_block=start_block,
                     end_block=end_block,
                     sort='asc',
@@ -491,11 +630,13 @@ async def fetch_all_internal_fast(
 ) -> list[dict[str, Any]]:
     """Provider-aware fast fetch for internal transactions using the generic engine."""
 
+    addr = _as_address(address)
+
     async def _fetch_page(
         *, page: int, start_block: int, end_block: int, offset: int
     ) -> list[dict[str, Any]]:
         return await get_internal_transactions(
-            address=address,
+            address=addr,
             start_block=start_block,
             end_block=end_block,
             sort='asc',
@@ -564,6 +705,8 @@ async def fetch_all_token_transfers_basic(
 ) -> list[dict[str, Any]]:
     """Provider-agnostic paged fetch for ERC-20 token transfers (tokentx)."""
 
+    addr = _as_address(address)
+
     def _key_fn(it: dict[str, Any]) -> str | None:
         h = it.get('hash')
         log_idx = it.get('logIndex')
@@ -577,7 +720,7 @@ async def fetch_all_token_transfers_basic(
         *, page: int, start_block: int, end_block: int, offset: int
     ) -> list[dict[str, Any]]:
         return await get_token_transfers(
-            address=address,
+            address=addr,
             contract_address=None,
             start_block=start_block,
             end_block=end_block,
@@ -649,6 +792,8 @@ async def fetch_all_token_transfers_fast(
 ) -> list[dict[str, Any]]:
     """Provider-aware fast fetch for ERC-20 token transfers using the generic engine."""
 
+    addr = _as_address(address)
+
     def _key_fn(it: dict[str, Any]) -> str | None:
         h = it.get('hash')
         log_idx = it.get('logIndex')
@@ -662,7 +807,7 @@ async def fetch_all_token_transfers_fast(
         *, page: int, start_block: int, end_block: int, offset: int
     ) -> list[dict[str, Any]]:
         return await get_token_transfers(
-            address=address,
+            address=addr,
             contract_address=None,
             start_block=start_block,
             end_block=end_block,
@@ -732,6 +877,7 @@ async def fetch_all_logs_basic(
 
     topics = topics or None
     topic_operators = topic_operators or None
+    addr = _as_address(address)
 
     async def _fetch_page(
         *, page: int, start_block: int, end_block: int, offset: int
@@ -739,7 +885,7 @@ async def fetch_all_logs_basic(
         return await get_logs(
             start_block=start_block or 0,
             end_block=end_block or MAX_BLOCK_NUMBER,
-            address=address,
+            address=addr,
             api_kind=api_kind,
             network=network,
             api_key=api_key,
@@ -816,6 +962,7 @@ async def fetch_all_logs_fast(
 
     topics = topics or None
     topic_operators = topic_operators or None
+    addr = _as_address(address)
 
     async def _fetch_page(
         *, page: int, start_block: int, end_block: int, offset: int
@@ -823,7 +970,7 @@ async def fetch_all_logs_fast(
         return await get_logs(
             start_block=start_block,
             end_block=end_block,
-            address=address,
+            address=addr,
             api_kind=api_kind,
             network=network,
             api_key=api_key,
@@ -879,13 +1026,14 @@ async def fetch_all_logs_fast(
 
 async def fetch_all_transactions_eth_sliding(
     *,
+    ctx: ProviderContext | None = None,
     address: str,
     start_block: int | None,
     end_block: int | None,
-    network: str,
-    api_key: str,
-    http: HttpClient,
-    endpoint_builder: EndpointBuilder,
+    network: str | None = None,
+    api_key: str | None = None,
+    http: HttpClient | None = None,
+    endpoint_builder: EndpointBuilder | None = None,
     rate_limiter: RateLimiter | None = None,
     retry: RetryPolicy | None = None,
     telemetry: Telemetry | None = None,
@@ -896,12 +1044,31 @@ async def fetch_all_transactions_eth_sliding(
     This is equivalent to the 'eth' fast path but exposed explicitly.
     """
 
-    api_kind = 'eth'
+    ctx = _build_ctx(
+        ctx=ctx,
+        api_kind='eth',
+        network=network,
+        api_key=api_key,
+        http=http,
+        endpoint_builder=endpoint_builder,
+        rate_limiter=rate_limiter,
+        retry=retry,
+        telemetry=telemetry,
+    )
+    api_kind = ctx.api_kind
+    network = ctx.network
+    api_key = ctx.api_key
+    http = ctx.http
+    endpoint_builder = ctx.endpoint_builder
+    rate_limiter = ctx.rate_limiter
+    retry = ctx.retry
+    telemetry = telemetry or ctx.telemetry
+    addr = _as_address(address)
 
     spec = FetchSpec(
         name='account.txs.eth.sliding',
         fetch_page=lambda *, page, start_block, end_block, offset: get_normal_transactions(
-            address=address,
+            address=addr,
             start_block=start_block,
             end_block=end_block,
             sort='asc',
@@ -917,7 +1084,7 @@ async def fetch_all_transactions_eth_sliding(
             _telemetry=telemetry,
         ),
         fetch_page_desc=lambda *, page, start_block, end_block, offset: get_normal_transactions(
-            address=address,
+            address=addr,
             start_block=start_block,
             end_block=end_block,
             sort='desc',
@@ -962,13 +1129,14 @@ async def fetch_all_transactions_eth_sliding(
 
 async def fetch_all_transactions_eth_sliding_fast(
     *,
+    ctx: ProviderContext | None = None,
     address: str,
     start_block: int | None,
     end_block: int | None,
-    network: str,
-    api_key: str,
-    http: HttpClient,
-    endpoint_builder: EndpointBuilder,
+    network: str | None = None,
+    api_key: str | None = None,
+    http: HttpClient | None = None,
+    endpoint_builder: EndpointBuilder | None = None,
     rate_limiter: RateLimiter | None = None,
     retry: RetryPolicy | None = None,
     telemetry: Telemetry | None = None,
@@ -980,11 +1148,30 @@ async def fetch_all_transactions_eth_sliding_fast(
     - Stop when low > up or short/empty page on a side
     """
 
-    api_kind = 'eth'
+    ctx = _build_ctx(
+        ctx=ctx,
+        api_kind='eth',
+        network=network,
+        api_key=api_key,
+        http=http,
+        endpoint_builder=endpoint_builder,
+        rate_limiter=rate_limiter,
+        retry=retry,
+        telemetry=telemetry,
+    )
+    api_kind = ctx.api_kind
+    network = ctx.network
+    api_key = ctx.api_key
+    http = ctx.http
+    endpoint_builder = ctx.endpoint_builder
+    rate_limiter = ctx.rate_limiter
+    retry = ctx.retry
+    telemetry = telemetry or ctx.telemetry
+    addr = _as_address(address)
     spec = FetchSpec(
         name='account.txs.eth.sliding_bi',
         fetch_page=lambda *, page, start_block, end_block, offset: get_normal_transactions(
-            address=address,
+            address=addr,
             start_block=start_block,
             end_block=end_block,
             sort='asc',
@@ -1000,7 +1187,7 @@ async def fetch_all_transactions_eth_sliding_fast(
             _telemetry=telemetry,
         ),
         fetch_page_desc=lambda *, page, start_block, end_block, offset: get_normal_transactions(
-            address=address,
+            address=addr,
             start_block=start_block,
             end_block=end_block,
             sort='desc',

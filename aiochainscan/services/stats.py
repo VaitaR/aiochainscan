@@ -5,34 +5,24 @@ from datetime import date
 from time import monotonic
 from typing import Any
 
+from aiochainscan.core.context import ProviderContext
 from aiochainscan.domain.dto_v2 import DailySeriesDTO, EthPriceDTO, parse_hex_or_int
-from aiochainscan.ports.cache import Cache
-from aiochainscan.ports.endpoint_builder import EndpointBuilder
-from aiochainscan.ports.http_client import HttpClient
-from aiochainscan.ports.rate_limiter import RateLimiter, RetryPolicy
-from aiochainscan.ports.telemetry import Telemetry
 from aiochainscan.services._executor import run_with_policies
 from aiochainscan.services.constants import CACHE_TTL_ETH_PRICE_SECONDS
 
 
 async def get_eth_price(
     *,
-    api_kind: str,
-    network: str,
-    api_key: str,
-    http: HttpClient,
-    _endpoint_builder: EndpointBuilder,
+    ctx: ProviderContext,
     extra_params: Mapping[str, Any] | None = None,
-    _cache: Cache | None = None,
-    _rate_limiter: RateLimiter | None = None,
-    _retry: RetryPolicy | None = None,
-    _telemetry: Telemetry | None = None,
 ) -> dict[str, Any]:
     """Fetch ETH price (raw provider shape).
 
     Returns a provider-shaped mapping with keys like 'ethusd', 'ethbtc', etc.
     """
-    endpoint = _endpoint_builder.open(api_key=api_key, api_kind=api_kind, network=network)
+    endpoint = ctx.endpoint_builder.open(
+        api_key=ctx.api_key, api_kind=ctx.api_kind, network=ctx.network
+    )
     url: str = endpoint.api_url
 
     params: dict[str, Any] = {
@@ -45,33 +35,33 @@ async def get_eth_price(
     # Preserve explicit None for sort in tests: keep the key present
     signed_params, headers = endpoint.filter_and_sign(params, headers=None)
 
-    cache_key = f'ethprice:{api_kind}:{network}'
-    if _cache is not None:
-        cached = await _cache.get(cache_key)
+    cache_key = f'ethprice:{ctx.api_kind}:{ctx.network}'
+    if ctx.cache is not None:
+        cached = await ctx.cache.get(cache_key)
         if isinstance(cached, dict):
             return cached
 
     response: Any = await run_with_policies(
-        do_call=lambda: http.get(url, params=signed_params, headers=headers),
-        telemetry=_telemetry,
+        do_call=lambda: ctx.http.get(url, params=signed_params, headers=headers),
+        telemetry=ctx.telemetry,
         telemetry_name='stats.get_eth_price',
-        api_kind=api_kind,
-        network=network,
-        rate_limiter=_rate_limiter,
-        rate_limiter_key=f'{api_kind}:{network}:ethprice',
-        retry_policy=_retry,
+        api_kind=ctx.api_kind,
+        network=ctx.network,
+        rate_limiter=ctx.rate_limiter,
+        rate_limiter_key=f'{ctx.api_kind}:{ctx.network}:ethprice',
+        retry_policy=ctx.retry,
     )
 
     result: Any = response
     if isinstance(response, dict):
         result = response.get('result', response)
     if isinstance(result, dict):
-        if _cache is not None:
-            await _cache.set(cache_key, result, ttl_seconds=CACHE_TTL_ETH_PRICE_SECONDS)
-        if _telemetry is not None:
-            await _telemetry.record_event(
+        if ctx.cache is not None:
+            await ctx.cache.set(cache_key, result, ttl_seconds=CACHE_TTL_ETH_PRICE_SECONDS)
+        if ctx.telemetry is not None:
+            await ctx.telemetry.record_event(
                 'stats.get_eth_price.ok',
-                {'api_kind': api_kind, 'network': network},
+                {'api_kind': ctx.api_kind, 'network': ctx.network},
             )
         return result
     return {}
@@ -79,32 +69,27 @@ async def get_eth_price(
 
 async def get_eth_supply(
     *,
-    api_kind: str,
-    network: str,
-    api_key: str,
-    http: HttpClient,
-    _endpoint_builder: EndpointBuilder,
+    ctx: ProviderContext,
     extra_params: Mapping[str, Any] | None = None,
-    _rate_limiter: RateLimiter | None = None,
-    _retry: RetryPolicy | None = None,
-    _telemetry: Telemetry | None = None,
 ) -> str:
     """Get Total Supply of Ether (ethsupply)."""
-    endpoint = _endpoint_builder.open(api_key=api_key, api_kind=api_kind, network=network)
+    endpoint = ctx.endpoint_builder.open(
+        api_key=ctx.api_key, api_kind=ctx.api_kind, network=ctx.network
+    )
     url: str = endpoint.api_url
     params: dict[str, Any] = {'module': 'stats', 'action': 'ethsupply'}
     if extra_params:
         params.update({k: v for k, v in extra_params.items() if v is not None})
     signed_params, headers = endpoint.filter_and_sign(params, headers=None)
     response: Any = await run_with_policies(
-        do_call=lambda: http.get(url, params=signed_params, headers=headers),
-        telemetry=_telemetry,
+        do_call=lambda: ctx.http.get(url, params=signed_params, headers=headers),
+        telemetry=ctx.telemetry,
         telemetry_name='stats.ethsupply',
-        api_kind=api_kind,
-        network=network,
-        rate_limiter=_rate_limiter,
-        rate_limiter_key=f'{api_kind}:{network}:ethsupply',
-        retry_policy=_retry,
+        api_kind=ctx.api_kind,
+        network=ctx.network,
+        rate_limiter=ctx.rate_limiter,
+        rate_limiter_key=f'{ctx.api_kind}:{ctx.network}:ethsupply',
+        retry_policy=ctx.retry,
     )
     if isinstance(response, dict):
         result = response.get('result', response)
@@ -114,32 +99,27 @@ async def get_eth_supply(
 
 async def get_eth2_supply(
     *,
-    api_kind: str,
-    network: str,
-    api_key: str,
-    http: HttpClient,
-    _endpoint_builder: EndpointBuilder,
+    ctx: ProviderContext,
     extra_params: Mapping[str, Any] | None = None,
-    _rate_limiter: RateLimiter | None = None,
-    _retry: RetryPolicy | None = None,
-    _telemetry: Telemetry | None = None,
 ) -> str:
     """Get Total Supply of Ether (ethsupply2)."""
-    endpoint = _endpoint_builder.open(api_key=api_key, api_kind=api_kind, network=network)
+    endpoint = ctx.endpoint_builder.open(
+        api_key=ctx.api_key, api_kind=ctx.api_kind, network=ctx.network
+    )
     url: str = endpoint.api_url
     params: dict[str, Any] = {'module': 'stats', 'action': 'ethsupply2'}
     if extra_params:
         params.update({k: v for k, v in extra_params.items() if v is not None})
     signed_params, headers = endpoint.filter_and_sign(params, headers=None)
     response: Any = await run_with_policies(
-        do_call=lambda: http.get(url, params=signed_params, headers=headers),
-        telemetry=_telemetry,
+        do_call=lambda: ctx.http.get(url, params=signed_params, headers=headers),
+        telemetry=ctx.telemetry,
         telemetry_name='stats.ethsupply2',
-        api_kind=api_kind,
-        network=network,
-        rate_limiter=_rate_limiter,
-        rate_limiter_key=f'{api_kind}:{network}:ethsupply2',
-        retry_policy=_retry,
+        api_kind=ctx.api_kind,
+        network=ctx.network,
+        rate_limiter=ctx.rate_limiter,
+        rate_limiter_key=f'{ctx.api_kind}:{ctx.network}:ethsupply2',
+        retry_policy=ctx.retry,
     )
     if isinstance(response, dict):
         result = response.get('result', response)
@@ -149,32 +129,27 @@ async def get_eth2_supply(
 
 async def get_total_nodes_count(
     *,
-    api_kind: str,
-    network: str,
-    api_key: str,
-    http: HttpClient,
-    _endpoint_builder: EndpointBuilder,
+    ctx: ProviderContext,
     extra_params: Mapping[str, Any] | None = None,
-    _rate_limiter: RateLimiter | None = None,
-    _retry: RetryPolicy | None = None,
-    _telemetry: Telemetry | None = None,
 ) -> dict[str, Any]:
     """Get Total Nodes Count (nodecount)."""
-    endpoint = _endpoint_builder.open(api_key=api_key, api_kind=api_kind, network=network)
+    endpoint = ctx.endpoint_builder.open(
+        api_key=ctx.api_key, api_kind=ctx.api_kind, network=ctx.network
+    )
     url: str = endpoint.api_url
     params: dict[str, Any] = {'module': 'stats', 'action': 'nodecount'}
     if extra_params:
         params.update({k: v for k, v in extra_params.items() if v is not None})
     signed_params, headers = endpoint.filter_and_sign(params, headers=None)
     response: Any = await run_with_policies(
-        do_call=lambda: http.get(url, params=signed_params, headers=headers),
-        telemetry=_telemetry,
+        do_call=lambda: ctx.http.get(url, params=signed_params, headers=headers),
+        telemetry=ctx.telemetry,
         telemetry_name='stats.nodecount',
-        api_kind=api_kind,
-        network=network,
-        rate_limiter=_rate_limiter,
-        rate_limiter_key=f'{api_kind}:{network}:nodecount',
-        retry_policy=_retry,
+        api_kind=ctx.api_kind,
+        network=ctx.network,
+        rate_limiter=ctx.rate_limiter,
+        rate_limiter_key=f'{ctx.api_kind}:{ctx.network}:nodecount',
+        retry_policy=ctx.retry,
     )
     if isinstance(response, dict):
         result = response.get('result', response)
@@ -184,22 +159,17 @@ async def get_total_nodes_count(
 
 async def get_chain_size(
     *,
+    ctx: ProviderContext,
     start_date: date,
     end_date: date,
     client_type: str,
     sync_mode: str,
-    api_kind: str,
-    network: str,
-    api_key: str,
-    http: HttpClient,
-    _endpoint_builder: EndpointBuilder,
     sort: str | None = None,
-    _rate_limiter: RateLimiter | None = None,
-    _retry: RetryPolicy | None = None,
-    _telemetry: Telemetry | None = None,
 ) -> dict[str, Any] | None:
     """Get chain size (provider-shaped). Returns None when provider returns empty list."""
-    endpoint = _endpoint_builder.open(api_key=api_key, api_kind=api_kind, network=network)
+    endpoint = ctx.endpoint_builder.open(
+        api_key=ctx.api_key, api_kind=ctx.api_kind, network=ctx.network
+    )
     url: str = endpoint.api_url
     params: dict[str, Any] = {
         'module': 'stats',
@@ -213,14 +183,14 @@ async def get_chain_size(
     signed_params, headers = endpoint.filter_and_sign(params, headers=None)
 
     response: Any = await run_with_policies(
-        do_call=lambda: http.get(url, params=signed_params, headers=headers),
-        telemetry=_telemetry,
+        do_call=lambda: ctx.http.get(url, params=signed_params, headers=headers),
+        telemetry=ctx.telemetry,
         telemetry_name='stats.chainsize',
-        api_kind=api_kind,
-        network=network,
-        rate_limiter=_rate_limiter,
-        rate_limiter_key=f'{api_kind}:{network}:chainsize',
-        retry_policy=_retry,
+        api_kind=ctx.api_kind,
+        network=ctx.network,
+        rate_limiter=ctx.rate_limiter,
+        rate_limiter_key=f'{ctx.api_kind}:{ctx.network}:chainsize',
+        retry_policy=ctx.retry,
     )
 
     if isinstance(response, list) and len(response) == 0:
@@ -240,21 +210,16 @@ def normalize_eth_price(raw: dict[str, Any]) -> EthPriceDTO:
 
 async def _get_daily_series(
     *,
+    ctx: ProviderContext,
     action: str,
     start_date: date,
     end_date: date,
-    api_kind: str,
-    network: str,
-    api_key: str,
-    http: HttpClient,
-    _endpoint_builder: EndpointBuilder,
     sort: str | None = None,
-    _rate_limiter: RateLimiter | None = None,
-    _retry: RetryPolicy | None = None,
-    _telemetry: Telemetry | None = None,
 ) -> list[dict[str, Any]]:
     """Fetch a daily time-series from stats endpoints (raw provider shape)."""
-    endpoint = _endpoint_builder.open(api_key=api_key, api_kind=api_kind, network=network)
+    endpoint = ctx.endpoint_builder.open(
+        api_key=ctx.api_key, api_kind=ctx.api_kind, network=ctx.network
+    )
     url: str = endpoint.api_url
 
     params: dict[str, Any] = {
@@ -267,30 +232,30 @@ async def _get_daily_series(
     signed_params, headers = endpoint.filter_and_sign(params, headers=None)
 
     async def _do_request() -> Any:
-        if _rate_limiter is not None:
-            await _rate_limiter.acquire(key=f'{api_kind}:{network}:{action}')
+        if ctx.rate_limiter is not None:
+            await ctx.rate_limiter.acquire(key=f'{ctx.api_kind}:{ctx.network}:{action}')
         start = monotonic()
         try:
-            return await http.get(url, params=signed_params, headers=headers)
+            return await ctx.http.get(url, params=signed_params, headers=headers)
         finally:
-            if _telemetry is not None:
+            if ctx.telemetry is not None:
                 duration_ms = int((monotonic() - start) * 1000)
-                await _telemetry.record_event(
+                await ctx.telemetry.record_event(
                     f'stats.{action}.duration',
-                    {'api_kind': api_kind, 'network': network, 'duration_ms': duration_ms},
+                    {'api_kind': ctx.api_kind, 'network': ctx.network, 'duration_ms': duration_ms},
                 )
 
     try:
-        if _retry is not None:
-            response: Any = await _retry.run(_do_request)
+        if ctx.retry is not None:
+            response: Any = await ctx.retry.run(_do_request)
         else:
             response = await _do_request()
     except Exception as exc:  # noqa: BLE001
-        if _telemetry is not None:
-            await _telemetry.record_error(
+        if ctx.telemetry is not None:
+            await ctx.telemetry.record_error(
                 f'stats.{action}.error',
                 exc,
-                {'api_kind': api_kind, 'network': network},
+                {'api_kind': ctx.api_kind, 'network': ctx.network},
             )
         raise
 
@@ -303,10 +268,10 @@ async def _get_daily_series(
     elif isinstance(response, list):
         items = response
 
-    if _telemetry is not None:
-        await _telemetry.record_event(
+    if ctx.telemetry is not None:
+        await ctx.telemetry.record_event(
             f'stats.{action}.ok',
-            {'api_kind': api_kind, 'network': network, 'items': len(items)},
+            {'api_kind': ctx.api_kind, 'network': ctx.network, 'items': len(items)},
         )
 
     return items if isinstance(items, list) else []
@@ -370,332 +335,178 @@ def normalize_daily_network_utilization(raw: list[dict[str, Any]]) -> list[Daily
 # Public service functions for high-traffic series
 async def get_daily_transaction_count(
     *,
+    ctx: ProviderContext,
     start_date: date,
     end_date: date,
-    api_kind: str,
-    network: str,
-    api_key: str,
-    http: HttpClient,
-    _endpoint_builder: EndpointBuilder,
     sort: str | None = None,
-    _rate_limiter: RateLimiter | None = None,
-    _retry: RetryPolicy | None = None,
-    _telemetry: Telemetry | None = None,
 ) -> list[dict[str, Any]]:
     return await _get_daily_series(
+        ctx=ctx,
         action='dailytx',
         start_date=start_date,
         end_date=end_date,
-        api_kind=api_kind,
-        network=network,
-        api_key=api_key,
-        http=http,
-        _endpoint_builder=_endpoint_builder,
         sort=sort,
-        _rate_limiter=_rate_limiter,
-        _retry=_retry,
-        _telemetry=_telemetry,
     )
 
 
 async def get_daily_new_address_count(
     *,
+    ctx: ProviderContext,
     start_date: date,
     end_date: date,
-    api_kind: str,
-    network: str,
-    api_key: str,
-    http: HttpClient,
-    _endpoint_builder: EndpointBuilder,
     sort: str | None = None,
-    _rate_limiter: RateLimiter | None = None,
-    _retry: RetryPolicy | None = None,
-    _telemetry: Telemetry | None = None,
 ) -> list[dict[str, Any]]:
     return await _get_daily_series(
+        ctx=ctx,
         action='dailynewaddress',
         start_date=start_date,
         end_date=end_date,
-        api_kind=api_kind,
-        network=network,
-        api_key=api_key,
-        http=http,
-        _endpoint_builder=_endpoint_builder,
         sort=sort,
-        _rate_limiter=_rate_limiter,
-        _retry=_retry,
-        _telemetry=_telemetry,
     )
 
 
 async def get_daily_network_tx_fee(
     *,
+    ctx: ProviderContext,
     start_date: date,
     end_date: date,
-    api_kind: str,
-    network: str,
-    api_key: str,
-    http: HttpClient,
-    _endpoint_builder: EndpointBuilder,
     sort: str | None = None,
-    _rate_limiter: RateLimiter | None = None,
-    _retry: RetryPolicy | None = None,
-    _telemetry: Telemetry | None = None,
 ) -> list[dict[str, Any]]:
     return await _get_daily_series(
+        ctx=ctx,
         action='dailytxnfee',
         start_date=start_date,
         end_date=end_date,
-        api_kind=api_kind,
-        network=network,
-        api_key=api_key,
-        http=http,
-        _endpoint_builder=_endpoint_builder,
         sort=sort,
-        _rate_limiter=_rate_limiter,
-        _retry=_retry,
-        _telemetry=_telemetry,
     )
 
 
 async def get_daily_network_utilization(
     *,
+    ctx: ProviderContext,
     start_date: date,
     end_date: date,
-    api_kind: str,
-    network: str,
-    api_key: str,
-    http: HttpClient,
-    _endpoint_builder: EndpointBuilder,
     sort: str | None = None,
-    _rate_limiter: RateLimiter | None = None,
-    _retry: RetryPolicy | None = None,
-    _telemetry: Telemetry | None = None,
 ) -> list[dict[str, Any]]:
     return await _get_daily_series(
+        ctx=ctx,
         action='dailynetutilization',
         start_date=start_date,
         end_date=end_date,
-        api_kind=api_kind,
-        network=network,
-        api_key=api_key,
-        http=http,
-        _endpoint_builder=_endpoint_builder,
         sort=sort,
-        _rate_limiter=_rate_limiter,
-        _retry=_retry,
-        _telemetry=_telemetry,
     )
 
 
 # Additional daily series exposed via services
 async def get_daily_average_block_size(
     *,
+    ctx: ProviderContext,
     start_date: date,
     end_date: date,
-    api_kind: str,
-    network: str,
-    api_key: str,
-    http: HttpClient,
-    _endpoint_builder: EndpointBuilder,
     sort: str | None = None,
-    _rate_limiter: RateLimiter | None = None,
-    _retry: RetryPolicy | None = None,
-    _telemetry: Telemetry | None = None,
 ) -> list[dict[str, Any]]:
     return await _get_daily_series(
+        ctx=ctx,
         action='dailyavgblocksize',
         start_date=start_date,
         end_date=end_date,
-        api_kind=api_kind,
-        network=network,
-        api_key=api_key,
-        http=http,
-        _endpoint_builder=_endpoint_builder,
         sort=sort,
-        _rate_limiter=_rate_limiter,
-        _retry=_retry,
-        _telemetry=_telemetry,
     )
 
 
 async def get_daily_block_rewards(
     *,
+    ctx: ProviderContext,
     start_date: date,
     end_date: date,
-    api_kind: str,
-    network: str,
-    api_key: str,
-    http: HttpClient,
-    _endpoint_builder: EndpointBuilder,
     sort: str | None = None,
-    _rate_limiter: RateLimiter | None = None,
-    _retry: RetryPolicy | None = None,
-    _telemetry: Telemetry | None = None,
 ) -> list[dict[str, Any]]:
     return await _get_daily_series(
+        ctx=ctx,
         action='dailyblockrewards',
         start_date=start_date,
         end_date=end_date,
-        api_kind=api_kind,
-        network=network,
-        api_key=api_key,
-        http=http,
-        _endpoint_builder=_endpoint_builder,
         sort=sort,
-        _rate_limiter=_rate_limiter,
-        _retry=_retry,
-        _telemetry=_telemetry,
     )
 
 
 async def get_daily_average_block_time(
     *,
+    ctx: ProviderContext,
     start_date: date,
     end_date: date,
-    api_kind: str,
-    network: str,
-    api_key: str,
-    http: HttpClient,
-    _endpoint_builder: EndpointBuilder,
     sort: str | None = None,
-    _rate_limiter: RateLimiter | None = None,
-    _retry: RetryPolicy | None = None,
-    _telemetry: Telemetry | None = None,
 ) -> list[dict[str, Any]]:
     return await _get_daily_series(
+        ctx=ctx,
         action='dailyavgblocktime',
         start_date=start_date,
         end_date=end_date,
-        api_kind=api_kind,
-        network=network,
-        api_key=api_key,
-        http=http,
-        _endpoint_builder=_endpoint_builder,
         sort=sort,
-        _rate_limiter=_rate_limiter,
-        _retry=_retry,
-        _telemetry=_telemetry,
     )
 
 
 async def get_daily_uncle_block_count(
     *,
+    ctx: ProviderContext,
     start_date: date,
     end_date: date,
-    api_kind: str,
-    network: str,
-    api_key: str,
-    http: HttpClient,
-    _endpoint_builder: EndpointBuilder,
     sort: str | None = None,
-    _rate_limiter: RateLimiter | None = None,
-    _retry: RetryPolicy | None = None,
-    _telemetry: Telemetry | None = None,
 ) -> list[dict[str, Any]]:
     return await _get_daily_series(
+        ctx=ctx,
         action='dailyuncleblkcount',
         start_date=start_date,
         end_date=end_date,
-        api_kind=api_kind,
-        network=network,
-        api_key=api_key,
-        http=http,
-        _endpoint_builder=_endpoint_builder,
         sort=sort,
-        _rate_limiter=_rate_limiter,
-        _retry=_retry,
-        _telemetry=_telemetry,
     )
 
 
 async def get_daily_average_gas_limit(
     *,
+    ctx: ProviderContext,
     start_date: date,
     end_date: date,
-    api_kind: str,
-    network: str,
-    api_key: str,
-    http: HttpClient,
-    _endpoint_builder: EndpointBuilder,
     sort: str | None = None,
-    _rate_limiter: RateLimiter | None = None,
-    _retry: RetryPolicy | None = None,
-    _telemetry: Telemetry | None = None,
 ) -> list[dict[str, Any]]:
     return await _get_daily_series(
+        ctx=ctx,
         action='dailyavggaslimit',
         start_date=start_date,
         end_date=end_date,
-        api_kind=api_kind,
-        network=network,
-        api_key=api_key,
-        http=http,
-        _endpoint_builder=_endpoint_builder,
         sort=sort,
-        _rate_limiter=_rate_limiter,
-        _retry=_retry,
-        _telemetry=_telemetry,
     )
 
 
 async def get_daily_total_gas_used(
     *,
+    ctx: ProviderContext,
     start_date: date,
     end_date: date,
-    api_kind: str,
-    network: str,
-    api_key: str,
-    http: HttpClient,
-    _endpoint_builder: EndpointBuilder,
     sort: str | None = None,
-    _rate_limiter: RateLimiter | None = None,
-    _retry: RetryPolicy | None = None,
-    _telemetry: Telemetry | None = None,
 ) -> list[dict[str, Any]]:
     return await _get_daily_series(
+        ctx=ctx,
         action='dailygasused',
         start_date=start_date,
         end_date=end_date,
-        api_kind=api_kind,
-        network=network,
-        api_key=api_key,
-        http=http,
-        _endpoint_builder=_endpoint_builder,
         sort=sort,
-        _rate_limiter=_rate_limiter,
-        _retry=_retry,
-        _telemetry=_telemetry,
     )
 
 
 async def get_daily_average_gas_price(
     *,
+    ctx: ProviderContext,
     start_date: date,
     end_date: date,
-    api_kind: str,
-    network: str,
-    api_key: str,
-    http: HttpClient,
-    _endpoint_builder: EndpointBuilder,
     sort: str | None = None,
-    _rate_limiter: RateLimiter | None = None,
-    _retry: RetryPolicy | None = None,
-    _telemetry: Telemetry | None = None,
 ) -> list[dict[str, Any]]:
     return await _get_daily_series(
+        ctx=ctx,
         action='dailyavggasprice',
         start_date=start_date,
         end_date=end_date,
-        api_kind=api_kind,
-        network=network,
-        api_key=api_key,
-        http=http,
-        _endpoint_builder=_endpoint_builder,
         sort=sort,
-        _rate_limiter=_rate_limiter,
-        _retry=_retry,
-        _telemetry=_telemetry,
     )
 
 
@@ -796,149 +607,79 @@ def normalize_ether_historical_price(raw: list[dict[str, Any]]) -> list[DailySer
 
 async def get_daily_block_count(
     *,
+    ctx: ProviderContext,
     start_date: date,
     end_date: date,
-    api_kind: str,
-    network: str,
-    api_key: str,
-    http: HttpClient,
-    _endpoint_builder: EndpointBuilder,
     sort: str | None = None,
-    _rate_limiter: RateLimiter | None = None,
-    _retry: RetryPolicy | None = None,
-    _telemetry: Telemetry | None = None,
 ) -> list[dict[str, Any]]:
     return await _get_daily_series(
+        ctx=ctx,
         action='dailyblkcount',
         start_date=start_date,
         end_date=end_date,
-        api_kind=api_kind,
-        network=network,
-        api_key=api_key,
-        http=http,
-        _endpoint_builder=_endpoint_builder,
         sort=sort,
-        _rate_limiter=_rate_limiter,
-        _retry=_retry,
-        _telemetry=_telemetry,
     )
 
 
 async def get_daily_average_network_hash_rate(
     *,
+    ctx: ProviderContext,
     start_date: date,
     end_date: date,
-    api_kind: str,
-    network: str,
-    api_key: str,
-    http: HttpClient,
-    _endpoint_builder: EndpointBuilder,
     sort: str | None = None,
-    _rate_limiter: RateLimiter | None = None,
-    _retry: RetryPolicy | None = None,
-    _telemetry: Telemetry | None = None,
 ) -> list[dict[str, Any]]:
     return await _get_daily_series(
+        ctx=ctx,
         action='dailyavghashrate',
         start_date=start_date,
         end_date=end_date,
-        api_kind=api_kind,
-        network=network,
-        api_key=api_key,
-        http=http,
-        _endpoint_builder=_endpoint_builder,
         sort=sort,
-        _rate_limiter=_rate_limiter,
-        _retry=_retry,
-        _telemetry=_telemetry,
     )
 
 
 async def get_daily_average_network_difficulty(
     *,
+    ctx: ProviderContext,
     start_date: date,
     end_date: date,
-    api_kind: str,
-    network: str,
-    api_key: str,
-    http: HttpClient,
-    _endpoint_builder: EndpointBuilder,
     sort: str | None = None,
-    _rate_limiter: RateLimiter | None = None,
-    _retry: RetryPolicy | None = None,
-    _telemetry: Telemetry | None = None,
 ) -> list[dict[str, Any]]:
     return await _get_daily_series(
+        ctx=ctx,
         action='dailyavgnetdifficulty',
         start_date=start_date,
         end_date=end_date,
-        api_kind=api_kind,
-        network=network,
-        api_key=api_key,
-        http=http,
-        _endpoint_builder=_endpoint_builder,
         sort=sort,
-        _rate_limiter=_rate_limiter,
-        _retry=_retry,
-        _telemetry=_telemetry,
     )
 
 
 async def get_ether_historical_daily_market_cap(
     *,
+    ctx: ProviderContext,
     start_date: date,
     end_date: date,
-    api_kind: str,
-    network: str,
-    api_key: str,
-    http: HttpClient,
-    _endpoint_builder: EndpointBuilder,
     sort: str | None = None,
-    _rate_limiter: RateLimiter | None = None,
-    _retry: RetryPolicy | None = None,
-    _telemetry: Telemetry | None = None,
 ) -> list[dict[str, Any]]:
     return await _get_daily_series(
+        ctx=ctx,
         action='ethdailymarketcap',
         start_date=start_date,
         end_date=end_date,
-        api_kind=api_kind,
-        network=network,
-        api_key=api_key,
-        http=http,
-        _endpoint_builder=_endpoint_builder,
         sort=sort,
-        _rate_limiter=_rate_limiter,
-        _retry=_retry,
-        _telemetry=_telemetry,
     )
 
 
 async def get_ether_historical_price(
     *,
+    ctx: ProviderContext,
     start_date: date,
     end_date: date,
-    api_kind: str,
-    network: str,
-    api_key: str,
-    http: HttpClient,
-    _endpoint_builder: EndpointBuilder,
     sort: str | None = None,
-    _rate_limiter: RateLimiter | None = None,
-    _retry: RetryPolicy | None = None,
-    _telemetry: Telemetry | None = None,
 ) -> list[dict[str, Any]]:
     return await _get_daily_series(
+        ctx=ctx,
         action='ethdailyprice',
         start_date=start_date,
         end_date=end_date,
-        api_kind=api_kind,
-        network=network,
-        api_key=api_key,
-        http=http,
-        _endpoint_builder=_endpoint_builder,
         sort=sort,
-        _rate_limiter=_rate_limiter,
-        _retry=_retry,
-        _telemetry=_telemetry,
     )
