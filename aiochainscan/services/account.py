@@ -5,15 +5,15 @@ from time import monotonic
 from typing import Any
 
 from aiochainscan.constants import MAX_BLOCK_NUMBER
-from aiochainscan.domain.dto import (
-    AddressBalanceDTO,
+from aiochainscan.domain.dto_v2 import (
+    BalanceDTO,
     BeaconWithdrawalDTO,
-    InternalTxDTO,
+    InternalTransactionDTO,
     MinedBlockDTO,
-    NormalTxDTO,
     TokenTransferDTO,
+    TransactionDTO,
+    parse_hex_or_int_zero,
 )
-from aiochainscan.domain.dto_v2 import parse_hex_or_int_zero
 from aiochainscan.domain.models import Address
 from aiochainscan.exceptions import ChainscanClientError
 from aiochainscan.ports.cache import Cache
@@ -780,157 +780,36 @@ async def get_account_balance_by_blockno(
     return str(response)
 
 
-# --- Normalizers for account list endpoints (pure helpers) ---
+# ============================================================================
+# Normalizers — convert raw API dicts to Pydantic models via model_validate()
+# ============================================================================
 
 
-def _to_str(value: Any) -> str | None:
-    try:
-        if value is None:
-            return None
-        return str(value)
-    except (ValueError, TypeError):
-        return None
+def normalize_normal_txs(items: list[dict[str, Any]]) -> list[TransactionDTO]:
+    """Normalize a list of raw normal-tx dicts into TransactionDTO Pydantic models."""
+    return [TransactionDTO.model_validate(it) for it in items if isinstance(it, dict)]
 
 
-def normalize_normal_txs(items: list[dict[str, Any]]) -> list[NormalTxDTO]:
-    normalized: list[NormalTxDTO] = []
-    for it in items:
-        if not isinstance(it, dict):
-            continue
-        normalized.append(
-            {
-                'blockNumber': _to_str(it.get('blockNumber')),
-                'timeStamp': _to_str(it.get('timeStamp')),
-                'hash': _to_str(it.get('hash')),
-                'nonce': _to_str(it.get('nonce')),
-                'blockHash': _to_str(it.get('blockHash')),
-                'transactionIndex': _to_str(it.get('transactionIndex')),
-                'from_': _to_str(it.get('from') or it.get('from_')),
-                'to': _to_str(it.get('to')),
-                'value': _to_str(it.get('value')),
-                'gas': _to_str(it.get('gas')),
-                'gasPrice': _to_str(it.get('gasPrice')),
-                'isError': _to_str(it.get('isError')),
-                'txreceipt_status': _to_str(it.get('txreceipt_status')),
-                'input': _to_str(it.get('input')),
-                'contractAddress': _to_str(it.get('contractAddress')),
-                'cumulativeGasUsed': _to_str(it.get('cumulativeGasUsed')),
-                'gasUsed': _to_str(it.get('gasUsed')),
-                'confirmations': _to_str(it.get('confirmations')),
-            }
-        )
-    return normalized
-
-
-def normalize_internal_txs(items: list[dict[str, Any]]) -> list[InternalTxDTO]:
-    normalized: list[InternalTxDTO] = []
-    for it in items:
-        if not isinstance(it, dict):
-            continue
-        normalized.append(
-            {
-                'blockNumber': _to_str(it.get('blockNumber')),
-                'timeStamp': _to_str(it.get('timeStamp')),
-                'hash': _to_str(it.get('hash')),
-                'from_': _to_str(it.get('from') or it.get('from_')),
-                'to': _to_str(it.get('to')),
-                'value': _to_str(it.get('value')),
-                'contractAddress': _to_str(it.get('contractAddress')),
-                'input': _to_str(it.get('input')),
-                'type': _to_str(it.get('type')),
-                'gas': _to_str(it.get('gas')),
-                'gasUsed': _to_str(it.get('gasUsed')),
-                'traceId': _to_str(it.get('traceId')),
-                'isError': _to_str(it.get('isError')),
-                'errCode': _to_str(it.get('errCode')),
-            }
-        )
-    return normalized
+def normalize_internal_txs(items: list[dict[str, Any]]) -> list[InternalTransactionDTO]:
+    """Normalize a list of raw internal-tx dicts into InternalTransactionDTO Pydantic models."""
+    return [InternalTransactionDTO.model_validate(it) for it in items if isinstance(it, dict)]
 
 
 def normalize_token_transfers(items: list[dict[str, Any]]) -> list[TokenTransferDTO]:
-    normalized: list[TokenTransferDTO] = []
-    for it in items:
-        if not isinstance(it, dict):
-            continue
-        normalized.append(
-            {
-                'blockNumber': _to_str(it.get('blockNumber')),
-                'timeStamp': _to_str(it.get('timeStamp')),
-                'hash': _to_str(it.get('hash')),
-                'nonce': _to_str(it.get('nonce')),
-                'blockHash': _to_str(it.get('blockHash')),
-                'from_': _to_str(it.get('from') or it.get('from_')),
-                'contractAddress': _to_str(it.get('contractAddress')),
-                'to': _to_str(it.get('to')),
-                'value': _to_str(it.get('value')),
-                'tokenName': _to_str(it.get('tokenName')),
-                'tokenSymbol': _to_str(it.get('tokenSymbol')),
-                'tokenDecimal': _to_str(it.get('tokenDecimal')),
-                'transactionIndex': _to_str(it.get('transactionIndex')),
-                'gas': _to_str(it.get('gas')),
-                'gasPrice': _to_str(it.get('gasPrice')),
-                'gasUsed': _to_str(it.get('gasUsed')),
-                'cumulativeGasUsed': _to_str(it.get('cumulativeGasUsed')),
-                'input': _to_str(it.get('input')),
-                'confirmations': _to_str(it.get('confirmations')),
-            }
-        )
-    return normalized
+    """Normalize a list of raw token-transfer dicts into TokenTransferDTO Pydantic models."""
+    return [TokenTransferDTO.model_validate(it) for it in items if isinstance(it, dict)]
 
 
 def normalize_mined_blocks(items: list[dict[str, Any]]) -> list[MinedBlockDTO]:
-    normalized: list[MinedBlockDTO] = []
-    for it in items:
-        if not isinstance(it, dict):
-            continue
-        normalized.append(
-            {
-                'blockNumber': _to_str(it.get('blockNumber')),
-                'timeStamp': _to_str(it.get('timeStamp')),
-                'blockReward': _to_str(it.get('blockReward')),
-            }
-        )
-    return normalized
+    """Normalize a list of raw mined-block dicts into MinedBlockDTO Pydantic models."""
+    return [MinedBlockDTO.model_validate(it) for it in items if isinstance(it, dict)]
 
 
 def normalize_beacon_withdrawals(items: list[dict[str, Any]]) -> list[BeaconWithdrawalDTO]:
-    normalized: list[BeaconWithdrawalDTO] = []
-    for it in items:
-        if not isinstance(it, dict):
-            continue
-        normalized.append(
-            {
-                'blockNumber': _to_str(it.get('blockNumber')),
-                'timeStamp': _to_str(it.get('timeStamp')),
-                'address': _to_str(it.get('address')),
-                'amount': _to_str(it.get('amount')),
-            }
-        )
-    return normalized
+    """Normalize a list of raw beacon withdrawal dicts into BeaconWithdrawalDTO Pydantic models."""
+    return [BeaconWithdrawalDTO.model_validate(it) for it in items if isinstance(it, dict)]
 
 
-def normalize_address_balances(items: list[dict[str, Any]]) -> list[AddressBalanceDTO]:
-    """Normalize multi-balance response items into `AddressBalanceDTO` list.
-
-    Providers usually return entries like {'account': '0x..', 'balance': '123'}.
-    This helper coerces balance to int when possible and renames fields.
-    """
-
-    def to_int(value: Any) -> int | None:
-        try:
-            return int(value) if value is not None else None
-        except (ValueError, TypeError):
-            return None
-
-    normalized: list[AddressBalanceDTO] = []
-    for it in items:
-        if not isinstance(it, dict):
-            continue
-        normalized.append(
-            {
-                'address': _to_str(it.get('account') or it.get('address')),
-                'balance_wei': to_int(it.get('balance')),
-            }
-        )
-    return normalized
+def normalize_address_balances(items: list[dict[str, Any]]) -> list[BalanceDTO]:
+    """Normalize multi-balance response items into BalanceDTO Pydantic models."""
+    return [BalanceDTO.model_validate(it) for it in items if isinstance(it, dict)]

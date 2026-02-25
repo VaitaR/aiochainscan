@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from aiochainscan.domain.dto import GasOracleDTO
+from aiochainscan.domain.dto_v2 import GasOracleDTO
 from aiochainscan.ports.cache import Cache
 from aiochainscan.ports.endpoint_builder import EndpointBuilder
 from aiochainscan.ports.http_client import HttpClient
@@ -114,53 +114,8 @@ async def get_gas_estimate(
 
 
 def normalize_gas_oracle(raw: dict[str, Any]) -> GasOracleDTO:
-    """Normalize provider-shaped gas oracle payload to `GasOracleDTO`.
+    """Normalize provider-shaped gas oracle payload to GasOracleDTO.
 
-    Supports Etherscan-compatible fields: SafeGasPrice, ProposeGasPrice, FastGasPrice,
-    suggestBaseFee, gasUsedRatio. Missing fields are omitted.
+    Pydantic handles SafeGasPrice/ProposeGasPrice/FastGasPrice → Gwei-to-wei conversion.
     """
-
-    def gwei_to_wei(value: str | int | float | None) -> int | None:
-        if value is None:
-            return None
-        try:
-            v = float(value) if isinstance(value, str) else float(value)
-            return int(v * 1_000_000_000)
-        except Exception:
-            return None
-
-    dto: GasOracleDTO = {}
-    # Etherscan-style keys
-    safe = raw.get('SafeGasPrice')
-    prop = raw.get('ProposeGasPrice')
-    fast = raw.get('FastGasPrice')
-    base = raw.get('suggestBaseFee')
-    ratio = raw.get('gasUsedRatio')
-
-    safe_wei = gwei_to_wei(safe)
-    if safe_wei is not None:
-        dto['safe_gas_price_wei'] = safe_wei
-
-    prop_wei = gwei_to_wei(prop)
-    if prop_wei is not None:
-        dto['propose_gas_price_wei'] = prop_wei
-
-    fast_wei = gwei_to_wei(fast)
-    if fast_wei is not None:
-        dto['fast_gas_price_wei'] = fast_wei
-
-    base_wei = gwei_to_wei(base)
-    if base_wei is not None:
-        dto['suggest_base_fee_wei'] = base_wei
-
-    if isinstance(ratio, str):
-        # Etherscan often returns a comma-separated list of ratios; take the first numeric value
-        try:
-            first = ratio.split(',')[0]
-            dto['gas_used_ratio'] = float(first)
-        except Exception:
-            pass
-    elif isinstance(ratio, int | float):
-        dto['gas_used_ratio'] = float(ratio)
-
-    return dto
+    return GasOracleDTO.model_validate(raw)

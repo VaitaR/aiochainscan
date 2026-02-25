@@ -28,15 +28,19 @@ from aiochainscan.capabilities import (
     is_feature_supported as _caps_is_feature_supported,
 )
 from aiochainscan.config import config_manager as _config_manager
-from aiochainscan.domain.dto import (
+from aiochainscan.domain.dto_v2 import (
     BlockDTO,
     DailySeriesDTO,
     EthPriceDTO,
     GasOracleDTO,
-    LogEntryDTO,
-    NormalTxDTO,
     TokenTransferDTO,
     TransactionDTO,
+)
+from aiochainscan.domain.dto_v2 import (
+    LogEventDTO as LogEntryDTO,
+)
+from aiochainscan.domain.dto_v2 import (
+    TransactionDTO as NormalTxDTO,
 )
 from aiochainscan.domain.models import Address, Page, TxHash
 from aiochainscan.ports.cache import Cache

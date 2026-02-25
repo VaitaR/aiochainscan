@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from time import monotonic
 from typing import Any
 
-from aiochainscan.domain.dto import ProxyTxDTO
+from aiochainscan.domain.dto_v2 import TransactionDTO
 from aiochainscan.ports.cache import Cache
 from aiochainscan.ports.endpoint_builder import EndpointBuilder
 from aiochainscan.ports.http_client import HttpClient
@@ -187,28 +187,9 @@ async def get_tx_by_hash(
     return {}
 
 
-def normalize_proxy_tx(raw: dict[str, Any]) -> ProxyTxDTO:
-    """Normalize proxy.eth_getTransactionByHash result into ProxyTxDTO."""
-
-    def hex_to_int(v: Any) -> int | None:
-        try:
-            if isinstance(v, str) and v.startswith('0x'):
-                return int(v, 16)
-            return int(v)
-        except Exception:
-            return None
-
-    return {
-        'tx_hash': raw.get('hash'),
-        'block_number': hex_to_int(raw.get('blockNumber')),
-        'from_address': raw.get('from'),
-        'to_address': raw.get('to'),
-        'value_wei': hex_to_int(raw.get('value')),
-        'gas': hex_to_int(raw.get('gas')),
-        'gas_price_wei': hex_to_int(raw.get('gasPrice')),
-        'nonce': hex_to_int(raw.get('nonce')),
-        'input': raw.get('input'),
-    }
+def normalize_proxy_tx(raw: dict[str, Any]) -> TransactionDTO:
+    """Normalize proxy.eth_getTransactionByHash result into TransactionDTO."""
+    return TransactionDTO.model_validate(raw)
 
 
 async def get_gas_price(

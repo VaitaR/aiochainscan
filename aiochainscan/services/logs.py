@@ -5,7 +5,7 @@ from time import monotonic
 from typing import Any
 
 from aiochainscan.constants import MAX_BLOCK_NUMBER
-from aiochainscan.domain.dto import LogEntryDTO
+from aiochainscan.domain.dto_v2 import LogEventDTO
 from aiochainscan.exceptions import ChainscanClientApiError
 from aiochainscan.ports.cache import Cache
 from aiochainscan.ports.endpoint_builder import EndpointBuilder
@@ -288,33 +288,14 @@ async def get_logs_page(
     return items, next_cursor
 
 
-def normalize_log_entry(raw: dict[str, Any]) -> LogEntryDTO:
-    def hex_to_int(h: str | None) -> int | None:
-        if not h:
-            return None
-        try:
-            return int(h, 16) if isinstance(h, str) and h.startswith('0x') else int(h)
-        except Exception:
-            return None
-
-    topics_value = raw.get('topics')
-    topics: list[Any] = topics_value if isinstance(topics_value, list) else []
-    return {
-        'address': raw.get('address', ''),
-        'block_number': hex_to_int(raw.get('blockNumber')),
-        'tx_hash': raw.get('transactionHash'),
-        'data': raw.get('data'),
-        'topics': [str(t) for t in topics],
-    }
+def normalize_log_entry(raw: dict[str, Any]) -> LogEventDTO:
+    """Normalize a raw log entry dict into a LogEventDTO Pydantic model."""
+    return LogEventDTO.model_validate(raw)
 
 
-def normalize_logs(items: list[dict[str, Any]]) -> list[LogEntryDTO]:
-    """Normalize a list of raw log entries using `normalize_log_entry`."""
-    out: list[LogEntryDTO] = []
-    for item in items:
-        if isinstance(item, dict):
-            out.append(normalize_log_entry(item))
-    return out
+def normalize_logs(items: list[dict[str, Any]]) -> list[LogEventDTO]:
+    """Normalize a list of raw log dicts into LogEventDTO Pydantic models."""
+    return [LogEventDTO.model_validate(item) for item in items if isinstance(item, dict)]
 
 
 async def get_all_logs_optimized(
