@@ -10,14 +10,14 @@ import pytest_asyncio
 
 from aiochainscan.adapters.aiolimiter_adapter import AioLimiterAdapter
 from aiochainscan.adapters.tenacity_retry import TenacityRetryAdapter
+from aiochainscan.core.url_builder import UrlBuilder
 from aiochainscan.exceptions import (
     ChainscanClientApiError,
     ChainscanClientContentTypeError,
     ChainscanClientProxyError,
     ChainscanRateLimitError,
 )
-from aiochainscan.network import Network
-from aiochainscan.url_builder import UrlBuilder
+from aiochainscan.network import Network, _redact_url
 
 
 @pytest_asyncio.fixture
@@ -254,3 +254,26 @@ async def test_close_session(nw):
 
     await nw.close()
     assert nw._client is None
+
+
+def test_redact_url_query_api_key() -> None:
+    """Sensitive query params in URL must be redacted before logging."""
+    url = 'https://api.etherscan.io/v2/api?module=account&apikey=secret123&chainid=1'
+    redacted = _redact_url(url)
+
+    assert 'secret123' not in redacted
+    assert 'apikey=%2A%2A%2AREDACTED%2A%2A%2A' in redacted
+    assert 'module=account' in redacted
+    assert 'chainid=1' in redacted
+
+
+def test_redact_url_query_case_insensitive() -> None:
+    """Redaction must be case-insensitive for query parameter names."""
+    url = 'https://example.com/api?API_KEY=topsecret&key=abc&foo=bar'
+    redacted = _redact_url(url)
+
+    assert 'topsecret' not in redacted
+    assert 'abc' not in redacted
+    assert 'API_KEY=%2A%2A%2AREDACTED%2A%2A%2A' in redacted
+    assert 'key=%2A%2A%2AREDACTED%2A%2A%2A' in redacted
+    assert 'foo=bar' in redacted

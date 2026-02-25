@@ -20,8 +20,8 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from ..core.endpoint import EndpointSpec
 from ..core.method import Method
+from ..core.url_builder import UrlBuilder
 from ..exceptions import ChainscanClientApiError, ChainscanNetworkError
-from ..url_builder import UrlBuilder
 from . import register_scanner
 from .base import Scanner
 

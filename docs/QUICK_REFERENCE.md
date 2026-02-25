@@ -15,7 +15,7 @@ DeprecationWarning: get_balance() is deprecated and will be removed in v0.5.0
 
 #### ❌ Old (Deprecated)
 ```python
-from aiochainscan import get_balance
+from aiochainscan import ChainscanClient
 
 balance = await get_balance(
     address='0x...',
@@ -43,7 +43,7 @@ finally:
 
 #### ❌ Old (Creates 100 HTTP clients - VERY SLOW!)
 ```python
-from aiochainscan import get_balance
+from aiochainscan import ChainscanClient
 import asyncio
 
 addresses = ['0x...' for _ in range(100)]

@@ -15,6 +15,7 @@ connection resets and protocol errors.
 from __future__ import annotations
 
 import logging
+import urllib.parse
 from typing import TYPE_CHECKING, Any, cast
 
 import httpx
@@ -30,6 +31,7 @@ from aiochainscan.constants import (
     RETRY_MAX_WAIT,
     RETRY_MIN_WAIT,
 )
+from aiochainscan.core.url_builder import UrlBuilder
 from aiochainscan.exceptions import (
     ChainscanClientApiError,
     ChainscanClientContentTypeError,
@@ -39,13 +41,13 @@ from aiochainscan.exceptions import (
     ChainscanRateLimitError,
 )
 from aiochainscan.ports.rate_limiter import RateLimiter, RetryPolicy
-from aiochainscan.url_builder import UrlBuilder
 
 if TYPE_CHECKING:
     pass
 
 # Sensitive headers that should be redacted in logs
 SENSITIVE_HEADERS = {'authorization', 'x-api-key', 'apikey'}
+SENSITIVE_QUERY_PARAMS = {'apikey', 'api_key', 'key'}
 
 
 def _redact_headers(headers: dict[str, str] | None) -> dict[str, str] | None:
@@ -54,6 +56,28 @@ def _redact_headers(headers: dict[str, str] | None) -> dict[str, str] | None:
         return None
     return {
         k: ('***REDACTED***' if k.lower() in SENSITIVE_HEADERS else v) for k, v in headers.items()
+    }
+
+
+def _redact_url(url: str | httpx.URL) -> str:
+    """Redact sensitive query parameters from URL for safe logging."""
+    parsed = urllib.parse.urlparse(str(url))
+    query_pairs = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
+
+    redacted_pairs = [
+        (k, '***REDACTED***' if k.lower() in SENSITIVE_QUERY_PARAMS else v) for k, v in query_pairs
+    ]
+    redacted_query = urllib.parse.urlencode(redacted_pairs, doseq=True)
+    return urllib.parse.urlunparse(parsed._replace(query=redacted_query))
+
+
+def _redact_payload(payload: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Redact sensitive values in request payload/query dictionaries."""
+    if payload is None:
+        return None
+    return {
+        k: ('***REDACTED***' if k.lower() in SENSITIVE_QUERY_PARAMS else v)
+        for k, v in payload.items()
     }
 
 
@@ -246,8 +270,8 @@ class Network:
                 '[%s %s] url=%r params=%r headers=%r',
                 method,
                 response.status_code,
-                str(response.url),
-                params,
+                _redact_url(response.url),
+                _redact_payload(params),
                 _redact_headers(headers),
             )
 
@@ -288,8 +312,8 @@ class Network:
                 '[%s %s] url=%r data=%r headers=%r',
                 method,
                 response.status_code,
-                str(response.url),
-                data,
+                _redact_url(response.url),
+                _redact_payload(data),
                 _redact_headers(headers),
             )
 
@@ -322,7 +346,10 @@ class Network:
             # Convert to our exception types for consistent handling
             if status_code == 429:
                 raise ChainscanRateLimitError('HTTP 429', 'Too Many Requests') from e
-            raise ChainscanClientError(str(e)) from e
+            safe_url = _redact_url(response.url)
+            raise ChainscanClientError(
+                f'HTTP {status_code} for {safe_url}: {response.reason_phrase}'
+            ) from e
 
         # Parse JSON response
         content_type = response.headers.get('content-type', '')

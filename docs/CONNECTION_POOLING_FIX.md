@@ -54,7 +54,7 @@ Users believed they were getting connection pooling because:
 
 ```python
 import asyncio
-from aiochainscan import get_balance
+from aiochainscan import ChainscanClient
 
 addresses = ['0x...' for _ in range(100)]  # Typical whale tracking use case
 
@@ -152,7 +152,7 @@ log_batches = await asyncio.gather(*[
 ### Before (v0.3.x - Bug Present)
 
 ```python
-from aiochainscan import get_balance
+from aiochainscan import ChainscanClient
 import asyncio
 
 addresses = ['0x...' for _ in range(100)]
@@ -324,7 +324,7 @@ All facade functions in `aiochainscan/__init__.py`:
 ```python
 # Test that warnings are emitted
 import warnings
-from aiochainscan import get_balance
+from aiochainscan import ChainscanClient
 
 with warnings.catch_warnings(record=True) as w:
     warnings.simplefilter("always")
@@ -337,7 +337,7 @@ with warnings.catch_warnings(record=True) as w:
 ### Monitoring Usage
 
 Track which facade functions are still being used in the wild:
-- Check GitHub search for `from aiochainscan import get_balance`
+- Check GitHub search for `from aiochainscan import ChainscanClient`
 - Monitor PyPI download stats after v0.4.0 release
 - Provide 6-month deprecation period before v0.5.0 removal
 

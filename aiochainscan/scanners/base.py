@@ -8,8 +8,8 @@ from typing import Any, Literal
 from ..chain_registry import resolve_chain_id
 from ..core.endpoint import EndpointSpec
 from ..core.method import Method
+from ..core.url_builder import UrlBuilder
 from ..network import Network
-from ..url_builder import UrlBuilder
 
 
 class Scanner(ABC):

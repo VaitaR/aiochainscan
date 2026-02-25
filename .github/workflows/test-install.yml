@@ -55,8 +55,8 @@ jobs:
           # Verify main modules
           python -c "from aiochainscan import ChainscanClient, Method; print('✓ Main classes imported')"
 
-          # Verify facade imports
-          python -c "from aiochainscan import get_balance, get_block, get_transaction; print('✓ Facades imported')"
+          # Verify modern public API
+          python -c "from aiochainscan import ChainscanClient, Method, SmartContract, DecodedEvent, DecodedTransaction; print('✓ Modern public API imported')"
 
           # Verify CLI is available
           which aiochainscan || echo "⚠ CLI not found"
@@ -181,7 +181,7 @@ jobs:
           print(f'Package location: {pkg_path}')
 
           # Check for key modules
-          modules = ['client', 'config', 'network', 'core', 'services', 'adapters', 'ports', 'domain']
+          modules = ['config', 'network', 'core', 'services', 'adapters', 'ports', 'domain']
           for mod in modules:
               mod_path = os.path.join(pkg_path, mod + '.py')
               dir_path = os.path.join(pkg_path, mod)

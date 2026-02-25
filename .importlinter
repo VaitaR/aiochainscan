@@ -16,7 +16,6 @@ forbidden_modules =
     aiochainscan.services
     aiochainscan.adapters
     aiochainscan.core
-    aiochainscan.modules
     aiochainscan.scanners
 
 [importlinter:contract:2]
@@ -28,7 +27,6 @@ forbidden_modules =
     aiochainscan.services
     aiochainscan.adapters
     aiochainscan.core
-    aiochainscan.modules
     aiochainscan.scanners
 
 [importlinter:contract:3]

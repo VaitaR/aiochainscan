@@ -58,7 +58,6 @@ dependencies = [
  "pyo3",
  "pyo3-build-config",
  "pythonize",
- "rayon",
  "serde",
  "serde_json",
  "thiserror 1.0.69",

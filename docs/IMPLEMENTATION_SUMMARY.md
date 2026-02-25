@@ -230,7 +230,7 @@ Users have **at least one minor version** to migrate.
    - Or implement a decorator approach for consistency
 
 2. **Monitor usage**
-   - Track GitHub searches for `from aiochainscan import get_balance`
+    - Track GitHub searches for `from aiochainscan import ChainscanClient`
    - Check PyPI download stats
    - Monitor GitHub issues for migration questions
 

@@ -18,7 +18,7 @@ Provides a single, consistent API for accessing blockchain data across multiple 
 - **⚡ Built-in Rate Limiting** - Automatic throttling with configurable limits and retry policies
 - **🎯 Comprehensive API Coverage** - 28 blockchain operations with typed convenience methods
 - **🔒 Type-safe Operations** - Typed data transfer objects, method enums, 100% mypy --strict
-- **🚀 Optimized Bulk Operations** - Pagination engine, streaming decoder, range-splitting aggregators
+- **🚀 Optimized Bulk Operations** - Streaming aggregation for `get_all_*` plus `iter_*_streaming` for low-memory processing
 - **🧩 Dependency Injection** - Configurable HTTP clients, caching, telemetry, and rate limiters
 - **⛓️ Rust FFI** - Fast ABI decoding via PyO3 with LRU cache
 
@@ -44,7 +44,7 @@ pip install .
 import aiochainscan
 print(f"aiochainscan v{aiochainscan.__version__}")
 
-from aiochainscan import get_balance, get_block
+from aiochainscan import ChainscanClient
 print("✓ Installation successful!")
 ```
 
@@ -152,7 +152,7 @@ The **ChainscanClient** provides a unified interface with **30+ typed convenienc
 
 ```python
 import asyncio
-from aiochainscan.core.client import ChainscanClient
+from aiochainscan import ChainscanClient
 
 async def main():
     # Create client — async context manager handles cleanup
@@ -162,7 +162,7 @@ async def main():
         print(f"Balance: {int(balance) / 10**18:.6f} ETH")
 
         txs = await client.get_transactions('0x...')           # single page
-        all_txs = await client.get_all_transactions('0x...')    # ALL (paginated)
+        all_txs = await client.get_all_transactions('0x...')    # ALL (streaming aggregation → list)
         tokens = await client.get_token_portfolio('0x...')      # ERC-20 holdings
 
         # Blocks & transactions
@@ -180,9 +180,9 @@ async def main():
 
         # Event logs (single page or ALL)
         logs = await client.get_logs('0x...', from_block=0)
-        all_logs = await client.get_all_logs('0x...', from_block=0)
+        all_logs = await client.get_all_logs('0x...', from_block=0)  # streaming aggregation → list
 
-        # Streaming for large datasets (~10MB RAM for 1M+ txs)
+        # Preferred for large datasets (~10MB RAM for 1M+ txs)
         async for batch in client.iter_transactions_streaming('0x...', batch_size=1000):
             process(batch)
 
@@ -201,63 +201,18 @@ client = ChainscanClient.from_config('blockscout_v2', 'ethereum')
 client = ChainscanClient.from_config('etherscan', 'ethereum')
 ```
 
-### 4. ⚠️ Legacy Facade Functions (Deprecated)
+### 4. Legacy API Purge (v0.5+)
 
-**WARNING**: Facade functions are deprecated in v0.4.0 and will be removed in v0.5.0 due to critical connection pooling issues.
+Public usage is now **ChainscanClient-only**.
 
-<details>
-<summary>Why are facade functions deprecated? (Click to expand)</summary>
+Removed legacy surfaces:
+- Top-level facade functions (`get_balance`, `get_block`, etc.)
+- Legacy facade/context/url-builder orchestration services
+- Older pagination engines replaced by modern streaming aggregation
 
-**The Problem**: Each facade function call creates and destroys an HTTP client, preventing connection pooling:
+Use `get_all_*` when you need fully materialized results (it now uses streaming aggregation internally), and prefer `iter_*_streaming` for large datasets.
 
-```python
-# ❌ AVOID - Creates 100 separate HTTP clients (very slow!)
-balances = await asyncio.gather(*[
-    get_balance(address=addr, api_kind='eth', network='main', api_key=key)
-    for addr in addresses  # 100 addresses
-])
-```
-
-This causes:
-- 100 TCP connection establishments
-- 100 TLS handshakes
-- Loss of HTTP/2 multiplexing
-- High CPU load and API rate limits
-
-**The Solution**: Use `ChainscanClient` which maintains a persistent connection pool (see examples above).
-
-</details>
-
-For simple use cases, you can still use facade functions (but expect deprecation warnings):
-
-```python
-import asyncio
-from aiochainscan import get_balance, get_block
-
-async def main():
-    # BlockScout (free, no API key needed)
-    balance = await get_balance(
-        address='0x742d35Cc6634C0532925a3b8D9fa7a3D91D1e9b3',
-        api_kind='blockscout_sepolia',
-        network='sepolia',
-        api_key=''
-    )
-
-    # Etherscan (requires API key)
-    block = await get_block(
-        tag=17000000,
-        api_kind='eth',
-        network='main',
-        api_key='YOUR_ETHERSCAN_API_KEY'
-    )
-
-    print(f"Balance: {balance} wei")
-    print(f"Block: #{block['block_number']}")
-
-asyncio.run(main())
-```
-
-**Migration Path**: See [MIGRATION_GUIDE.md](docs/MIGRATION_GUIDE.md) for detailed migration instructions.
+Migration details: [MIGRATION_GUIDE.md](docs/MIGRATION_GUIDE.md).
 
 ### 5. Bulk Operations & Streaming
 
@@ -301,7 +256,7 @@ For advanced use cases with custom rate limiting, retries, and dependency inject
 
 ```python
 import asyncio
-from aiochainscan.core.client import ChainscanClient
+from aiochainscan import ChainscanClient
 from aiochainscan.core.method import Method
 from aiochainscan.adapters.simple_rate_limiter import SimpleRateLimiter
 from aiochainscan.adapters.retry_exponential import ExponentialBackoffRetry
@@ -353,7 +308,7 @@ The **ChainscanClient** makes it trivial to switch between different blockchain 
 
 ```python
 import asyncio
-from aiochainscan.core.client import ChainscanClient
+from aiochainscan import ChainscanClient
 from aiochainscan.core.method import Method
 
 async def check_multi_scanner_balance():
@@ -395,29 +350,23 @@ async def check_multi_scanner_balance():
 asyncio.run(check_multi_scanner_balance())
 ```
 
-### Legacy Multiple Networks (Facade Functions)
-
-For simple cases, you can still use the legacy facade functions:
+### Multiple Networks with ChainscanClient
 
 ```python
 import asyncio
-from aiochainscan import get_balance
+from aiochainscan import ChainscanClient
 
 async def check_balances():
-    # Works with multiple scanners using legacy interface
-    networks = [
-        ('blockscout_sepolia', 'sepolia', ''),          # Blockscout (free)
-        ('eth', 'main', 'YOUR_ETHERSCAN_KEY'),          # Etherscan
+    address = "0x742d35Cc6634C0532925a3b8D9fa7a3D91D1e9b3"
+    targets = [
+        ("blockscout_v2", "ethereum"),
+        ("etherscan", "ethereum"),
     ]
 
-    for api_kind, network, api_key in networks:
-        balance = await get_balance(
-            address="0x742d35Cc6634C0532925a3b8D9fa7a3D91D1e9b3",
-            api_kind=api_kind,
-            network=network,
-            api_key=api_key
-        )
-        print(f"{api_kind} {network}: {balance} wei")
+    for scanner_name, network in targets:
+        async with ChainscanClient.from_config(scanner_name, network) as client:
+            balance = await client.get_balance(address)
+            print(f"{scanner_name} {network}: {balance} wei")
 
 asyncio.run(check_balances())
 ```
@@ -435,7 +384,7 @@ export ETHERSCAN_KEY="your_etherscan_api_key"
 
 When using `ChainscanClient.from_config()`, you need to specify three key parameters:
 
-- **scanner_name**: Provider name (`'etherscan'`, `'blockscout'`, `'moralis'`, etc.)
+- **scanner_name**: Provider name (`'etherscan'`, `'blockscout'`, `'blockscout_v2'`)
 - **scanner_version**: API version (`'v1'`, `'v2'`)
 - **network**: Chain name/ID (`'eth'`, `'ethereum'`, `1`, `'base'`, `8453`, etc.)
 
@@ -456,20 +405,20 @@ When using `ChainscanClient.from_config()`, you need to specify three key parame
 
 ## Available Interfaces
 
-The library provides two main interfaces for accessing blockchain data:
+The public interface is **ChainscanClient**.
 
 ### 1. ChainscanClient (Recommended)
 
 The **unified client** provides 30+ typed convenience methods:
 
 ```python
-from aiochainscan.core.client import ChainscanClient
+from aiochainscan import ChainscanClient
 
 async with ChainscanClient.from_config('blockscout_v2', 'ethereum') as client:
     # Account
     balance = await client.get_balance('0x...')                   # Wei string
     txs     = await client.get_transactions('0x...')              # single page
-    all_txs = await client.get_all_transactions('0x...')          # ALL (paginated)
+    all_txs = await client.get_all_transactions('0x...')          # ALL (streaming aggregation → list)
     itxs    = await client.get_internal_transactions('0x...')     # internal txs
     erc20   = await client.get_token_transfers('0x...')           # ERC-20 transfers
     erc721  = await client.get_erc721_transfers('0x...')          # ERC-721 transfers
@@ -506,7 +455,7 @@ async with ChainscanClient.from_config('blockscout_v2', 'ethereum') as client:
 
     # Event Logs
     logs     = await client.get_logs('0x...', from_block=0)       # single page
-    all_logs = await client.get_all_logs('0x...', from_block=0)   # ALL (paginated)
+    all_logs = await client.get_all_logs('0x...', from_block=0)   # ALL (streaming aggregation → list)
 
     # Proxy / JSON-RPC
     result  = await client.eth_call('0xTO', '0xDATA')             # eth_call
@@ -535,24 +484,18 @@ from aiochainscan.core.method import Method
 result = await client.call(Method.ACCOUNT_BALANCE, address='0x...')
 ```
 
-### 3. Legacy Facade Functions (Deprecated)
-
-Facade functions are deprecated in v0.4.0. Use `ChainscanClient` instead.
-
 ## Error Handling
 
 ```python
 import asyncio
+from aiochainscan import ChainscanClient
 from aiochainscan.exceptions import ChainscanClientApiError
 
 async def main():
     try:
-        balance = await get_balance(
-            address='0x...',
-            api_kind='eth',
-            network='main',
-            api_key='YOUR_API_KEY'
-        )
+        async with ChainscanClient.from_config('etherscan', 'ethereum') as client:
+            balance = await client.get_balance('0x...')
+            print(balance)
     except ChainscanClientApiError as e:
         print(f"API Error: {e}")
 

@@ -25,7 +25,7 @@ from typing import Any
 
 import pytest
 
-from aiochainscan.config import config as global_config
+from aiochainscan.config import get_config_manager
 from aiochainscan.core.client import ChainscanClient
 from aiochainscan.core.method import Method
 from aiochainscan.exceptions import ChainscanClientApiError
@@ -33,16 +33,18 @@ from aiochainscan.exceptions import ChainscanClientApiError
 # Well-known EOA with activity on Ethereum mainnet (may be zero elsewhere)
 TEST_ADDRESS: str = '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045'
 
+config_manager = get_config_manager()
+
 
 def _has_api_key(scanner_id: str) -> bool:
     """Return True if API key is configured or not required."""
     try:
-        cfg = global_config.get_scanner_config(scanner_id)
+        cfg = config_manager.get_scanner_config(scanner_id)
         if not cfg.requires_api_key:
             return True
         # Attempt to resolve key via config manager (env/.env supported)
         try:
-            key = global_config.get_api_key(scanner_id)
+            key = config_manager.get_api_key(scanner_id)
             return bool(key)
         except Exception:
             return False
