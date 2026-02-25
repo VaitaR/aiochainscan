@@ -199,8 +199,8 @@ class TestRetryDuringMidIteration:
             client.api_key = ''
 
             # Create a real Network instance with mocked HTTP client
+            from aiochainscan.core.url_builder import UrlBuilder
             from aiochainscan.network import Network
-            from aiochainscan.url_builder import UrlBuilder
 
             url_builder = MagicMock(spec=UrlBuilder)
             url_builder.API_URL = 'https://eth.blockscout.com'

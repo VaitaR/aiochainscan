@@ -6,6 +6,9 @@
 
 `aiochainscan` is a Python library that lets you query blockchain data (balances, transactions, tokens, logs, contracts, gas) from multiple networks using a unified API.
 
+**Public API is ChainscanClient-only** (`from aiochainscan import ChainscanClient`).
+Legacy top-level facade/context/url-builder entrypoints and old pagination-engine guidance are removed.
+
 **Key Facts:**
 - `blockscout_v2` — **no API key**, but only supports **6 methods** (balance, transactions, token portfolio, contract ABI, ENS reverse lookup, ENS batch reverse)
 - `blockscout` (v1) — **no API key**, supports ~20 methods, but some endpoints may return 400 on certain networks
@@ -61,7 +64,7 @@
 ### Basic — Balance & Transactions (no API key)
 ```python
 import asyncio
-from aiochainscan.core.client import ChainscanClient
+from aiochainscan import ChainscanClient
 
 async def get_wallet_info(address: str):
     async with ChainscanClient.from_config("blockscout_v2", "ethereum") as client:
@@ -82,7 +85,7 @@ print(result)
 ### Full data — Gas, Logs, Blocks (requires ETHERSCAN_KEY)
 ```python
 import asyncio, os
-from aiochainscan.core.client import ChainscanClient
+from aiochainscan import ChainscanClient
 
 # Set: export ETHERSCAN_KEY="your_key_here"
 async def full_data():
@@ -90,7 +93,7 @@ async def full_data():
         price = await client.get_eth_price()        # {'ethusd': '1825.33', ...}
         gas = await client.get_gas_oracle()         # {'SafeGasPrice': '1', ...}
         block = await client.get_block(22000000)
-        all_txs = await client.get_all_transactions("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")
+        all_txs = await client.get_all_transactions("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")  # streaming aggregation -> list
         return price, gas, block, len(all_txs)
 
 asyncio.run(full_data())
@@ -105,11 +108,11 @@ asyncio.run(full_data())
 |--------|-------------|---------|
 | `get_balance(address)` | Native token balance | `str` (Wei) |
 | `get_transactions(address)` | Normal transactions (**single page ~50 items**) | `list[dict]` |
-| `get_all_transactions(address)` | **ALL** transactions (auto-paginated) | `list[dict]` |
+| `get_all_transactions(address)` | **ALL** transactions (streaming aggregation, then materialized) | `list[dict]` |
 | `get_internal_transactions(address)` | Internal transactions | `list[dict]` |
-| `get_all_internal_transactions(address)` | **ALL** internal txs | `list[dict]` |
+| `get_all_internal_transactions(address)` | **ALL** internal txs (streaming aggregation, then materialized) | `list[dict]` |
 | `get_token_transfers(address)` | ERC-20 transfers (single page) | `list[dict]` |
-| `get_all_token_transfers(address)` | **ALL** ERC-20 transfers | `list[dict]` |
+| `get_all_token_transfers(address)` | **ALL** ERC-20 transfers (streaming aggregation, then materialized) | `list[dict]` |
 | `get_erc721_transfers(address)` | ERC-721 (NFT) transfers | `list[dict]` |
 | `get_erc1155_transfers(address)` | ERC-1155 transfers | `list[dict]` |
 | `get_token_portfolio(address)` | All ERC-20 holdings | `list[dict]` |
@@ -149,7 +152,7 @@ asyncio.run(full_data())
 | Method | Description | Returns |
 |--------|-------------|---------|
 | `get_logs(address, from_block, ...)` | Logs (≤1000, single page) | `list[dict]` |
-| `get_all_logs(address, from_block, ...)` | **ALL** logs (auto-paginated) | `list[dict]` |
+| `get_all_logs(address, from_block, ...)` | **ALL** logs (streaming aggregation, then materialized) | `list[dict]` |
 
 ### Gas & Statistics
 | Method | Description | Returns |
@@ -198,6 +201,7 @@ df = await client.get_token_portfolio_df(address)
 |---------|----------|
 | `get_transactions()` returns only ~50 items | Use `get_all_transactions()` for complete data |
 | `get_logs()` returns ≤1000 logs | Use `get_all_logs()` for complete data |
+| Large wallet/log range causes high memory | Prefer `iter_*_streaming()` and process batch-by-batch |
 | Method raises `ValueError: not supported` | Wrong scanner — check support matrix above |
 | Balance is a huge number | It's Wei — divide by `10**18` for ETH |
 | Token balance is a huge number | Divide by `10**decimals` (get from `get_token_info()`) |
@@ -334,7 +338,7 @@ async with ChainscanClient.from_config("blockscout", "ethereum") as client:
 ### 4. ALL Transactions — Complete History
 ```python
 async with ChainscanClient.from_config("blockscout_v2", "ethereum") as client:
-    # ✅ get_all_transactions handles pagination automatically
+    # ✅ get_all_transactions uses streaming aggregation internally
     all_txs = await client.get_all_transactions(address)
     print(f"Total: {len(all_txs)} transactions")
 
@@ -401,14 +405,14 @@ export ETHERSCAN_KEY="your_key_here"     # Required for etherscan scanner
 
 ## Tips for AI Agents
 
-1. **Check the support matrix first** — most methods are NOT available on `blockscout_v2`
-2. **Use `blockscout_v2` for**: balance, recent transactions, token portfolio, ENS reverse lookup
-3. **Use `etherscan` for**: gas oracle, ETH price, blocks, logs, full method coverage
-4. **Balance is in Wei** — divide by `10**18` for ETH/MATIC
-5. **Use `get_all_*` methods** — `get_transactions()` and `get_logs()` are single-page only
-6. **BlockScout V2 tx schema**: `from`/`to` are dicts → use `tx["from"]["hash"]`
-7. **Etherscan tx schema**: `from`/`to` are flat strings → use `tx["from"]` directly
-8. **For large data** — use `iter_transactions_streaming()` (~10MB RAM) or `get_transactions_df()`
+1. **Use `ChainscanClient` only** — do not use removed legacy facade/context/url-builder imports
+2. **Check the support matrix first** — most methods are NOT available on `blockscout_v2`
+3. **Use `blockscout_v2` for**: balance, recent transactions, token portfolio, ENS reverse lookup
+4. **Use `etherscan` for**: gas oracle, ETH price, blocks, logs, full method coverage
+5. **Balance is in Wei** — divide by `10**18` for ETH/MATIC
+6. **`get_all_*` now uses streaming aggregation** — prefer `iter_*_streaming` for very large datasets
+7. **BlockScout V2 tx schema**: `from`/`to` are dicts → use `tx["from"]["hash"]`
+8. **Etherscan tx schema**: `from`/`to` are flat strings → use `tx["from"]` directly
 9. **Handle network errors** — blockscout endpoints sometimes return 400/500; wrap in try/except
 
 ---

@@ -11,15 +11,18 @@ Async Python wrapper for blockchain explorer APIs (Etherscan, BlockScout). Unifi
 
 ## Quick Start for Agents
 
+> Public API policy: use `ChainscanClient` only.
+> Legacy facade/context/url-builder entrypoints and old pagination-engine docs are removed from agent workflows.
+
 ### Primary Interface (USE THIS)
 ```python
-from aiochainscan.core.client import ChainscanClient
+from aiochainscan import ChainscanClient
 
 async with ChainscanClient.from_config('blockscout_v2', 'ethereum') as client:
     # ── Account ──────────────────────────────────────────────
     balance = await client.get_balance('0x...')                   # Wei string
     txs     = await client.get_transactions('0x...')              # single page
-    all_txs = await client.get_all_transactions('0x...')          # ALL (paginated)
+    all_txs = await client.get_all_transactions('0x...')          # ALL (streaming aggregation → list)
     itxs    = await client.get_internal_transactions('0x...')     # single page
     erc20   = await client.get_token_transfers('0x...')           # single page
     erc721  = await client.get_erc721_transfers('0x...')          # single page
@@ -56,7 +59,7 @@ async with ChainscanClient.from_config('blockscout_v2', 'ethereum') as client:
 
     # ── Event Logs ───────────────────────────────────────────
     logs     = await client.get_logs('0x...', from_block=0)       # single page (≤1000)
-    all_logs = await client.get_all_logs('0x...', from_block=0)   # ALL (paginated)
+    all_logs = await client.get_all_logs('0x...', from_block=0)   # ALL (streaming aggregation → list)
 
     # ── Proxy / JSON-RPC ─────────────────────────────────────
     result  = await client.eth_call('0xTO', '0xDATA')             # eth_call
@@ -82,11 +85,12 @@ async with ChainscanClient.from_config('blockscout_v2', 'ethereum') as client:
 ### ⚠️ Key Gotchas
 - `get_transactions()` returns **one page** (~50-100 items). Use `get_all_transactions()` for complete data.
 - `get_logs()` returns **≤1000 logs**. Use `get_all_logs()` for complete data.
+- `get_all_*()` now uses **streaming aggregation** under the hood; for very large datasets prefer `iter_*_streaming()`.
 - `get_transactions_df()` auto-paginates (uses `iter_transactions` internally).
 - Balance/value/supply values are **Wei strings** — divide by `10**18` for ETH.
 
 > **Note:** Legacy `Client` class and `modules/` were removed in v0.3.0.
-> Facade functions (`get_balance`, etc.) are **DEPRECATED** in v0.4.0 — use `ChainscanClient`.
+> Legacy facade/context/url-builder public entrypoints and old pagination-engine usage were purged in modern API docs.
 
 ---
 
@@ -132,7 +136,7 @@ Every `Method` enum value (28 total) maps to typed convenience methods on `Chain
 | Pattern | Use When | Memory |
 |---|---|---|
 | `get_transactions(address)` | Quick look, small wallets | Low |
-| `get_all_transactions(address)` | Need ALL data, moderate wallets | Grows with data |
+| `get_all_transactions(address)` | Need ALL data (built via streaming aggregation) | Grows with data |
 | `iter_transactions_streaming(address)` | Large wallets (1M+ txs) | Constant ~10MB |
 | `get_transactions_df(address)` | Data analysis (Polars) | Grows with data |
 
@@ -142,8 +146,8 @@ Every `Method` enum value (28 total) maps to typed convenience methods on `Chain
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                      FACADE LAYER                            │
-│  core/client.py (ChainscanClient) | domain/contract.py      │
+│                    CLIENT / DOMAIN LAYER                     │
+│  core/client.py (ChainscanClient) | domain/contract.py       │
 └─────────────────────────┬───────────────────────────────────┘
                           │
 ┌─────────────────────────▼───────────────────────────────────┐
@@ -152,9 +156,9 @@ Every `Method` enum value (28 total) maps to typed convenience methods on `Chain
 └─────────────────────────┬───────────────────────────────────┘
                           │
 ┌─────────────────────────▼───────────────────────────────────┐
-│                    SERVICE LAYER                             │
-│  paging_engine.py | streaming_decoder.py | chunked_fetcher  │
-│  ens_resolver.py | unified_fetch.py | analytics.py          │
+│                   AGGREGATION SERVICES                       │
+│  account.py | logs.py | streaming_decoder.py | analytics.py  │
+│  ens_resolver.py | chunked_fetcher.py                        │
 └─────────────────────────┬───────────────────────────────────┘
                           │
 ┌─────────────────────────▼───────────────────────────────────┐
@@ -262,9 +266,10 @@ Every `Method` enum value (28 total) maps to typed convenience methods on `Chain
 5. Register in `scanners/__init__.py`
 
 ### Adding Bulk Fetch Support
-1. Use `paging_engine.fetch_all_generic()` with `FetchSpec`
-2. For streaming: use `paging_streaming.fetch_all_generic_streaming()`
-3. Always pass `on_progress` callback through to engine
+1. Extend `ChainscanClient` methods and scanner `SPECS` first
+2. Keep `get_all_*` behavior as materialized results from streaming aggregation
+3. Add/maintain matching `iter_*_streaming` path for large datasets
+4. Always thread `on_progress` callbacks through public client methods
 
 ### Modifying HTTP Behavior
 - Rate limiting: `adapters/aiolimiter_adapter.py` (burst=1 for APIs)
@@ -299,7 +304,7 @@ async for batch in client.iter_transactions_streaming(address, batch_size=1000):
 
 ### Get ALL Data (Paginated)
 ```python
-# These handle pagination automatically:
+# These use streaming aggregation internally and return materialized lists:
 all_txs = await client.get_all_transactions(address)
 all_logs = await client.get_all_logs(address, from_block=0, topic0='0xddf252...')
 all_transfers = await client.get_all_token_transfers(address)
@@ -310,9 +315,9 @@ all_internal = await client.get_all_internal_transactions(address)
 ```python
 from aiochainscan.utils.progress_helpers import console_progress
 
-txs = await fetch_all_transactions_fast(
-    ...,
-    on_progress=console_progress()  # Real-time feedback
+txs = await client.get_all_transactions(
+    address,
+    on_progress=console_progress(),  # Real-time feedback
 )
 ```
 
