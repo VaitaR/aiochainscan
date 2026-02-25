@@ -14,6 +14,10 @@ Legacy top-level facade/context/url-builder entrypoints and old pagination-engin
 - `blockscout` (v1) — **no API key**, supports ~20 methods, but some endpoints may return 400 on certain networks
 - `etherscan` — **requires `ETHERSCAN_KEY` env var**, supports ~12 methods, most reliable
 
+> ⚠️ **ALWAYS use `ChainscanClient.from_config(scanner, network)`** — **never call `ChainscanClient(...)` directly**.
+> The raw constructor has a completely different internal signature (requires `scanner_version`, `api_kind`, `api_key` as positional args) and is **not** the public API.
+> Every example in this document uses `from_config`. Model this pattern exactly.
+
 ---
 
 ## ⚠️ CRITICAL: Scanner Support Matrix
@@ -213,6 +217,7 @@ df = await client.get_token_portfolio_df(address)
 | `iter_events()` fails on `blockscout_v2` | Use `etherscan` (EVENT_LOGS not in blockscout_v2) |
 | `from_config('etherscan', ...)` raises `ValueError` immediately | `ETHERSCAN_KEY` must be in env **before** creating the client, not just before API calls |
 | `lookup_address()` / `resolve_name()` returns `None` | Always check `if name is not None` — address may have no ENS name |
+| `ChainscanClient(scanner=..., network=...)` — calling the raw constructor | Use `ChainscanClient.from_config("blockscout_v2", "ethereum")` — raw constructor requires internal positional args and is **not** public API |
 
 ---
 
@@ -420,6 +425,7 @@ export ETHERSCAN_KEY="your_key_here"     # Required for etherscan scanner
 9. **Handle network errors** — blockscout endpoints sometimes return 400/500; wrap in try/except
 10. **ENS lookups return `None`** — `lookup_address()` and `resolve_name()` return `str | None`; always guard: `name = await client.lookup_address(addr)` then `if name: ...`
 11. **`from_config('etherscan', ...)` validates the API key at construction** — it raises `ValueError` immediately if `ETHERSCAN_KEY` is not set; check `os.environ.get('ETHERSCAN_KEY')` before calling `from_config`
+12. **NEVER call `ChainscanClient(...)` directly** — always use `ChainscanClient.from_config(scanner, network)`. The raw constructor has an internal signature requiring `scanner_version`, `api_kind`, `api_key` as positional args and is not the public interface. Every code example you write must use `from_config`.
 
 ---
 
