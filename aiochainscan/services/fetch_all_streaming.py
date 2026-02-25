@@ -7,14 +7,18 @@ functions to handle whale addresses with millions of transactions without OOM.
 
 from __future__ import annotations
 
+# mypy: disable-error-code=call-arg
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any
 
+from aiochainscan.domain.dto_v2 import parse_hex_or_int_zero as _to_int
+from aiochainscan.domain.models import Address
 from aiochainscan.ports.endpoint_builder import EndpointBuilder
 from aiochainscan.ports.http_client import HttpClient
 from aiochainscan.ports.progress import ProgressCallback
 from aiochainscan.ports.rate_limiter import RateLimiter, RetryPolicy
 from aiochainscan.ports.telemetry import Telemetry
+from aiochainscan.services._block_utils import _resolve_end_block_factory
 from aiochainscan.services.account import (
     get_internal_transactions,
     get_normal_transactions,
@@ -23,58 +27,12 @@ from aiochainscan.services.account import (
 from aiochainscan.services.logs import get_logs
 from aiochainscan.services.paging_engine import (
     FetchSpec,
-    ResolveEndBlock,
     resolve_policy_for_provider,
 )
 from aiochainscan.services.paging_streaming import fetch_all_generic_streaming
 
 if TYPE_CHECKING:
     from aiochainscan.scanners.base import Scanner
-
-
-def _to_int(value: Any) -> int:
-    try:
-        if isinstance(value, str):
-            s = value.strip()
-            if s.startswith('0x'):
-                return int(s, 16)
-            return int(s)
-        return int(value)
-    except Exception:
-        return 0
-
-
-def _resolve_end_block_factory(
-    *,
-    api_kind: str,
-    network: str,
-    api_key: str,
-    http: HttpClient,
-    endpoint_builder: EndpointBuilder,
-    rate_limiter: RateLimiter | None,
-    retry: RetryPolicy | None,
-) -> ResolveEndBlock:
-    async def _resolve() -> int:
-        endpoint = endpoint_builder.open(api_key=api_key, api_kind=api_kind, network=network)
-        url: str = endpoint.api_url
-        params_proxy: dict[str, Any] = {'module': 'proxy', 'action': 'eth_blockNumber'}
-        signed_params, headers = endpoint.filter_and_sign(params_proxy, headers=None)
-
-        async def _do() -> Any:
-            if rate_limiter is not None:
-                await rate_limiter.acquire(key=f'{api_kind}:{network}:proxy.blockNumber')
-            return await http.get(url, params=signed_params, headers=headers)
-
-        response: Any = await (retry.run(_do) if retry is not None else _do())
-        latest_hex = response.get('result') if isinstance(response, dict) else None
-        if isinstance(latest_hex, str):
-            if latest_hex.startswith('0x'):
-                return int(latest_hex, 16)
-            if latest_hex.isdigit():
-                return int(latest_hex)
-        return 99_999_999
-
-    return _resolve
 
 
 def _is_blockscout_v2(api_kind: str, scanner: Scanner | None) -> bool:
@@ -256,6 +214,8 @@ async def fetch_all_transactions_streaming(
                 print(tx['hash'])
         ```
     """
+    addr = Address(address)
+
     # Route to V2 scanner when appropriate (fixes split-brain bug)
     if _is_blockscout_v2(api_kind, scanner) and scanner is not None:
         try:
@@ -276,7 +236,7 @@ async def fetch_all_transactions_streaming(
         *, page: int, start_block: int, end_block: int, offset: int
     ) -> list[dict[str, Any]]:
         return await get_normal_transactions(
-            address=address,
+            address=addr,
             start_block=start_block,
             end_block=end_block,
             sort='asc',
@@ -348,11 +308,13 @@ async def fetch_all_internal_streaming(
 ) -> AsyncIterator[list[dict[str, Any]]]:
     """Stream internal transactions in batches for memory-efficient processing."""
 
+    addr = Address(address)
+
     async def _fetch_page(
         *, page: int, start_block: int, end_block: int, offset: int
     ) -> list[dict[str, Any]]:
         return await get_internal_transactions(
-            address=address,
+            address=addr,
             start_block=start_block,
             end_block=end_block,
             sort='asc',
@@ -426,17 +388,20 @@ async def fetch_all_token_transfers_streaming(
 ) -> AsyncIterator[list[dict[str, Any]]]:
     """Stream ERC20 token transfers in batches for memory-efficient processing."""
 
+    addr = Address(address)
+    contract_addr = Address(contract_address) if contract_address is not None else None
+
     async def _fetch_page(
         *, page: int, start_block: int, end_block: int, offset: int
     ) -> list[dict[str, Any]]:
         return await get_token_transfers(
-            address=address,
+            address=addr,
             start_block=start_block,
             end_block=end_block,
             sort='asc',
             page=page,
             offset=offset,
-            contract_address=contract_address,
+            contract_address=contract_addr,
             token_standard='erc20',
             api_kind=api_kind,
             network=network,
@@ -510,6 +475,10 @@ async def fetch_all_logs_streaming(
     on_progress: ProgressCallback | None = None,
 ) -> AsyncIterator[list[dict[str, Any]]]:
     """Stream event logs in batches for memory-efficient processing."""
+    if address is None:
+        raise ValueError('address is required for fetch_all_logs_streaming')
+    addr = Address(address)
+
     # Build topics list from individual topic params
     topics: list[str] | None = None
     if any([topic0, topic1, topic2, topic3]):
@@ -525,10 +494,8 @@ async def fetch_all_logs_streaming(
     async def _fetch_page(
         *, page: int, start_block: int, end_block: int, offset: int
     ) -> list[dict[str, Any]]:
-        # address is required by get_logs, use empty string if None
-        effective_address = address if address is not None else ''
         return await get_logs(
-            address=effective_address,
+            address=addr,
             start_block=start_block,
             end_block=end_block,
             page=page,

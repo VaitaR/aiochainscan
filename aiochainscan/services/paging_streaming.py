@@ -14,7 +14,7 @@ from contextlib import suppress
 from time import monotonic
 from typing import Any, cast
 
-from aiochainscan.constants import BATCH_DEFAULT_SIZE
+from aiochainscan.constants import BATCH_DEFAULT_SIZE, MAX_BLOCK_NUMBER
 from aiochainscan.exceptions import ChainscanDataError, PaginationDataLossError
 from aiochainscan.ports.progress import ProgressCallback
 from aiochainscan.ports.rate_limiter import RateLimiter, RetryPolicy
@@ -129,9 +129,9 @@ async def fetch_all_generic_streaming(
             try:
                 effective_end_block = int(await fetch_spec.resolve_end_block())
             except (ValueError, TypeError):
-                effective_end_block = 99_999_999
+                effective_end_block = MAX_BLOCK_NUMBER
         else:
-            effective_end_block = 99_999_999
+            effective_end_block = MAX_BLOCK_NUMBER
     else:
         effective_end_block = int(end_block)
 

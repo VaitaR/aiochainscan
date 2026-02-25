@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 from ..chain_registry import get_chain_info, resolve_chain_id
 from ..config import config as global_config
 from ..domain.contract import SmartContract
+from ..domain.models import Address, TxHash
 from ..ports.rate_limiter import RateLimiter, RetryPolicy
 from ..scanners import get_scanner_class
 from ..scanners.base import Scanner
@@ -421,7 +422,8 @@ class ChainscanClient:
         Returns:
             Balance in Wei as string
         """
-        params: dict[str, Any] = {'address': address}
+        addr = Address(address)
+        params: dict[str, Any] = {'address': str(addr)}
         # Only pass tag for Etherscan (other scanners may not support it)
         if self.scanner_name == 'etherscan':
             params['tag'] = tag
@@ -448,7 +450,8 @@ class ChainscanClient:
         Returns:
             List of transaction dictionaries
         """
-        params: dict[str, Any] = {'address': address}
+        addr = Address(address)
+        params: dict[str, Any] = {'address': str(addr)}
         # Only pass pagination params for Etherscan (blockscout_v2 doesn't support them)
         if self.scanner_name == 'etherscan':
             params['startblock'] = start_block
@@ -477,12 +480,13 @@ class ChainscanClient:
         Returns:
             List of token transfer dictionaries
         """
-        params: dict[str, Any] = {'address': address}
+        addr = Address(address)
+        params: dict[str, Any] = {'address': str(addr)}
         # Only pass extra params for Etherscan
         if self.scanner_name == 'etherscan':
             params['startblock'] = start_block
             if contract_address:
-                params['contractaddress'] = contract_address
+                params['contractaddress'] = str(Address(contract_address))
             if end_block:
                 params['endblock'] = end_block
         result: list[dict[Any, Any]] = await self.call(Method.ACCOUNT_ERC20_TRANSFERS, **params)
@@ -513,8 +517,9 @@ class ChainscanClient:
         Returns:
             List of internal transaction dicts
         """
+        addr = Address(address)
         params: dict[str, Any] = {
-            'address': address,
+            'address': str(addr),
             'startblock': start_block,
             'page': page,
             'offset': offset,
@@ -535,7 +540,7 @@ class ChainscanClient:
             List of token holding dictionaries
         """
         result: list[dict[Any, Any]] = await self.call(
-            Method.ACCOUNT_TOKEN_PORTFOLIO, address=address
+            Method.ACCOUNT_TOKEN_PORTFOLIO, address=str(Address(address))
         )
         return result
 
@@ -548,7 +553,7 @@ class ChainscanClient:
         Returns:
             Contract ABI as JSON string
         """
-        result: str = await self.call(Method.CONTRACT_ABI, address=address)
+        result: str = await self.call(Method.CONTRACT_ABI, address=str(Address(address)))
         return result
 
     async def get_contract_source(self, address: str) -> dict[str, Any]:
@@ -560,7 +565,9 @@ class ChainscanClient:
         Returns:
             Dict with source code, compiler version, optimization settings, etc.
         """
-        result: dict[str, Any] = await self.call(Method.CONTRACT_SOURCE, address=address)
+        result: dict[str, Any] = await self.call(
+            Method.CONTRACT_SOURCE, address=str(Address(address))
+        )
         return result
 
     async def get_transaction(self, tx_hash: str) -> dict[str, Any]:
@@ -572,7 +579,7 @@ class ChainscanClient:
         Returns:
             Transaction dict with from, to, value, gas, input, etc.
         """
-        result: dict[str, Any] = await self.call(Method.TX_BY_HASH, txhash=tx_hash)
+        result: dict[str, Any] = await self.call(Method.TX_BY_HASH, txhash=str(TxHash(tx_hash)))
         return result
 
     async def get_transaction_status(self, tx_hash: str) -> dict[str, Any]:
@@ -584,7 +591,9 @@ class ChainscanClient:
         Returns:
             Dict with status field ('1' = success, '0' = fail)
         """
-        result: dict[str, Any] = await self.call(Method.TX_RECEIPT_STATUS, txhash=tx_hash)
+        result: dict[str, Any] = await self.call(
+            Method.TX_RECEIPT_STATUS, txhash=str(TxHash(tx_hash))
+        )
         return result
 
     async def get_logs(
@@ -612,8 +621,9 @@ class ChainscanClient:
         Returns:
             List of log dicts (may be truncated at API limit)
         """
+        addr = Address(address)
         params: dict[str, Any] = {
-            'address': address,
+            'address': str(addr),
             'fromBlock': from_block,
             'toBlock': to_block or 'latest',
         }
@@ -795,7 +805,10 @@ class ChainscanClient:
             Token balance in raw units (divide by 10^decimals for human-readable)
         """
         result: str = await self.call(
-            Method.TOKEN_BALANCE, address=address, contractaddress=contract_address, tag=tag
+            Method.TOKEN_BALANCE,
+            address=str(Address(address)),
+            contractaddress=str(Address(contract_address)),
+            tag=tag,
         )
         return str(result)
 
@@ -809,7 +822,7 @@ class ChainscanClient:
             Dict with name, symbol, decimals, totalSupply, etc.
         """
         result: dict[str, Any] = await self.call(
-            Method.TOKEN_INFO, contractaddress=contract_address
+            Method.TOKEN_INFO, contractaddress=str(Address(contract_address))
         )
         return result
 
@@ -949,7 +962,7 @@ class ChainscanClient:
         Returns:
             List of NFT dicts with token_id, contract, metadata, etc.
         """
-        result: Any = await self.call(Method.ACCOUNT_NFT_PORTFOLIO, address=address)
+        result: Any = await self.call(Method.ACCOUNT_NFT_PORTFOLIO, address=str(Address(address)))
         items: list[dict[str, Any]] = (
             result
             if isinstance(result, list)
@@ -971,7 +984,9 @@ class ChainscanClient:
         Returns:
             Dict with isError and errDescription fields
         """
-        result: dict[str, Any] = await self.call(Method.TX_STATUS_CHECK, txhash=tx_hash)
+        result: dict[str, Any] = await self.call(
+            Method.TX_STATUS_CHECK, txhash=str(TxHash(tx_hash))
+        )
         return result
 
     async def get_contract_creation(self, addresses: list[str]) -> list[dict[str, Any]]:
@@ -985,7 +1000,7 @@ class ChainscanClient:
         """
         result: Any = await self.call(
             Method.CONTRACT_CREATION,
-            contractaddresses=','.join(addresses),
+            contractaddresses=','.join(str(Address(address)) for address in addresses),
         )
         return result if isinstance(result, list) else []
 

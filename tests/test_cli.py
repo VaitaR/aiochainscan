@@ -288,7 +288,7 @@ class TestCmdTestScanner:
     @patch('asyncio.run')
     def test_test_scanner_success(self, mock_run, mock_print):
         """Test successful scanner testing."""
-        mock_run.return_value = None
+        mock_run.side_effect = lambda coro: coro.close()
 
         args = MagicMock()
         args.scanner = 'eth'
@@ -304,7 +304,7 @@ class TestCmdTestScanner:
     @patch('asyncio.run')
     def test_test_scanner_basic(self, mock_run, mock_exit, mock_print):
         """Test basic scanner test functionality."""
-        mock_run.return_value = None
+        mock_run.side_effect = lambda coro: coro.close()
 
         args = MagicMock()
         args.scanner = 'eth'
