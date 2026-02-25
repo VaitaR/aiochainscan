@@ -6,6 +6,7 @@ Install with: pip install aiochainscan[data]
 """
 
 import asyncio
+import logging
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any
 
@@ -19,6 +20,10 @@ try:
     POLARS_AVAILABLE = True
 except ImportError:
     POLARS_AVAILABLE = False
+
+
+logger = logging.getLogger(__name__)
+OOM_WARNING_THRESHOLD = 100_000
 
 
 def require_polars() -> None:
@@ -65,6 +70,13 @@ async def transactions_to_dataframe(
                 await asyncio.sleep(0)
     else:
         tx_list = list(transactions)
+
+    if len(tx_list) >= OOM_WARNING_THRESHOLD:
+        logger.warning(
+            'Materializing %s transactions in-memory for DataFrame conversion. '
+            'For very large datasets, prefer streaming to NDJSON/Parquet and scan with Polars.',
+            len(tx_list),
+        )
 
     if not tx_list:
         # Return empty DataFrame with expected schema

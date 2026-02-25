@@ -7,6 +7,7 @@ from typing import Any, Protocol, cast
 from ...domain.contract import SmartContract
 from ...domain.models import Address
 from ..method import Method
+from ..types import JSONDict, JSONList
 
 
 class _ContractClientProtocol(Protocol):
@@ -21,16 +22,14 @@ class ContractMixin:
         result: str = await self.call(Method.CONTRACT_ABI, address=str(Address(address)))
         return result
 
-    async def get_contract_source(self: _ContractClientProtocol, address: str) -> dict[str, Any]:
+    async def get_contract_source(self: _ContractClientProtocol, address: str) -> JSONDict:
         """Get verified contract source code."""
-        result: dict[str, Any] = await self.call(
-            Method.CONTRACT_SOURCE, address=str(Address(address))
-        )
+        result: JSONDict = await self.call(Method.CONTRACT_SOURCE, address=str(Address(address)))
         return result
 
     async def get_contract_creation(
         self: _ContractClientProtocol, addresses: list[str]
-    ) -> list[dict[str, Any]]:
+    ) -> JSONList:
         """Get contract creator and creation tx hash."""
         result: Any = await self.call(
             Method.CONTRACT_CREATION,

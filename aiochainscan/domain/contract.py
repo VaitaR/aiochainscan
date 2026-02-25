@@ -5,6 +5,7 @@ Proxy resolution, and decoded event/transaction iteration.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any
@@ -288,14 +289,15 @@ class SmartContract:
         if not isinstance(logs, list):
             logs = []
 
+        decoded_logs = await asyncio.to_thread(
+            lambda: [decode_log_data(log, self.abi) for log in logs]
+        )
+
         # Decode and yield events
         count = 0
-        for log in logs:
+        for log, decoded_log in zip(logs, decoded_logs, strict=False):
             if limit is not None and count >= limit:
                 break
-
-            # Decode the log
-            decoded_log = decode_log_data(log, self.abi)
 
             # Only yield if successfully decoded
             if 'decoded_data' in decoded_log:

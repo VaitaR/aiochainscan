@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any, Protocol
 
 from ...domain.models import Address
 from ..method import Method
+from ..types import JSONList
 
 if TYPE_CHECKING:
     from ...ports.progress import ProgressCallback
+
+
+logger = logging.getLogger(__name__)
+AGGREGATION_WARNING_THRESHOLD = 100_000
 
 
 class _LogsClientProtocol(Protocol):
@@ -40,7 +46,7 @@ class LogsMixin:
         topic1: str | None = None,
         topic2: str | None = None,
         topic3: str | None = None,
-    ) -> list[dict[str, Any]]:
+    ) -> JSONList:
         addr = Address(address)
         params: dict[str, Any] = {
             'address': str(addr),
@@ -55,7 +61,7 @@ class LogsMixin:
             params['topic2'] = topic2
         if topic3:
             params['topic3'] = topic3
-        result: list[dict[str, Any]] = await self.call(Method.EVENT_LOGS, **params)
+        result: JSONList = await self.call(Method.EVENT_LOGS, **params)
         return result if isinstance(result, list) else []
 
     async def get_all_logs(
@@ -68,8 +74,8 @@ class LogsMixin:
         topic2: str | None = None,
         topic3: str | None = None,
         on_progress: ProgressCallback | None = None,
-    ) -> list[dict[str, Any]]:
-        all_logs: list[dict[str, Any]] = []
+    ) -> JSONList:
+        all_logs: JSONList = []
         async for batch in self.iter_logs_streaming(
             address=address,
             from_block=from_block,
@@ -82,4 +88,9 @@ class LogsMixin:
             on_progress=on_progress,
         ):
             all_logs.extend(batch)
+            if len(all_logs) == AGGREGATION_WARNING_THRESHOLD:
+                logger.warning(
+                    'Aggregating >100k logs in memory. '
+                    'Consider using iter_logs_streaming() to avoid OOM.'
+                )
         return all_logs

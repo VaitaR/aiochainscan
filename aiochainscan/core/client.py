@@ -31,11 +31,11 @@ from .mixins import (
     TokenMixin,
     TransactionMixin,
 )
+from .types import JSONDict
 from .url_builder import UrlBuilder
 
 # Strict type aliases for scanner and network names (defined after imports)
 ScannerName = Literal['etherscan', 'blockscout', 'blockscout_v2']
-JSONDict = dict[str, Any]
 NetworkName = Literal[
     'ethereum',
     'mainnet',
