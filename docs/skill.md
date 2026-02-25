@@ -169,12 +169,14 @@ asyncio.run(full_data())
 | `eth_get_balance(address, tag)` | Balance via JSON-RPC | `str` (hex Wei) |
 
 ### ENS (Ethereum Name Service)
-| Method | Description | Scanner |
-|--------|-------------|---------|
-| `lookup_address("0x...")` | Address → name (reverse) | `blockscout_v2` |
-| `resolve_name("vitalik.eth")` | Name → address (forward) | `etherscan` |
-| `lookup_addresses(["0x...", ...])` | Batch reverse | `blockscout_v2` |
-| `resolve_names(["a.eth", ...])` | Batch forward | `etherscan` |
+| Method | Description | Returns | Scanner |
+|--------|-------------|---------|--------|
+| `lookup_address("0x...")` | Address → name (reverse) | `str \| None` ¹ | `blockscout_v2` |
+| `resolve_name("vitalik.eth")` | Name → address (forward) | `str \| None` ¹ | `etherscan` |
+| `lookup_addresses(["0x...", ...])` | Batch reverse | `dict[str, str]` | `blockscout_v2` |
+| `resolve_names(["a.eth", ...])` | Batch forward | `dict[str, str]` | `etherscan` |
+
+> ¹ Returns `None` when address has no ENS name registered (or ENS name has no forward record).
 
 ### Streaming (Memory Efficient — large datasets)
 ```python
@@ -209,6 +211,8 @@ df = await client.get_token_portfolio_df(address)
 | `get_eth_price()` fails on `blockscout_v2` | Use `etherscan` or `blockscout` (v1) |
 | `get_block()` fails on `blockscout_v2` | Use `etherscan` or `blockscout` (v1) |
 | `iter_events()` fails on `blockscout_v2` | Use `etherscan` (EVENT_LOGS not in blockscout_v2) |
+| `from_config('etherscan', ...)` raises `ValueError` immediately | `ETHERSCAN_KEY` must be in env **before** creating the client, not just before API calls |
+| `lookup_address()` / `resolve_name()` returns `None` | Always check `if name is not None` — address may have no ENS name |
 
 ---
 
@@ -414,9 +418,11 @@ export ETHERSCAN_KEY="your_key_here"     # Required for etherscan scanner
 7. **BlockScout V2 tx schema**: `from`/`to` are dicts → use `tx["from"]["hash"]`
 8. **Etherscan tx schema**: `from`/`to` are flat strings → use `tx["from"]` directly
 9. **Handle network errors** — blockscout endpoints sometimes return 400/500; wrap in try/except
+10. **ENS lookups return `None`** — `lookup_address()` and `resolve_name()` return `str | None`; always guard: `name = await client.lookup_address(addr)` then `if name: ...`
+11. **`from_config('etherscan', ...)` validates the API key at construction** — it raises `ValueError` immediately if `ETHERSCAN_KEY` is not set; check `os.environ.get('ETHERSCAN_KEY')` before calling `from_config`
 
 ---
 
 ## Version
 
-Current: **0.4.1**
+Current: **0.5.0**
