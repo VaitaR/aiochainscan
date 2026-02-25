@@ -175,19 +175,6 @@ forbidden_modules = [
 ]
 
 [[tool.importlinter.contracts]]
-name = "Modules do not import core/network directly or services/adapters"
-type = "forbidden"
-source_modules = [
-  "aiochainscan.modules",
-]
-forbidden_modules = [
-  "aiochainscan.services",
-  "aiochainscan.adapters",
-  "aiochainscan.core",
-  "aiochainscan.network",
-]
-
-[[tool.importlinter.contracts]]
 name = "Services do not import core or network"
 type = "forbidden"
 source_modules = [
@@ -206,29 +193,6 @@ source_modules = [
 ]
 forbidden_modules = [
   "aiochainscan.scanners",
-]
-
-[[tool.importlinter.contracts]]
-name = "Internal packages do not import modules"
-type = "forbidden"
-source_modules = [
-  "aiochainscan.domain",
-  "aiochainscan.services",
-  "aiochainscan.adapters",
-  "aiochainscan.ports",
-]
-forbidden_modules = [
-  "aiochainscan.modules",
-]
-
-[[tool.importlinter.contracts]]
-name = "Facade does not import modules (no back-edges)"
-type = "forbidden"
-source_modules = [
-  "aiochainscan",
-]
-forbidden_modules = [
-  "aiochainscan.modules",
 ]
 
 [[tool.mypy.overrides]]

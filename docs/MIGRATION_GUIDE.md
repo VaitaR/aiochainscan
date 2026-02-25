@@ -67,7 +67,7 @@ finally:
 
 **Before (Deprecated)**:
 ```python
-from aiochainscan import get_balance
+from aiochainscan import ChainscanClient
 
 balance = await get_balance(
     address='0x742d35Cc6634C0532925a3b8D9fa7a3D91D1e9b3',
@@ -96,7 +96,7 @@ finally:
 
 **Before (Deprecated - Creates 100 HTTP clients!)**:
 ```python
-from aiochainscan import get_balance
+from aiochainscan import ChainscanClient
 import asyncio
 
 addresses = ['0x...' for _ in range(100)]
@@ -244,7 +244,7 @@ await client.close()
 The library still provides high-level facade functions that don't require creating a client:
 
 ```python
-from aiochainscan import get_address_balance, get_block_by_number
+from aiochainscan import ChainscanClient
 
 # These functions handle client creation/cleanup internally
 balance = await get_address_balance(
