@@ -5,6 +5,7 @@ from time import monotonic
 from typing import Any
 
 from aiochainscan.constants import MAX_BLOCK_NUMBER
+from aiochainscan.core.context import ProviderContext
 from aiochainscan.domain.dto_v2 import (
     BalanceDTO,
     BeaconWithdrawalDTO,
@@ -14,13 +15,8 @@ from aiochainscan.domain.dto_v2 import (
     TransactionDTO,
     parse_hex_or_int_zero,
 )
-from aiochainscan.domain.models import Address
+from aiochainscan.domain.models import Address, TxHash
 from aiochainscan.exceptions import ChainscanClientError
-from aiochainscan.ports.cache import Cache
-from aiochainscan.ports.endpoint_builder import EndpointBuilder
-from aiochainscan.ports.http_client import HttpClient
-from aiochainscan.ports.rate_limiter import RateLimiter, RetryPolicy
-from aiochainscan.ports.telemetry import Telemetry
 from aiochainscan.services._executor import run_with_policies
 
 CACHE_TTL_SECONDS_BALANCE: int = 10
@@ -33,17 +29,10 @@ CACHE_TTL_SECONDS_BALANCE: int = 10
 
 async def _fetch_account_list_data(
     *,
+    ctx: ProviderContext,
     action: str,
     params: dict[str, Any],
-    api_kind: str,
-    network: str,
-    api_key: str,
-    http: HttpClient,
-    _endpoint_builder: EndpointBuilder,
     extra_params: Mapping[str, Any] | None = None,
-    _rate_limiter: RateLimiter | None = None,
-    _retry: RetryPolicy | None = None,
-    _telemetry: Telemetry | None = None,
     telemetry_name: str | None = None,
     preserve_none: bool = False,
 ) -> list[dict[str, Any]]:
@@ -58,24 +47,19 @@ async def _fetch_account_list_data(
     - get_beacon_chain_withdrawals
 
     Args:
+        ctx: Provider context bundling all infra ports.
         action: The API action (e.g., 'txlist', 'txlistinternal', 'tokentx')
         params: Base parameters dict (will be merged with module='account' and action)
-        api_kind: Scanner identifier (e.g., 'eth', 'bsc')
-        network: Network name (e.g., 'main', 'test')
-        api_key: API key for the scanner
-        http: HTTP client port
-        _endpoint_builder: Endpoint builder for URL construction
         extra_params: Additional params to merge
-        _rate_limiter: Optional rate limiter
-        _retry: Optional retry policy
-        _telemetry: Optional telemetry recorder
         telemetry_name: Name for telemetry events (defaults to f'account.{action}')
         preserve_none: Whether to keep None values in params
 
     Returns:
         List of dict results from the API
     """
-    endpoint = _endpoint_builder.open(api_key=api_key, api_kind=api_kind, network=network)
+    endpoint = ctx.endpoint_builder.open(
+        api_key=ctx.api_key, api_kind=ctx.api_kind, network=ctx.network
+    )
     url: str = endpoint.api_url
 
     # Build final params with module and action
@@ -93,27 +77,27 @@ async def _fetch_account_list_data(
 
     # Determine telemetry name
     telem_name = telemetry_name or f'account.{action}'
-    rate_limiter_key = f'{api_kind}:{network}:{action}'
+    rate_limiter_key = f'{ctx.api_kind}:{ctx.network}:{action}'
 
     response: Any = await run_with_policies(
-        do_call=lambda: http.get(url, params=signed_params, headers=headers),
-        telemetry=_telemetry,
+        do_call=lambda: ctx.http.get(url, params=signed_params, headers=headers),
+        telemetry=ctx.telemetry,
         telemetry_name=telem_name,
-        api_kind=api_kind,
-        network=network,
-        rate_limiter=_rate_limiter,
+        api_kind=ctx.api_kind,
+        network=ctx.network,
+        rate_limiter=ctx.rate_limiter,
         rate_limiter_key=rate_limiter_key,
-        retry_policy=_retry,
+        retry_policy=ctx.retry,
     )
 
     # Parse response - common pattern for all list endpoints
     out = _parse_list_response(response=response)
 
     # Record telemetry for successful list responses
-    if _telemetry is not None and out:
-        await _telemetry.record_event(
+    if ctx.telemetry is not None and out:
+        await ctx.telemetry.record_event(
             f'{telem_name}.ok',
-            {'api_kind': api_kind, 'network': network, 'items': len(out)},
+            {'api_kind': ctx.api_kind, 'network': ctx.network, 'items': len(out)},
         )
 
     return out
@@ -149,26 +133,20 @@ def _parse_list_response(*, response: Any) -> list[dict[str, Any]]:
 
 async def get_address_balance(
     *,
-    address: Address | str,
-    api_kind: str,
-    network: str,
-    api_key: str,
-    http: HttpClient,
-    _endpoint_builder: EndpointBuilder,
+    ctx: ProviderContext,
+    address: Address,
     extra_params: Mapping[str, Any] | None = None,
-    _cache: Cache | None = None,
-    _rate_limiter: RateLimiter | None = None,
-    _retry: RetryPolicy | None = None,
-    _telemetry: Telemetry | None = None,
 ) -> int:
     """Fetch address balance (wei) using the canonical HTTP port and legacy UrlBuilder.
 
     This is a thin use-case wrapper. It composes URL and delegates HTTP to the provided port.
     """
 
-    endpoint = _endpoint_builder.open(api_key=api_key, api_kind=api_kind, network=network)
+    endpoint = ctx.endpoint_builder.open(
+        api_key=ctx.api_key, api_kind=ctx.api_kind, network=ctx.network
+    )
     url: str = endpoint.api_url
-    cache_key = f'balance:{api_kind}:{network}:{address}'
+    cache_key = f'balance:{ctx.api_kind}:{ctx.network}:{address}'
 
     params: dict[str, Any] = {
         'module': 'account',
@@ -182,20 +160,20 @@ async def get_address_balance(
     signed_params, headers = endpoint.filter_and_sign(params, headers=None)
 
     # Try cache first
-    if _cache is not None:
-        cached = await _cache.get(cache_key)
+    if ctx.cache is not None:
+        cached = await ctx.cache.get(cache_key)
         if isinstance(cached, int):
             return cached
 
     response: Any = await run_with_policies(
-        do_call=lambda: http.get(url, params=signed_params, headers=headers),
-        telemetry=_telemetry,
+        do_call=lambda: ctx.http.get(url, params=signed_params, headers=headers),
+        telemetry=ctx.telemetry,
         telemetry_name='account.get_address_balance',
-        api_kind=api_kind,
-        network=network,
-        rate_limiter=_rate_limiter,
-        rate_limiter_key=f'{api_kind}:{network}:balance',
-        retry_policy=_retry,
+        api_kind=ctx.api_kind,
+        network=ctx.network,
+        rate_limiter=ctx.rate_limiter,
+        rate_limiter_key=f'{ctx.api_kind}:{ctx.network}:balance',
+        retry_policy=ctx.retry,
     )
 
     # Etherscan-like response: {"status": "1", "message": "OK", "result": "123..."}
@@ -213,182 +191,126 @@ async def get_address_balance(
         except (ValueError, TypeError):
             value = 0
 
-    if _telemetry is not None:
-        await _telemetry.record_event(
+    if ctx.telemetry is not None:
+        await ctx.telemetry.record_event(
             'account.get_address_balance.ok',
             {
-                'api_kind': api_kind,
-                'network': network,
+                'api_kind': ctx.api_kind,
+                'network': ctx.network,
             },
         )
 
-    if _cache is not None and value >= 0:
-        await _cache.set(cache_key, value, ttl_seconds=CACHE_TTL_SECONDS_BALANCE)
+    if ctx.cache is not None and value >= 0:
+        await ctx.cache.set(cache_key, value, ttl_seconds=CACHE_TTL_SECONDS_BALANCE)
 
     return value
 
 
 async def get_address_balances(
     *,
-    addresses: list[str],
+    ctx: ProviderContext,
+    addresses: list[Address],
     tag: str,
-    api_kind: str,
-    network: str,
-    api_key: str,
-    http: HttpClient,
-    _endpoint_builder: EndpointBuilder,
     extra_params: Mapping[str, Any] | None = None,
-    _rate_limiter: RateLimiter | None = None,
-    _retry: RetryPolicy | None = None,
-    _telemetry: Telemetry | None = None,
 ) -> list[dict[str, Any]]:
     return await _fetch_account_list_data(
+        ctx=ctx,
         action='balancemulti',
         params={
-            'address': ','.join(addresses),
+            'address': ','.join(str(a) for a in addresses),
             'tag': tag,
         },
-        api_kind=api_kind,
-        network=network,
-        api_key=api_key,
-        http=http,
-        _endpoint_builder=_endpoint_builder,
         extra_params=extra_params,
-        _rate_limiter=_rate_limiter,
-        _retry=_retry,
-        _telemetry=_telemetry,
         telemetry_name='account.get_address_balances',
     )
 
 
 async def get_normal_transactions(
     *,
-    address: str,
+    ctx: ProviderContext,
+    address: Address,
     start_block: int | None,
     end_block: int | None,
     sort: str | None,
     page: int | None,
     offset: int | None,
-    api_kind: str,
-    network: str,
-    api_key: str,
-    http: HttpClient,
-    _endpoint_builder: EndpointBuilder,
     extra_params: Mapping[str, Any] | None = None,
-    _rate_limiter: RateLimiter | None = None,
-    _retry: RetryPolicy | None = None,
-    _telemetry: Telemetry | None = None,
 ) -> list[dict[str, Any]]:
     return await _fetch_account_list_data(
+        ctx=ctx,
         action='txlist',
         params={
-            'address': address,
+            'address': str(address),
             'startblock': start_block,
             'endblock': end_block,
             'sort': sort,
             'page': page,
             'offset': offset,
         },
-        api_kind=api_kind,
-        network=network,
-        api_key=api_key,
-        http=http,
-        _endpoint_builder=_endpoint_builder,
         extra_params=extra_params,
-        _rate_limiter=_rate_limiter,
-        _retry=_retry,
-        _telemetry=_telemetry,
         telemetry_name='account.get_normal_transactions',
     )
 
 
 async def get_internal_transactions(
     *,
-    address: str | None,
+    ctx: ProviderContext,
+    address: Address | None,
     start_block: int | None,
     end_block: int | None,
     sort: str | None,
     page: int | None,
     offset: int | None,
-    txhash: str | None,
-    api_kind: str,
-    network: str,
-    api_key: str,
-    http: HttpClient,
-    _endpoint_builder: EndpointBuilder,
+    txhash: TxHash | None,
     extra_params: Mapping[str, Any] | None = None,
-    _rate_limiter: RateLimiter | None = None,
-    _retry: RetryPolicy | None = None,
-    _telemetry: Telemetry | None = None,
 ) -> list[dict[str, Any]]:
     return await _fetch_account_list_data(
+        ctx=ctx,
         action='txlistinternal',
         params={
-            'address': address,
+            'address': str(address) if address is not None else None,
             'startblock': start_block,
             'endblock': end_block,
             'sort': sort,
             'page': page,
             'offset': offset,
-            'txhash': txhash,
+            'txhash': str(txhash) if txhash is not None else None,
         },
-        api_kind=api_kind,
-        network=network,
-        api_key=api_key,
-        http=http,
-        _endpoint_builder=_endpoint_builder,
         extra_params=extra_params,
-        _rate_limiter=_rate_limiter,
-        _retry=_retry,
-        _telemetry=_telemetry,
         telemetry_name='account.get_internal_transactions',
     )
 
 
 async def get_token_transfers(
     *,
-    address: str | None,
-    contract_address: str | None,
+    ctx: ProviderContext,
+    address: Address | None,
+    contract_address: Address | None,
     start_block: int | None,
     end_block: int | None,
     sort: str | None,
     page: int | None,
     offset: int | None,
     token_standard: str,
-    api_kind: str,
-    network: str,
-    api_key: str,
-    http: HttpClient,
-    _endpoint_builder: EndpointBuilder,
     extra_params: Mapping[str, Any] | None = None,
-    _rate_limiter: RateLimiter | None = None,
-    _retry: RetryPolicy | None = None,
-    _telemetry: Telemetry | None = None,
     preserve_none: bool = False,
 ) -> list[dict[str, Any]]:
     actions = {'erc20': 'tokentx', 'erc721': 'tokennfttx', 'erc1155': 'token1155tx'}
     action = actions.get(token_standard, 'tokentx')
 
     return await _fetch_account_list_data(
+        ctx=ctx,
         action=action,
         params={
-            'address': address,
-            'contractaddress': contract_address,
+            'address': str(address) if address is not None else None,
+            'contractaddress': str(contract_address) if contract_address is not None else None,
             'startblock': start_block,
             'endblock': end_block,
             'sort': sort,
             'page': page,
             'offset': offset,
         },
-        api_kind=api_kind,
-        network=network,
-        api_key=api_key,
-        http=http,
-        _endpoint_builder=_endpoint_builder,
         extra_params=extra_params,
-        _rate_limiter=_rate_limiter,
-        _retry=_retry,
-        _telemetry=_telemetry,
         telemetry_name='account.get_token_transfers',
         preserve_none=preserve_none,
     )
@@ -396,7 +318,8 @@ async def get_token_transfers(
 
 async def get_all_transactions_optimized(
     *,
-    address: str,
+    ctx: ProviderContext,
+    address: Address,
     start_block: int | None,
     end_block: int | None,
     max_concurrent: int,
@@ -404,14 +327,6 @@ async def get_all_transactions_optimized(
     min_range_width: int = 1_000,
     max_attempts_per_range: int = 3,
     prefer_paging: bool | None = None,
-    api_kind: str,
-    network: str,
-    api_key: str,
-    http: HttpClient,
-    _endpoint_builder: EndpointBuilder,
-    _rate_limiter: RateLimiter | None = None,
-    _retry: RetryPolicy | None = None,
-    _telemetry: Telemetry | None = None,
     stats: dict[str, int] | None = None,
 ) -> list[dict[str, Any]]:
     """Fetch all normal transactions using dynamic range splitting and priority queue.
@@ -426,18 +341,11 @@ async def get_all_transactions_optimized(
         from aiochainscan.services.unified_fetch import fetch_all as _fetch_all_unified
 
         result = await _fetch_all_unified(
+            ctx=ctx,
             data_type='transactions',
-            address=address,
+            address=str(address),
             start_block=start_block,
             end_block=end_block,
-            api_kind=api_kind,
-            network=network,
-            api_key=api_key,
-            http=http,
-            endpoint_builder=_endpoint_builder,
-            rate_limiter=_rate_limiter,
-            retry=_retry,
-            telemetry=_telemetry,
             strategy='fast',
             max_offset=max_offset,
             max_concurrent=max_concurrent,
@@ -448,33 +356,20 @@ async def get_all_transactions_optimized(
             fetch_all_transactions_fast,
         )
 
-        if api_kind == 'eth':
+        if ctx.api_kind == 'eth':
             result = await fetch_all_transactions_eth_sliding_fast(
-                address=address,
+                ctx=ctx,
+                address=str(address),
                 start_block=start_block,
                 end_block=end_block,
-                network=network,
-                api_key=api_key,
-                http=http,
-                endpoint_builder=_endpoint_builder,
-                rate_limiter=_rate_limiter,
-                retry=_retry,
-                telemetry=_telemetry,
                 max_offset=max_offset,
             )
         else:
             result = await fetch_all_transactions_fast(
-                address=address,
+                ctx=ctx,
+                address=str(address),
                 start_block=start_block,
                 end_block=end_block,
-                api_kind=api_kind,
-                network=network,
-                api_key=api_key,
-                http=http,
-                endpoint_builder=_endpoint_builder,
-                rate_limiter=_rate_limiter,
-                retry=_retry,
-                telemetry=_telemetry,
                 max_offset=max_offset,
                 max_concurrent=max_concurrent,
             )
@@ -486,21 +381,14 @@ async def get_all_transactions_optimized(
 
 async def get_all_internal_transactions_optimized(
     *,
-    address: str,
+    ctx: ProviderContext,
+    address: Address,
     start_block: int | None,
     end_block: int | None,
     max_concurrent: int,
     max_offset: int,
     min_range_width: int = 1_000,
     max_attempts_per_range: int = 3,
-    api_kind: str,
-    network: str,
-    api_key: str,
-    http: HttpClient,
-    _endpoint_builder: EndpointBuilder,
-    _rate_limiter: RateLimiter | None = None,
-    _retry: RetryPolicy | None = None,
-    _telemetry: Telemetry | None = None,
     stats: dict[str, int] | None = None,
 ) -> list[dict[str, Any]]:
     """Fetch all internal transactions using page-based strategy.
@@ -511,19 +399,23 @@ async def get_all_internal_transactions_optimized(
     # Resolve latest block when needed (same as above)
 
     if end_block is None:
-        endpoint = _endpoint_builder.open(api_key=api_key, api_kind=api_kind, network=network)
+        endpoint = ctx.endpoint_builder.open(
+            api_key=ctx.api_key, api_kind=ctx.api_kind, network=ctx.network
+        )
         url: str = endpoint.api_url
         try:
             params_proxy: dict[str, Any] = {'module': 'proxy', 'action': 'eth_blockNumber'}
             signed_params, headers = endpoint.filter_and_sign(params_proxy, headers=None)
 
             async def _get_latest_block() -> Any:
-                if _rate_limiter is not None:
-                    await _rate_limiter.acquire(key=f'{api_kind}:{network}:proxy.blockNumber')
-                return await http.get(url, params=signed_params, headers=headers)
+                if ctx.rate_limiter is not None:
+                    await ctx.rate_limiter.acquire(
+                        key=f'{ctx.api_kind}:{ctx.network}:proxy.blockNumber'
+                    )
+                return await ctx.http.get(url, params=signed_params, headers=headers)
 
             response: Any = await (
-                _retry.run(_get_latest_block) if _retry is not None else _get_latest_block()
+                ctx.retry.run(_get_latest_block) if ctx.retry is not None else _get_latest_block()
             )
             latest_hex: str | None = None
             if isinstance(response, dict):
@@ -546,12 +438,16 @@ async def get_all_internal_transactions_optimized(
             signed_params2, headers2 = endpoint.filter_and_sign(params_block, headers=None)
 
             async def _get_block_by_time() -> Any:
-                if _rate_limiter is not None:
-                    await _rate_limiter.acquire(key=f'{api_kind}:{network}:block.getblocknobytime')
-                return await http.get(url, params=signed_params2, headers=headers2)
+                if ctx.rate_limiter is not None:
+                    await ctx.rate_limiter.acquire(
+                        key=f'{ctx.api_kind}:{ctx.network}:block.getblocknobytime'
+                    )
+                return await ctx.http.get(url, params=signed_params2, headers=headers2)
 
             resp2: Any = await (
-                _retry.run(_get_block_by_time) if _retry is not None else _get_block_by_time()
+                ctx.retry.run(_get_block_by_time)
+                if ctx.retry is not None
+                else _get_block_by_time()
             )
             if isinstance(resp2, dict):
                 res2 = resp2.get('result', resp2)
@@ -565,10 +461,11 @@ async def get_all_internal_transactions_optimized(
     all_items: list[dict[str, Any]] = []
     pages_processed = 0
 
-    if api_kind == 'eth':
+    if ctx.api_kind == 'eth':
         current_start = start_block
         while True:
             items = await get_internal_transactions(
+                ctx=ctx,
                 address=address,
                 start_block=current_start,
                 end_block=end_block,
@@ -576,14 +473,6 @@ async def get_all_internal_transactions_optimized(
                 page=1,
                 offset=max_offset,
                 txhash=None,
-                api_kind=api_kind,
-                network=network,
-                api_key=api_key,
-                http=http,
-                _endpoint_builder=_endpoint_builder,
-                _rate_limiter=_rate_limiter,
-                _retry=_retry,
-                _telemetry=_telemetry,
             )
             pages_processed += 1
             if not items:
@@ -605,6 +494,7 @@ async def get_all_internal_transactions_optimized(
         page = 1
         while True:
             items = await get_internal_transactions(
+                ctx=ctx,
                 address=address,
                 start_block=start_block,
                 end_block=end_block,
@@ -612,14 +502,6 @@ async def get_all_internal_transactions_optimized(
                 page=page,
                 offset=max_offset,
                 txhash=None,
-                api_kind=api_kind,
-                network=network,
-                api_key=api_key,
-                http=http,
-                _endpoint_builder=_endpoint_builder,
-                _rate_limiter=_rate_limiter,
-                _retry=_retry,
-                _telemetry=_telemetry,
             )
             pages_processed += 1
             if not items:
@@ -656,102 +538,69 @@ async def get_all_internal_transactions_optimized(
 
 async def get_mined_blocks(
     *,
-    address: str,
+    ctx: ProviderContext,
+    address: Address,
     blocktype: str,
     page: int | None,
     offset: int | None,
-    api_kind: str,
-    network: str,
-    api_key: str,
-    http: HttpClient,
-    _endpoint_builder: EndpointBuilder,
     extra_params: Mapping[str, Any] | None = None,
-    _rate_limiter: RateLimiter | None = None,
-    _retry: RetryPolicy | None = None,
-    _telemetry: Telemetry | None = None,
 ) -> list[dict[str, Any]]:
     return await _fetch_account_list_data(
+        ctx=ctx,
         action='getminedblocks',
         params={
-            'address': address,
+            'address': str(address),
             'blocktype': blocktype,
             'page': page,
             'offset': offset,
         },
-        api_kind=api_kind,
-        network=network,
-        api_key=api_key,
-        http=http,
-        _endpoint_builder=_endpoint_builder,
         extra_params=extra_params,
-        _rate_limiter=_rate_limiter,
-        _retry=_retry,
-        _telemetry=_telemetry,
         telemetry_name='account.get_mined_blocks',
     )
 
 
 async def get_beacon_chain_withdrawals(
     *,
-    address: str,
+    ctx: ProviderContext,
+    address: Address,
     start_block: int | None,
     end_block: int | None,
     sort: str | None,
     page: int | None,
     offset: int | None,
-    api_kind: str,
-    network: str,
-    api_key: str,
-    http: HttpClient,
-    _endpoint_builder: EndpointBuilder,
     extra_params: Mapping[str, Any] | None = None,
-    _rate_limiter: RateLimiter | None = None,
-    _retry: RetryPolicy | None = None,
-    _telemetry: Telemetry | None = None,
 ) -> list[dict[str, Any]]:
     return await _fetch_account_list_data(
+        ctx=ctx,
         action='txsBeaconWithdrawal',
         params={
-            'address': address,
+            'address': str(address),
             'startblock': start_block,
             'endblock': end_block,
             'sort': sort,
             'page': page,
             'offset': offset,
         },
-        api_kind=api_kind,
-        network=network,
-        api_key=api_key,
-        http=http,
-        _endpoint_builder=_endpoint_builder,
         extra_params=extra_params,
-        _rate_limiter=_rate_limiter,
-        _retry=_retry,
-        _telemetry=_telemetry,
         telemetry_name='account.get_beacon_chain_withdrawals',
     )
 
 
 async def get_account_balance_by_blockno(
     *,
-    address: str,
+    ctx: ProviderContext,
+    address: Address,
     blockno: int,
-    api_kind: str,
-    network: str,
-    api_key: str,
-    http: HttpClient,
-    _endpoint_builder: EndpointBuilder,
     extra_params: Mapping[str, Any] | None = None,
-    _rate_limiter: RateLimiter | None = None,
-    _retry: RetryPolicy | None = None,
-    _telemetry: Telemetry | None = None,
 ) -> str:
-    endpoint = _endpoint_builder.open(api_key=api_key, api_kind=api_kind, network=network)
+    endpoint = ctx.endpoint_builder.open(
+        api_key=ctx.api_key, api_kind=ctx.api_kind, network=ctx.network
+    )
     url: str = endpoint.api_url
     params: dict[str, Any] = {
         'module': 'account',
         'action': 'balancehistory',
-        'address': address,
+        'address': str(address),
         'blockno': blockno,
     }
     if extra_params:
@@ -759,20 +608,20 @@ async def get_account_balance_by_blockno(
     signed_params, headers = endpoint.filter_and_sign(params, headers=None)
 
     async def _do_request() -> Any:
-        if _rate_limiter is not None:
-            await _rate_limiter.acquire(key=f'{api_kind}:{network}:balancehistory')
+        if ctx.rate_limiter is not None:
+            await ctx.rate_limiter.acquire(key=f'{ctx.api_kind}:{ctx.network}:balancehistory')
         start = monotonic()
         try:
-            return await http.get(url, params=signed_params, headers=headers)
+            return await ctx.http.get(url, params=signed_params, headers=headers)
         finally:
-            if _telemetry is not None:
+            if ctx.telemetry is not None:
                 duration_ms = int((monotonic() - start) * 1000)
-                await _telemetry.record_event(
+                await ctx.telemetry.record_event(
                     'account.get_account_balance_by_blockno.duration',
-                    {'api_kind': api_kind, 'network': network, 'duration_ms': duration_ms},
+                    {'api_kind': ctx.api_kind, 'network': ctx.network, 'duration_ms': duration_ms},
                 )
 
-    response: Any = await (_retry.run(_do_request) if _retry is not None else _do_request())
+    response: Any = await (ctx.retry.run(_do_request) if ctx.retry is not None else _do_request())
     if isinstance(response, dict):
         result = response.get('result', response)
         if isinstance(result, str | int):

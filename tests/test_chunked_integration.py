@@ -4,7 +4,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from aiochainscan.core.context import ProviderContext
 from aiochainscan.services.unified_fetch import fetch_all
+
+TEST_ADDRESS = '0x1111111111111111111111111111111111111111'
 
 
 @pytest.fixture
@@ -45,16 +48,19 @@ async def test_unified_fetch_with_chunked_strategy_logs(mock_http, mock_endpoint
 
     mock_http.get = mock_get
 
-    logs = await fetch_all(
-        data_type='logs',
-        address='0xtest',
-        start_block=0,
-        end_block=100,
+    _ctx = ProviderContext(
         api_kind='eth',
         network='ethereum',
         api_key='test_key',
         http=mock_http,
         endpoint_builder=mock_endpoint_builder,
+    )
+    logs = await fetch_all(
+        ctx=_ctx,
+        data_type='logs',
+        address=TEST_ADDRESS,
+        start_block=0,
+        end_block=100,
         strategy='chunked',
         max_offset=50,  # chunk_size
         max_concurrent=2,
@@ -81,16 +87,19 @@ async def test_unified_fetch_with_chunked_strategy_transactions(mock_http, mock_
 
     mock_http.get = mock_get
 
-    txs = await fetch_all(
-        data_type='transactions',
-        address='0xtest',
-        start_block=0,
-        end_block=100,
+    _ctx = ProviderContext(
         api_kind='eth',
         network='ethereum',
         api_key='test_key',
         http=mock_http,
         endpoint_builder=mock_endpoint_builder,
+    )
+    txs = await fetch_all(
+        ctx=_ctx,
+        data_type='transactions',
+        address=TEST_ADDRESS,
+        start_block=0,
+        end_block=100,
         strategy='chunked',
         max_offset=50,
         max_concurrent=2,
@@ -106,16 +115,19 @@ async def test_unified_fetch_chunked_fallback_to_fast(mock_http, mock_endpoint_b
     mock_http.get = AsyncMock(return_value={'result': []})
 
     # internal_transactions is not supported by chunked, should fall back to fast
-    result = await fetch_all(
-        data_type='internal_transactions',
-        address='0xtest',
-        start_block=0,
-        end_block=100,
+    _ctx = ProviderContext(
         api_kind='eth',
         network='ethereum',
         api_key='test_key',
         http=mock_http,
         endpoint_builder=mock_endpoint_builder,
+    )
+    result = await fetch_all(
+        ctx=_ctx,
+        data_type='internal_transactions',
+        address=TEST_ADDRESS,
+        start_block=0,
+        end_block=100,
         strategy='chunked',
         max_offset=50,
         max_concurrent=2,

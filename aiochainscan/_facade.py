@@ -7,6 +7,8 @@ These functions are lazily loaded from ``aiochainscan.__init__`` via PEP 562
 ``__getattr__`` and will be removed in v0.5.0.
 """
 
+# mypy: disable-error-code=call-arg
+
 from __future__ import annotations
 
 import warnings
@@ -14,6 +16,15 @@ from collections.abc import Mapping
 from datetime import date
 from typing import Any
 
+import aiochainscan.services.account as _account_services
+import aiochainscan.services.block as _block_services
+import aiochainscan.services.contract as _contract_services
+import aiochainscan.services.gas as _gas_services
+import aiochainscan.services.logs as _logs_services
+import aiochainscan.services.proxy as _proxy_services
+import aiochainscan.services.stats as _stats_services
+import aiochainscan.services.token as _token_services
+import aiochainscan.services.transaction as _transaction_services
 from aiochainscan.adapters.endpoint_builder_urlbuilder import UrlBuilderEndpoint
 from aiochainscan.adapters.httpx_client import HttpxClientAdapter
 from aiochainscan.adapters.structlog_telemetry import StructlogTelemetry
@@ -28,6 +39,7 @@ from aiochainscan.capabilities import (
     is_feature_supported as _caps_is_feature_supported,
 )
 from aiochainscan.config import config_manager as _config_manager
+from aiochainscan.core.context import ProviderContext
 from aiochainscan.domain.dto_v2 import (
     BlockDTO,
     DailySeriesDTO,
@@ -142,6 +154,161 @@ from aiochainscan.services.stats import (
 from aiochainscan.services.token import TokenBalanceDTO, normalize_token_balance
 from aiochainscan.services.token import get_token_balance as get_token_balance_service
 from aiochainscan.services.transaction import get_transaction_by_hash, normalize_transaction
+
+
+def _legacy_ctx_wrapper(fn: Any) -> Any:
+    """Adapt legacy service kwargs to ``ctx: ProviderContext``."""
+
+    async def _wrapped(*args: Any, **kwargs: Any) -> Any:
+        if 'ctx' in kwargs:
+            return await fn(*args, **kwargs)
+
+        api_kind = kwargs.pop('api_kind')
+        network = kwargs.pop('network')
+        api_key = kwargs.pop('api_key')
+        http = kwargs.pop('http')
+        endpoint_builder = kwargs.pop('_endpoint_builder', kwargs.pop('endpoint_builder', None))
+        rate_limiter = kwargs.pop('_rate_limiter', kwargs.pop('rate_limiter', None))
+        retry = kwargs.pop('_retry', kwargs.pop('retry', None))
+        telemetry = kwargs.pop('_telemetry', kwargs.pop('telemetry', None))
+        cache = kwargs.pop('_cache', kwargs.pop('cache', None))
+        gql = kwargs.pop('_gql', kwargs.pop('gql', None))
+        gql_builder = kwargs.pop('_gql_builder', kwargs.pop('gql_builder', None))
+        federator = kwargs.pop('_federator', kwargs.pop('federator', None))
+
+        if endpoint_builder is None:
+            raise TypeError('endpoint_builder is required for legacy facade service calls')
+
+        ctx = ProviderContext(
+            api_kind=api_kind,
+            network=network,
+            api_key=api_key,
+            http=http,
+            endpoint_builder=endpoint_builder,
+            rate_limiter=rate_limiter,
+            retry=retry,
+            telemetry=telemetry,
+            cache=cache,
+            gql=gql,
+            gql_builder=gql_builder,
+            federator=federator,
+        )
+        return await fn(*args, ctx=ctx, **kwargs)
+
+    return _wrapped
+
+
+# Wrap imported symbols used directly in this module.
+get_address_balance = _legacy_ctx_wrapper(get_address_balance)
+get_address_balances_service = _legacy_ctx_wrapper(get_address_balances_service)
+get_normal_transactions_service = _legacy_ctx_wrapper(get_normal_transactions_service)
+get_internal_transactions_service = _legacy_ctx_wrapper(get_internal_transactions_service)
+get_token_transfers_service = _legacy_ctx_wrapper(get_token_transfers_service)
+get_all_transactions_optimized_service = _legacy_ctx_wrapper(
+    get_all_transactions_optimized_service
+)
+get_all_internal_transactions_optimized_service = _legacy_ctx_wrapper(
+    get_all_internal_transactions_optimized_service
+)
+get_mined_blocks_service = _legacy_ctx_wrapper(get_mined_blocks_service)
+get_beacon_chain_withdrawals_service = _legacy_ctx_wrapper(get_beacon_chain_withdrawals_service)
+get_account_balance_by_blockno_service = _legacy_ctx_wrapper(
+    get_account_balance_by_blockno_service
+)
+get_block_by_number = _legacy_ctx_wrapper(get_block_by_number)
+get_transaction_by_hash = _legacy_ctx_wrapper(get_transaction_by_hash)
+get_token_balance_service = _legacy_ctx_wrapper(get_token_balance_service)
+get_gas_oracle_service = _legacy_ctx_wrapper(get_gas_oracle_service)
+get_logs_page_service = _legacy_ctx_wrapper(get_logs_page_service)
+estimate_gas_service = _legacy_ctx_wrapper(estimate_gas_service)
+eth_call_service = _legacy_ctx_wrapper(eth_call_service)
+get_block_number_service = _legacy_ctx_wrapper(get_block_number_service)
+get_block_tx_count_by_number_service = _legacy_ctx_wrapper(get_block_tx_count_by_number_service)
+get_code_service = _legacy_ctx_wrapper(get_code_service)
+get_gas_price_service = _legacy_ctx_wrapper(get_gas_price_service)
+get_storage_at_service = _legacy_ctx_wrapper(get_storage_at_service)
+get_tx_by_block_number_and_index_service = _legacy_ctx_wrapper(
+    get_tx_by_block_number_and_index_service
+)
+get_tx_count_service = _legacy_ctx_wrapper(get_tx_count_service)
+get_tx_receipt_service = _legacy_ctx_wrapper(get_tx_receipt_service)
+get_uncle_by_block_number_and_index_service = _legacy_ctx_wrapper(
+    get_uncle_by_block_number_and_index_service
+)
+send_raw_tx_service = _legacy_ctx_wrapper(send_raw_tx_service)
+get_contract_abi_service = _legacy_ctx_wrapper(get_contract_abi_service)
+get_contract_source_code_service = _legacy_ctx_wrapper(get_contract_source_code_service)
+get_contract_creation_service = _legacy_ctx_wrapper(get_contract_creation_service)
+verify_contract_source_code_service = _legacy_ctx_wrapper(verify_contract_source_code_service)
+check_verification_status_service = _legacy_ctx_wrapper(check_verification_status_service)
+verify_proxy_contract_service = _legacy_ctx_wrapper(verify_proxy_contract_service)
+check_proxy_contract_verification_service = _legacy_ctx_wrapper(
+    check_proxy_contract_verification_service
+)
+
+# Patch module attributes for functions imported lazily inside facade methods.
+_account_services.get_normal_transactions = _legacy_ctx_wrapper(
+    _account_services.get_normal_transactions
+)
+_logs_services.get_logs = _legacy_ctx_wrapper(_logs_services.get_logs)
+_logs_services.get_all_logs_optimized = _legacy_ctx_wrapper(_logs_services.get_all_logs_optimized)
+_stats_services.get_eth_price = _legacy_ctx_wrapper(_stats_services.get_eth_price)
+_stats_services.get_daily_transaction_count = _legacy_ctx_wrapper(
+    _stats_services.get_daily_transaction_count
+)
+_stats_services.get_daily_new_address_count = _legacy_ctx_wrapper(
+    _stats_services.get_daily_new_address_count
+)
+_stats_services.get_daily_network_tx_fee = _legacy_ctx_wrapper(
+    _stats_services.get_daily_network_tx_fee
+)
+_stats_services.get_daily_network_utilization = _legacy_ctx_wrapper(
+    _stats_services.get_daily_network_utilization
+)
+_stats_services.get_daily_average_block_size = _legacy_ctx_wrapper(
+    _stats_services.get_daily_average_block_size
+)
+_stats_services.get_daily_block_rewards = _legacy_ctx_wrapper(
+    _stats_services.get_daily_block_rewards
+)
+_stats_services.get_daily_average_block_time = _legacy_ctx_wrapper(
+    _stats_services.get_daily_average_block_time
+)
+_stats_services.get_daily_uncle_block_count = _legacy_ctx_wrapper(
+    _stats_services.get_daily_uncle_block_count
+)
+_stats_services.get_daily_average_gas_limit = _legacy_ctx_wrapper(
+    _stats_services.get_daily_average_gas_limit
+)
+_stats_services.get_daily_total_gas_used = _legacy_ctx_wrapper(
+    _stats_services.get_daily_total_gas_used
+)
+_stats_services.get_daily_average_gas_price = _legacy_ctx_wrapper(
+    _stats_services.get_daily_average_gas_price
+)
+_stats_services.get_daily_block_count = _legacy_ctx_wrapper(_stats_services.get_daily_block_count)
+_stats_services.get_daily_average_network_hash_rate = _legacy_ctx_wrapper(
+    _stats_services.get_daily_average_network_hash_rate
+)
+_stats_services.get_daily_average_network_difficulty = _legacy_ctx_wrapper(
+    _stats_services.get_daily_average_network_difficulty
+)
+_stats_services.get_ether_historical_daily_market_cap = _legacy_ctx_wrapper(
+    _stats_services.get_ether_historical_daily_market_cap
+)
+_stats_services.get_ether_historical_price = _legacy_ctx_wrapper(
+    _stats_services.get_ether_historical_price
+)
+
+# Keep imported module aliases referenced to satisfy linters.
+_ = (
+    _block_services,
+    _contract_services,
+    _gas_services,
+    _proxy_services,
+    _token_services,
+    _transaction_services,
+)
 
 # =============================================================================
 # DEPRECATION WARNING HELPER
@@ -495,7 +662,7 @@ async def get_logs_page_typed(
         items, next_cursor = await get_logs_page_service(
             start_block=start_block,
             end_block=end_block,
-            address=address,
+            address=Address(address),
             api_kind=api_kind,
             network=network,
             api_key=api_key,
@@ -581,8 +748,8 @@ async def get_token_transfers_page_typed(
         if not items:
             # Fallback: REST page (page/offset → not cursor). Return opaque cursors as None.
             items = await get_token_transfers_service(
-                address=address,
-                contract_address=token_contract,
+                address=Address(address) if address is not None else None,
+                contract_address=Address(token_contract) if token_contract is not None else None,
                 start_block=None,
                 end_block=None,
                 sort=None,
@@ -660,7 +827,7 @@ async def get_address_transactions_page_typed(
             )
 
             items = await get_normal_transactions_service(
-                address=address,
+                address=Address(address),
                 start_block=None,
                 end_block=None,
                 sort=None,
@@ -844,7 +1011,7 @@ async def get_address_balances(
     telemetry = telemetry or StructlogTelemetry()
     try:
         return await get_address_balances_service(
-            addresses=addresses,
+            addresses=[Address(item) for item in addresses],
             tag=tag,
             api_kind=api_kind,
             network=network,
@@ -881,7 +1048,7 @@ async def get_normal_transactions(
     telemetry = telemetry or StructlogTelemetry()
     try:
         return await get_normal_transactions_service(
-            address=address,
+            address=Address(address),
             start_block=start_block,
             end_block=end_block,
             sort=sort,
@@ -930,7 +1097,7 @@ async def get_all_transactions_optimized(
     telemetry = telemetry or StructlogTelemetry()
     try:
         return await get_all_transactions_optimized_service(
-            address=address,
+            address=Address(address),
             start_block=start_block,
             end_block=end_block,
             max_concurrent=max_concurrent,
@@ -1014,7 +1181,7 @@ async def get_all_internal_transactions_optimized(
     telemetry = telemetry or StructlogTelemetry()
     try:
         return await get_all_internal_transactions_optimized_service(
-            address=address,
+            address=Address(address),
             start_block=start_block,
             end_block=end_block,
             max_concurrent=max_concurrent,
@@ -1065,7 +1232,7 @@ async def get_all_logs_optimized(
         )
 
         return await get_all_logs_optimized_service(
-            address=address,
+            address=Address(address),
             start_block=start_block,
             end_block=end_block,
             max_concurrent=max_concurrent,
@@ -1111,13 +1278,13 @@ async def get_internal_transactions(
     telemetry = telemetry or StructlogTelemetry()
     try:
         return await get_internal_transactions_service(
-            address=address,
+            address=Address(address) if address is not None else None,
             start_block=start_block,
             end_block=end_block,
             sort=sort,
             page=page,
             offset=offset,
-            txhash=txhash,
+            txhash=TxHash(txhash) if txhash is not None else None,
             api_kind=api_kind,
             network=network,
             api_key=api_key,
@@ -1155,8 +1322,8 @@ async def get_token_transfers(
     telemetry = telemetry or StructlogTelemetry()
     try:
         return await get_token_transfers_service(
-            address=address,
-            contract_address=contract_address,
+            address=Address(address) if address is not None else None,
+            contract_address=Address(contract_address) if contract_address is not None else None,
             start_block=start_block,
             end_block=end_block,
             sort=sort,
@@ -1196,7 +1363,7 @@ async def get_mined_blocks(
     telemetry = telemetry or StructlogTelemetry()
     try:
         return await get_mined_blocks_service(
-            address=address,
+            address=Address(address),
             blocktype=blocktype,
             page=page,
             offset=offset,
@@ -1235,7 +1402,7 @@ async def get_beacon_chain_withdrawals(
     telemetry = telemetry or StructlogTelemetry()
     try:
         return await get_beacon_chain_withdrawals_service(
-            address=address,
+            address=Address(address),
             start_block=start_block,
             end_block=end_block,
             sort=sort,
@@ -1272,7 +1439,7 @@ async def get_account_balance_by_blockno(
     telemetry = telemetry or StructlogTelemetry()
     try:
         return await get_account_balance_by_blockno_service(
-            address=address,
+            address=Address(address),
             blockno=blockno,
             api_kind=api_kind,
             network=network,
@@ -1431,7 +1598,7 @@ async def get_logs(
         return await get_logs_service(
             start_block=start_block,
             end_block=end_block,
-            address=address,
+            address=Address(address),
             api_kind=api_kind,
             network=network,
             api_key=api_key,
