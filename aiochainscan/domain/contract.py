@@ -15,6 +15,7 @@ if TYPE_CHECKING:
 
 from ..core.method import Method
 from ..decode import decode_log_data, decode_transaction_input
+from ..exceptions import ChainscanClientError
 
 
 class SmartContract:
@@ -163,7 +164,7 @@ class SmartContract:
                 if implementation_address:
                     implementation_address = implementation_address.lower()
 
-        except Exception:  # noqa: BLE001 - Any API failure should fallback to regular ABI fetch
+        except ChainscanClientError:
             # If CONTRACT_SOURCE fails, continue with regular ABI fetch
             pass
 

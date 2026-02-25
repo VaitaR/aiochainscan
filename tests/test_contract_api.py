@@ -13,6 +13,7 @@ import pytest
 from aiochainscan.core.client import ChainscanClient
 from aiochainscan.core.method import Method
 from aiochainscan.domain.contract import DecodedEvent, DecodedTransaction, SmartContract
+from aiochainscan.exceptions import ChainscanClientError
 
 # Sample ERC20 ABI (minimal for testing)
 SAMPLE_ERC20_ABI = [
@@ -176,7 +177,7 @@ class TestSmartContractFromAddress:
         """Test graceful fallback when CONTRACT_SOURCE fails."""
         # Mock CONTRACT_SOURCE to fail, but ABI succeeds
         mock_client.call.side_effect = [
-            Exception('Source not available'),  # CONTRACT_SOURCE fails
+            ChainscanClientError('Source not available'),  # CONTRACT_SOURCE fails
             json.dumps(SAMPLE_ERC20_ABI),  # CONTRACT_ABI succeeds
         ]
 
