@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from time import monotonic
 from typing import Any, Literal, Protocol
 
-from aiochainscan.constants import API_MAX_OFFSET_ETHERSCAN
+from aiochainscan.constants import API_MAX_OFFSET_ETHERSCAN, MAX_BLOCK_NUMBER
 from aiochainscan.exceptions import PaginationDataLossError
 from aiochainscan.ports.progress import ProgressCallback
 from aiochainscan.ports.rate_limiter import RateLimiter, RetryPolicy
@@ -128,9 +128,9 @@ async def fetch_all_generic(
             try:
                 effective_end_block = int(await fetch_spec.resolve_end_block())
             except (ValueError, TypeError):
-                effective_end_block = 99_999_999
+                effective_end_block = MAX_BLOCK_NUMBER
         else:
-            effective_end_block = 99_999_999
+            effective_end_block = MAX_BLOCK_NUMBER
     else:
         effective_end_block = int(end_block)
 
@@ -477,9 +477,9 @@ async def fetch_all_sliding_bi(
             try:
                 effective_end = int(await fetch_spec.resolve_end_block())
             except (ValueError, TypeError):
-                effective_end = 99_999_999
+                effective_end = MAX_BLOCK_NUMBER
         else:
-            effective_end = 99_999_999
+            effective_end = MAX_BLOCK_NUMBER
     else:
         effective_end = int(end_block)
     low = 0 if start_block is None else int(start_block)

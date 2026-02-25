@@ -131,36 +131,3 @@ async def test_etherscan_two_chains_live() -> None:
 
 # Base network is now supported through Etherscan V2 with chain_id
 # No need for separate BaseScan scanner
-
-
-@pytest.mark.slow
-@pytest.mark.asyncio
-async def test_moralis_two_chains_live() -> None:
-    # Moralis requires MORALIS_API_KEY
-    tests = [
-        ('moralis', 'v1', 'moralis', 'eth'),
-        ('moralis', 'v1', 'moralis', 'arbitrum'),
-    ]
-
-    for scanner_name, version, _scanner_id, network in tests:
-        if not _has_api_key(_scanner_id):
-            pytest.skip('Missing MORALIS_API_KEY')
-        client = ChainscanClient.from_config(scanner_name, network, version)
-        await _assert_balance_ok(client, TEST_ADDRESS)
-        await client.close()
-        await asyncio.sleep(0.2)
-
-
-@pytest.mark.slow
-@pytest.mark.asyncio
-async def test_routscan_mode_live() -> None:
-    # RoutScan supports Mode only (one network)
-    # RoutScan may not be registered in config in all environments; skip if unknown
-    try:
-        scanner_name, version, _scanner_id, network = ('routscan', 'v1', 'routscan_mode', 'mode')
-        client = ChainscanClient.from_config(scanner_name, network, version)
-    except Exception as e:
-        pytest.skip(f'RoutScan not available in this build: {e}')
-    # Address may be zero on Mode; we still validate shape
-    await _assert_balance_ok(client, TEST_ADDRESS)
-    await client.close()

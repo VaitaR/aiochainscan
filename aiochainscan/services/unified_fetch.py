@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+# mypy: disable-error-code=call-arg
 import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Literal
@@ -11,10 +12,14 @@ from aiochainscan.constants import (
     BATCH_DEFAULT_CONCURRENCY,
     BATCH_MAX_CONCURRENT_CHUNKS,
 )
+from aiochainscan.core.context import ProviderContext
+from aiochainscan.domain.dto_v2 import parse_hex_or_int_zero as _to_int
+from aiochainscan.domain.models import Address
 from aiochainscan.ports.endpoint_builder import EndpointBuilder
 from aiochainscan.ports.http_client import HttpClient
 from aiochainscan.ports.rate_limiter import RateLimiter, RetryPolicy
 from aiochainscan.ports.telemetry import Telemetry
+from aiochainscan.services._block_utils import _resolve_end_block_factory
 from aiochainscan.services.account import (
     get_internal_transactions,
     get_normal_transactions,
@@ -33,6 +38,73 @@ from aiochainscan.services.paging_engine import (
 if TYPE_CHECKING:
     from aiochainscan.scanners.base import Scanner
 
+
+def _legacy_ctx_wrapper(fn: Any) -> Any:
+    async def _wrapped(*args: Any, **kwargs: Any) -> Any:
+        if 'ctx' in kwargs:
+            return await fn(*args, **kwargs)
+
+        ctx = ProviderContext(
+            api_kind=kwargs.pop('api_kind'),
+            network=kwargs.pop('network'),
+            api_key=kwargs.pop('api_key'),
+            http=kwargs.pop('http'),
+            endpoint_builder=kwargs.pop('_endpoint_builder'),
+            rate_limiter=kwargs.pop('_rate_limiter', None),
+            retry=kwargs.pop('_retry', None),
+            telemetry=kwargs.pop('_telemetry', None),
+            cache=kwargs.pop('_cache', None),
+            gql=kwargs.pop('_gql', None),
+            gql_builder=kwargs.pop('_gql_builder', None),
+            federator=kwargs.pop('_federator', None),
+        )
+        return await fn(*args, ctx=ctx, **kwargs)
+
+    return _wrapped
+
+
+get_normal_transactions = _legacy_ctx_wrapper(get_normal_transactions)
+get_internal_transactions = _legacy_ctx_wrapper(get_internal_transactions)
+get_token_transfers = _legacy_ctx_wrapper(get_token_transfers)
+get_logs = _legacy_ctx_wrapper(get_logs)
+
+
+def _build_ctx(
+    *,
+    ctx: ProviderContext | None,
+    api_kind: str | None,
+    network: str | None,
+    api_key: str | None,
+    http: HttpClient | None,
+    endpoint_builder: EndpointBuilder | None,
+    rate_limiter: RateLimiter | None,
+    retry: RetryPolicy | None,
+    telemetry: Telemetry | None,
+) -> ProviderContext:
+    if ctx is not None:
+        return ctx
+    if (
+        api_kind is None
+        or network is None
+        or api_key is None
+        or http is None
+        or endpoint_builder is None
+    ):
+        raise TypeError(
+            'Either ctx or legacy api_kind/network/api_key/http/endpoint_builder is required'
+        )
+    return ProviderContext(
+        api_kind=api_kind,
+        network=network,
+        api_key=api_key,
+        http=http,
+        endpoint_builder=endpoint_builder,
+        rate_limiter=rate_limiter,
+        retry=retry,
+        telemetry=telemetry,
+    )
+
+
 DataType = Literal[
     'transactions',
     'internal_transactions',
@@ -41,50 +113,6 @@ DataType = Literal[
 ]
 
 Strategy = Literal['basic', 'fast', 'chunked']
-
-
-def _to_int(value: Any) -> int:
-    try:
-        if isinstance(value, str):
-            s = value.strip()
-            if s.startswith('0x'):
-                return int(s, 16)
-            return int(s)
-        return int(value)
-    except Exception:  # noqa: BLE001
-        return 0
-
-
-def _resolve_end_block_factory(
-    *,
-    api_kind: str,
-    network: str,
-    api_key: str,
-    http: HttpClient,
-    endpoint_builder: EndpointBuilder,
-    rate_limiter: RateLimiter | None,
-    retry: RetryPolicy | None,
-) -> ResolveEndBlock:
-    async def _resolve() -> int:
-        endpoint = endpoint_builder.open(api_key=api_key, api_kind=api_kind, network=network)
-        url: str = endpoint.api_url
-        params_proxy: dict[str, Any] = {'module': 'proxy', 'action': 'eth_blockNumber'}
-        signed_params, headers = endpoint.filter_and_sign(params_proxy, headers=None)
-
-        async def _do() -> Any:
-            if rate_limiter is not None:
-                await rate_limiter.acquire(key=f'{api_kind}:{network}:proxy.blockNumber')
-            return await http.get(url, params=signed_params, headers=headers)
-
-        response: Any = await (retry.run(_do) if retry is not None else _do())
-        latest_hex = response.get('result') if isinstance(response, dict) else None
-        return (
-            int(latest_hex, 16)
-            if isinstance(latest_hex, str) and latest_hex.startswith('0x')
-            else int(latest_hex)  # type: ignore[arg-type]
-        )
-
-    return _resolve
 
 
 def _is_blockscout(api_kind: str) -> bool:
@@ -198,15 +226,16 @@ async def _fetch_all_via_v2_scanner(
 
 async def fetch_all(
     *,
+    ctx: ProviderContext | None = None,
     data_type: DataType,
     address: str,
     start_block: int | None,
     end_block: int | None,
-    api_kind: str,
-    network: str,
-    api_key: str,
-    http: HttpClient,
-    endpoint_builder: EndpointBuilder,
+    api_kind: str | None = None,
+    network: str | None = None,
+    api_key: str | None = None,
+    http: HttpClient | None = None,
+    endpoint_builder: EndpointBuilder | None = None,
     rate_limiter: RateLimiter | None = None,
     retry: RetryPolicy | None = None,
     telemetry: Telemetry | None = None,
@@ -259,6 +288,28 @@ async def fetch_all(
     Returns:
         A list of provider items (dicts) deduplicated and stably sorted.
     """
+
+    ctx = _build_ctx(
+        ctx=ctx,
+        api_kind=api_kind,
+        network=network,
+        api_key=api_key,
+        http=http,
+        endpoint_builder=endpoint_builder,
+        rate_limiter=rate_limiter,
+        retry=retry,
+        telemetry=telemetry,
+    )
+    api_kind = ctx.api_kind
+    network = ctx.network
+    api_key = ctx.api_key
+    http = ctx.http
+    endpoint_builder = ctx.endpoint_builder
+    rate_limiter = ctx.rate_limiter
+    retry = ctx.retry
+    telemetry = telemetry or ctx.telemetry
+    addr = Address(address)
+    contract_addr = Address(contract_address) if contract_address is not None else None
 
     # Route to V2 scanner when appropriate (fixes split-brain bug)
     # BlockScout V2 uses modern REST API with cursor pagination (next_page_params)
@@ -428,7 +479,7 @@ async def fetch_all(
             *, page: int, start_block: int, end_block: int, offset: int
         ) -> list[dict[str, Any]]:
             return await get_normal_transactions(
-                address=address,
+                address=addr,
                 start_block=start_block,
                 end_block=end_block,
                 sort='asc',
@@ -459,7 +510,7 @@ async def fetch_all(
                 while True:
                     try:
                         return await get_internal_transactions(
-                            address=address,
+                            address=addr,
                             start_block=start_block,
                             end_block=end_block,
                             sort='asc',
@@ -490,7 +541,7 @@ async def fetch_all(
                         raise
             else:
                 return await get_internal_transactions(
-                    address=address,
+                    address=addr,
                     start_block=start_block,
                     end_block=end_block,
                     sort='asc',
@@ -515,8 +566,8 @@ async def fetch_all(
             *, page: int, start_block: int, end_block: int, offset: int
         ) -> list[dict[str, Any]]:
             return await get_token_transfers(
-                address=address,
-                contract_address=contract_address,
+                address=addr,
+                contract_address=contract_addr,
                 start_block=start_block,
                 end_block=end_block,
                 sort='asc',
@@ -545,7 +596,7 @@ async def fetch_all(
             return await get_logs(
                 start_block=start_block,
                 end_block=end_block,
-                address=address,
+                address=addr,
                 api_kind=api_kind,
                 network=network,
                 api_key=api_key,

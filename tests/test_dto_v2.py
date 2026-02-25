@@ -1,4 +1,4 @@
-"""Tests for Pydantic V2 DTOs and orjson parser.
+"""Tests for Pydantic V2 DTOs.
 
 Tests cover:
 - Hex string parsing in various formats
@@ -15,14 +15,6 @@ from typing import Any
 
 import pytest
 
-from aiochainscan.adapters.orjson_parser import (
-    parse_api_result,
-    parse_response,
-    parse_response_str,
-    parse_safe,
-    serialize,
-    serialize_str,
-)
 from aiochainscan.domain.dto_v2 import (
     BalanceDTO,
     BlockDTO,
@@ -395,70 +387,6 @@ class TestContractSourceDTO:
         assert source.optimization_used is True
         assert source.runs == 200
         assert source.proxy is False
-
-
-class TestOrjsonParser:
-    """Test orjson parsing utilities."""
-
-    def test_parse_response_bytes(self) -> None:
-        """Test parsing raw bytes."""
-        data = b'{"status": "1", "result": [1, 2, 3]}'
-        parsed = parse_response(data)
-
-        assert parsed['status'] == '1'
-        assert parsed['result'] == [1, 2, 3]
-
-    def test_parse_response_str(self) -> None:
-        """Test parsing string."""
-        data = '{"key": "value", "number": 42}'
-        parsed = parse_response_str(data)
-
-        assert parsed['key'] == 'value'
-        assert parsed['number'] == 42
-
-    def test_serialize(self) -> None:
-        """Test serialization to bytes."""
-        data = {'key': 'value', 'list': [1, 2, 3]}
-        result = serialize(data)
-
-        assert isinstance(result, bytes)
-        assert b'"key"' in result
-
-    def test_serialize_str(self) -> None:
-        """Test serialization to string."""
-        data = {'key': 'value'}
-        result = serialize_str(data)
-
-        assert isinstance(result, str)
-        assert '"key"' in result
-
-    def test_parse_api_result(self) -> None:
-        """Test API result extraction."""
-        data = b'{"status": "1", "message": "OK", "result": {"tx": "0x123"}}'
-        result = parse_api_result(data)
-
-        assert result == {'tx': '0x123'}
-
-    def test_parse_api_result_no_result_field(self) -> None:
-        """Test API parsing without result field."""
-        data = b'{"data": "value"}'
-        result = parse_api_result(data)
-
-        assert result == {'data': 'value'}
-
-    def test_parse_safe_valid(self) -> None:
-        """Test safe parsing with valid JSON."""
-        data = b'{"key": "value"}'
-        result = parse_safe(data)
-
-        assert result == {'key': 'value'}
-
-    def test_parse_safe_invalid(self) -> None:
-        """Test safe parsing with invalid JSON."""
-        data = b'not json'
-        result = parse_safe(data, default={'error': True})
-
-        assert result == {'error': True}
 
 
 class TestAliasMapping:

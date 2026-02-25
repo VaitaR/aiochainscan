@@ -415,3 +415,78 @@ class ContractSourceDTO(BaseModel):
     @classmethod
     def _parse_runs(cls, v: Any) -> int | None:
         return parse_hex_or_int(v)
+
+
+class EthPriceDTO(BaseModel):
+    """Normalized ETH price data."""
+
+    eth_usd: float | None = Field(default=None, validation_alias='ethusd')
+    eth_btc: float | None = Field(default=None, validation_alias='ethbtc')
+    eth_usd_timestamp: int | None = Field(default=None, validation_alias='ethusd_timestamp')
+    eth_btc_timestamp: int | None = Field(default=None, validation_alias='ethbtc_timestamp')
+
+    model_config = ConfigDict(populate_by_name=True, extra='ignore')
+
+    @field_validator('eth_usd', 'eth_btc', mode='before')
+    @classmethod
+    def _parse_float(cls, v: Any) -> float | None:
+        try:
+            return float(v) if v is not None and v != '' else None
+        except Exception:
+            return None
+
+    @field_validator('eth_usd_timestamp', 'eth_btc_timestamp', mode='before')
+    @classmethod
+    def _parse_int(cls, v: Any) -> int | None:
+        return parse_hex_or_int(v)
+
+
+class DailySeriesDTO(BaseModel):
+    """Normalized daily time-series data point."""
+
+    utc_date: str | None = None
+    unix_timestamp: int | None = None
+    value: float | None = None
+
+    model_config = ConfigDict(populate_by_name=True, extra='ignore')
+
+
+class MinedBlockDTO(BaseModel):
+    """Normalized mined block entry."""
+
+    block_number: int | None = Field(default=None, validation_alias='blockNumber')
+    timestamp: int | None = Field(default=None, validation_alias='timeStamp')
+    block_reward: int | None = Field(default=None, validation_alias='blockReward')
+
+    model_config = ConfigDict(populate_by_name=True, extra='ignore')
+
+    @field_validator('block_number', 'timestamp', 'block_reward', mode='before')
+    @classmethod
+    def _parse_hex_int_nullable(cls, v: Any) -> int | None:
+        return parse_hex_or_int(v)
+
+
+class BeaconWithdrawalDTO(BaseModel):
+    """Normalized beacon chain withdrawal entry."""
+
+    block_number: int | None = Field(default=None, validation_alias='blockNumber')
+    timestamp: int | None = Field(default=None, validation_alias='timeStamp')
+    address: str | None = None
+    amount: str | None = None  # Gwei string, keep as-is for precision
+
+    model_config = ConfigDict(populate_by_name=True, extra='ignore')
+
+    @field_validator('block_number', 'timestamp', mode='before')
+    @classmethod
+    def _parse_hex_int_nullable(cls, v: Any) -> int | None:
+        return parse_hex_or_int(v)
+
+
+# ---------------------------------------------------------------------------
+# Backwards compatibility aliases (old TypedDict dto.py names → Pydantic)
+# ---------------------------------------------------------------------------
+NormalTxDTO = TransactionDTO
+InternalTxDTO = InternalTransactionDTO
+ProxyTxDTO = TransactionDTO
+LogEntryDTO = LogEventDTO
+AddressBalanceDTO = BalanceDTO

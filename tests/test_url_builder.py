@@ -23,11 +23,6 @@ def test_sign(ub):
     assert params == {'something': 'something', 'chainid': '1'}
     assert headers == {'X-API-Key': ub._API_KEY}
 
-    # Legacy helper still proxies to the new implementation
-    legacy_params, legacy_headers = ub._sign({}, {})
-    assert legacy_params == {'chainid': '1'}
-    assert legacy_headers == {'X-API-Key': ub._API_KEY}
-
 
 def test_filter_params(ub):
     assert ub._filter_params({}) == {}
@@ -123,12 +118,6 @@ def test_currency(api_kind, expected):
     [
         # Base network via Etherscan V2
         ('base', 'main', 'etherscan.io', 'https://api.etherscan.io/v2/api'),
-        (
-            'routscan_mode',
-            'main',
-            'api.routescan.io/v2/network/mainnet/evm/34443',
-            'https://etherscan.api.routescan.io',
-        ),
         ('blockscout_eth', 'main', 'eth.blockscout.com', 'https://eth.blockscout.com/api'),
         (
             'blockscout_sepolia',
@@ -148,7 +137,6 @@ def test_currency(api_kind, expected):
             'polygon.blockscout.com',
             'https://polygon.blockscout.com/api',
         ),
-        ('moralis', 'main', 'deep-index.moralis.io', 'https://api.deep-index.moralis.io'),
     ],
 )
 def test_api_kinds_smoke(api_kind, network, expected_base_contains, expected_api_contains):
@@ -174,12 +162,10 @@ def test_api_kinds_drift_guard():
         'linea',
         'blast',
         'base',
-        'routscan_mode',
         'blockscout_eth',
         'blockscout_sepolia',
         'blockscout_gnosis',
         'blockscout_polygon',
-        'moralis',
     }
     actual = set(UrlBuilder._API_KINDS.keys())
     # Must include at least the expected set (allowing more kinds in future)

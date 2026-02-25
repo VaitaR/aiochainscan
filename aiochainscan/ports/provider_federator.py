@@ -16,9 +16,3 @@ class ProviderFederator(Protocol):
         preferred: bool | None = None,
     ) -> bool:  # noqa: D401 - simple protocol
         """Return True if GraphQL should be used for `feature` with (api_kind, network)."""
-
-    def report_success(self, feature: str, *, api_kind: str, network: str) -> None:
-        """Record a successful GraphQL attempt (for health gating)."""
-
-    def report_failure(self, feature: str, *, api_kind: str, network: str) -> None:
-        """Record a failed GraphQL attempt (for health gating)."""

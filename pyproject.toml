@@ -88,6 +88,7 @@ markers = [
     "benchmark: marks tests as benchmarks (deselect with '-m \"not benchmark\"')",
     "slow: marks tests as slow (e.g. E2E tests, deselect with '-m \"not slow\"')",
     "integration: marks tests as integration tests requiring network access",
+  "memory: marks tests as memory-focused benchmarks",
 ]
 
 [tool.ruff]

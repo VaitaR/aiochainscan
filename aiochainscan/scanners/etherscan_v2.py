@@ -1,15 +1,47 @@
 """
 Etherscan API v2 scanner implementation for multichain support.
+
+SPECS are derived programmatically from the parent EtherscanLikeScanner:
+each inherited spec gets ``'chainid': '{chain_id}'`` injected into its
+query dict so the v2 multichain routing works transparently.
 """
 
-from ..core.endpoint import PARSERS, EndpointSpec
+from dataclasses import replace
+
+from ..core.endpoint import EndpointSpec
 from ..core.method import Method
 from . import register_scanner
-from .base import Scanner
+from ._etherscan_like import EtherscanLikeScanner
+
+
+def _inject_chain_id(
+    specs: dict[Method, EndpointSpec],
+    methods: set[Method],
+) -> dict[Method, EndpointSpec]:
+    """Return *copies* of the selected parent specs with ``chainid`` added to each query."""
+    return {
+        m: replace(specs[m], query={**specs[m].query, 'chainid': '{chain_id}'}) for m in methods
+    }
+
+
+# Parent methods that V2 supports without any param_map changes.
+_V2_INHERITED_METHODS: set[Method] = {
+    Method.ACCOUNT_BALANCE,
+    Method.ACCOUNT_TRANSACTIONS,
+    Method.ACCOUNT_INTERNAL_TXS,
+    Method.TX_BY_HASH,
+    Method.BLOCK_BY_NUMBER,
+    Method.CONTRACT_ABI,
+    Method.GAS_ORACLE,
+    Method.ACCOUNT_TOKEN_PORTFOLIO,
+    Method.ACCOUNT_NFT_PORTFOLIO,
+    Method.CONTRACT_VERIFY,
+    Method.CONTRACT_VERIFY_STATUS,
+}
 
 
 @register_scanner
-class EtherscanV2(Scanner):
+class EtherscanV2(EtherscanLikeScanner):
     """
     Etherscan API v2 implementation with multichain support.
 
@@ -32,161 +64,18 @@ class EtherscanV2(Scanner):
         'base',
         'sonic',
     }
-    auth_mode = 'query'
-    auth_field = 'apikey'
 
-    SPECS = {
-        Method.ACCOUNT_BALANCE: EndpointSpec(
-            http_method='GET',
-            path='/api',
-            query={
-                'module': 'account',
-                'action': 'balance',
-                'tag': 'latest',
-                'chainid': '{chain_id}',
-            },
-            param_map={'address': 'address'},
-            parser=PARSERS['etherscan'],
-        ),
-        Method.ACCOUNT_TRANSACTIONS: EndpointSpec(
-            http_method='GET',
-            path='/api',
-            query={'module': 'account', 'action': 'txlist', 'chainid': '{chain_id}'},
+    # Build SPECS from parent with chainid injection, plus V2-specific overrides.
+    SPECS: dict[Method, EndpointSpec] = {
+        **_inject_chain_id(EtherscanLikeScanner.SPECS, _V2_INHERITED_METHODS),
+        # EVENT_LOGS gains page/offset params in V2 on top of the chainid injection.
+        Method.EVENT_LOGS: replace(
+            EtherscanLikeScanner.SPECS[Method.EVENT_LOGS],
+            query={**EtherscanLikeScanner.SPECS[Method.EVENT_LOGS].query, 'chainid': '{chain_id}'},
             param_map={
-                'address': 'address',
-                'start_block': 'startblock',
-                'end_block': 'endblock',
-                'page': 'page',
-                'offset': 'offset',
-                'sort': 'sort',
-            },
-            parser=PARSERS['etherscan'],
-        ),
-        Method.ACCOUNT_INTERNAL_TXS: EndpointSpec(
-            http_method='GET',
-            path='/api',
-            query={'module': 'account', 'action': 'txlistinternal', 'chainid': '{chain_id}'},
-            param_map={
-                'address': 'address',
-                'start_block': 'startblock',
-                'end_block': 'endblock',
-                'page': 'page',
-                'offset': 'offset',
-                'sort': 'sort',
-            },
-            parser=PARSERS['etherscan'],
-        ),
-        Method.TX_BY_HASH: EndpointSpec(
-            http_method='GET',
-            path='/api',
-            query={
-                'module': 'proxy',
-                'action': 'eth_getTransactionByHash',
-                'chainid': '{chain_id}',
-            },
-            param_map={'txhash': 'txhash'},
-            parser=PARSERS['etherscan'],
-        ),
-        Method.BLOCK_BY_NUMBER: EndpointSpec(
-            http_method='GET',
-            path='/api',
-            query={
-                'module': 'proxy',
-                'action': 'eth_getBlockByNumber',
-                'boolean': 'true',
-                'chainid': '{chain_id}',
-            },
-            param_map={'block_number': 'tag'},
-            parser=PARSERS['etherscan'],
-        ),
-        Method.CONTRACT_ABI: EndpointSpec(
-            http_method='GET',
-            path='/api',
-            query={'module': 'contract', 'action': 'getabi', 'chainid': '{chain_id}'},
-            param_map={'address': 'address'},
-            parser=PARSERS['etherscan'],
-        ),
-        Method.GAS_ORACLE: EndpointSpec(
-            http_method='GET',
-            path='/api',
-            query={'module': 'gastracker', 'action': 'gasoracle', 'chainid': '{chain_id}'},
-            parser=PARSERS['etherscan'],
-        ),
-        Method.ACCOUNT_TOKEN_PORTFOLIO: EndpointSpec(
-            http_method='GET',
-            path='/api',
-            query={
-                'module': 'account',
-                'action': 'addresstokenbalance',
-                'chainid': '{chain_id}',
-            },
-            param_map={
-                'address': 'address',
+                **EtherscanLikeScanner.SPECS[Method.EVENT_LOGS].param_map,
                 'page': 'page',
                 'offset': 'offset',
             },
-            parser=PARSERS['etherscan'],
-        ),
-        Method.ACCOUNT_NFT_PORTFOLIO: EndpointSpec(
-            http_method='GET',
-            path='/api',
-            query={
-                'module': 'account',
-                'action': 'addresstokennftinventory',
-                'chainid': '{chain_id}',
-            },
-            param_map={
-                'address': 'address',
-                'page': 'page',
-                'offset': 'offset',
-            },
-            parser=PARSERS['etherscan'],
-        ),
-        Method.CONTRACT_VERIFY: EndpointSpec(
-            http_method='POST',
-            path='/api',
-            query={'module': 'contract', 'action': 'verifysourcecode', 'chainid': '{chain_id}'},
-            param_map={
-                'contract_address': 'contractaddress',
-                'source_code': 'sourceCode',
-                'code_format': 'codeformat',
-                'contract_name': 'contractname',
-                'compiler_version': 'compilerversion',
-                'optimization_used': 'optimizationUsed',
-                'runs': 'runs',
-                'constructor_arguments': 'constructorArguements',
-                'evm_version': 'evmversion',
-                'library_name': 'libraryname',
-                'library_address': 'libraryaddress',
-            },
-            parser=PARSERS['etherscan'],
-        ),
-        Method.CONTRACT_VERIFY_STATUS: EndpointSpec(
-            http_method='GET',
-            path='/api',
-            query={
-                'module': 'contract',
-                'action': 'checkverifystatus',
-                'chainid': '{chain_id}',
-            },
-            param_map={'guid': 'guid'},
-            parser=PARSERS['etherscan'],
-        ),
-        Method.EVENT_LOGS: EndpointSpec(
-            http_method='GET',
-            path='/api',
-            query={'module': 'logs', 'action': 'getLogs', 'chainid': '{chain_id}'},
-            param_map={
-                'address': 'address',
-                'from_block': 'fromBlock',
-                'to_block': 'toBlock',
-                'topic0': 'topic0',
-                'topic1': 'topic1',
-                'topic2': 'topic2',
-                'topic3': 'topic3',
-                'page': 'page',
-                'offset': 'offset',
-            },
-            parser=PARSERS['etherscan'],
         ),
     }

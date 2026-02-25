@@ -15,6 +15,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+TEST_ADDRESS = '0x1111111111111111111111111111111111111111'
+
 
 class TestBlockScoutV2Detection:
     """Tests for V2 scanner detection."""
@@ -103,7 +105,7 @@ class TestUnifiedFetchV2Routing:
 
         # Mock _build_url and _build_query_params
         mock_scanner._build_url = MagicMock(
-            return_value='https://eth.blockscout.com/api/v2/addresses/0x123/transactions'
+            return_value=f'https://eth.blockscout.com/api/v2/addresses/{TEST_ADDRESS}/transactions'
         )
         mock_scanner._build_query_params = MagicMock(return_value={})
 
@@ -118,16 +120,21 @@ class TestUnifiedFetchV2Routing:
         # The key insight: with scanner provided, it should NOT call get_normal_transactions
         with patch('aiochainscan.services.unified_fetch.get_normal_transactions') as mock_legacy:  # noqa: F841
             try:
-                result = await fetch_all(
-                    data_type='transactions',
-                    address='0x123',
-                    start_block=None,
-                    end_block=None,
+                from aiochainscan.core.context import ProviderContext
+
+                _ctx = ProviderContext(
                     api_kind='blockscout_v2',
                     network='ethereum',
                     api_key='',
                     http=MagicMock(),
                     endpoint_builder=MagicMock(),
+                )
+                result = await fetch_all(
+                    ctx=_ctx,
+                    data_type='transactions',
+                    address=TEST_ADDRESS,
+                    start_block=None,
+                    end_block=None,
                     scanner=mock_scanner,
                 )
 
@@ -198,7 +205,7 @@ class TestV2PaginationFlow:
         all_items = []
         try:
             async for batch in _stream_v2_transactions(
-                address='0x123',
+                address=TEST_ADDRESS,
                 scanner=mock_scanner,
                 batch_size=10,
             ):

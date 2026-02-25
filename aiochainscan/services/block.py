@@ -3,12 +3,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from aiochainscan.domain.dto import BlockDTO
-from aiochainscan.ports.cache import Cache
-from aiochainscan.ports.endpoint_builder import EndpointBuilder
-from aiochainscan.ports.http_client import HttpClient
-from aiochainscan.ports.rate_limiter import RateLimiter, RetryPolicy
-from aiochainscan.ports.telemetry import Telemetry
+from aiochainscan.core.context import ProviderContext
+from aiochainscan.domain.dto_v2 import BlockDTO
 from aiochainscan.services._executor import run_with_policies
 
 CACHE_TTL_SECONDS: int = 5
@@ -28,24 +24,18 @@ def _to_tag(value: int | str) -> str:
 
 async def get_block_by_number(
     *,
+    ctx: ProviderContext,
     tag: int | str,
     full: bool,
-    api_kind: str,
-    network: str,
-    api_key: str,
-    http: HttpClient,
-    _endpoint_builder: EndpointBuilder,
     extra_params: Mapping[str, Any] | None = None,
-    _cache: Cache | None = None,
-    _rate_limiter: RateLimiter | None = None,
-    _retry: RetryPolicy | None = None,
-    _telemetry: Telemetry | None = None,
 ) -> dict[str, Any]:
     """Fetch block by number via proxy.eth_getBlockByNumber."""
 
-    endpoint = _endpoint_builder.open(api_key=api_key, api_kind=api_kind, network=network)
+    endpoint = ctx.endpoint_builder.open(
+        api_key=ctx.api_key, api_kind=ctx.api_kind, network=ctx.network
+    )
     url: str = endpoint.api_url
-    cache_key = f'block:{api_kind}:{network}:{_to_tag(tag)}:{full}'
+    cache_key = f'block:{ctx.api_kind}:{ctx.network}:{_to_tag(tag)}:{full}'
 
     params: dict[str, Any] = {
         'module': 'proxy',
@@ -58,20 +48,20 @@ async def get_block_by_number(
 
     signed_params, headers = endpoint.filter_and_sign(params, headers=None)
 
-    if _cache is not None:
-        cached = await _cache.get(cache_key)
+    if ctx.cache is not None:
+        cached = await ctx.cache.get(cache_key)
         if isinstance(cached, dict):
             return cached
 
     response: Any = await run_with_policies(
-        do_call=lambda: http.get(url, params=signed_params, headers=headers),
-        telemetry=_telemetry,
+        do_call=lambda: ctx.http.get(url, params=signed_params, headers=headers),
+        telemetry=ctx.telemetry,
         telemetry_name='block.get_block_by_number',
-        api_kind=api_kind,
-        network=network,
-        rate_limiter=_rate_limiter,
-        rate_limiter_key=f'{api_kind}:{network}:block',
-        retry_policy=_retry,
+        api_kind=ctx.api_kind,
+        network=ctx.network,
+        rate_limiter=ctx.rate_limiter,
+        rate_limiter_key=f'{ctx.api_kind}:{ctx.network}:block',
+        retry_policy=ctx.retry,
     )
 
     out: dict[str, Any]
@@ -84,34 +74,26 @@ async def get_block_by_number(
     else:
         out = dict(response) if isinstance(response, Mapping) else {'result': response}
 
-    if _telemetry is not None:
-        await _telemetry.record_event(
+    if ctx.telemetry is not None:
+        await ctx.telemetry.record_event(
             'block.get_block_by_number.ok',
             {
-                'api_kind': api_kind,
-                'network': network,
+                'api_kind': ctx.api_kind,
+                'network': ctx.network,
             },
         )
 
-    if _cache is not None:
-        await _cache.set(cache_key, out, ttl_seconds=CACHE_TTL_SECONDS)
+    if ctx.cache is not None:
+        await ctx.cache.set(cache_key, out, ttl_seconds=CACHE_TTL_SECONDS)
 
     return out
 
 
 async def get_block_countdown(
     *,
+    ctx: ProviderContext,
     block_no: int,
-    api_kind: str,
-    network: str,
-    api_key: str,
-    http: HttpClient,
-    _endpoint_builder: EndpointBuilder,
     extra_params: Mapping[str, Any] | None = None,
-    _cache: Cache | None = None,
-    _rate_limiter: RateLimiter | None = None,
-    _retry: RetryPolicy | None = None,
-    _telemetry: Telemetry | None = None,
 ) -> dict[str, Any] | None:
     """Get Estimated Block Countdown Time by BlockNo via provider endpoint.
 
@@ -119,7 +101,9 @@ async def get_block_countdown(
     (e.g., "No transactions found").
     """
 
-    endpoint = _endpoint_builder.open(api_key=api_key, api_kind=api_kind, network=network)
+    endpoint = ctx.endpoint_builder.open(
+        api_key=ctx.api_key, api_kind=ctx.api_kind, network=ctx.network
+    )
     url: str = endpoint.api_url
 
     params: dict[str, Any] = {
@@ -133,14 +117,14 @@ async def get_block_countdown(
     signed_params, headers = endpoint.filter_and_sign(params, headers=None)
 
     response: Any = await run_with_policies(
-        do_call=lambda: http.get(url, params=signed_params, headers=headers),
-        telemetry=_telemetry,
+        do_call=lambda: ctx.http.get(url, params=signed_params, headers=headers),
+        telemetry=ctx.telemetry,
         telemetry_name='block.get_block_countdown',
-        api_kind=api_kind,
-        network=network,
-        rate_limiter=_rate_limiter,
-        rate_limiter_key=f'{api_kind}:{network}:getblockcountdown',
-        retry_policy=_retry,
+        api_kind=ctx.api_kind,
+        network=ctx.network,
+        rate_limiter=ctx.rate_limiter,
+        rate_limiter_key=f'{ctx.api_kind}:{ctx.network}:getblockcountdown',
+        retry_policy=ctx.retry,
     )
 
     # Handle API responses
@@ -160,9 +144,9 @@ async def get_block_countdown(
     else:
         out = {'result': response}
 
-    if _telemetry is not None:
-        await _telemetry.record_event(
-            'block.get_block_countdown.ok', {'api_kind': api_kind, 'network': network}
+    if ctx.telemetry is not None:
+        await ctx.telemetry.record_event(
+            'block.get_block_countdown.ok', {'api_kind': ctx.api_kind, 'network': ctx.network}
         )
 
     return out
@@ -170,23 +154,18 @@ async def get_block_countdown(
 
 async def get_block_reward(
     *,
+    ctx: ProviderContext,
     block_no: int,
-    api_kind: str,
-    network: str,
-    api_key: str,
-    http: HttpClient,
-    _endpoint_builder: EndpointBuilder,
     extra_params: Mapping[str, Any] | None = None,
-    _rate_limiter: RateLimiter | None = None,
-    _retry: RetryPolicy | None = None,
-    _telemetry: Telemetry | None = None,
 ) -> dict[str, Any] | None:
     """Get Block And Uncle Rewards by BlockNo.
 
     Returns provider-shaped dict or None when provider reports no reward/status=0.
     """
 
-    endpoint = _endpoint_builder.open(api_key=api_key, api_kind=api_kind, network=network)
+    endpoint = ctx.endpoint_builder.open(
+        api_key=ctx.api_key, api_kind=ctx.api_kind, network=ctx.network
+    )
     url: str = endpoint.api_url
     params: dict[str, Any] = {
         'module': 'block',
@@ -198,14 +177,14 @@ async def get_block_reward(
     signed_params, headers = endpoint.filter_and_sign(params, headers=None)
 
     response: Any = await run_with_policies(
-        do_call=lambda: http.get(url, params=signed_params, headers=headers),
-        telemetry=_telemetry,
+        do_call=lambda: ctx.http.get(url, params=signed_params, headers=headers),
+        telemetry=ctx.telemetry,
         telemetry_name='block.get_block_reward',
-        api_kind=api_kind,
-        network=network,
-        rate_limiter=_rate_limiter,
-        rate_limiter_key=f'{api_kind}:{network}:getblockreward',
-        retry_policy=_retry,
+        api_kind=ctx.api_kind,
+        network=ctx.network,
+        rate_limiter=ctx.rate_limiter,
+        rate_limiter_key=f'{ctx.api_kind}:{ctx.network}:getblockreward',
+        retry_policy=ctx.retry,
     )
 
     if isinstance(response, dict) and response.get('status') == '0':
@@ -218,20 +197,15 @@ async def get_block_reward(
 
 async def get_block_number_by_timestamp(
     *,
+    ctx: ProviderContext,
     ts: int,
     closest: str,
-    api_kind: str,
-    network: str,
-    api_key: str,
-    http: HttpClient,
-    _endpoint_builder: EndpointBuilder,
     extra_params: Mapping[str, Any] | None = None,
-    _rate_limiter: RateLimiter | None = None,
-    _retry: RetryPolicy | None = None,
-    _telemetry: Telemetry | None = None,
 ) -> dict[str, Any]:
     """Get Block Number by Timestamp (Etherscan-compatible)."""
-    endpoint = _endpoint_builder.open(api_key=api_key, api_kind=api_kind, network=network)
+    endpoint = ctx.endpoint_builder.open(
+        api_key=ctx.api_key, api_kind=ctx.api_kind, network=ctx.network
+    )
     url: str = endpoint.api_url
     params: dict[str, Any] = {
         'module': 'block',
@@ -244,14 +218,14 @@ async def get_block_number_by_timestamp(
     signed_params, headers = endpoint.filter_and_sign(params, headers=None)
 
     response: Any = await run_with_policies(
-        do_call=lambda: http.get(url, params=signed_params, headers=headers),
-        telemetry=_telemetry,
+        do_call=lambda: ctx.http.get(url, params=signed_params, headers=headers),
+        telemetry=ctx.telemetry,
         telemetry_name='block.get_block_number_by_timestamp',
-        api_kind=api_kind,
-        network=network,
-        rate_limiter=_rate_limiter,
-        rate_limiter_key=f'{api_kind}:{network}:getblocknobytime',
-        retry_policy=_retry,
+        api_kind=ctx.api_kind,
+        network=ctx.network,
+        rate_limiter=ctx.rate_limiter,
+        rate_limiter_key=f'{ctx.api_kind}:{ctx.network}:getblocknobytime',
+        retry_policy=ctx.retry,
     )
 
     if isinstance(response, dict):
@@ -261,26 +235,22 @@ async def get_block_number_by_timestamp(
 
 
 def normalize_block(raw: dict[str, Any]) -> BlockDTO:
-    """Normalize provider-shaped block into BlockDTO."""
+    """Normalize provider-shaped block into BlockDTO.
 
-    def hex_to_int(h: str | None) -> int | None:
-        if not h:
-            return None
-        try:
-            return int(h, 16) if isinstance(h, str) and h.startswith('0x') else int(h)
-        except Exception:
-            return None
-
-    txs = raw.get('transactions')
-    tx_count: int | None = len(txs) if isinstance(txs, list) else None
-
-    return {
-        'block_number': hex_to_int(raw.get('number') or raw.get('blockNumber')),
-        'hash': raw.get('hash'),
-        'parent_hash': raw.get('parentHash'),
-        'miner': raw.get('miner') or raw.get('author'),
-        'timestamp': hex_to_int(raw.get('timestamp')),
-        'gas_limit': hex_to_int(raw.get('gasLimit')),
-        'gas_used': hex_to_int(raw.get('gasUsed')),
-        'tx_count': tx_count,
-    }
+    Pre-processes JSON-RPC field name variants before Pydantic validation:
+    - 'number' (JSON-RPC) → 'blockNumber' (Etherscan alias in BlockDTO)
+    - 'author' (some clients) → 'miner'
+    - Derives 'txCount' from 'transactions' list when present
+    """
+    data = dict(raw)
+    # JSON-RPC eth_getBlockByNumber uses 'number', Etherscan uses 'blockNumber'
+    if 'number' in data and 'blockNumber' not in data:
+        data['blockNumber'] = data['number']
+    # Some chain clients use 'author' instead of 'miner'
+    if not data.get('miner') and data.get('author'):
+        data['miner'] = data['author']
+    # Derive txCount from the transactions list when the field is absent
+    txs = data.get('transactions')
+    if isinstance(txs, list) and 'txCount' not in data:
+        data['txCount'] = len(txs)
+    return BlockDTO.model_validate(data)
