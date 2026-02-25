@@ -554,6 +554,14 @@ class ChainscanClient(
                 print(f"Args: {tx['decoded_data']}")
             ```
         """
+        from ..decode import decode_transaction_input
+
+        def _maybe_decode(tx: dict[str, Any]) -> dict[str, Any]:
+            if abi is None:
+                return tx
+            tx_copy = dict(tx)
+            return decode_transaction_input(tx_copy, abi)
+
         # Validate batch_size to prevent infinite loops
         if batch_size < 1:
             raise ValueError(f'batch_size must be at least 1, got {batch_size}')
@@ -602,7 +610,7 @@ class ChainscanClient(
                         next_page_params = None
 
                     for tx in items:
-                        yield tx
+                        yield _maybe_decode(tx)
 
                     # Check for next page
                     if not next_page_params:
@@ -630,7 +638,7 @@ class ChainscanClient(
                         break
 
                     for tx in items:
-                        yield tx
+                        yield _maybe_decode(tx)
 
                     if len(items) < batch_size:
                         break
@@ -645,7 +653,7 @@ class ChainscanClient(
             )
             items = txs if isinstance(txs, list) else txs.get('items', [])
             for tx in items:
-                yield tx
+                yield _maybe_decode(tx)
             return
 
         end_block = _resolve_end_block_int(to_block)
@@ -670,7 +678,7 @@ class ChainscanClient(
             if not items:
                 break
             for tx in items:
-                yield tx
+                yield _maybe_decode(tx)
             if len(items) < batch_size:
                 break
             page += 1
@@ -1027,22 +1035,53 @@ class ChainscanClient(
                     print(f"To: {log['decoded_data'].get('to')}")
             ```
         """
-        topic0 = topics[0] if topics and len(topics) > 0 else None
-        topic1 = topics[1] if topics and len(topics) > 1 else None
-        topic2 = topics[2] if topics and len(topics) > 2 else None
-        topic3 = topics[3] if topics and len(topics) > 3 else None
-        async for batch in self.iter_logs_streaming(
-            address=address,
-            from_block=from_block,
-            to_block=to_block,
-            topic0=topic0,
-            topic1=topic1,
-            topic2=topic2,
-            topic3=topic3,
-            batch_size=batch_size,
-        ):
-            for log in batch:
-                yield log
+        from ..decode import decode_log_data
+
+        end_block = _resolve_end_block_param(to_block)
+        page = 1
+        while True:
+            params: dict[str, Any] = {
+                'address': address,
+                'fromBlock': from_block,
+                'toBlock': end_block,
+                'page': page,
+                'offset': batch_size,
+            }
+
+            if topics:
+                if len(topics) > 0:
+                    params['topic0'] = topics[0]
+                if len(topics) > 1:
+                    params['topic1'] = topics[1]
+                if len(topics) > 2:
+                    params['topic2'] = topics[2]
+                if len(topics) > 3:
+                    params['topic3'] = topics[3]
+
+            if topic_operators:
+                for i, operator in enumerate(topic_operators[:3]):
+                    params[f'topic{i}_{i + 1}_opr'] = operator
+
+            logs = await self.call(Method.EVENT_LOGS, **params)
+            items = (
+                logs
+                if isinstance(logs, list)
+                else logs.get('items', [])
+                if isinstance(logs, dict)
+                else []
+            )
+            if not items:
+                break
+
+            for log in items:
+                if abi is None:
+                    yield log
+                else:
+                    yield decode_log_data(dict(log), abi)
+
+            if len(items) < batch_size:
+                break
+            page += 1
 
     # =========================================================================
     # DATAFRAME API - Polars integration for data analysis
