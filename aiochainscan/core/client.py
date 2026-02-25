@@ -14,14 +14,27 @@ if TYPE_CHECKING:
     from ..services.ens_resolver import ENSResolver
 
 from ..chain_registry import get_chain_info, resolve_chain_id
-from ..config import config as global_config
-from ..domain.contract import SmartContract
-from ..domain.models import Address, TxHash
+from ..config import get_config_manager
+from ..constants import MAX_BLOCK_NUMBER
 from ..ports.rate_limiter import RateLimiter, RetryPolicy
 from ..scanners import get_scanner_class
 from ..scanners.base import Scanner
-from ..url_builder import UrlBuilder
 from .method import Method
+from .mixins import (
+    AccountMixin,
+    BlockMixin,
+    ContractMixin,
+    ENSMixin,
+    LogsMixin,
+    ProxyMixin,
+    StatsMixin,
+    TokenMixin,
+    TransactionMixin,
+)
+from .types import JSONDict
+from .url_builder import UrlBuilder
+
+global_config = get_config_manager()
 
 # Strict type aliases for scanner and network names (defined after imports)
 ScannerName = Literal['etherscan', 'blockscout', 'blockscout_v2']
@@ -43,7 +56,90 @@ NetworkName = Literal[
 ]
 
 
-class ChainscanClient:
+def _resolve_end_block_int(to_block: int | str | None) -> int:
+    if to_block is None or to_block == 'latest':
+        return MAX_BLOCK_NUMBER
+    return int(to_block)
+
+
+def _resolve_end_block_param(to_block: int | str | None) -> int | str:
+    if to_block is None or to_block == 'latest':
+        return 'latest'
+    return int(to_block)
+
+
+class AccountFacade:
+    """Account-oriented namespace facade over ``ChainscanClient``."""
+
+    def __init__(self, client: 'ChainscanClient') -> None:
+        self._client = client
+
+    async def get_balance(self, address: str, tag: str = 'latest') -> str:
+        return await self._client.get_balance(address, tag=tag)
+
+    async def get_transactions(
+        self,
+        address: str,
+        start_block: int = 0,
+        end_block: int | None = None,
+        page: int = 1,
+        offset: int = 100,
+    ) -> list[JSONDict]:
+        return await self._client.get_transactions(address, start_block, end_block, page, offset)
+
+    async def get_all_transactions(
+        self,
+        address: str,
+        from_block: int = 0,
+        to_block: int | str | None = None,
+        on_progress: 'ProgressCallback | None' = None,
+    ) -> list[JSONDict]:
+        return await self._client.get_all_transactions(address, from_block, to_block, on_progress)
+
+
+class ContractFacade:
+    """Contract-oriented namespace facade over ``ChainscanClient``."""
+
+    def __init__(self, client: 'ChainscanClient') -> None:
+        self._client = client
+
+    async def get_abi(self, address: str) -> str:
+        return await self._client.get_contract_abi(address)
+
+    async def get_source(self, address: str) -> JSONDict:
+        return await self._client.get_contract_source(address)
+
+    async def get_creation(self, addresses: list[str]) -> list[JSONDict]:
+        return await self._client.get_contract_creation(addresses)
+
+
+class BlockFacade:
+    """Block-oriented namespace facade over ``ChainscanClient``."""
+
+    def __init__(self, client: 'ChainscanClient') -> None:
+        self._client = client
+
+    async def get(self, block_number: int | str) -> JSONDict:
+        return await self._client.get_block(block_number)
+
+    async def get_reward(self, block_number: int) -> JSONDict:
+        return await self._client.get_block_reward(block_number)
+
+    async def get_by_timestamp(self, timestamp: int, closest: str = 'before') -> JSONDict:
+        return await self._client.get_block_by_timestamp(timestamp, closest=closest)
+
+
+class ChainscanClient(
+    AccountMixin,
+    ContractMixin,
+    BlockMixin,
+    TransactionMixin,
+    LogsMixin,
+    TokenMixin,
+    StatsMixin,
+    ProxyMixin,
+    ENSMixin,
+):
     """
     Unified client for accessing different blockchain scanner APIs.
 
@@ -134,6 +230,11 @@ class ChainscanClient:
 
         # Lazy-initialized ENS resolver
         self._ens_resolver: ENSResolver | None = None
+
+        # Namespace facades (composition-friendly API surface)
+        self.account = AccountFacade(self)
+        self.contracts = ContractFacade(self)
+        self.blocks = BlockFacade(self)
 
     @classmethod
     def from_config(
@@ -412,821 +513,6 @@ class ChainscanClient:
     # PUBLIC API - Typed convenience methods with autocomplete support
     # =========================================================================
 
-    async def get_balance(self, address: str, tag: str = 'latest') -> str:
-        """Get account balance in Wei as string.
-
-        Args:
-            address: Wallet address to check
-            tag: Block tag ('latest', 'earliest', or block number) - Etherscan only
-
-        Returns:
-            Balance in Wei as string
-        """
-        addr = Address(address)
-        params: dict[str, Any] = {'address': str(addr)}
-        # Only pass tag for Etherscan (other scanners may not support it)
-        if self.scanner_name == 'etherscan':
-            params['tag'] = tag
-        result: str = await self.call(Method.ACCOUNT_BALANCE, **params)
-        return result
-
-    async def get_transactions(
-        self,
-        address: str,
-        start_block: int = 0,
-        end_block: int | None = None,
-        page: int = 1,
-        offset: int = 100,
-    ) -> list[dict[Any, Any]]:
-        """Get list of normal transactions for address.
-
-        Args:
-            address: Wallet address
-            start_block: Starting block number (Etherscan only)
-            end_block: Ending block number (Etherscan only, None for latest)
-            page: Page number for pagination (Etherscan only)
-            offset: Number of transactions per page (Etherscan only, max 10000)
-
-        Returns:
-            List of transaction dictionaries
-        """
-        addr = Address(address)
-        params: dict[str, Any] = {'address': str(addr)}
-        # Only pass pagination params for Etherscan (blockscout_v2 doesn't support them)
-        if self.scanner_name == 'etherscan':
-            params['startblock'] = start_block
-            params['page'] = page
-            params['offset'] = offset
-            if end_block is not None:
-                params['endblock'] = end_block
-        result: list[dict[Any, Any]] = await self.call(Method.ACCOUNT_TRANSACTIONS, **params)
-        return result
-
-    async def get_token_transfers(
-        self,
-        address: str,
-        contract_address: str | None = None,
-        start_block: int = 0,
-        end_block: int | None = None,
-    ) -> list[dict[Any, Any]]:
-        """Get ERC20 token transfers for address.
-
-        Args:
-            address: Wallet address
-            contract_address: Filter by specific token contract (optional, Etherscan only)
-            start_block: Starting block number (Etherscan only)
-            end_block: Ending block number (Etherscan only, None for latest)
-
-        Returns:
-            List of token transfer dictionaries
-        """
-        addr = Address(address)
-        params: dict[str, Any] = {'address': str(addr)}
-        # Only pass extra params for Etherscan
-        if self.scanner_name == 'etherscan':
-            params['startblock'] = start_block
-            if contract_address:
-                params['contractaddress'] = str(Address(contract_address))
-            if end_block:
-                params['endblock'] = end_block
-        result: list[dict[Any, Any]] = await self.call(Method.ACCOUNT_ERC20_TRANSFERS, **params)
-        return result
-
-    async def get_internal_transactions(
-        self,
-        address: str,
-        start_block: int = 0,
-        end_block: int | None = None,
-        page: int = 1,
-        offset: int = 100,
-        sort: str = 'asc',
-    ) -> list[dict[str, Any]]:
-        """Get internal transactions for an address (single page).
-
-        For complete data, use ``get_all_internal_transactions()``
-        or ``iter_internal_transactions_streaming()``.
-
-        Args:
-            address: Wallet address
-            start_block: Starting block number
-            end_block: Ending block number (None for latest)
-            page: Page number for pagination
-            offset: Number of results per page
-            sort: Sort order ('asc' or 'desc')
-
-        Returns:
-            List of internal transaction dicts
-        """
-        addr = Address(address)
-        params: dict[str, Any] = {
-            'address': str(addr),
-            'startblock': start_block,
-            'page': page,
-            'offset': offset,
-            'sort': sort,
-        }
-        if end_block is not None:
-            params['endblock'] = end_block
-        result: Any = await self.call(Method.ACCOUNT_INTERNAL_TXS, **params)
-        return result if isinstance(result, list) else []
-
-    async def get_token_portfolio(self, address: str) -> list[dict[Any, Any]]:
-        """Get all ERC20 tokens held by address.
-
-        Args:
-            address: Wallet address
-
-        Returns:
-            List of token holding dictionaries
-        """
-        result: list[dict[Any, Any]] = await self.call(
-            Method.ACCOUNT_TOKEN_PORTFOLIO, address=str(Address(address))
-        )
-        return result
-
-    async def get_contract_abi(self, address: str) -> str:
-        """Get contract ABI as JSON string.
-
-        Args:
-            address: Contract address
-
-        Returns:
-            Contract ABI as JSON string
-        """
-        result: str = await self.call(Method.CONTRACT_ABI, address=str(Address(address)))
-        return result
-
-    async def get_contract_source(self, address: str) -> dict[str, Any]:
-        """Get verified contract source code.
-
-        Args:
-            address: Contract address
-
-        Returns:
-            Dict with source code, compiler version, optimization settings, etc.
-        """
-        result: dict[str, Any] = await self.call(
-            Method.CONTRACT_SOURCE, address=str(Address(address))
-        )
-        return result
-
-    async def get_transaction(self, tx_hash: str) -> dict[str, Any]:
-        """Get transaction details by hash.
-
-        Args:
-            tx_hash: Transaction hash (0x...)
-
-        Returns:
-            Transaction dict with from, to, value, gas, input, etc.
-        """
-        result: dict[str, Any] = await self.call(Method.TX_BY_HASH, txhash=str(TxHash(tx_hash)))
-        return result
-
-    async def get_transaction_status(self, tx_hash: str) -> dict[str, Any]:
-        """Check transaction receipt status (success/fail).
-
-        Args:
-            tx_hash: Transaction hash (0x...)
-
-        Returns:
-            Dict with status field ('1' = success, '0' = fail)
-        """
-        result: dict[str, Any] = await self.call(
-            Method.TX_RECEIPT_STATUS, txhash=str(TxHash(tx_hash))
-        )
-        return result
-
-    async def get_logs(
-        self,
-        address: str,
-        from_block: int = 0,
-        to_block: int | str | None = None,
-        topic0: str | None = None,
-        topic1: str | None = None,
-        topic2: str | None = None,
-        topic3: str | None = None,
-    ) -> list[dict[str, Any]]:
-        """Get event logs (single page, max ~1000 results).
-
-        ⚠️ WARNING: This returns at most ~1000 logs. For complete data use
-        ``get_all_logs()`` or ``iter_logs_streaming()`` which handle pagination.
-
-        Args:
-            address: Contract address
-            from_block: Starting block number (default: 0)
-            to_block: Ending block number (default: latest)
-            topic0: Event signature hash (optional)
-            topic1-topic3: Indexed parameter filters (optional)
-
-        Returns:
-            List of log dicts (may be truncated at API limit)
-        """
-        addr = Address(address)
-        params: dict[str, Any] = {
-            'address': str(addr),
-            'fromBlock': from_block,
-            'toBlock': to_block or 'latest',
-        }
-        if topic0:
-            params['topic0'] = topic0
-        if topic1:
-            params['topic1'] = topic1
-        if topic2:
-            params['topic2'] = topic2
-        if topic3:
-            params['topic3'] = topic3
-        result: list[dict[str, Any]] = await self.call(Method.EVENT_LOGS, **params)
-        return result if isinstance(result, list) else []
-
-    async def get_all_logs(
-        self,
-        address: str,
-        from_block: int = 0,
-        to_block: int | str | None = None,
-        topic0: str | None = None,
-        topic1: str | None = None,
-        topic2: str | None = None,
-        topic3: str | None = None,
-        on_progress: 'ProgressCallback | None' = None,
-    ) -> list[dict[str, Any]]:
-        """Get ALL event logs with automatic pagination (handles API limits).
-
-        Unlike ``get_logs()`` which returns at most ~1000 results, this method
-        fetches every log in the specified range using paginated requests.
-
-        Args:
-            address: Contract address
-            from_block: Starting block number (default: 0)
-            to_block: Ending block number (default: latest)
-            topic0: Event signature hash (optional)
-            topic1-topic3: Indexed parameter filters (optional)
-            on_progress: Progress callback for tracking fetch progress
-
-        Returns:
-            Complete list of all log dicts, deduplicated and sorted by block/logIndex
-        """
-        all_logs: list[dict[str, Any]] = []
-        async for batch in self.iter_logs_streaming(
-            address=address,
-            from_block=from_block,
-            to_block=to_block,
-            topic0=topic0,
-            topic1=topic1,
-            topic2=topic2,
-            topic3=topic3,
-            batch_size=1000,
-            on_progress=on_progress,
-        ):
-            all_logs.extend(batch)
-        return all_logs
-
-    async def get_all_transactions(
-        self,
-        address: str,
-        from_block: int = 0,
-        to_block: int | str | None = None,
-        on_progress: 'ProgressCallback | None' = None,
-    ) -> list[dict[str, Any]]:
-        """Get ALL transactions with automatic pagination.
-
-        Unlike ``get_transactions()`` which returns a single page, this method
-        fetches every transaction using streaming pagination.
-
-        Args:
-            address: Wallet address
-            from_block: Starting block number (default: 0)
-            to_block: Ending block number (default: latest)
-            on_progress: Progress callback for tracking fetch progress
-
-        Returns:
-            Complete list of all transaction dicts
-        """
-        all_txs: list[dict[str, Any]] = []
-        async for batch in self.iter_transactions_streaming(
-            address=address,
-            from_block=from_block,
-            to_block=to_block,
-            batch_size=1000,
-            on_progress=on_progress,
-        ):
-            all_txs.extend(batch)
-        return all_txs
-
-    async def get_all_token_transfers(
-        self,
-        address: str,
-        contract_address: str | None = None,
-        from_block: int = 0,
-        to_block: int | str | None = None,
-        on_progress: 'ProgressCallback | None' = None,
-    ) -> list[dict[str, Any]]:
-        """Get ALL ERC20 token transfers with automatic pagination.
-
-        Args:
-            address: Wallet address
-            contract_address: Filter by specific token contract (optional)
-            from_block: Starting block number (default: 0)
-            to_block: Ending block number (default: latest)
-            on_progress: Progress callback for tracking fetch progress
-
-        Returns:
-            Complete list of all token transfer dicts
-        """
-        all_transfers: list[dict[str, Any]] = []
-        async for batch in self.iter_token_transfers_streaming(
-            address=address,
-            from_block=from_block,
-            to_block=to_block,
-            contract_address=contract_address,
-            batch_size=1000,
-            on_progress=on_progress,
-        ):
-            all_transfers.extend(batch)
-        return all_transfers
-
-    async def get_all_internal_transactions(
-        self,
-        address: str,
-        from_block: int = 0,
-        to_block: int | str | None = None,
-        on_progress: 'ProgressCallback | None' = None,
-    ) -> list[dict[str, Any]]:
-        """Get ALL internal transactions with automatic pagination.
-
-        Args:
-            address: Wallet address
-            from_block: Starting block number (default: 0)
-            to_block: Ending block number (default: latest)
-            on_progress: Progress callback for tracking fetch progress
-
-        Returns:
-            Complete list of all internal transaction dicts
-        """
-        all_txs: list[dict[str, Any]] = []
-        async for batch in self.iter_internal_transactions_streaming(
-            address=address,
-            from_block=from_block,
-            to_block=to_block,
-            batch_size=1000,
-            on_progress=on_progress,
-        ):
-            all_txs.extend(batch)
-        return all_txs
-
-    async def get_eth_price(self) -> dict[str, Any]:
-        """Get current ETH price (USD, BTC).
-
-        Returns:
-            Dict with 'ethusd', 'ethbtc', 'ethusd_timestamp', etc.
-        """
-        result: dict[str, Any] = await self.call(Method.ETH_PRICE)
-        return result
-
-    async def get_gas_oracle(self) -> dict[str, Any]:
-        """Get current gas price recommendations.
-
-        Returns:
-            Dict with 'SafeGasPrice', 'ProposeGasPrice', 'FastGasPrice' in Gwei
-        """
-        result: dict[str, Any] = await self.call(Method.GAS_ORACLE)
-        return result
-
-    async def get_token_balance(
-        self, address: str, contract_address: str, tag: str = 'latest'
-    ) -> str:
-        """Get ERC-20 token balance for a specific token.
-
-        Args:
-            address: Wallet address
-            contract_address: Token contract address
-            tag: Block tag ('latest', 'earliest', or block number)
-
-        Returns:
-            Token balance in raw units (divide by 10^decimals for human-readable)
-        """
-        result: str = await self.call(
-            Method.TOKEN_BALANCE,
-            address=str(Address(address)),
-            contractaddress=str(Address(contract_address)),
-            tag=tag,
-        )
-        return str(result)
-
-    async def get_token_info(self, contract_address: str) -> dict[str, Any]:
-        """Get token metadata (name, symbol, decimals, supply).
-
-        Args:
-            contract_address: Token contract address
-
-        Returns:
-            Dict with name, symbol, decimals, totalSupply, etc.
-        """
-        result: dict[str, Any] = await self.call(
-            Method.TOKEN_INFO, contractaddress=str(Address(contract_address))
-        )
-        return result
-
-    async def get_block(self, block_number: int | str) -> dict[str, Any]:
-        """Get block information by number.
-
-        Args:
-            block_number: Block number or 'latest'
-
-        Returns:
-            Block dict with transactions, timestamp, miner, etc.
-        """
-        result: dict[str, Any] = await self.call(Method.BLOCK_BY_NUMBER, blockno=block_number)
-        return result
-
-    async def get_block_reward(self, block_number: int) -> dict[str, Any]:
-        """Get block mining reward information.
-
-        Args:
-            block_number: Block number
-
-        Returns:
-            Dict with blockMiner, blockReward, uncles, etc.
-        """
-        result: dict[str, Any] = await self.call(Method.BLOCK_REWARD, blockno=block_number)
-        return result
-
-    async def get_block_countdown(self, target_block: int) -> dict[str, Any]:
-        """Get estimated time to a target block number.
-
-        Args:
-            target_block: Target block number
-
-        Returns:
-            Dict with EstimateTimeInSec, CurrentBlock, CountdownBlock, etc.
-        """
-        result: dict[str, Any] = await self.call(Method.BLOCK_COUNTDOWN, blockno=target_block)
-        return result
-
-    async def get_block_by_timestamp(
-        self, timestamp: int, closest: str = 'before'
-    ) -> dict[str, Any]:
-        """Get block number by Unix timestamp.
-
-        Args:
-            timestamp: Unix timestamp (seconds)
-            closest: 'before' or 'after' the timestamp
-
-        Returns:
-            Dict with block number closest to the given timestamp
-        """
-        result: dict[str, Any] = await self.call(
-            Method.BLOCK_NUMBER_BY_TIMESTAMP, timestamp=timestamp, closest=closest
-        )
-        return result
-
-    async def get_erc721_transfers(
-        self,
-        address: str,
-        contract_address: str | None = None,
-        start_block: int = 0,
-        end_block: int | str = 99999999,
-        page: int = 1,
-        offset: int = 100,
-        sort: str = 'asc',
-    ) -> list[dict[str, Any]]:
-        """Get ERC-721 (NFT) token transfers for an address.
-
-        Args:
-            address: Wallet address
-            contract_address: Filter by specific NFT contract (optional)
-            start_block: Starting block number
-            end_block: Ending block number
-            page: Page number for pagination
-            offset: Number of results per page
-            sort: Sort order ('asc' or 'desc')
-
-        Returns:
-            List of ERC-721 transfer dicts
-        """
-        params: dict[str, Any] = {
-            'address': address,
-            'startblock': start_block,
-            'endblock': end_block,
-            'page': page,
-            'offset': offset,
-            'sort': sort,
-        }
-        if contract_address:
-            params['contractaddress'] = contract_address
-        result: Any = await self.call(Method.ACCOUNT_ERC721_TRANSFERS, **params)
-        return result if isinstance(result, list) else []
-
-    async def get_erc1155_transfers(
-        self,
-        address: str,
-        contract_address: str | None = None,
-        start_block: int = 0,
-        end_block: int | str = 99999999,
-        page: int = 1,
-        offset: int = 100,
-        sort: str = 'asc',
-    ) -> list[dict[str, Any]]:
-        """Get ERC-1155 (multi-token) transfers for an address.
-
-        Args:
-            address: Wallet address
-            contract_address: Filter by specific contract (optional)
-            start_block: Starting block number
-            end_block: Ending block number
-            page: Page number for pagination
-            offset: Number of results per page
-            sort: Sort order ('asc' or 'desc')
-
-        Returns:
-            List of ERC-1155 transfer dicts
-        """
-        params: dict[str, Any] = {
-            'address': address,
-            'startblock': start_block,
-            'endblock': end_block,
-            'page': page,
-            'offset': offset,
-            'sort': sort,
-        }
-        if contract_address:
-            params['contractaddress'] = contract_address
-        result: Any = await self.call(Method.ACCOUNT_ERC1155_TRANSFERS, **params)
-        return result if isinstance(result, list) else []
-
-    async def get_nft_portfolio(self, address: str) -> list[dict[str, Any]]:
-        """Get all NFTs owned by an address.
-
-        Args:
-            address: Wallet address
-
-        Returns:
-            List of NFT dicts with token_id, contract, metadata, etc.
-        """
-        result: Any = await self.call(Method.ACCOUNT_NFT_PORTFOLIO, address=str(Address(address)))
-        items: list[dict[str, Any]] = (
-            result
-            if isinstance(result, list)
-            else result.get('items', [])
-            if isinstance(result, dict)
-            else []
-        )
-        return items
-
-    async def check_transaction_status(self, tx_hash: str) -> dict[str, Any]:
-        """Check execution status of a transaction (Etherscan specific).
-
-        Unlike ``get_transaction_status()`` which checks receipt status,
-        this checks internal execution status (e.g., contract call success/fail).
-
-        Args:
-            tx_hash: Transaction hash (0x...)
-
-        Returns:
-            Dict with isError and errDescription fields
-        """
-        result: dict[str, Any] = await self.call(
-            Method.TX_STATUS_CHECK, txhash=str(TxHash(tx_hash))
-        )
-        return result
-
-    async def get_contract_creation(self, addresses: list[str]) -> list[dict[str, Any]]:
-        """Get contract creator and creation tx hash.
-
-        Args:
-            addresses: List of contract addresses (max 5)
-
-        Returns:
-            List of dicts with contractAddress, contractCreator, txHash
-        """
-        result: Any = await self.call(
-            Method.CONTRACT_CREATION,
-            contractaddresses=','.join(str(Address(address)) for address in addresses),
-        )
-        return result if isinstance(result, list) else []
-
-    async def get_token_supply(self, contract_address: str) -> str:
-        """Get total supply of an ERC-20 token.
-
-        Args:
-            contract_address: Token contract address
-
-        Returns:
-            Total supply in raw units (divide by 10^decimals for human-readable)
-        """
-        result: str = await self.call(Method.TOKEN_SUPPLY, contractaddress=contract_address)
-        return str(result)
-
-    async def get_gas_estimate(self, gas_price: int) -> str:
-        """Get estimated confirmation time for a gas price.
-
-        Args:
-            gas_price: Gas price in Wei
-
-        Returns:
-            Estimated confirmation time in seconds
-        """
-        result: str = await self.call(Method.GAS_ESTIMATE, gasprice=gas_price)
-        return str(result)
-
-    async def get_eth_supply(self) -> str:
-        """Get total ETH supply.
-
-        Returns:
-            Total ETH supply in Wei (as string to prevent overflow)
-        """
-        result: str = await self.call(Method.ETH_SUPPLY)
-        return str(result)
-
-    async def eth_call(self, to: str, data: str, tag: str = 'latest') -> str:
-        """Execute a read-only contract call via eth_call JSON-RPC proxy.
-
-        Args:
-            to: Contract address
-            data: ABI-encoded function call data (hex string)
-            tag: Block tag ('latest', 'earliest', or hex block number)
-
-        Returns:
-            ABI-encoded return data (hex string)
-        """
-        result: str = await self.call(Method.PROXY_ETH_CALL, to=to, data=data, tag=tag)
-        return str(result)
-
-    async def eth_get_balance(self, address: str, tag: str = 'latest') -> str:
-        """Get ETH balance via eth_getBalance JSON-RPC proxy.
-
-        Unlike ``get_balance()``, this returns the raw hex balance via the
-        JSON-RPC proxy endpoint, not the human-formatted balance.
-
-        Args:
-            address: Wallet address
-            tag: Block tag ('latest', 'earliest', or hex block number)
-
-        Returns:
-            Balance in Wei as hex string
-        """
-        result: str = await self.call(Method.PROXY_GET_BALANCE, address=address, tag=tag)
-        return str(result)
-
-    async def get_contract(self, address: str) -> SmartContract:
-        """
-        Get a SmartContract instance with automatic ABI fetching and Proxy resolution.
-
-        This is the recommended way to interact with smart contracts. The returned
-        SmartContract object provides high-level methods for:
-        - Iterating through decoded events
-        - Iterating through decoded transactions
-        - Accessing contract ABI information
-
-        Args:
-            address: Contract address
-
-        Returns:
-            SmartContract instance ready for use
-
-        Raises:
-            ValueError: If contract ABI cannot be fetched
-
-        Example:
-            ```python
-            # Get USDT contract (automatically resolves proxy)
-            usdt = await client.get_contract("0xdac17f958d2ee523a2206206994597c13d831ec7")
-
-            # Iterate through Transfer events
-            async for event in usdt.iter_events("Transfer", limit=100):
-                print(f"{event.args['from']} -> {event.args['to']}: {event.args['value']}")
-
-            # Iterate through transactions
-            async for tx in usdt.iter_transactions(limit=50):
-                print(f"Function: {tx.function_name}, Args: {tx.args}")
-            ```
-        """
-        from ..domain.contract import SmartContract
-
-        return await SmartContract.from_address(address, self)
-
-    # =========================================================================
-    # ENS INTEGRATION - Name resolution and reverse lookup
-    # =========================================================================
-
-    @property
-    def ens(self) -> 'ENSResolver':
-        """
-        Get ENS resolver instance for name resolution.
-
-        Lazy-initialized on first access. The resolver provides:
-        - Forward resolution (name → address)
-        - Reverse lookup (address → name)
-        - Batch operations
-        - Automatic caching
-
-        Returns:
-            ENSResolver instance
-
-        Raises:
-            ValueError: If ENS is not supported on this network
-
-        Example:
-            ```python
-            # Access ENS resolver
-            address = await client.ens.resolve_name("vitalik.eth")
-            name = await client.ens.lookup_address("0xd8dA...")
-            ```
-        """
-        if self._ens_resolver is None:
-            from ..services.ens_resolver import ENSResolver
-
-            self._ens_resolver = ENSResolver(self)
-        return self._ens_resolver
-
-    async def resolve_name(self, name: str) -> str | None:
-        """
-        Resolve ENS name to Ethereum address.
-
-        Convenience method that delegates to the ENS resolver.
-
-        Args:
-            name: ENS name (e.g., "vitalik.eth")
-
-        Returns:
-            Ethereum address or None if not found
-
-        Raises:
-            ValueError: If ENS is not supported on this network
-
-        Example:
-            ```python
-            address = await client.resolve_name("vitalik.eth")
-            print(address)  # "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"
-            ```
-        """
-        return await self.ens.resolve_name(name)
-
-    async def lookup_address(self, address: str) -> str | None:
-        """
-        Reverse lookup: Ethereum address to ENS name.
-
-        Convenience method that delegates to the ENS resolver.
-
-        Args:
-            address: Ethereum address (e.g., "0xd8dA...")
-
-        Returns:
-            ENS name or None if not found
-
-        Raises:
-            ValueError: If ENS is not supported on this network
-
-        Example:
-            ```python
-            name = await client.lookup_address("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")
-            print(name)  # "vitalik.eth"
-            ```
-        """
-        return await self.ens.lookup_address(address)
-
-    async def resolve_names(self, names: list[str]) -> dict[str, str]:
-        """
-        Batch resolve multiple ENS names to addresses.
-
-        Resolves names in parallel for efficiency.
-
-        Args:
-            names: List of ENS names
-
-        Returns:
-            Dict mapping names to addresses (only successful resolutions)
-
-        Example:
-            ```python
-            result = await client.resolve_names(["vitalik.eth", "uniswap.eth"])
-            # {"vitalik.eth": "0xd8dA...", "uniswap.eth": "0x1f98..."}
-            ```
-        """
-        return await self.ens.resolve_names(names)
-
-    async def lookup_addresses(self, addresses: list[str]) -> dict[str, str]:
-        """
-        Batch reverse lookup multiple addresses to ENS names.
-
-        Performs lookups in parallel for efficiency.
-
-        Args:
-            addresses: List of Ethereum addresses
-
-        Returns:
-            Dict mapping addresses to names (only successful lookups)
-
-        Example:
-            ```python
-            result = await client.lookup_addresses([
-                "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
-                "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984"
-            ])
-            # {"0xd8dA...": "vitalik.eth", "0x1f98...": "uniswap.eth"}
-            ```
-        """
-        return await self.ens.lookup_addresses(addresses)
-
     # =========================================================================
     # STREAMING API - Memory-efficient iteration with optional decoding
     # =========================================================================
@@ -1270,6 +556,14 @@ class ChainscanClient:
                 print(f"Args: {tx['decoded_data']}")
             ```
         """
+        from ..decode import decode_transaction_input
+
+        def _maybe_decode(tx: dict[str, Any]) -> dict[str, Any]:
+            if abi is None:
+                return tx
+            tx_copy = dict(tx)
+            return decode_transaction_input(tx_copy, abi)
+
         # Validate batch_size to prevent infinite loops
         if batch_size < 1:
             raise ValueError(f'batch_size must be at least 1, got {batch_size}')
@@ -1318,7 +612,7 @@ class ChainscanClient:
                         next_page_params = None
 
                     for tx in items:
-                        yield tx
+                        yield _maybe_decode(tx)
 
                     # Check for next page
                     if not next_page_params:
@@ -1346,7 +640,7 @@ class ChainscanClient:
                         break
 
                     for tx in items:
-                        yield tx
+                        yield _maybe_decode(tx)
 
                     if len(items) < batch_size:
                         break
@@ -1361,46 +655,35 @@ class ChainscanClient:
             )
             items = txs if isinstance(txs, list) else txs.get('items', [])
             for tx in items:
-                yield tx
+                yield _maybe_decode(tx)
             return
 
-        # Use advanced streaming decoder for decoding and/or block range filtering
-        from aiochainscan.services.streaming_decoder import StreamingDecoder
-
-        # Get HTTP client from network
-        http_client = self._network._http2
-
-        decoder = StreamingDecoder(
-            api_kind=self.api_kind,
-            network=self.network,
-            api_key=self.api_key,
-            http=http_client,  # type: ignore[arg-type]
-            endpoint_builder=self._network._url_builder,  # type: ignore[arg-type]
-            batch_size=batch_size,
-            rate_limiter=self._rate_limiter,
-            retry=self._retry_policy,
-            telemetry=None,
-            max_concurrent=1,
-        )
-
-        if abi is not None:
-            # Stream with decoding
-            async for tx in decoder.stream_transactions(
+        end_block = _resolve_end_block_int(to_block)
+        page = 1
+        while True:
+            txs = await self.call(
+                Method.ACCOUNT_TRANSACTIONS,
                 address=address,
-                abi=abi,
-                from_block=from_block,
-                to_block=to_block,
-            ):
-                yield tx
-        else:
-            # Stream without decoding
-            async for batch in decoder._fetch_transaction_batches(
-                address=address,
-                from_block=from_block,
-                to_block=to_block,
-            ):
-                for tx in batch:
-                    yield tx
+                startblock=from_block,
+                endblock=end_block,
+                page=page,
+                offset=batch_size,
+                sort='asc',
+            )
+            items = (
+                txs
+                if isinstance(txs, list)
+                else txs.get('items', [])
+                if isinstance(txs, dict)
+                else []
+            )
+            if not items:
+                break
+            for tx in items:
+                yield _maybe_decode(tx)
+            if len(items) < batch_size:
+                break
+            page += 1
 
     # =========================================================================
     # BATCH STREAMING API - Memory-efficient batch iteration for whale addresses
@@ -1455,37 +738,40 @@ class ChainscanClient:
             - iter_transactions: 1M txs = ~100MB RAM (yields one at a time)
             - iter_transactions_streaming: 1M txs = ~10MB RAM (yields batches)
         """
-        from aiochainscan.services.fetch_all_streaming import (
-            fetch_all_transactions_streaming,
-        )
-
-        # Get HTTP client from network
-        http_client = self._network._http2
-
-        # Convert 'latest' to None for the fetch function
-        end_block: int | None = (
-            None if to_block == 'latest' else int(to_block) if to_block else None
-        )
-
-        async for batch in fetch_all_transactions_streaming(
-            address=address,
-            start_block=from_block,
-            end_block=end_block,
-            api_kind=self.api_kind,
-            network=self.network,
-            api_key=self.api_key,
-            http=http_client,  # type: ignore[arg-type]
-            endpoint_builder=self._network._url_builder,  # type: ignore[arg-type]
-            rate_limiter=self._rate_limiter,
-            retry=self._retry_policy,
-            telemetry=None,
-            max_offset=10_000,
-            batch_size=batch_size,
-            on_progress=on_progress,
-            # Pass scanner for proper V2 routing (fixes split-brain bug)
-            scanner=self._scanner,
-        ):
+        end_block = _resolve_end_block_int(to_block)
+        page = 1
+        fetched = 0
+        while True:
+            txs = await self.call(
+                Method.ACCOUNT_TRANSACTIONS,
+                address=address,
+                startblock=from_block,
+                endblock=end_block,
+                page=page,
+                offset=batch_size,
+                sort='asc',
+            )
+            batch = (
+                txs
+                if isinstance(txs, list)
+                else txs.get('items', [])
+                if isinstance(txs, dict)
+                else []
+            )
+            if not batch:
+                break
+            fetched += len(batch)
+            if on_progress is not None:
+                await on_progress(
+                    fetched=fetched,
+                    total_expected=None,
+                    current_page=page,
+                    operation='transactions',
+                )
             yield batch
+            if len(batch) < batch_size:
+                break
+            page += 1
 
     async def iter_internal_transactions_streaming(
         self,
@@ -1508,32 +794,40 @@ class ChainscanClient:
         Yields:
             Batches of internal transaction dictionaries
         """
-        from aiochainscan.services.fetch_all_streaming import (
-            fetch_all_internal_streaming,
-        )
-
-        http_client = self._network._http2
-        end_block: int | None = (
-            None if to_block == 'latest' else int(to_block) if to_block else None
-        )
-
-        async for batch in fetch_all_internal_streaming(
-            address=address,
-            start_block=from_block,
-            end_block=end_block,
-            api_kind=self.api_kind,
-            network=self.network,
-            api_key=self.api_key,
-            http=http_client,  # type: ignore[arg-type]
-            endpoint_builder=self._network._url_builder,  # type: ignore[arg-type]
-            rate_limiter=self._rate_limiter,
-            retry=self._retry_policy,
-            telemetry=None,
-            max_offset=10_000,
-            batch_size=batch_size,
-            on_progress=on_progress,
-        ):
+        end_block = _resolve_end_block_int(to_block)
+        page = 1
+        fetched = 0
+        while True:
+            txs = await self.call(
+                Method.ACCOUNT_INTERNAL_TXS,
+                address=address,
+                startblock=from_block,
+                endblock=end_block,
+                page=page,
+                offset=batch_size,
+                sort='asc',
+            )
+            batch = (
+                txs
+                if isinstance(txs, list)
+                else txs.get('items', [])
+                if isinstance(txs, dict)
+                else []
+            )
+            if not batch:
+                break
+            fetched += len(batch)
+            if on_progress is not None:
+                await on_progress(
+                    fetched=fetched,
+                    total_expected=None,
+                    current_page=page,
+                    operation='internal_transactions',
+                )
             yield batch
+            if len(batch) < batch_size:
+                break
+            page += 1
 
     async def iter_token_transfers_streaming(
         self,
@@ -1558,33 +852,42 @@ class ChainscanClient:
         Yields:
             Batches of token transfer dictionaries
         """
-        from aiochainscan.services.fetch_all_streaming import (
-            fetch_all_token_transfers_streaming,
-        )
-
-        http_client = self._network._http2
-        end_block: int | None = (
-            None if to_block == 'latest' else int(to_block) if to_block else None
-        )
-
-        async for batch in fetch_all_token_transfers_streaming(
-            address=address,
-            start_block=from_block,
-            end_block=end_block,
-            api_kind=self.api_kind,
-            network=self.network,
-            api_key=self.api_key,
-            http=http_client,  # type: ignore[arg-type]
-            endpoint_builder=self._network._url_builder,  # type: ignore[arg-type]
-            contract_address=contract_address,
-            rate_limiter=self._rate_limiter,
-            retry=self._retry_policy,
-            telemetry=None,
-            max_offset=10_000,
-            batch_size=batch_size,
-            on_progress=on_progress,
-        ):
+        end_block = _resolve_end_block_int(to_block)
+        page = 1
+        fetched = 0
+        while True:
+            params: dict[str, Any] = {
+                'address': address,
+                'startblock': from_block,
+                'endblock': end_block,
+                'page': page,
+                'offset': batch_size,
+                'sort': 'asc',
+            }
+            if contract_address is not None:
+                params['contractaddress'] = contract_address
+            txs = await self.call(Method.ACCOUNT_ERC20_TRANSFERS, **params)
+            batch = (
+                txs
+                if isinstance(txs, list)
+                else txs.get('items', [])
+                if isinstance(txs, dict)
+                else []
+            )
+            if not batch:
+                break
+            fetched += len(batch)
+            if on_progress is not None:
+                await on_progress(
+                    fetched=fetched,
+                    total_expected=None,
+                    current_page=page,
+                    operation='token_transfers',
+                )
             yield batch
+            if len(batch) < batch_size:
+                break
+            page += 1
 
     async def iter_logs_streaming(
         self,
@@ -1615,36 +918,48 @@ class ChainscanClient:
         Yields:
             Batches of event log dictionaries
         """
-        from aiochainscan.services.fetch_all_streaming import (
-            fetch_all_logs_streaming,
-        )
-
-        http_client = self._network._http2
-        end_block: int | None = (
-            None if to_block == 'latest' else int(to_block) if to_block else None
-        )
-
-        async for batch in fetch_all_logs_streaming(
-            address=address,
-            start_block=from_block,
-            end_block=end_block,
-            api_kind=self.api_kind,
-            network=self.network,
-            api_key=self.api_key,
-            http=http_client,  # type: ignore[arg-type]
-            endpoint_builder=self._network._url_builder,  # type: ignore[arg-type]
-            topic0=topic0,
-            topic1=topic1,
-            topic2=topic2,
-            topic3=topic3,
-            rate_limiter=self._rate_limiter,
-            retry=self._retry_policy,
-            telemetry=None,
-            max_offset=1_000,
-            batch_size=batch_size,
-            on_progress=on_progress,
-        ):
+        end_block = _resolve_end_block_param(to_block)
+        page = 1
+        fetched = 0
+        while True:
+            params: dict[str, Any] = {
+                'fromBlock': from_block,
+                'toBlock': end_block,
+                'page': page,
+                'offset': batch_size,
+            }
+            if address is not None:
+                params['address'] = address
+            if topic0 is not None:
+                params['topic0'] = topic0
+            if topic1 is not None:
+                params['topic1'] = topic1
+            if topic2 is not None:
+                params['topic2'] = topic2
+            if topic3 is not None:
+                params['topic3'] = topic3
+            logs = await self.call(Method.EVENT_LOGS, **params)
+            batch = (
+                logs
+                if isinstance(logs, list)
+                else logs.get('items', [])
+                if isinstance(logs, dict)
+                else []
+            )
+            if not batch:
+                break
+            fetched += len(batch)
+            if on_progress is not None:
+                await on_progress(
+                    fetched=fetched,
+                    total_expected=None,
+                    current_page=page,
+                    operation='logs',
+                )
             yield batch
+            if len(batch) < batch_size:
+                break
+            page += 1
 
     @classmethod
     def get_available_scanners(cls) -> dict[tuple[str, str], type[Scanner]]:
@@ -1722,43 +1037,53 @@ class ChainscanClient:
                     print(f"To: {log['decoded_data'].get('to')}")
             ```
         """
-        from aiochainscan.services.streaming_decoder import StreamingDecoder
+        from ..decode import decode_log_data
 
-        decoder = StreamingDecoder(
-            api_kind=self.api_kind,
-            network=self.network,
-            api_key=self.api_key,
-            http=self._network._http2,  # type: ignore[arg-type]
-            endpoint_builder=self._network._url_builder,  # type: ignore[arg-type]
-            batch_size=batch_size,
-            rate_limiter=self._rate_limiter,
-            retry=self._retry_policy,
-            telemetry=None,
-            max_concurrent=1,
-        )
+        end_block = _resolve_end_block_param(to_block)
+        page = 1
+        while True:
+            params: dict[str, Any] = {
+                'address': address,
+                'fromBlock': from_block,
+                'toBlock': end_block,
+                'page': page,
+                'offset': batch_size,
+            }
 
-        if abi is not None:
-            # Stream with decoding
-            async for log in decoder.stream_logs(
-                address=address,
-                abi=abi,
-                from_block=from_block,
-                to_block=to_block,
-                topics=topics,
-                topic_operators=topic_operators,
-            ):
-                yield log
-        else:
-            # Stream without decoding
-            async for batch in decoder._fetch_log_batches(
-                address=address,
-                from_block=from_block,
-                to_block=to_block,
-                topics=topics,
-                topic_operators=topic_operators,
-            ):
-                for log in batch:
+            if topics:
+                if len(topics) > 0:
+                    params['topic0'] = topics[0]
+                if len(topics) > 1:
+                    params['topic1'] = topics[1]
+                if len(topics) > 2:
+                    params['topic2'] = topics[2]
+                if len(topics) > 3:
+                    params['topic3'] = topics[3]
+
+            if topic_operators:
+                for i, operator in enumerate(topic_operators[:3]):
+                    params[f'topic{i}_{i + 1}_opr'] = operator
+
+            logs = await self.call(Method.EVENT_LOGS, **params)
+            items = (
+                logs
+                if isinstance(logs, list)
+                else logs.get('items', [])
+                if isinstance(logs, dict)
+                else []
+            )
+            if not items:
+                break
+
+            for log in items:
+                if abi is None:
                     yield log
+                else:
+                    yield decode_log_data(dict(log), abi)
+
+            if len(items) < batch_size:
+                break
+            page += 1
 
     # =========================================================================
     # DATAFRAME API - Polars integration for data analysis

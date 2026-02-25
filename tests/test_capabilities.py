@@ -1,6 +1,6 @@
-from aiochainscan import get_capabilities_overview
 from aiochainscan.capabilities import (
     FEATURE_SUPPORT,
+    get_capabilities_overview,
     get_supported_features,
     get_supported_scanners,
     is_feature_supported,

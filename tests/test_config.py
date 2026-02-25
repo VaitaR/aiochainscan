@@ -6,7 +6,12 @@ from unittest.mock import patch
 
 import pytest
 
-from aiochainscan.config import ConfigurationManager, ScannerConfig, config_manager
+from aiochainscan.config import (
+    ConfigurationManager,
+    ScannerConfig,
+    config_manager,
+    get_config_manager,
+)
 
 
 class TestScannerConfig:
@@ -298,7 +303,8 @@ class TestGlobalConfigManager:
     def test_global_config_manager_exists(self):
         """Test that global config manager instance exists and works."""
         assert config_manager is not None
-        assert isinstance(config_manager, ConfigurationManager)
+        manager = get_config_manager()
+        assert isinstance(manager, ConfigurationManager)
 
         # Test basic functionality
         scanners = config_manager.get_supported_scanners()

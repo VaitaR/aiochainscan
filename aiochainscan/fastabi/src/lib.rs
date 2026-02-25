@@ -5,7 +5,6 @@ use once_cell::sync::OnceCell;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyAny};
 use pythonize::depythonize;
-use rayon::prelude::*;
 use twox_hash::XxHash64;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
@@ -13,7 +12,6 @@ use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex};
 use thiserror::Error;
 
-const BATCH_PAR_THRESHOLD: usize = 256;
 const ABI_CACHE_CAPACITY: usize = 1000;  // Maximum number of ABIs to cache
 
 #[derive(Error, Debug)]
@@ -35,7 +33,6 @@ impl From<FastAbiError> for PyErr {
 // Global ABI cache with LRU eviction to prevent unbounded memory growth
 static ABI_CACHE: OnceCell<Mutex<LruCache<u64, Arc<AbiData>>>> = OnceCell::new();
 // Micro-caches to avoid repeated work on hot paths
-static LAST_ABI_HASH: OnceCell<Mutex<Option<(usize, usize, u64)>>> = OnceCell::new();
 // Cache stores (data_hash, abi_hash, json_result) - never use raw pointers as cache keys!
 static LAST_INPUT_JSON: OnceCell<Mutex<Option<(u64, u64, String)>>> = OnceCell::new();
 
@@ -57,17 +54,9 @@ fn calculate_abi_hash(abi_json: &str) -> u64 {
 }
 
 fn calculate_abi_hash_memoized(abi_json: &str) -> u64 {
-    let ptr = abi_json.as_ptr() as usize;
-    let len = abi_json.len();
-    let cell = LAST_ABI_HASH.get_or_init(|| Mutex::new(None));
-    if let Some((p, l, h)) = *cell.lock().unwrap() {
-        if p == ptr && l == len {
-            return h;
-        }
-    }
-    let h = calculate_abi_hash(abi_json);
-    *cell.lock().unwrap() = Some((ptr, len, h));
-    h
+    // Always hash by content. Never cache by pointer/length because
+    // Python allocators can reuse freed addresses for different strings.
+    calculate_abi_hash(abi_json)
 }
 
 fn calculate_function_selector(function: &Function) -> [u8; 4] {
@@ -231,8 +220,9 @@ fn decode_many_raw(
 ) -> PyResult<String> {
     let abi_data = get_abi_data_from_json(abi_json)?;
 
-    // Release GIL and process (parallel for large batches)
-    let use_par = calldatas.len() >= BATCH_PAR_THRESHOLD;
+    // Release GIL and process sequentially.
+    // Python side already parallelizes with asyncio.to_thread, so additional
+    // internal Rayon parallelism causes thread oversubscription.
     let json_result: Result<String, FastAbiError> = py.allow_threads(|| {
         let process_calldata = |calldata: &[u8]| -> serde_json::Value {
             if calldata.len() < 4 {
@@ -257,11 +247,8 @@ fn decode_many_raw(
             serde_json::json!([function.name, params])
         };
 
-        let results: Vec<serde_json::Value> = if use_par {
-            calldatas.par_iter().map(|c| process_calldata(c)).collect()
-        } else {
-            calldatas.iter().map(|c| process_calldata(c)).collect()
-        };
+        let results: Vec<serde_json::Value> =
+            calldatas.iter().map(|c| process_calldata(c)).collect();
 
         serde_json::to_string(&results)
             .map_err(|e| FastAbiError::DecodeError(format!("JSON serialization failed: {}", e)))
@@ -283,7 +270,7 @@ fn decode_many_flat(
     // Release GIL and do ALL computation in parallel including JSON serialization
     let json_result: Result<String, FastAbiError> = py.allow_threads(|| {
         let results: Vec<serde_json::Value> = calldatas
-            .par_iter()  // PARALLEL processing with rayon
+            .iter()
             .map(|calldata| {
                 if calldata.len() < 4 {
                     return serde_json::json!([""]);
@@ -386,7 +373,7 @@ fn decode_many(
     // Release GIL and do ALL computation in parallel, including JSON serialization
     let json_result: Result<String, FastAbiError> = py.allow_threads(|| {
         let results: Result<Vec<_>, FastAbiError> = calldatas
-            .par_iter()  // PARALLEL processing
+            .iter()
             .map(|calldata| {
                 if calldata.len() < 4 {
                     return Ok(serde_json::json!({
@@ -452,8 +439,8 @@ fn decode_many_direct(
 ) -> PyResult<String> {
     let abi_data = get_abi_data_direct(py_abi)?;
 
-    // Release GIL and do ALL computation including JSON serialization
-    let use_par = calldatas.len() >= BATCH_PAR_THRESHOLD;
+    // Release GIL and do ALL computation including JSON serialization.
+    // Keep Rust path single-threaded to avoid conflict with Python executor threads.
     let json_result: Result<String, FastAbiError> = py.allow_threads(|| {
         let process_calldata = |calldata: &[u8]| -> serde_json::Value {
             if calldata.len() < 4 {
@@ -496,11 +483,8 @@ fn decode_many_direct(
             })
         };
 
-        let results: Vec<serde_json::Value> = if use_par {
-            calldatas.par_iter().map(|c| process_calldata(c)).collect()
-        } else {
-            calldatas.iter().map(|c| process_calldata(c)).collect()
-        };
+        let results: Vec<serde_json::Value> =
+            calldatas.iter().map(|c| process_calldata(c)).collect();
 
         serde_json::to_string(&results)
             .map_err(|e| FastAbiError::DecodeError(format!("JSON serialization failed: {}", e)))
@@ -519,8 +503,8 @@ fn decode_many_hex(
 ) -> PyResult<String> {
     let abi_data = get_abi_data_from_json(abi_json)?;
 
-    // Release GIL and do everything including hex parsing and JSON serialization
-    let use_par = hex_inputs.len() >= BATCH_PAR_THRESHOLD;
+    // Release GIL and do everything including hex parsing and JSON serialization.
+    // Keep Rust path single-threaded to avoid thread-pool oversubscription.
     let json_result: Result<String, FastAbiError> = py.allow_threads(|| {
         let process_hex = |hex_input: &str| -> serde_json::Value {
             let hex_clean = if hex_input.starts_with("0x") { &hex_input[2..] } else { hex_input };
@@ -571,11 +555,8 @@ fn decode_many_hex(
             })
         };
 
-        let results: Vec<serde_json::Value> = if use_par {
-            hex_inputs.par_iter().map(|h| process_hex(h)).collect()
-        } else {
-            hex_inputs.iter().map(|h| process_hex(h)).collect()
-        };
+        let results: Vec<serde_json::Value> =
+            hex_inputs.iter().map(|h| process_hex(h)).collect();
 
         serde_json::to_string(&results)
             .map_err(|e| FastAbiError::DecodeError(format!("JSON serialization failed: {}", e)))

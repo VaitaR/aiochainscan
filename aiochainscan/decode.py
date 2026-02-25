@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from typing import Any, cast
 
@@ -11,6 +12,7 @@ from aiochainscan.ports.http_client import HttpClient
 
 # orjson is a required dependency — always available
 ORJSON_AVAILABLE = True
+logger = logging.getLogger(__name__)
 
 
 def _parse_json(json_str: str) -> Any:
@@ -98,8 +100,13 @@ class SignatureDatabase:
                     signature = cast(str, results[0]['text_signature'])
                     self.cache[selector] = signature  # Save to cache
                     return signature
-        except Exception:  # noqa: BLE001 - Network errors can be of many types (aiohttp, httpx, etc.)
-            pass  # Ignore network/parsing errors, we just can't find the signature
+        except Exception as exc:  # noqa: BLE001 - preserve compatibility across HTTP backends
+            logger.warning(
+                'Failed to fetch function signature for selector %s: %s',
+                selector,
+                exc,
+                exc_info=True,
+            )
 
         return None
 

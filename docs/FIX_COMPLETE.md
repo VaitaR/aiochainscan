@@ -109,7 +109,7 @@ $ pytest tests/ -q
 $ python -c "
 import asyncio
 import warnings
-from aiochainscan import get_balance
+from aiochainscan import ChainscanClient
 from aiochainscan.adapters.httpx_client import HttpxClientAdapter
 
 warnings.simplefilter('always')
@@ -226,7 +226,7 @@ All documentation cross-references each other for easy navigation.
 
 **Before**:
 ```python
-from aiochainscan import get_balance
+from aiochainscan import ChainscanClient
 balance = await get_balance(address='0x...', api_kind='eth', network='main', api_key=key)
 ```
 
