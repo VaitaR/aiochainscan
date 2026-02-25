@@ -711,51 +711,10 @@ class _ConfigManagerProxy:
 config_manager = _ConfigManagerProxy()
 
 
-# Backward compatibility - expose the same interface as before
-class ChainScanConfig:
-    """Backward compatibility wrapper."""
-
-    def __init__(self) -> None:
-        pass
-
-    def get_scanner_config(self, scanner: str) -> ScannerConfig:
-        return get_config_manager().get_scanner_config(scanner)
-
-    def get_api_key(self, scanner: str) -> str | None:
-        try:
-            return get_config_manager().get_api_key(scanner)
-        except ValueError:
-            config = get_config_manager().get_scanner_config(scanner)
-            if not config.requires_api_key:
-                return ''
-            raise
-
-    def validate_network(self, scanner: str, network: str) -> str:
-        return get_config_manager().validate_network(scanner, network)
-
-    def get_supported_scanners(self) -> list[str]:
-        return get_config_manager().get_supported_scanners()
-
-    def get_scanner_networks(self, scanner: str) -> set[str]:
-        return get_config_manager().get_scanner_networks(scanner)
-
-    def create_client_config(self, scanner: str, network: str = 'main') -> dict[str, str]:
-        return get_config_manager().create_client_config(scanner, network)
-
-    def list_all_configurations(self) -> dict[str, dict[str, Any]]:
-        return get_config_manager().list_all_configurations()
-
-
-# Global instance for backward compatibility
-config = ChainScanConfig()
-
-
 # Export new advanced interface
 __all__ = [
     'ConfigurationManager',
     'ScannerConfig',
-    'ChainScanConfig',
-    'config',
     'config_manager',
     'get_config_manager',
 ]

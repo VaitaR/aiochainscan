@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from ..services.ens_resolver import ENSResolver
 
 from ..chain_registry import get_chain_info, resolve_chain_id
-from ..config import config as global_config
+from ..config import get_config_manager
 from ..constants import MAX_BLOCK_NUMBER
 from ..ports.rate_limiter import RateLimiter, RetryPolicy
 from ..scanners import get_scanner_class
@@ -33,6 +33,8 @@ from .mixins import (
 )
 from .types import JSONDict
 from .url_builder import UrlBuilder
+
+global_config = get_config_manager()
 
 # Strict type aliases for scanner and network names (defined after imports)
 ScannerName = Literal['etherscan', 'blockscout', 'blockscout_v2']

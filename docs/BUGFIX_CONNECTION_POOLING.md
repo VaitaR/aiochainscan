@@ -55,7 +55,7 @@
 
 ### Before (Bug - Creates 100 HTTP clients!)
 ```python
-from aiochainscan import get_balance
+from aiochainscan import ChainscanClient
 import asyncio
 
 addresses = ['0x...' for _ in range(100)]
@@ -133,7 +133,7 @@ $ pytest tests/ -q
 
 ### Example Warning Output
 ```python
->>> from aiochainscan import get_balance
+>>> from aiochainscan import ChainscanClient
 >>> await get_balance(address='0x...', api_kind='eth', network='main', api_key='...')
 
 DeprecationWarning: get_balance() is deprecated and will be removed in v0.5.0.
