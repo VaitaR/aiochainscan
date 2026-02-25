@@ -482,6 +482,79 @@ class TestTransactionsDfPagination:
             pytest.skip('Polars not installed')
 
 
+class TestStreamingDecodeAndTopicOperators:
+    """Regression tests for decoded iteration paths."""
+
+    @pytest.mark.asyncio
+    async def test_iter_transactions_applies_abi_decode(
+        self, client: ChainscanClient, mock_call: AsyncMock, monkeypatch
+    ) -> None:
+        mock_call.side_effect = [
+            [
+                {
+                    'hash': '0x1',
+                    'input': '0xabc',
+                }
+            ],
+            [],
+        ]
+
+        def fake_decode(tx: dict[str, Any], abi: list[dict[str, Any]]) -> dict[str, Any]:
+            tx['decoded_func'] = 'transfer'
+            tx['decoded_data'] = {'to': '0x2', 'value': '1'}
+            return tx
+
+        monkeypatch.setattr('aiochainscan.decode.decode_transaction_input', fake_decode)
+
+        out: list[dict[str, Any]] = []
+        async for tx in client.iter_transactions(TEST_ADDRESS, abi=[{'type': 'function'}]):
+            out.append(tx)
+
+        assert len(out) == 1
+        assert out[0]['decoded_func'] == 'transfer'
+        assert out[0]['decoded_data']['value'] == '1'
+
+    @pytest.mark.asyncio
+    async def test_iter_logs_preserves_topic_operators_and_decodes(
+        self, client: ChainscanClient, mock_call: AsyncMock, monkeypatch
+    ) -> None:
+        mock_call.side_effect = [
+            [
+                {
+                    'address': TEST_CONTRACT,
+                    'topics': ['0xabc'],
+                    'data': '0x',
+                }
+            ],
+            [],
+        ]
+
+        def fake_decode(log: dict[str, Any], abi: list[dict[str, Any]]) -> dict[str, Any]:
+            log['decoded_event'] = 'Transfer'
+            log['decoded_data'] = {'from': TEST_ADDRESS}
+            return log
+
+        monkeypatch.setattr('aiochainscan.decode.decode_log_data', fake_decode)
+
+        out: list[dict[str, Any]] = []
+        async for log in client.iter_logs(
+            TEST_CONTRACT,
+            abi=[{'type': 'event'}],
+            topics=['0xtopic0', '0xtopic1'],
+            topic_operators=['and'],
+            batch_size=1,
+        ):
+            out.append(log)
+
+        assert len(out) == 1
+        assert out[0]['decoded_event'] == 'Transfer'
+        assert mock_call.await_count == 2
+        first_call_kwargs = mock_call.await_args_list[0].kwargs
+        assert first_call_kwargs['topic0'] == '0xtopic0'
+        assert first_call_kwargs['topic1'] == '0xtopic1'
+        assert first_call_kwargs['topic0_1_opr'] == 'and'
+
+
 # ---------------------------------------------------------------------------
 # Method coverage: every Method enum value should have a convenience path
 # ---------------------------------------------------------------------------
