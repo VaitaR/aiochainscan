@@ -390,6 +390,26 @@ class TestPaginatedConvenienceMethods:
         assert result[2]['hash'] == '0x3'
 
     @pytest.mark.asyncio
+    async def test_get_all_transactions_warns_on_large_aggregation(
+        self, client: ChainscanClient, monkeypatch, caplog
+    ) -> None:
+        from aiochainscan.core.mixins import account as account_mixin
+
+        monkeypatch.setattr(account_mixin, 'AGGREGATION_WARNING_THRESHOLD', 4)
+
+        async def fake_stream(*args: Any, **kwargs: Any) -> AsyncIterator[list[dict[str, Any]]]:
+            yield [{'hash': '0x1'}, {'hash': '0x2'}]
+            yield [{'hash': '0x3'}, {'hash': '0x4'}]
+
+        client.iter_transactions_streaming = fake_stream  # type: ignore[assignment]
+
+        with caplog.at_level('WARNING'):
+            result = await client.get_all_transactions('0xABC')
+
+        assert len(result) == 4
+        assert 'Aggregating >100k transactions in memory' in caplog.text
+
+    @pytest.mark.asyncio
     async def test_get_all_token_transfers(self, client: ChainscanClient) -> None:
         async def fake_stream(*args: Any, **kwargs: Any) -> AsyncIterator[list[dict[str, Any]]]:
             yield [{'hash': '0xT1'}]

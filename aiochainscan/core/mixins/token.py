@@ -6,6 +6,7 @@ from typing import Any, Protocol
 
 from ...domain.models import Address
 from ..method import Method
+from ..types import JSONDict
 
 
 class _TokenClientProtocol(Protocol):
@@ -26,8 +27,8 @@ class TokenMixin:
         )
         return str(result)
 
-    async def get_token_info(self: _TokenClientProtocol, contract_address: str) -> dict[str, Any]:
-        result: dict[str, Any] = await self.call(
+    async def get_token_info(self: _TokenClientProtocol, contract_address: str) -> JSONDict:
+        result: JSONDict = await self.call(
             Method.TOKEN_INFO, contractaddress=str(Address(contract_address))
         )
         return result

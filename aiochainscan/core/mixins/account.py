@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any, Protocol
 
 from ...domain.models import Address
 from ..method import Method
+from ..types import JSONList
 
 if TYPE_CHECKING:
     from ...ports.progress import ProgressCallback
+
+
+logger = logging.getLogger(__name__)
+AGGREGATION_WARNING_THRESHOLD = 100_000
 
 
 class _AccountClientProtocol(Protocol):
@@ -64,7 +70,7 @@ class AccountMixin:
         end_block: int | None = None,
         page: int = 1,
         offset: int = 100,
-    ) -> list[dict[str, Any]]:
+    ) -> JSONList:
         """Get list of normal transactions for address."""
         addr = Address(address)
         params: dict[str, Any] = {'address': str(addr)}
@@ -74,7 +80,7 @@ class AccountMixin:
             params['offset'] = offset
             if end_block is not None:
                 params['endblock'] = end_block
-        result: list[dict[str, Any]] = await self.call(Method.ACCOUNT_TRANSACTIONS, **params)
+        result: JSONList = await self.call(Method.ACCOUNT_TRANSACTIONS, **params)
         return result
 
     async def get_token_transfers(
@@ -83,7 +89,7 @@ class AccountMixin:
         contract_address: str | None = None,
         start_block: int = 0,
         end_block: int | None = None,
-    ) -> list[dict[str, Any]]:
+    ) -> JSONList:
         """Get ERC20 token transfers for address."""
         addr = Address(address)
         params: dict[str, Any] = {'address': str(addr)}
@@ -93,7 +99,7 @@ class AccountMixin:
                 params['contractaddress'] = str(Address(contract_address))
             if end_block:
                 params['endblock'] = end_block
-        result: list[dict[str, Any]] = await self.call(Method.ACCOUNT_ERC20_TRANSFERS, **params)
+        result: JSONList = await self.call(Method.ACCOUNT_ERC20_TRANSFERS, **params)
         return result
 
     async def get_internal_transactions(
@@ -104,7 +110,7 @@ class AccountMixin:
         page: int = 1,
         offset: int = 100,
         sort: str = 'asc',
-    ) -> list[dict[str, Any]]:
+    ) -> JSONList:
         """Get internal transactions for an address (single page)."""
         addr = Address(address)
         params: dict[str, Any] = {
@@ -119,11 +125,9 @@ class AccountMixin:
         result: Any = await self.call(Method.ACCOUNT_INTERNAL_TXS, **params)
         return result if isinstance(result, list) else []
 
-    async def get_token_portfolio(
-        self: _AccountClientProtocol, address: str
-    ) -> list[dict[str, Any]]:
+    async def get_token_portfolio(self: _AccountClientProtocol, address: str) -> JSONList:
         """Get all ERC20 tokens held by address."""
-        result: list[dict[str, Any]] = await self.call(
+        result: JSONList = await self.call(
             Method.ACCOUNT_TOKEN_PORTFOLIO, address=str(Address(address))
         )
         return result
@@ -137,7 +141,7 @@ class AccountMixin:
         page: int = 1,
         offset: int = 100,
         sort: str = 'asc',
-    ) -> list[dict[str, Any]]:
+    ) -> JSONList:
         """Get ERC-721 token transfers for an address."""
         params: dict[str, Any] = {
             'address': address,
@@ -161,7 +165,7 @@ class AccountMixin:
         page: int = 1,
         offset: int = 100,
         sort: str = 'asc',
-    ) -> list[dict[str, Any]]:
+    ) -> JSONList:
         """Get ERC-1155 token transfers for an address."""
         params: dict[str, Any] = {
             'address': address,
@@ -176,12 +180,10 @@ class AccountMixin:
         result: Any = await self.call(Method.ACCOUNT_ERC1155_TRANSFERS, **params)
         return result if isinstance(result, list) else []
 
-    async def get_nft_portfolio(
-        self: _AccountClientProtocol, address: str
-    ) -> list[dict[str, Any]]:
+    async def get_nft_portfolio(self: _AccountClientProtocol, address: str) -> JSONList:
         """Get all NFTs owned by an address."""
         result: Any = await self.call(Method.ACCOUNT_NFT_PORTFOLIO, address=str(Address(address)))
-        items: list[dict[str, Any]] = (
+        items: JSONList = (
             result
             if isinstance(result, list)
             else result.get('items', [])
@@ -196,9 +198,9 @@ class AccountMixin:
         from_block: int = 0,
         to_block: int | str | None = None,
         on_progress: ProgressCallback | None = None,
-    ) -> list[dict[str, Any]]:
+    ) -> JSONList:
         """Get all transactions by aggregating streaming batches."""
-        all_txs: list[dict[str, Any]] = []
+        all_txs: JSONList = []
         async for batch in self.iter_transactions_streaming(
             address=address,
             from_block=from_block,
@@ -207,6 +209,11 @@ class AccountMixin:
             on_progress=on_progress,
         ):
             all_txs.extend(batch)
+            if len(all_txs) == AGGREGATION_WARNING_THRESHOLD:
+                logger.warning(
+                    'Aggregating >100k transactions in memory. '
+                    'Consider using iter_transactions_streaming() to avoid OOM.'
+                )
         return all_txs
 
     async def get_all_token_transfers(
@@ -216,9 +223,9 @@ class AccountMixin:
         from_block: int = 0,
         to_block: int | str | None = None,
         on_progress: ProgressCallback | None = None,
-    ) -> list[dict[str, Any]]:
+    ) -> JSONList:
         """Get all ERC20 token transfers by aggregating streaming batches."""
-        all_transfers: list[dict[str, Any]] = []
+        all_transfers: JSONList = []
         async for batch in self.iter_token_transfers_streaming(
             address=address,
             from_block=from_block,
@@ -228,6 +235,11 @@ class AccountMixin:
             on_progress=on_progress,
         ):
             all_transfers.extend(batch)
+            if len(all_transfers) == AGGREGATION_WARNING_THRESHOLD:
+                logger.warning(
+                    'Aggregating >100k token transfers in memory. '
+                    'Consider using iter_token_transfers_streaming() to avoid OOM.'
+                )
         return all_transfers
 
     async def get_all_internal_transactions(
@@ -236,9 +248,9 @@ class AccountMixin:
         from_block: int = 0,
         to_block: int | str | None = None,
         on_progress: ProgressCallback | None = None,
-    ) -> list[dict[str, Any]]:
+    ) -> JSONList:
         """Get all internal transactions by aggregating streaming batches."""
-        all_txs: list[dict[str, Any]] = []
+        all_txs: JSONList = []
         async for batch in self.iter_internal_transactions_streaming(
             address=address,
             from_block=from_block,
@@ -247,4 +259,9 @@ class AccountMixin:
             on_progress=on_progress,
         ):
             all_txs.extend(batch)
+            if len(all_txs) == AGGREGATION_WARNING_THRESHOLD:
+                logger.warning(
+                    'Aggregating >100k internal transactions in memory. '
+                    'Consider using iter_internal_transactions_streaming() to avoid OOM.'
+                )
         return all_txs

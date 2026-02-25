@@ -250,6 +250,38 @@ class TestTransactionsToDataframe:
         hashes = df['hash'].to_list()
         assert hashes == ['0xasync0', '0xasync1', '0xasync2']
 
+    @pytest.mark.asyncio
+    async def test_warns_on_large_materialization(self, monkeypatch, caplog):
+        """Warn when too many rows are accumulated in memory before DataFrame build."""
+        from aiochainscan.services import analytics as analytics_mod
+
+        monkeypatch.setattr(analytics_mod, 'OOM_WARNING_THRESHOLD', 2)
+        txs = [
+            {
+                'hash': '0x1',
+                'block_number': 1,
+                'from': '0xsender',
+                'to': '0xrecipient',
+                'value': '1',
+                'gas_used': '21000',
+                'timestamp': '1',
+            },
+            {
+                'hash': '0x2',
+                'block_number': 2,
+                'from': '0xsender',
+                'to': '0xrecipient',
+                'value': '2',
+                'gas_used': '21000',
+                'timestamp': '2',
+            },
+        ]
+
+        with caplog.at_level('WARNING'):
+            _ = await transactions_to_dataframe(txs)
+
+        assert 'Materializing 2 transactions in-memory' in caplog.text
+
 
 class TestTokenPortfolioToDataframe:
     """Tests for token_portfolio_to_dataframe function."""
