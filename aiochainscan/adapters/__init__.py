@@ -13,7 +13,6 @@ except ImportError:
     AiohttpClient = None  # type: ignore[misc, assignment]
 
 from .aiolimiter_adapter import AioLimiterAdapter
-from .endpoint_builder_urlbuilder import UrlBuilderEndpoint
 from .httpx_client import HttpxClientAdapter
 from .retry_exponential import ExponentialBackoffRetry
 from .simple_rate_limiter import SimpleRateLimiter
@@ -26,5 +25,4 @@ __all__ = [
     'HttpxClientAdapter',
     'SimpleRateLimiter',
     'TenacityRetryAdapter',
-    'UrlBuilderEndpoint',
 ]

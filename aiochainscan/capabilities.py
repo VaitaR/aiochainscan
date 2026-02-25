@@ -93,3 +93,21 @@ def get_supported_features(scanner_id: str, network: str) -> set[FeatureName]:
     """
     target = (scanner_id, network)
     return {feature for feature, combinations in FEATURE_SUPPORT.items() if target in combinations}
+
+
+def get_capabilities_overview() -> dict[str, object]:
+    """Return capability matrix and scanner metadata overview."""
+    from aiochainscan.config import get_config_manager
+
+    manager = get_config_manager()
+    builtin_scanners = manager._get_builtin_scanner_definitions()  # noqa: SLF001
+    scanners: dict[str, dict[str, object]] = {
+        scanner_id: {
+            'name': cfg.name,
+            'domain': cfg.base_domain,
+            'networks': sorted(cfg.supported_networks),
+        }
+        for scanner_id, cfg in builtin_scanners.items()
+    }
+    features = {feature: combinations.copy() for feature, combinations in FEATURE_SUPPORT.items()}
+    return {'features': features, 'scanners': scanners}

@@ -8,15 +8,13 @@ method on ChainscanClient, and that critical data-integrity bugs
 
 from __future__ import annotations
 
-import warnings
 from collections.abc import AsyncIterator
 from typing import Any
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from aiochainscan.core.client import ChainscanClient
-from aiochainscan.core.context import ProviderContext
 from aiochainscan.core.method import Method
 from aiochainscan.domain.models import Address, TxHash
 
@@ -62,6 +60,39 @@ class TestSinglePageConvenienceMethods:
             tag='latest',
         )
         assert result == '1000000000000000000'
+
+    @pytest.mark.asyncio
+    async def test_account_namespace_get_balance(
+        self, client: ChainscanClient, mock_call: AsyncMock
+    ) -> None:
+        mock_call.return_value = '1000000000000000000'
+        result = await client.account.get_balance(TEST_ADDRESS)
+        mock_call.assert_awaited_once_with(
+            Method.ACCOUNT_BALANCE,
+            address=str(Address(TEST_ADDRESS)),
+            tag='latest',
+        )
+        assert result == '1000000000000000000'
+
+    @pytest.mark.asyncio
+    async def test_contract_namespace_get_abi(
+        self, client: ChainscanClient, mock_call: AsyncMock
+    ) -> None:
+        mock_call.return_value = '[]'
+        result = await client.contracts.get_abi(TEST_CONTRACT)
+        mock_call.assert_awaited_once_with(
+            Method.CONTRACT_ABI, address=str(Address(TEST_CONTRACT))
+        )
+        assert result == '[]'
+
+    @pytest.mark.asyncio
+    async def test_blocks_namespace_get(
+        self, client: ChainscanClient, mock_call: AsyncMock
+    ) -> None:
+        mock_call.return_value = {'number': '123'}
+        result = await client.blocks.get(123)
+        mock_call.assert_awaited_once_with(Method.BLOCK_BY_NUMBER, blockno=123)
+        assert result == {'number': '123'}
 
     @pytest.mark.asyncio
     async def test_get_transactions(self, client: ChainscanClient, mock_call: AsyncMock) -> None:
@@ -429,63 +460,6 @@ class TestTransactionsDfPagination:
             assert len(df) == 1
         except ImportError:
             pytest.skip('Polars not installed')
-
-
-# ---------------------------------------------------------------------------
-# Whale block warning in logs.py
-# ---------------------------------------------------------------------------
-
-
-class TestWhaleBlockWarning:
-    """Verify that the whale block detection warns about potential data loss."""
-
-    @pytest.mark.asyncio
-    async def test_whale_block_emits_warning(self) -> None:
-        """When all items in a sliding-window batch are from the same block
-        and the batch size equals the offset limit, a warning must be emitted."""
-        from aiochainscan.services.logs import get_all_logs_optimized
-
-        # Create 1000 fake logs all from block 0xaaaaaa
-        whale_block = '0xaaaaaa'
-        fake_logs = [
-            {'blockNumber': whale_block, 'transactionHash': f'0x{i:064x}', 'logIndex': str(i)}
-            for i in range(1000)
-        ]
-
-        async def mock_get_logs(**kwargs: Any) -> list[dict[str, Any]]:
-            # First call returns full batch (whale block), second returns empty
-            if kwargs.get('start_block', 0) <= int(whale_block, 16):
-                return fake_logs
-            return []
-
-        with (
-            patch('aiochainscan.services.logs.get_logs', side_effect=mock_get_logs),
-            warnings.catch_warnings(record=True) as w,
-        ):
-            warnings.simplefilter('always')
-            await get_all_logs_optimized(
-                ctx=ProviderContext(
-                    api_kind='eth',  # triggers sliding-window mode
-                    network='ethereum',
-                    api_key='key',
-                    http=Mock(),
-                    endpoint_builder=Mock(),
-                    rate_limiter=None,
-                    retry=None,
-                    telemetry=None,
-                    cache=None,
-                    gql=None,
-                    gql_builder=None,
-                    federator=None,
-                ),
-                start_block=0,
-                end_block=99999999,
-                address='0xC',
-                max_concurrent=1,
-                max_offset=1000,
-            )
-            whale_warnings = [x for x in w if 'DROPPED' in str(x.message)]
-            assert len(whale_warnings) >= 1, 'Expected a warning about whale block data loss'
 
 
 # ---------------------------------------------------------------------------

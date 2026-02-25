@@ -5,6 +5,7 @@ Provides high-performance data export for Data Engineers and AI agents.
 Install with: pip install aiochainscan[data]
 """
 
+import asyncio
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any
 
@@ -18,6 +19,12 @@ try:
     POLARS_AVAILABLE = True
 except ImportError:
     POLARS_AVAILABLE = False
+
+
+def require_polars() -> None:
+    """Ensure Polars optional dependency is available."""
+    if not POLARS_AVAILABLE:
+        raise PolarsNotAvailableError()
 
 
 class PolarsNotAvailableError(ImportError):
@@ -45,12 +52,17 @@ async def transactions_to_dataframe(
     Raises:
         PolarsNotAvailableError: If Polars is not installed
     """
-    if not POLARS_AVAILABLE:
-        raise PolarsNotAvailableError()
+    require_polars()
 
     # Collect from async iterator if needed
     if hasattr(transactions, '__aiter__'):
-        tx_list = [tx async for tx in transactions]
+        tx_list = []
+        i = 0
+        async for tx in transactions:
+            tx_list.append(tx)
+            i += 1
+            if i % 1000 == 0:
+                await asyncio.sleep(0)
     else:
         tx_list = list(transactions)
 
@@ -71,38 +83,43 @@ async def transactions_to_dataframe(
             }
         )
 
-    # Normalize transaction data using column-oriented construction for performance
-    columns: dict[str, list[Any]] = {
-        'hash': [],
-        'block_number': [],
-        'from_address': [],
-        'to_address': [],
-        'value_wei': [],
-        'value_eth': [],
-        'gas_used': [],
-        'timestamp': [],
-    }
-
+    rows: list[dict[str, Any]] = []
     for tx in tx_list:
         # Handle nested address objects (BlockScout V2 format)
         from_addr = tx.get('from', {})
         to_addr = tx.get('to', {})
 
-        columns['hash'].append(tx.get('hash', ''))
-        columns['block_number'].append(tx.get('block_number') or tx.get('blockNumber'))
-        columns['from_address'].append(
-            from_addr.get('hash') if isinstance(from_addr, dict) else from_addr
-        )
-        columns['to_address'].append(
-            to_addr.get('hash') if isinstance(to_addr, dict) else to_addr or ''
+        value_wei = str(int(tx.get('value', 0)))
+        from_value = from_addr.get('hash') if isinstance(from_addr, dict) else from_addr
+        to_value = to_addr.get('hash') if isinstance(to_addr, dict) else to_addr
+
+        rows.append(
+            {
+                'hash': tx.get('hash', ''),
+                'block_number': tx.get('block_number') or tx.get('blockNumber'),
+                'from_address': from_value,
+                'to_address': to_value or '',
+                'value_wei': value_wei,
+                'value_eth': int(value_wei) / 1e18,
+                'gas_used': str(int(tx.get('gas_used', 0) or tx.get('gasUsed', 0))),
+                'timestamp': tx.get('timestamp', tx.get('timeStamp', '')),
+            }
         )
         # Store Wei as string to prevent integer overflow (Int64 max ~ 9.22 ETH)
-        columns['value_wei'].append(str(int(tx.get('value', 0))))
-        columns['value_eth'].append(int(tx.get('value', 0)) / 1e18)
-        columns['gas_used'].append(str(int(tx.get('gas_used', 0) or tx.get('gasUsed', 0))))
-        columns['timestamp'].append(tx.get('timestamp', tx.get('timeStamp', '')))
 
-    return pl.DataFrame(columns)
+    return pl.from_dicts(
+        rows,
+        schema_overrides={
+            'hash': pl.Utf8,
+            'block_number': pl.Int64,
+            'from_address': pl.Utf8,
+            'to_address': pl.Utf8,
+            'value_wei': pl.Utf8,
+            'value_eth': pl.Float64,
+            'gas_used': pl.Utf8,
+            'timestamp': pl.Utf8,
+        },
+    )
 
 
 async def token_portfolio_to_dataframe(tokens: list[dict[str, Any]]) -> 'pl.DataFrame':
@@ -115,8 +132,7 @@ async def token_portfolio_to_dataframe(tokens: list[dict[str, Any]]) -> 'pl.Data
     Returns:
         Polars DataFrame with token data
     """
-    if not POLARS_AVAILABLE:
-        raise PolarsNotAvailableError()
+    require_polars()
 
     if not tokens:
         return pl.DataFrame(
@@ -129,15 +145,7 @@ async def token_portfolio_to_dataframe(tokens: list[dict[str, Any]]) -> 'pl.Data
             }
         )
 
-    # Use column-oriented construction for performance
-    columns: dict[str, list[Any]] = {
-        'symbol': [],
-        'name': [],
-        'contract_address': [],
-        'balance': [],
-        'decimals': [],
-    }
-
+    rows: list[dict[str, Any]] = []
     for item in tokens:
         token_info = item.get('token', {})
         decimals = int(token_info.get('decimals', 18))
@@ -146,13 +154,26 @@ async def token_portfolio_to_dataframe(tokens: list[dict[str, Any]]) -> 'pl.Data
         # Handle both Etherscan (uses 'address') and BlockScout V2 (uses 'address_hash')
         contract_addr = token_info.get('address_hash') or token_info.get('address', '')
 
-        columns['symbol'].append(token_info.get('symbol', ''))
-        columns['name'].append(token_info.get('name', ''))
-        columns['contract_address'].append(contract_addr)
-        columns['balance'].append(value / (10**decimals) if decimals > 0 else float(value))
-        columns['decimals'].append(decimals)
+        rows.append(
+            {
+                'symbol': token_info.get('symbol', ''),
+                'name': token_info.get('name', ''),
+                'contract_address': contract_addr,
+                'balance': value / (10**decimals) if decimals > 0 else float(value),
+                'decimals': decimals,
+            }
+        )
 
-    return pl.DataFrame(columns)
+    return pl.from_dicts(
+        rows,
+        schema_overrides={
+            'symbol': pl.Utf8,
+            'name': pl.Utf8,
+            'contract_address': pl.Utf8,
+            'balance': pl.Float64,
+            'decimals': pl.Int64,
+        },
+    )
 
 
 # Convenience function for ChainscanClient integration
