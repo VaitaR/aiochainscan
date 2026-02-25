@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from time import monotonic
 from typing import Any
 
-from aiochainscan.domain.dto import TransactionDTO
+from aiochainscan.domain.dto_v2 import TransactionDTO
 from aiochainscan.domain.models import TxHash
 from aiochainscan.ports.cache import Cache
 from aiochainscan.ports.endpoint_builder import EndpointBuilder
@@ -163,28 +163,11 @@ async def get_transaction_by_hash(
 
 
 def normalize_transaction(raw: dict[str, Any]) -> TransactionDTO:
-    """Normalize provider-shaped transaction into TransactionDTO."""
+    """Normalize provider-shaped transaction into TransactionDTO.
 
-    def hex_to_int(h: str | None) -> int | None:
-        if not h:
-            return None
-        try:
-            return int(h, 16) if isinstance(h, str) and h.startswith('0x') else int(h)
-        except Exception:
-            return None
-
-    tx_hash_value = raw.get('hash') or raw.get('tx_hash') or raw.get('txhash')
-    return {
-        'tx_hash': str(tx_hash_value) if tx_hash_value is not None else '',
-        'block_number': hex_to_int(raw.get('blockNumber') or raw.get('block_number')),
-        'from_address': raw.get('from'),
-        'to_address': raw.get('to'),
-        'value_wei': hex_to_int(raw.get('value')),
-        'gas': hex_to_int(raw.get('gas')),
-        'gas_price_wei': hex_to_int(raw.get('gasPrice')),
-        'nonce': hex_to_int(raw.get('nonce')),
-        'input': raw.get('input'),
-    }
+    Pydantic handles all field aliases and hex→int conversion automatically.
+    """
+    return TransactionDTO.model_validate(raw)
 
 
 async def get_tx_receipt_status(

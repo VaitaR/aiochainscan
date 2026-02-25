@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from aiochainscan.domain.dto import BlockDTO
+from aiochainscan.domain.dto_v2 import BlockDTO
 from aiochainscan.ports.cache import Cache
 from aiochainscan.ports.endpoint_builder import EndpointBuilder
 from aiochainscan.ports.http_client import HttpClient
@@ -261,26 +261,22 @@ async def get_block_number_by_timestamp(
 
 
 def normalize_block(raw: dict[str, Any]) -> BlockDTO:
-    """Normalize provider-shaped block into BlockDTO."""
+    """Normalize provider-shaped block into BlockDTO.
 
-    def hex_to_int(h: str | None) -> int | None:
-        if not h:
-            return None
-        try:
-            return int(h, 16) if isinstance(h, str) and h.startswith('0x') else int(h)
-        except Exception:
-            return None
-
-    txs = raw.get('transactions')
-    tx_count: int | None = len(txs) if isinstance(txs, list) else None
-
-    return {
-        'block_number': hex_to_int(raw.get('number') or raw.get('blockNumber')),
-        'hash': raw.get('hash'),
-        'parent_hash': raw.get('parentHash'),
-        'miner': raw.get('miner') or raw.get('author'),
-        'timestamp': hex_to_int(raw.get('timestamp')),
-        'gas_limit': hex_to_int(raw.get('gasLimit')),
-        'gas_used': hex_to_int(raw.get('gasUsed')),
-        'tx_count': tx_count,
-    }
+    Pre-processes JSON-RPC field name variants before Pydantic validation:
+    - 'number' (JSON-RPC) → 'blockNumber' (Etherscan alias in BlockDTO)
+    - 'author' (some clients) → 'miner'
+    - Derives 'txCount' from 'transactions' list when present
+    """
+    data = dict(raw)
+    # JSON-RPC eth_getBlockByNumber uses 'number', Etherscan uses 'blockNumber'
+    if 'number' in data and 'blockNumber' not in data:
+        data['blockNumber'] = data['number']
+    # Some chain clients use 'author' instead of 'miner'
+    if not data.get('miner') and data.get('author'):
+        data['miner'] = data['author']
+    # Derive txCount from the transactions list when the field is absent
+    txs = data.get('transactions')
+    if isinstance(txs, list) and 'txCount' not in data:
+        data['txCount'] = len(txs)
+    return BlockDTO.model_validate(data)

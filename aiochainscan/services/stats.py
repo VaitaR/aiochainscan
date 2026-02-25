@@ -5,8 +5,7 @@ from datetime import date
 from time import monotonic
 from typing import Any
 
-from aiochainscan.domain.dto import DailySeriesDTO, EthPriceDTO
-from aiochainscan.domain.dto_v2 import parse_hex_or_int
+from aiochainscan.domain.dto_v2 import DailySeriesDTO, EthPriceDTO, parse_hex_or_int
 from aiochainscan.ports.cache import Cache
 from aiochainscan.ports.endpoint_builder import EndpointBuilder
 from aiochainscan.ports.http_client import HttpClient
@@ -236,25 +235,7 @@ async def get_chain_size(
 
 def normalize_eth_price(raw: dict[str, Any]) -> EthPriceDTO:
     """Normalize provider ETH price payload to EthPriceDTO."""
-
-    def to_float(value: Any) -> float | None:
-        try:
-            return float(value)
-        except Exception:
-            return None
-
-    def to_int(value: Any) -> int | None:
-        try:
-            return int(value)
-        except Exception:
-            return None
-
-    return {
-        'eth_usd': to_float(raw.get('ethusd')),
-        'eth_btc': to_float(raw.get('ethbtc')),
-        'eth_usd_timestamp': to_int(raw.get('ethusd_timestamp')),
-        'eth_btc_timestamp': to_int(raw.get('ethbtc_timestamp')),
-    }
+    return EthPriceDTO.model_validate(raw)
 
 
 async def _get_daily_series(
@@ -339,23 +320,27 @@ def _to_float(value: Any) -> float | None:
 
 
 def normalize_daily_series(raw: list[dict[str, Any]], *, value_key: str) -> list[DailySeriesDTO]:
-    """Normalize a provider daily-series payload to a simple DTO list.
+    """Normalize a provider daily-series payload to DailySeriesDTO list.
 
-    This helper accepts a specific value_key for the metric of interest since
-    different stats actions expose different field names.
+    The value_key parameter selects which provider-specific field contains the metric
+    (e.g. 'transactionCount', 'newAddressCount'). This can't be a static Pydantic
+    alias since it varies per endpoint, so we pre-process manually.
     """
-    normalized: list[DailySeriesDTO] = []
+    result: list[DailySeriesDTO] = []
     for item in raw:
         if not isinstance(item, dict):
             continue
-        normalized.append(
-            {
-                'utc_date': str(item.get('UTCDate')) if item.get('UTCDate') is not None else None,
-                'unix_timestamp': parse_hex_or_int(item.get('unixTimeStamp')),
-                'value': _to_float(item.get(value_key)),
-            }
+        utc = item.get('UTCDate')
+        ts_raw = item.get('unixTimeStamp')
+        val_raw = item.get(value_key)
+        result.append(
+            DailySeriesDTO(
+                utc_date=str(utc) if utc is not None else None,
+                unix_timestamp=parse_hex_or_int(ts_raw),
+                value=_to_float(val_raw),
+            )
         )
-    return normalized
+    return result
 
 
 # Convenience specific normalizers (value_key bound)
