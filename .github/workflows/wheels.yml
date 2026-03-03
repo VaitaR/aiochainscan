@@ -28,8 +28,8 @@ jobs:
       - name: Build wheels
         uses: pypa/cibuildwheel@v2.20.0
         env:
-          # Build for Python 3.10, 3.11, 3.12, 3.13
-          CIBW_BUILD: "cp310-* cp311-* cp312-* cp313-*"
+          # Build for Python 3.12, 3.13 only (requires-python >= 3.12)
+          CIBW_BUILD: "cp312-* cp313-*"
           CIBW_SKIP: "pp* *-musllinux*"  # Skip PyPy and musllinux
 
           # Explicitly install maturin>=1.8 (fixes ZIP64 "Large file" error)
