@@ -7,14 +7,12 @@ authors = [
 ]
 license = { text = "MIT" }
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
 ]
@@ -52,6 +50,9 @@ mcp = [
 ]
 data = [
     "polars>=1.0.0",
+]
+otel = [
+    "opentelemetry-api>=1.20.0",
 ]
 
 [project.scripts]
@@ -93,7 +94,7 @@ markers = [
 
 [tool.ruff]
 line-length = 99
-target-version = "py310"
+target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "W", "F", "B", "I", "SIM", "UP", "N", "C4"]
@@ -121,7 +122,7 @@ aiochainscan = ["py.typed", "*.pyi", "fastabi/Cargo.toml", "fastabi/**/*.rs"]
 [tool.poetry.group.dev.dependencies]
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.12"
 strict = true
 warn_return_any = true
 warn_unused_configs = true
@@ -231,6 +232,10 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = ["mcp", "mcp.*", "mcp.server.*", "mcp.server.fastmcp"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["opentelemetry", "opentelemetry.*"]
 ignore_missing_imports = true
 
 # Ignore untyped decorators in mcp_server when mcp package is missing

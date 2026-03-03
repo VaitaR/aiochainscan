@@ -28,10 +28,16 @@ try:
     from aiochainscan_fastabi import decode_many_flat as _fast_decode_many_flat_json
     from aiochainscan_fastabi import decode_many_hex as _fast_decode_many_hex_json
     from aiochainscan_fastabi import decode_many_raw as _fast_decode_many_raw_json
+    from aiochainscan_fastabi import decode_many_to_arrow as _fast_decode_many_to_arrow
     from aiochainscan_fastabi import decode_one as _fast_decode_one_json
     from aiochainscan_fastabi import decode_one_direct as _fast_decode_one_direct_json
 
     FASTABI_AVAILABLE = True
+    ARROW_AVAILABLE = True
+
+    def _fast_decode_to_arrow(calldatas: list[bytes], abi_json: str) -> Any:
+        """Decode many transactions and return Arrow RecordBatch (zero-copy)."""
+        return _fast_decode_many_to_arrow(calldatas, abi_json)
 
     # Wrapper functions that parse JSON returned from Rust
     # This avoids GIL blocking - orjson is optimized for fast object creation
@@ -75,6 +81,7 @@ try:
 
 except ImportError:
     FASTABI_AVAILABLE = False
+    ARROW_AVAILABLE = False
 
 FUNCTION_SELECTOR_LENGTH = 10  # '0x' + 4 bytes
 

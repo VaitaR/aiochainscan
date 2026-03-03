@@ -188,6 +188,49 @@ async def token_portfolio_to_dataframe(tokens: list[dict[str, Any]]) -> 'pl.Data
     )
 
 
+async def transactions_to_dataframe_arrow(
+    calldatas: list[bytes],
+    abi_json: str,
+) -> 'pl.DataFrame':
+    """Convert decoded transaction data directly to Polars DataFrame via Arrow zero-copy.
+
+    This bypasses JSON serialization entirely. Data flows:
+    Rust decode → Arrow columns → Polars DataFrame (zero copy).
+
+    Args:
+        calldatas: List of raw calldata bytes
+        abi_json: Contract ABI as JSON string
+
+    Returns:
+        Polars DataFrame with decoded function calls
+
+    Raises:
+        PolarsNotAvailableError: If Polars is not installed
+        ImportError: If fastabi with Arrow support is not available
+    """
+    require_polars()
+
+    from aiochainscan.decode import ARROW_AVAILABLE
+
+    if not ARROW_AVAILABLE:
+        raise ImportError(
+            'Arrow zero-copy requires fastabi with Arrow support. '
+            'Rebuild with: cd aiochainscan/fastabi && maturin develop --release'
+        )
+
+    # Run Rust decode + Arrow construction in thread pool
+    import asyncio
+
+    from aiochainscan.decode import _fast_decode_to_arrow
+
+    record_batch = await asyncio.to_thread(_fast_decode_to_arrow, calldatas, abi_json)
+
+    # Zero-copy conversion: Arrow RecordBatch → Polars DataFrame
+    df = pl.from_arrow(record_batch)
+    assert isinstance(df, pl.DataFrame)  # RecordBatch always yields DataFrame
+    return df
+
+
 # Convenience function for ChainscanClient integration
 def is_polars_available() -> bool:
     """Check if Polars is installed and available."""

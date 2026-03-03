@@ -37,3 +37,11 @@ def decode_many_raw(calldatas: list[bytes], abi_json: str) -> str:
 def decode_many_flat(calldatas: list[bytes], abi_json: str) -> str:
     """Decode many transactions as flat lists. Returns JSON string of [[name, param1, ...], ...]."""
     ...
+
+def decode_many_to_arrow(calldatas: list[bytes], abi_json: str) -> Any:
+    """Decode many transactions and return as Arrow RecordBatch (zero-copy to Polars).
+
+    Returns a PyArrow-compatible RecordBatch that can be passed directly to
+    polars.from_arrow() without any data copying.
+    """
+    ...
