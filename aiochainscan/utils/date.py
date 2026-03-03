@@ -4,7 +4,7 @@ Date utilities for aiochainscan.
 This module provides helper functions for working with dates in API requests.
 """
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 
 
 def default_range(days: int = 30) -> tuple[date, date]:
@@ -28,6 +28,6 @@ def default_range(days: int = 30) -> tuple[date, date]:
         >>> print(f"From {start} to {end}")  # Last 7 days ending yesterday
     """
     # Use yesterday UTC as safe closed day (already finalized by all explorers)
-    end_date = (datetime.now(timezone.utc) - timedelta(days=1)).date()
+    end_date = (datetime.now(UTC) - timedelta(days=1)).date()
     start_date = end_date - timedelta(days=days)
     return start_date, end_date

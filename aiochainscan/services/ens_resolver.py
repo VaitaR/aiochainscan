@@ -197,6 +197,20 @@ class ENSResolver:
 
         return name
 
+    async def _safe_resolve(self, name: str) -> str | None:
+        """Resolve a single name, returning None on failure."""
+        try:
+            return await self.resolve_name(name)
+        except Exception:  # noqa: BLE001
+            return None
+
+    async def _safe_lookup(self, address: str) -> str | None:
+        """Look up a single address, returning None on failure."""
+        try:
+            return await self.lookup_address(address)
+        except Exception:  # noqa: BLE001
+            return None
+
     async def resolve_names(self, names: list[str]) -> dict[str, str]:
         """
         Batch resolve multiple ENS names to addresses.
@@ -216,16 +230,17 @@ class ENSResolver:
         if not self._is_ens_supported():
             return {}
 
-        # Resolve in parallel
-        tasks = [self.resolve_name(name) for name in names]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        # Resolve in parallel with structured concurrency
+        async with asyncio.TaskGroup() as tg:
+            tasks = [tg.create_task(self._safe_resolve(name)) for name in names]
 
         # Build result dict (only successful resolutions)
-        return {
-            name: address
-            for name, address in zip(names, results, strict=False)
-            if isinstance(address, str) and address is not None
-        }
+        resolved: dict[str, str] = {}
+        for name, task in zip(names, tasks, strict=False):
+            result = task.result()
+            if isinstance(result, str):
+                resolved[name] = result
+        return resolved
 
     async def lookup_addresses(self, addresses: list[str]) -> dict[str, str]:
         """
@@ -249,16 +264,17 @@ class ENSResolver:
         if not self._is_ens_supported():
             return {}
 
-        # Lookup in parallel
-        tasks = [self.lookup_address(addr) for addr in addresses]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        # Lookup in parallel with structured concurrency
+        async with asyncio.TaskGroup() as tg:
+            tasks = [tg.create_task(self._safe_lookup(addr)) for addr in addresses]
 
         # Build result dict (only successful lookups)
-        return {
-            addr: name
-            for addr, name in zip(addresses, results, strict=False)
-            if isinstance(name, str) and name is not None
-        }
+        looked_up: dict[str, str] = {}
+        for addr, task in zip(addresses, tasks, strict=False):
+            result = task.result()
+            if isinstance(result, str):
+                looked_up[addr] = result
+        return looked_up
 
     async def _resolve_via_scanner(self, name: str) -> str | None:
         """

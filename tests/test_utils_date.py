@@ -1,4 +1,4 @@
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 
 from aiochainscan.utils.date import default_range
 
@@ -6,7 +6,7 @@ from aiochainscan.utils.date import default_range
 def test_default_range():
     """Test default_range function with various parameters."""
     # Expected end date: yesterday UTC
-    yesterday_utc = (datetime.now(timezone.utc) - timedelta(days=1)).date()
+    yesterday_utc = (datetime.now(UTC) - timedelta(days=1)).date()
 
     # Test default 30 days
     start, end = default_range()

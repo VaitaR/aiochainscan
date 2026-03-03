@@ -6,7 +6,6 @@ Only pure, dependency-free data types live here. No I/O, no logging, no env acce
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Generic, TypeVar
 
 from eth_utils.address import is_address, to_checksum_address
 
@@ -101,11 +100,8 @@ class BlockNumber:
         return str(self.value)
 
 
-T = TypeVar('T')
-
-
 @dataclass(slots=True, frozen=True)
-class Page(Generic[T]):
+class Page[T]:
     """Typed page container for cursor-based pagination.
 
     Items are strongly typed via the generic parameter. The `next_cursor`

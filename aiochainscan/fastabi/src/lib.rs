@@ -1,16 +1,18 @@
 use ethers::abi::{Abi, Function, Token};
 use ethers::utils::keccak256;
-use lru::LruCache;
-use once_cell::sync::OnceCell;
+use mini_moka::sync::Cache;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyAny};
 use pythonize::depythonize;
 use twox_hash::XxHash64;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
-use std::num::NonZeroUsize;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, OnceLock};
 use thiserror::Error;
+use arrow::array::{ArrayRef, StringArray};
+use arrow::datatypes::{DataType, Field, Schema};
+use arrow::record_batch::RecordBatch;
+use pyo3_arrow::PyRecordBatch;
 
 const ABI_CACHE_CAPACITY: usize = 1000;  // Maximum number of ABIs to cache
 
@@ -30,16 +32,23 @@ impl From<FastAbiError> for PyErr {
     }
 }
 
-// Global ABI cache with LRU eviction to prevent unbounded memory growth
-static ABI_CACHE: OnceCell<Mutex<LruCache<u64, Arc<AbiData>>>> = OnceCell::new();
-// Micro-caches to avoid repeated work on hot paths
-// Cache stores (data_hash, abi_hash, json_result) - never use raw pointers as cache keys!
-static LAST_INPUT_JSON: OnceCell<Mutex<Option<(u64, u64, String)>>> = OnceCell::new();
+// Lock-free, thread-safe ABI cache (ready for Python 3.13+ no-GIL)
+static ABI_CACHE: OnceLock<Cache<u64, Arc<AbiData>>> = OnceLock::new();
 
-fn get_abi_cache() -> &'static Mutex<LruCache<u64, Arc<AbiData>>> {
+// Lock-free micro-cache for last decode_input call
+// Uses DashMap with a single key for atomic read/write without Mutex
+static LAST_INPUT_CACHE: OnceLock<dashmap::DashMap<u8, (u64, u64, String)>> = OnceLock::new();
+
+fn get_abi_cache() -> &'static Cache<u64, Arc<AbiData>> {
     ABI_CACHE.get_or_init(|| {
-        Mutex::new(LruCache::new(NonZeroUsize::new(ABI_CACHE_CAPACITY).unwrap()))
+        Cache::builder()
+            .max_capacity(ABI_CACHE_CAPACITY as u64)
+            .build()
     })
+}
+
+fn get_last_input_cache() -> &'static dashmap::DashMap<u8, (u64, u64, String)> {
+    LAST_INPUT_CACHE.get_or_init(|| dashmap::DashMap::with_capacity(1))
 }
 
 #[derive(Clone)]
@@ -76,12 +85,9 @@ fn get_abi_data_from_json(abi_json: &str) -> PyResult<Arc<AbiData>> {
     let cache = get_abi_cache();
     let abi_hash = calculate_abi_hash_memoized(abi_json);
 
-    // Check cache first (LRU get also promotes entry)
-    {
-        let mut cache_guard = cache.lock().unwrap();
-        if let Some(cached) = cache_guard.get(&abi_hash) {
-            return Ok(Arc::clone(cached));
-        }
+    // Lock-free get (mini-moka is thread-safe)
+    if let Some(cached) = cache.get(&abi_hash) {
+        return Ok(cached);
     }
 
     // Parse ABI and build selector map
@@ -99,11 +105,8 @@ fn get_abi_data_from_json(abi_json: &str) -> PyResult<Arc<AbiData>> {
         selector_map,
     });
 
-    // Cache it (LRU automatically evicts oldest when at capacity)
-    {
-        let mut cache_guard = cache.lock().unwrap();
-        cache_guard.put(abi_hash, Arc::clone(&abi_data));
-    }
+    // Lock-free insert (mini-moka handles eviction internally)
+    cache.insert(abi_hash, Arc::clone(&abi_data));
     Ok(abi_data)
 }
 
@@ -131,12 +134,9 @@ fn get_abi_data_direct(py_abi: &Bound<'_, PyAny>) -> PyResult<Arc<AbiData>> {
     let abi_key = canonical_sigs.join(";");
     let abi_hash = calculate_abi_hash(&abi_key);
 
-    // Check cache first (LRU get also promotes entry)
-    {
-        let mut cache_guard = cache.lock().unwrap();
-        if let Some(cached) = cache_guard.get(&abi_hash) {
-            return Ok(Arc::clone(cached));
-        }
+    // Lock-free get (mini-moka is thread-safe)
+    if let Some(cached) = cache.get(&abi_hash) {
+        return Ok(cached);
     }
 
     // Build selector map
@@ -150,11 +150,8 @@ fn get_abi_data_direct(py_abi: &Bound<'_, PyAny>) -> PyResult<Arc<AbiData>> {
         selector_map,
     });
 
-    // Cache it (LRU automatically evicts oldest when at capacity)
-    {
-        let mut cache_guard = cache.lock().unwrap();
-        cache_guard.put(abi_hash, Arc::clone(&abi_data));
-    }
+    // Lock-free insert (mini-moka handles eviction internally)
+    cache.insert(abi_hash, Arc::clone(&abi_data));
     Ok(abi_data)
 }
 
@@ -587,7 +584,9 @@ fn decode_input(input_data: &Bound<'_, PyBytes>, abi_json: &str) -> PyResult<Str
         data.hash(&mut hasher);
         hasher.finish()
     };
-    if let Some((d_hash, a_hash, ref cached)) = *LAST_INPUT_JSON.get_or_init(|| Mutex::new(None)).lock().unwrap() {
+    let last_cache = get_last_input_cache();
+    if let Some(entry) = last_cache.get(&0u8) {
+        let (d_hash, a_hash, ref cached) = *entry;
         if d_hash == data_hash && a_hash == abi_hash {
             return Ok(cached.clone());
         }
@@ -618,7 +617,7 @@ fn decode_input(input_data: &Bound<'_, PyBytes>, abi_json: &str) -> PyResult<Str
                 });
                 let out = result.to_string();
                 // Update micro-cache with data hash, not pointer
-                *LAST_INPUT_JSON.get_or_init(|| Mutex::new(None)).lock().unwrap() = Some((data_hash, abi_hash, out.clone()));
+                get_last_input_cache().insert(0u8, (data_hash, abi_hash, out.clone()));
                 Ok(out)
             }
             Err(_e) => {
@@ -678,6 +677,120 @@ fn convert_token_to_json(token: &Token) -> serde_json::Value {
     }
 }
 
+/// Zero-copy decode: returns Arrow RecordBatch directly to Python/Polars.
+/// Columns: "function_name" (Utf8) + one Utf8 column per ABI parameter.
+/// All values are stringified for uniform schema across heterogeneous calldata.
+#[pyfunction]
+fn decode_many_to_arrow(
+    py: Python<'_>,
+    calldatas: Vec<Vec<u8>>,
+    abi_json: &str,
+) -> PyResult<PyRecordBatch> {
+    let abi_data = get_abi_data_from_json(abi_json)?;
+    let n = calldatas.len();
+
+    // First pass: collect all unique parameter names across all functions
+    // to build a stable schema
+    let mut all_param_names: Vec<String> = Vec::new();
+    let mut seen_params: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for func in abi_data.selector_map.values() {
+        for (i, input) in func.inputs.iter().enumerate() {
+            let name = if input.name.is_empty() {
+                format!("param_{}", i)
+            } else {
+                input.name.clone()
+            };
+            if seen_params.insert(name.clone()) {
+                all_param_names.push(name);
+            }
+        }
+    }
+
+    // Build columns — release GIL during heavy computation
+    let (func_names, param_columns): (Vec<Option<String>>, Vec<Vec<Option<String>>>) =
+        py.allow_threads(|| {
+            let mut func_names_col: Vec<Option<String>> = Vec::with_capacity(n);
+            let mut param_cols: Vec<Vec<Option<String>>> =
+                vec![Vec::with_capacity(n); all_param_names.len()];
+
+            for calldata in &calldatas {
+                if calldata.len() < 4 {
+                    func_names_col.push(Some(String::new()));
+                    for col in &mut param_cols {
+                        col.push(None);
+                    }
+                    continue;
+                }
+
+                let mut selector_array = [0u8; 4];
+                selector_array.copy_from_slice(&calldata[..4]);
+
+                match abi_data.selector_map.get(&selector_array) {
+                    Some(function) => {
+                        func_names_col.push(Some(function.name.clone()));
+
+                        let tokens = match function.decode_input(&calldata[4..]) {
+                            Ok(t) => t,
+                            Err(_) => {
+                                for col in &mut param_cols {
+                                    col.push(None);
+                                }
+                                continue;
+                            }
+                        };
+
+                        // Build a map of param_name → stringified value
+                        let mut decoded: HashMap<String, String> = HashMap::new();
+                        for (i, (input, token)) in
+                            function.inputs.iter().zip(tokens.iter()).enumerate()
+                        {
+                            let name = if input.name.is_empty() {
+                                format!("param_{}", i)
+                            } else {
+                                input.name.clone()
+                            };
+                            let value = convert_token_to_json(token).to_string();
+                            // Strip surrounding quotes from JSON string values
+                            let clean = value.trim_matches('"').to_string();
+                            decoded.insert(name, clean);
+                        }
+
+                        for (j, param_name) in all_param_names.iter().enumerate() {
+                            param_cols[j].push(decoded.get(param_name).cloned());
+                        }
+                    }
+                    None => {
+                        func_names_col.push(Some(String::new()));
+                        for col in &mut param_cols {
+                            col.push(None);
+                        }
+                    }
+                }
+            }
+
+            (func_names_col, param_cols)
+        });
+
+    // Build Arrow arrays
+    let func_name_array: ArrayRef = Arc::new(StringArray::from(func_names));
+
+    let mut fields = vec![Field::new("function_name", DataType::Utf8, false)];
+    let mut columns: Vec<ArrayRef> = vec![func_name_array];
+
+    for (i, param_name) in all_param_names.iter().enumerate() {
+        let array: ArrayRef = Arc::new(StringArray::from(param_columns[i].clone()));
+        fields.push(Field::new(param_name, DataType::Utf8, true));
+        columns.push(array);
+    }
+
+    let schema = Arc::new(Schema::new(fields));
+    let batch = RecordBatch::try_new(schema, columns).map_err(|e| {
+        pyo3::exceptions::PyValueError::new_err(format!("Arrow error: {}", e))
+    })?;
+
+    Ok(PyRecordBatch::new(batch))
+}
+
 /// Python module for fast ABI decoding
 #[pymodule]
 fn aiochainscan_fastabi(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -689,5 +802,6 @@ fn aiochainscan_fastabi(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(decode_many_flat, m)?)?; // ULTIMATE flat lists
     m.add_function(wrap_pyfunction!(decode_many_hex, m)?)?;
     m.add_function(wrap_pyfunction!(decode_input, m)?)?; // Legacy
+    m.add_function(wrap_pyfunction!(decode_many_to_arrow, m)?)?; // Zero-copy Arrow
     Ok(())
 }
