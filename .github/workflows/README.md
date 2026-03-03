@@ -12,7 +12,7 @@ This project uses a simplified two-workflow strategy optimized for Python packag
 
 **Jobs**:
 - **lint** - Pre-commit hooks, mypy type checking, import-linter
-- **test** - Pytest across Python 3.10, 3.11, 3.12 with coverage
+- **test** - Pytest across Python 3.12, 3.13 with coverage
 
 **Does NOT**:
 - Build wheels (too slow, not needed on every push)
@@ -68,7 +68,7 @@ git push
 
 # CI runs:
 # ✓ Lint (pre-commit, mypy, import-linter)
-# ✓ Test (pytest on Python 3.10, 3.11, 3.12)
+# ✓ Test (pytest on Python 3.12, 3.13)
 # → ~3-5 minutes
 ```
 
