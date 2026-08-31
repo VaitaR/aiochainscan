@@ -137,7 +137,7 @@ class TestDecodeTransactionInput:
             'blockNumber': '12345',
         }
 
-    @patch('aiochainscan.decode.decode')
+    @patch('aiochainscan.decode._eth_abi_decode')
     @patch('aiochainscan.decode.keccak_hash')
     def test_decode_transaction_input_success(self, mock_keccak, mock_decode):
         """Test successful transaction input decoding."""
@@ -170,7 +170,7 @@ class TestDecodeTransactionInput:
         assert result['decoded_func'] == ''
         assert result['decoded_data'] == {}
 
-    @patch('aiochainscan.decode.decode')
+    @patch('aiochainscan.decode._eth_abi_decode')
     @patch('aiochainscan.decode.keccak_hash')
     def test_decode_transaction_input_with_bytes_conversion(self, mock_keccak, mock_decode):
         """Test transaction decoding with bytes conversion."""
@@ -277,7 +277,7 @@ class TestDecodeLogData:
             'data': '0x000000000000000000000000000000000000000000000000de0b6b3a76400000',  # value (non-indexed)
         }
 
-    @patch('aiochainscan.decode.decode')
+    @patch('aiochainscan.decode._eth_abi_decode')
     @patch('aiochainscan.decode.keccak_hash')
     def test_decode_log_data_success(self, mock_keccak, mock_decode):
         """Test successful log data decoding."""
@@ -315,7 +315,7 @@ class TestDecodeLogData:
         # Should not have decoded_data if no match
         assert 'decoded_data' not in result
 
-    @patch('aiochainscan.decode.decode')
+    @patch('aiochainscan.decode._eth_abi_decode')
     @patch('aiochainscan.decode.keccak_hash')
     def test_decode_log_data_with_bytes_conversion(self, mock_keccak, mock_decode):
         """Test log decoding with bytes data conversion."""
@@ -354,7 +354,7 @@ class TestDecodeLogData:
 
         assert 'decoded_data' not in result
 
-    @patch('aiochainscan.decode.decode')
+    @patch('aiochainscan.decode._eth_abi_decode')
     @patch('aiochainscan.decode.keccak_hash')
     def test_decode_log_data_only_indexed_params(self, mock_keccak, mock_decode):
         """Test log decoding with only indexed parameters."""

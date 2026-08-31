@@ -1,7 +1,7 @@
 # aiochainscan - Agent Context Guide
 
 > **Purpose**: Quick context for LLM agents working on this codebase.
-> **Version**: 0.4.1 (February 2026)
+> **Version**: 0.6.0 (August 2026)
 
 ## What is this project?
 
@@ -282,6 +282,7 @@ Every `Method` enum value (30 total) maps to typed convenience methods on `Chain
 | `network.py` | HTTP transport | ALL HTTP must go through here |
 | `adapters/memory_cache.py` | In-memory LRU | O(1) ops, asyncio.Lock |
 | `adapters/aiolimiter_adapter.py` | Rate limiting | Token bucket, burst=1 |
+| `crypto.py` | Keccak-256, EIP-55 checksum | fastabi → eth-utils fallback chain |
 | `decode.py` | ABI decoding (Python) | Wraps Rust FFI, orjson parsing |
 | `fastabi/src/lib.rs` | ABI decoding (Rust) | Returns JSON, LRU cache |
 
@@ -377,7 +378,7 @@ from aiochainscan.exceptions import (
 ## Testing
 
 ```bash
-# Run all tests (587+ tests)
+# Run all tests (520+ tests)
 pytest tests/ -q
 
 # Type checking (strict)
@@ -394,20 +395,25 @@ Or in one shot: `make ci-local` (mirrors the disabled GitHub CI). Agents: run `m
 
 ## Rust FFI Notes (fastabi/)
 
-- **Build**: `cd aiochainscan/fastabi && maturin develop --release`
+- **Build**: `uv sync --extra dev` (compiles via maturin automatically), or `cd aiochainscan/fastabi && maturin develop --release`
 - **Cache**: LRU with 1000 entries max (~50MB)
 - **GIL**: Released during computation AND serialization
-- **Return format**: JSON string → parsed by orjson in Python
+- **Return format**: JSON string → parsed by orjson in Python; `keccak256` returns bytes
 - **Key invariant**: Never return PyDict/PyList directly (blocks GIL)
+- **Imports**: canonical module name is `aiochainscan.aiochainscan_fastabi` (NOT top-level `aiochainscan_fastabi`)
 
 ---
 
 ## Environment Setup
 
 ```bash
-pip install -e ".[dev]"
+uv sync --extra dev        # deps + fastabi build via maturin
+uv run pytest tests/ -q    # run tests
 export ETHERSCAN_KEY="your_key"  # Optional
 ```
+
+Required runtime deps are just: `httpx`, `orjson`, `tenacity`, `aiolimiter`.
+Everything else is an extra (`data`, `mcp`, `http2`, `fallback`).
 
 ---
 
@@ -415,8 +421,8 @@ export ETHERSCAN_KEY="your_key"  # Optional
 
 **Run BEFORE `git commit` — not after:**
 ```bash
-pytest tests/ -q                    # Verify all 587+ tests pass
-mypy aiochainscan --strict          # Type safety check (80 files)
+pytest tests/ -q                    # Verify all 520+ tests pass
+mypy aiochainscan --strict          # Type safety check (55 files)
 pre-commit run --all-files          # All linters (ruff, format, etc.)
 ```
 Only proceed to `git commit` when ALL three checks pass. Do NOT rely on post-commit hook to catch errors.

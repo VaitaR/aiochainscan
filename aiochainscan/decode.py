@@ -4,8 +4,30 @@ from collections.abc import Sequence
 from typing import Any, cast
 
 import orjson
-from eth_abi.abi import decode
-from eth_utils import keccak  # type: ignore[attr-defined]
+
+from aiochainscan.crypto import keccak_hex
+from aiochainscan.exceptions import ChainscanDependencyError
+
+_eth_abi_decode: Any
+try:
+    from eth_abi.abi import decode as _eth_abi_decode
+
+    ETH_ABI_AVAILABLE = True
+except ImportError:
+    _eth_abi_decode = None
+    ETH_ABI_AVAILABLE = False
+
+
+def _abi_decode(types: list[str], data: bytes) -> tuple[Any, ...]:
+    """Pure-Python ABI decode fallback for environments without fastabi."""
+    if _eth_abi_decode is None:
+        raise ChainscanDependencyError(
+            'Pure-Python ABI decoding requires eth-abi. The fastabi Rust extension '
+            'covers decoding in all wheel installs; otherwise run: '
+            'pip install "aiochainscan[fallback]"'
+        )
+    return cast('tuple[Any, ...]', _eth_abi_decode(types, data))
+
 
 # orjson is a required dependency — always available
 ORJSON_AVAILABLE = True
@@ -18,15 +40,19 @@ def _parse_json(json_str: str) -> Any:
 
 # Try to import fastabi Rust backend
 try:
-    from aiochainscan_fastabi import decode_input as _fast_decode_input_json
-    from aiochainscan_fastabi import decode_many as _fast_decode_many_json
-    from aiochainscan_fastabi import decode_many_direct as _fast_decode_many_direct_json
-    from aiochainscan_fastabi import decode_many_flat as _fast_decode_many_flat_json
-    from aiochainscan_fastabi import decode_many_hex as _fast_decode_many_hex_json
-    from aiochainscan_fastabi import decode_many_raw as _fast_decode_many_raw_json
-    from aiochainscan_fastabi import decode_many_to_arrow as _fast_decode_many_to_arrow
-    from aiochainscan_fastabi import decode_one as _fast_decode_one_json
-    from aiochainscan_fastabi import decode_one_direct as _fast_decode_one_direct_json
+    from aiochainscan.aiochainscan_fastabi import decode_input as _fast_decode_input_json
+    from aiochainscan.aiochainscan_fastabi import decode_many as _fast_decode_many_json
+    from aiochainscan.aiochainscan_fastabi import (
+        decode_many_direct as _fast_decode_many_direct_json,
+    )
+    from aiochainscan.aiochainscan_fastabi import decode_many_flat as _fast_decode_many_flat_json
+    from aiochainscan.aiochainscan_fastabi import decode_many_hex as _fast_decode_many_hex_json
+    from aiochainscan.aiochainscan_fastabi import decode_many_raw as _fast_decode_many_raw_json
+    from aiochainscan.aiochainscan_fastabi import (
+        decode_many_to_arrow as _fast_decode_many_to_arrow,
+    )
+    from aiochainscan.aiochainscan_fastabi import decode_one as _fast_decode_one_json
+    from aiochainscan.aiochainscan_fastabi import decode_one_direct as _fast_decode_one_direct_json
 
     FASTABI_AVAILABLE = True
     ARROW_AVAILABLE = True
@@ -140,7 +166,7 @@ def _convert_large_ints_to_strings(data: Any) -> Any:
 
 # Function to generate Keccak hash of the input text
 def keccak_hash(text: str) -> str:
-    return keccak(text.encode('utf-8')).hex()
+    return keccak_hex(text)
 
 
 def _decode_transaction_input_fast(
@@ -196,7 +222,7 @@ def _decode_transaction_input_python(
         ]
         input_data = cast(str, transaction['input'])[FUNCTION_SELECTOR_LENGTH:]
         try:
-            decoded_input = decode(input_types, bytes.fromhex(input_data))
+            decoded_input = _abi_decode(input_types, bytes.fromhex(input_data))
 
             # Assign the function name directly to transaction
             transaction['decoded_func'] = function['name']
@@ -324,7 +350,7 @@ def decode_log_data(log: dict[str, Any], abi: list[dict[str, Any]]) -> dict[str,
         ]
         for i, param in enumerate(indexed_params):
             topic = log['topics'][i + 1]
-            decoded_log[cast(str, param['name'])] = decode(
+            decoded_log[cast(str, param['name'])] = _abi_decode(
                 [cast(str, param['type'])], bytes.fromhex(cast(str, topic)[2:])
             )[0]
 
@@ -336,7 +362,7 @@ def decode_log_data(log: dict[str, Any], abi: list[dict[str, Any]]) -> dict[str,
             non_indexed_types: list[str] = [
                 cast(str, param['type']) for param in non_indexed_params
             ]
-            non_indexed_values = decode(
+            non_indexed_values = _abi_decode(
                 non_indexed_types, bytes.fromhex(cast(str, log['data'])[2:])
             )
             for i, param in enumerate(non_indexed_params):

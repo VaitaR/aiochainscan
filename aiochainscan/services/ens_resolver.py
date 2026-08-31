@@ -464,7 +464,7 @@ class ENSResolver:
         Returns:
             32-byte namehash as hex string (without 0x prefix)
         """
-        from eth_hash.auto import keccak
+        from aiochainscan.crypto import keccak256
 
         if not name:
             return '0' * 64
@@ -474,8 +474,8 @@ class ENSResolver:
         if name:
             labels = name.split('.')
             for label in reversed(labels):
-                label_hash = keccak(label.encode('utf-8'))
-                node = keccak(node + label_hash)
+                label_hash = keccak256(label.encode('utf-8'))
+                node = keccak256(node + label_hash)
 
         return node.hex()
 
@@ -489,20 +489,10 @@ class ENSResolver:
         Returns:
             Checksummed address
         """
-        from eth_hash.auto import keccak
+        from aiochainscan.crypto import to_checksum_address
 
-        addr = address[2:].lower() if address.startswith('0x') else address.lower()
-        hash_result = keccak(addr.encode('utf-8')).hex()
-
-        checksum_addr = '0x'
-        for i, char in enumerate(addr):
-            if char in '0123456789':
-                checksum_addr += char
-            else:
-                # Use hash to determine if letter should be uppercase
-                checksum_addr += char.upper() if int(hash_result[i], 16) >= 8 else char
-
-        return checksum_addr
+        addr = address[2:] if address.startswith('0x') else address
+        return to_checksum_address(f'0x{addr}')
 
     def _decode_string(self, data: str) -> str | None:
         """
