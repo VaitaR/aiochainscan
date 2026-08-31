@@ -76,11 +76,11 @@ class AccountMixin:
         addr = Address(address)
         params: dict[str, Any] = {'address': str(addr)}
         if self.scanner_name == 'etherscan':
-            params['startblock'] = start_block
+            params['start_block'] = start_block
             params['page'] = page
             params['offset'] = offset
             if end_block is not None:
-                params['endblock'] = end_block
+                params['end_block'] = end_block
         result: JSONList = await self.call(Method.ACCOUNT_TRANSACTIONS, **params)
         return result
 
@@ -95,11 +95,11 @@ class AccountMixin:
         addr = Address(address)
         params: dict[str, Any] = {'address': str(addr)}
         if self.scanner_name == 'etherscan':
-            params['startblock'] = start_block
+            params['start_block'] = start_block
             if contract_address:
-                params['contractaddress'] = str(Address(contract_address))
+                params['contract_address'] = str(Address(contract_address))
             if end_block:
-                params['endblock'] = end_block
+                params['end_block'] = end_block
         result: JSONList = await self.call(Method.ACCOUNT_ERC20_TRANSFERS, **params)
         return result
 
@@ -116,13 +116,13 @@ class AccountMixin:
         addr = Address(address)
         params: dict[str, Any] = {
             'address': str(addr),
-            'startblock': start_block,
+            'start_block': start_block,
             'page': page,
             'offset': offset,
             'sort': sort,
         }
         if end_block is not None:
-            params['endblock'] = end_block
+            params['end_block'] = end_block
         result: Any = await self.call(Method.ACCOUNT_INTERNAL_TXS, **params)
         return result if isinstance(result, list) else []
 
@@ -146,14 +146,14 @@ class AccountMixin:
         """Get ERC-721 token transfers for an address."""
         params: dict[str, Any] = {
             'address': address,
-            'startblock': start_block,
-            'endblock': end_block,
+            'start_block': start_block,
+            'end_block': end_block,
             'page': page,
             'offset': offset,
             'sort': sort,
         }
         if contract_address:
-            params['contractaddress'] = contract_address
+            params['contract_address'] = contract_address
         result: Any = await self.call(Method.ACCOUNT_ERC721_TRANSFERS, **params)
         return result if isinstance(result, list) else []
 
@@ -170,14 +170,14 @@ class AccountMixin:
         """Get ERC-1155 token transfers for an address."""
         params: dict[str, Any] = {
             'address': address,
-            'startblock': start_block,
-            'endblock': end_block,
+            'start_block': start_block,
+            'end_block': end_block,
             'page': page,
             'offset': offset,
             'sort': sort,
         }
         if contract_address:
-            params['contractaddress'] = contract_address
+            params['contract_address'] = contract_address
         result: Any = await self.call(Method.ACCOUNT_ERC1155_TRANSFERS, **params)
         return result if isinstance(result, list) else []
 

@@ -18,7 +18,7 @@ Async Python wrapper for blockchain explorer APIs (Etherscan, BlockScout). Unifi
 ```python
 from aiochainscan import ChainscanClient
 
-async with ChainscanClient.from_config('blockscout_v2', 'ethereum') as client:
+async with ChainscanClient.from_config('etherscan', 'ethereum') as client:
     # ── Account ──────────────────────────────────────────────
     balance = await client.get_balance('0x...')                   # Wei string
     txs     = await client.get_transactions('0x...')              # single page
@@ -82,6 +82,12 @@ async with ChainscanClient.from_config('blockscout_v2', 'ethereum') as client:
     df = await client.get_token_portfolio_df('0x...')              # Polars
 ```
 
+> **Scanner coverage:** the full surface above is declared by the Etherscan-like
+> scanners (`etherscan` v2, `blockscout` v1). `blockscout_v2` declares a subset —
+> see the Scanner Support Matrix. Convenience methods not declared by the
+> configured scanner raise `ValueError` at call time; the Method ↔ mixin ↔
+> SPECS mapping is enforced by `tests/test_method_consistency.py`.
+
 ### ⚠️ Key Gotchas
 - `get_transactions()` returns **one page** (~50-100 items). Use `get_all_transactions()` for complete data.
 - `get_logs()` returns **≤1000 logs**. Use `get_all_logs()` for complete data.
@@ -133,7 +139,7 @@ Re-enable when the budget allows: `gh workflow enable ci.yml test-install.yml wh
 
 ## Complete Method Reference
 
-Every `Method` enum value (28 total) maps to typed convenience methods on `ChainscanClient`:
+Every `Method` enum value (30 total) maps to typed convenience methods on `ChainscanClient`:
 
 | Method Enum | Convenience Method(s) | Returns |
 |---|---|---|
@@ -194,8 +200,7 @@ Every `Method` enum value (28 total) maps to typed convenience methods on `Chain
                           │
 ┌─────────────────────────▼───────────────────────────────────┐
 │                   AGGREGATION SERVICES                       │
-│  account.py | logs.py | streaming_decoder.py | analytics.py  │
-│  ens_resolver.py | chunked_fetcher.py                        │
+│  pagination.py | analytics.py | ens_resolver.py              │
 └─────────────────────────┬───────────────────────────────────┘
                           │
 ┌─────────────────────────▼───────────────────────────────────┐
@@ -258,7 +263,7 @@ Every `Method` enum value (28 total) maps to typed convenience methods on `Chain
 | File | Purpose | Source of Truth For |
 |------|---------|---------------------|
 | `core/client.py` | **ChainscanClient** (~1800 lines) | All API interactions, 30+ convenience methods |
-| `core/method.py` | **Method** enum (28 values) | Supported operations |
+| `core/method.py` | **Method** enum (30 values) | Supported operations |
 | `domain/contract.py` | **SmartContract** | High-level contract API |
 | `domain/models.py` | **Address**, **TxHash** | Data validation, EIP-55 |
 | `config.py` | **ConfigurationManager** | Scanner configs (lazy-loaded) |
@@ -266,12 +271,10 @@ Every `Method` enum value (28 total) maps to typed convenience methods on `Chain
 ### Services (Business Logic)
 | File | Purpose | Key Pattern |
 |------|---------|-------------|
-| `services/paging_engine.py` | Pagination | Sliding window, dedup, fail-fast |
-| `services/streaming_decoder.py` | Memory-efficient decoding | AsyncIterator + `asyncio.to_thread` |
-| `services/chunked_fetcher.py` | Block range splitting | Prevents DB timeouts |
+| `services/pagination.py` | Pagination | `iter_pages`/`iter_items`/`collect_all` over `Scanner.fetch_page` cursors |
 | `services/ens_resolver.py` | ENS name resolution | Cache + BlockScout V2 |
 | `services/analytics.py` | Polars DataFrames | Column-oriented, Utf8 for Wei |
-| `services/logs.py` | Event log fetching | Whale block warning, sliding window |
+| `services/constants.py` | Shared service constants | - |
 
 ### Infrastructure
 | File | Purpose | Key Pattern |
@@ -286,10 +289,11 @@ Every `Method` enum value (28 total) maps to typed convenience methods on `Chain
 
 ## Scanner Support Matrix
 
-| Scanner | Version | Free? | Key Env Var |
-|---------|---------|-------|-------------|
-| BlockScout | v1, **v2** | ✅ Yes | - |
-| Etherscan | v2 | ❌ No | `ETHERSCAN_KEY` |
+| Scanner | Version | Free? | Key Env Var | Method coverage |
+|---------|---------|-------|-------------|-----------------|
+| BlockScout | v1 | ✅ Yes | - | Full Etherscan-like surface (inherits shared SPECS) |
+| BlockScout | **v2** | ✅ Yes | - | Subset: `ACCOUNT_BALANCE`, `ACCOUNT_TRANSACTIONS`, `ACCOUNT_TOKEN_PORTFOLIO`, `CONTRACT_ABI`, `BLOCK_BY_NUMBER` |
+| Etherscan | v2 | ❌ No | `ETHERSCAN_KEY` | Full Etherscan-like surface (all 30 `Method` values) |
 
 ---
 

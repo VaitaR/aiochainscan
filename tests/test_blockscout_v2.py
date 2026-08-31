@@ -128,9 +128,19 @@ class TestEndpointSpecs:
         assert spec.parser is _parse_contract_abi
 
     def test_all_specs_have_path_placeholder(self) -> None:
-        """All specs should have {address} placeholder in path."""
+        """All specs should substitute a path parameter (e.g. {address})."""
         for method, spec in BlockScoutV2Scanner.SPECS.items():
-            assert '{address}' in spec.path, f'{method} path should contain {{address}}'
+            assert (
+                '{' in spec.path and '}' in spec.path
+            ), f'{method} path should contain a path placeholder: {spec.path}'
+
+    def test_block_by_number_spec(self) -> None:
+        """BLOCK_BY_NUMBER spec should be correctly configured."""
+        spec = BlockScoutV2Scanner.SPECS[Method.BLOCK_BY_NUMBER]
+        assert spec.http_method == 'GET'
+        assert spec.path == '/api/v2/blocks/{block_number}'
+        assert spec.requires_api_key is False
+        assert 'block_number' in spec.param_map
 
 
 # ============================================================================
@@ -403,7 +413,8 @@ class TestMethodSupport:
         assert Method.ACCOUNT_TOKEN_PORTFOLIO in methods
         assert Method.ACCOUNT_TRANSACTIONS in methods
         assert Method.CONTRACT_ABI in methods
-        assert len(methods) == 4
+        assert Method.BLOCK_BY_NUMBER in methods
+        assert len(methods) == 5
 
 
 # ============================================================================
@@ -516,4 +527,4 @@ class TestStringRepresentation:
         assert 'BlockScoutV2Scanner' in result
         assert 'ethereum' in result
         assert 'eth.blockscout.com' in result
-        assert 'methods=4' in result
+        assert 'methods=5' in result

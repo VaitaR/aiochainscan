@@ -33,7 +33,7 @@ class ContractMixin:
         """Get contract creator and creation tx hash."""
         result: Any = await self.call(
             Method.CONTRACT_CREATION,
-            contractaddresses=','.join(str(Address(address)) for address in addresses),
+            contract_addresses=','.join(str(Address(address)) for address in addresses),
         )
         return result if isinstance(result, list) else []
 
