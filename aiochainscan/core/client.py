@@ -13,8 +13,12 @@ if TYPE_CHECKING:
     from ..ports.progress import ProgressCallback
     from ..services.ens_resolver import ENSResolver
 
-from ..chain_registry import get_chain_info, resolve_chain_id
-from ..config import get_config_manager
+from ..chain_registry import (
+    get_chain_info,
+    get_scanner_network_name,
+    resolve_chain_id,
+    resolve_scanner_target,
+)
 from ..constants import MAX_BLOCK_NUMBER
 from ..ports.rate_limiter import RateLimiter, RetryPolicy
 from ..scanners import get_scanner_class
@@ -34,8 +38,6 @@ from .mixins import (
 )
 from .types import JSONDict
 from .url_builder import UrlBuilder
-
-global_config = get_config_manager()
 
 # Strict type aliases for scanner and network names (defined after imports)
 ScannerName = Literal['etherscan', 'blockscout', 'blockscout_v2']
@@ -177,7 +179,7 @@ class ChainscanClient(
         # Get scanner class and create instance with shared network client
         scanner_class = get_scanner_class(scanner_name, scanner_version)
         # Use chain_id to resolve the correct network name for this scanner
-        scanner_network = self._get_scanner_network_name(scanner_name, scanner_version, network)
+        scanner_network = get_scanner_network_name(scanner_name, scanner_version, network)
         self._scanner = scanner_class(
             api_key, scanner_network, self._url_builder, chain_id, network_client=self._network
         )
@@ -195,9 +197,15 @@ class ChainscanClient(
         proxy: str | None = None,
         rate_limiter: RateLimiter | None = None,
         retry_policy: RetryPolicy | None = None,
+        api_key: str | None = None,
     ) -> 'ChainscanClient':
         """
         Create client using unified chain-based configuration.
+
+        Thin factory: resolves the (scanner, network, api_kind, api_key)
+        target via ``aiochainscan.chain_registry.resolve_scanner_target``
+        and constructs the client. Configuration is loaded lazily at call
+        time; nothing is resolved at import time.
 
         Args:
             scanner_name: Scanner implementation ('etherscan', 'blockscout')
@@ -209,6 +217,8 @@ class ChainscanClient(
             proxy: Proxy URL
             rate_limiter: Rate limiter implementation
             retry_policy: Retry policy implementation
+            api_key: Explicit API key. If None (default), the key is resolved
+                from the configuration manager (env vars / .env / config files)
 
         Returns:
             Configured ChainscanClient instance
@@ -221,157 +231,28 @@ class ChainscanClient(
             # BlockScout v1 for Polygon (version defaults to 'v1')
             client = ChainscanClient.from_config('blockscout', 'polygon')
 
-            # Explicit version specification
-            client = ChainscanClient.from_config('moralis', 'ethereum', 'v1')
+            # BlockScout V2 alias for ('blockscout', 'v2') — no API key needed
+            client = ChainscanClient.from_config('blockscout_v2', 'ethereum')
 
             # Works with chain_id too
             client = ChainscanClient.from_config('etherscan', 8453)
             ```
         """
-        # Determine default scanner version if not provided
-        if scanner_version is None:
-            if scanner_name == 'etherscan' or scanner_name == 'blockscout_v2':
-                scanner_version = 'v2'
-            else:
-                scanner_version = 'v1'
-
-        # Handle blockscout_v2 special case
-        actual_scanner_name = scanner_name
-        if scanner_name == 'blockscout_v2':
-            actual_scanner_name = 'blockscout'
-            scanner_version = 'v2'
-
-        # Resolve chain_id from network name/id
-        chain_id = resolve_chain_id(network)
-
-        # If network was passed as int (chain_id), resolve it to canonical name
-        # This ensures from_config('etherscan', 8453) works correctly
-        from aiochainscan.chain_registry import get_chain_name
-
-        network_str = get_chain_name(network) if isinstance(network, int) else str(network)
-
-        # Get API key using existing config system
-        # For backward compatibility, map scanner names to their config IDs
-        # BlockScout scanner ID is determined by network (not hardcoded to eth)
-        if scanner_name == 'blockscout':
-            # Map network to appropriate BlockScout config ID
-            blockscout_config_map = {
-                'ethereum': 'blockscout_eth',
-                'eth': 'blockscout_eth',
-                'polygon': 'blockscout_polygon',
-                'gnosis': 'blockscout_gnosis',
-                'optimism': 'blockscout_optimism',
-                'base': 'blockscout_base',
-                'bsc': 'blockscout_bsc',
-                'bnb': 'blockscout_bsc',
-            }
-            scanner_id = blockscout_config_map.get(network_str, f'blockscout_{network_str}')
-        else:
-            scanner_id_map = {
-                'blockscout_v2': 'blockscout_eth',  # V2 doesn't use config
-                'etherscan': 'eth',
-                'moralis': 'moralis',
-                'routscan': 'routscan_mode',
-            }
-            scanner_id = scanner_id_map.get(scanner_name, scanner_name)
-
-        # Normalize network aliases for different scanners (for config lookup only)
-        # Different scanners use different naming conventions for the same networks
-        network_aliases: dict[str, dict[str, str]] = {
-            'etherscan': {
-                # All EtherscanV2 networks route through the single unified endpoint
-                # (api.etherscan.io/v2/api?chainid=...), so all map to 'main' for config lookup
-                'ethereum': 'main',
-                'eth': 'main',
-                'base': 'main',
-                'bsc': 'main',
-                'bnb': 'main',
-                'binance': 'main',
-                'polygon': 'main',
-                'matic': 'main',
-                'arbitrum': 'main',
-                'arb': 'main',
-                'optimism': 'main',
-                'op': 'main',
-                'sonic': 'main',
-            },
-            'blockscout': {'ethereum': 'eth', 'main': 'eth'},
-            'blockscout_v2': {'main': 'ethereum'},
-        }
-        config_network = network_str  # Preserve original for client property
-        if scanner_name in network_aliases:
-            aliases = network_aliases[scanner_name]
-            config_network = aliases.get(network_str, network_str)
-
-        # For blockscout_v2, we don't need config validation - it handles its own networks
-        if scanner_name == 'blockscout_v2':
-            api_key = ''  # BlockScout V2 doesn't require API key
-        else:
-            client_config = global_config.create_client_config(scanner_id, config_network)
-            api_key = client_config['api_key']
-
-        # Map scanner_name to appropriate api_kind for UrlBuilder
-        # For backward compatibility, map scanner names to their api_kind equivalents
-        # For blockscout, use the network-specific scanner_id (e.g., blockscout_polygon)
-        if scanner_name == 'blockscout':
-            api_kind = (
-                scanner_id  # Use network-specific ID (blockscout_polygon, blockscout_gnosis, etc.)
-            )
-        else:
-            api_kind_map = {
-                'etherscan': 'eth',
-                'blockscout_v2': 'blockscout_eth',
-                'moralis': 'moralis',
-                'routscan': 'routscan_mode',
-            }
-            api_kind = api_kind_map.get(scanner_name, scanner_name)
-
+        target = resolve_scanner_target(
+            scanner_name, network, api_key=api_key, scanner_version=scanner_version
+        )
         return cls(
-            scanner_name=actual_scanner_name,
-            scanner_version=scanner_version,
-            api_kind=api_kind,  # Use mapped api_kind for UrlBuilder compatibility
-            network=network_str,  # Preserve original network value
-            api_key=api_key,
-            chain_id=chain_id,  # Pass chain_id to scanner
+            scanner_name=target.scanner_name,
+            scanner_version=target.scanner_version,
+            api_kind=target.api_kind,
+            network=target.network,
+            api_key=target.api_key,
+            chain_id=target.chain_id,
             timeout=timeout,
             proxy=proxy,
             rate_limiter=rate_limiter,
             retry_policy=retry_policy,
         )
-
-    def _get_scanner_network_name(
-        self, scanner_name: str, scanner_version: str, network: str
-    ) -> str:
-        """
-        Get the correct network name for a specific scanner.
-
-        Different scanners use different naming conventions for the same networks.
-        This method maps the unified network name to scanner-specific names.
-
-        Args:
-            scanner_name: Name of the scanner (e.g., 'etherscan', 'blockscout')
-            scanner_version: Version of the scanner (e.g., 'v1', 'v2')
-            network: Unified network name (e.g., 'ethereum', 'polygon', 1)
-
-        Returns:
-            Scanner-specific network name
-        """
-        # Network aliases for different scanners
-        # blockscout v1 uses 'eth', v2 uses 'ethereum'
-        if scanner_name == 'blockscout' and scanner_version == 'v1':
-            # v1 uses 'eth' for Ethereum mainnet
-            if network in ('ethereum', 'main'):
-                return 'eth'
-        elif scanner_name == 'blockscout' and scanner_version == 'v2':
-            # v2 uses 'ethereum' for Ethereum mainnet
-            if network == 'main':
-                return 'ethereum'
-        elif scanner_name == 'etherscan' and network == 'ethereum':
-            # Etherscan uses 'main' for Ethereum mainnet
-            return 'main'
-
-        # For other cases, use the network name as-is
-        return network
 
     async def call(self, method: Method, **params: Any) -> Any:
         """
