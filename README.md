@@ -19,7 +19,7 @@ Provides a single, consistent API for accessing blockchain data across multiple 
 - **🎯 Comprehensive API Coverage** - 28 blockchain operations with typed convenience methods
 - **🔒 Type-safe Operations** - Typed data transfer objects, method enums, 100% mypy --strict
 - **🚀 Optimized Bulk Operations** - Streaming aggregation for `get_all_*` plus `iter_*_streaming` for low-memory processing
-- **🧩 Dependency Injection** - Configurable HTTP clients, caching, telemetry, and rate limiters
+- **🧩 Dependency Injection** - Configurable caching, retry policies, and rate limiters
 - **⛓️ Rust FFI** - Fast ABI decoding via PyO3 with LRU cache
 
 ## Supported Networks

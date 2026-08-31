@@ -198,7 +198,6 @@ forbidden_modules = [
 
 [[tool.mypy.overrides]]
 module = [
- "aiochainscan.common",
  "aiochainscan.network",
  "aiochainscan.config",
  "aiochainscan.decode",

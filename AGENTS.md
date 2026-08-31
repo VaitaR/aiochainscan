@@ -163,12 +163,12 @@ Every `Method` enum value (28 total) maps to typed convenience methods on `Chain
                           │
 ┌─────────────────────────▼───────────────────────────────────┐
 │                     PORTS (Interfaces)                       │
-│  http.py | cache.py | telemetry.py | progress.py            │
+│  cache.py | progress.py | rate_limiter.py                   │
 └─────────────────────────┬───────────────────────────────────┘
                           │
 ┌─────────────────────────▼───────────────────────────────────┐
 │                    ADAPTERS (Implementations)                │
-│  aiohttp_client.py | memory_cache.py | aiolimiter_adapter   │
+│  memory_cache.py | aiolimiter_adapter | tenacity_retry      │
 └─────────────────────────┬───────────────────────────────────┘
                           │
 ┌─────────────────────────▼───────────────────────────────────┐
