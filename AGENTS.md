@@ -94,6 +94,43 @@ async with ChainscanClient.from_config('blockscout_v2', 'ethereum') as client:
 
 ---
 
+## Multi-Agent Workflow (Worktrees & Scripts)
+
+**One session == one worktree == one branch.** Never switch branches or stash to share a directory with another agent session — parallel sessions on one checkout cause `.git/index.lock` collisions and lost work. Setup mirrors `lombard-data-analytics`.
+
+```bash
+make wt-new SLUG=my-task                 # .claude/worktrees/my-task on branch feat/my-task
+                                         # copies .env, runs uv sync --extra dev --frozen
+make wt-ls                               # list worktrees + merge status (dry-run)
+make wt-rm SLUG=my-task ARGS="--yes"     # teardown — refuses dirty or unmerged worktrees
+```
+
+Branch types: `feat | fix | chore | docs | arch | refactor` (2nd arg, default `feat`); base ref (3rd arg, default `origin/main`). Env knobs: `AIO_SKIP_SYNC=1`, `AIO_BUILD_FASTABI=1`.
+
+### Agent script toolkit (`scripts/agent/`)
+
+| Script | Purpose |
+|--------|---------|
+| `new-worktree.sh` | Bootstrap an isolated session worktree |
+| `rm-worktree.sh` | Safe teardown — removes only clean + merged worktrees, squash-merge aware, integration branches protected |
+| `preflight.sh` | Run BEFORE starting: env, deps, imports, test collection, fastabi status |
+| `validate_fast.sh` | The DONE gate — ruff, format, import-lint, mypy --strict, full pytest |
+| `safe_commit.sh` | `git add` + commit with index.lock retry (worktree-aware; use `make commit`) |
+| `ci_watch.sh` | Bounded GH Actions poller; exit status is the verdict |
+| `ruff_format_hook.py` | PostToolUse hook — auto-formats edited `*.py` |
+
+### ⚠️ GitHub Actions temporarily DISABLED (Actions-minutes budget)
+
+CI/CD, Test Installation and Build and Publish Wheels are `disabled_manually`. **Do not wait on CI — it will never run.** Use the local mirror instead:
+
+```bash
+make ci-local        # lint + format-check + import-lint + mypy --strict + pytest
+```
+
+Re-enable when the budget allows: `gh workflow enable ci.yml test-install.yml wheels.yml --repo VaitaR/aiochainscan`.
+
+---
+
 ## Complete Method Reference
 
 Every `Method` enum value (28 total) maps to typed convenience methods on `ChainscanClient`:
@@ -346,6 +383,8 @@ mypy aiochainscan --strict
 ruff check . --fix
 ruff format .
 ```
+
+Or in one shot: `make ci-local` (mirrors the disabled GitHub CI). Agents: run `make validate` before claiming DONE and `make commit MSG="..." PATHS="..."` to commit.
 
 ---
 
