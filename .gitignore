@@ -193,3 +193,7 @@ dump_*.json
 test_dump.py
 *_dump.json
 ethereum_*.json
+
+# Agent session state (multi-agent worktree setup)
+.claude/worktrees/
+.zcode/
