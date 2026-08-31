@@ -44,19 +44,6 @@ def test_scanners_registry():
     assert etherscan is not None
 
 
-def test_optional_dependencies_graceful():
-    """Test that optional dependencies fail gracefully if not installed."""
-    # aiohttp should be optional for httpx-only installations
-    try:
-        from aiochainscan.adapters import AiohttpClient
-
-        # If import succeeds, it should be the real class or None
-        assert AiohttpClient is None or callable(AiohttpClient)
-    except ImportError:
-        # This is also acceptable - optional dependency
-        pass
-
-
 def test_mcp_server_optional():
     """Test that MCP server is optional and doesn't block base imports."""
     try:

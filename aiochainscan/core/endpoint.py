@@ -80,41 +80,6 @@ def etherscan_parser(response: dict[str, Any]) -> Any:
     return response
 
 
-def moralis_balance_parser(response: dict[str, Any]) -> int:
-    """Moralis balance response parser."""
-    # Moralis возвращает: {"balance": "123456789000000000000"} или в другом формате
-    if 'balance' in response:
-        return int(response['balance'])
-    # Если структура отличается, попробуем извлечь из других полей
-    elif isinstance(response, dict) and 'result' in response:
-        return int(response['result'])
-    # Если это строка
-    elif isinstance(response, str):
-        return int(response)
-    # Fallback
-    return 0
-
-
-def moralis_transactions_parser(response: dict[str, Any]) -> Any:
-    """Moralis transactions response parser."""
-    # Moralis returns: {"page": 1, "page_size": 100, "result": [...]}
-    return response.get('result', response)
-
-
-def moralis_token_balances_parser(response: dict[str, Any]) -> Any:
-    """Moralis token balances response parser."""
-    # Moralis returns array directly or in result field
-    if isinstance(response, list):
-        return response
-    return response.get('result', response)
-
-
-def moralis_transaction_parser(response: dict[str, Any]) -> dict[str, Any]:
-    """Moralis single transaction response parser."""
-    # Moralis returns transaction object directly
-    return response
-
-
 # Pre-defined parsers for common use cases
 
 
@@ -124,9 +89,5 @@ def raw_parser(response: dict[str, Any]) -> Any:
 
 PARSERS: dict[str, Callable[[dict[str, Any]], Any]] = {
     'etherscan': etherscan_parser,
-    'moralis_balance': moralis_balance_parser,
-    'moralis_transactions': moralis_transactions_parser,
-    'moralis_token_balances': moralis_token_balances_parser,
-    'moralis_transaction': moralis_transaction_parser,
     'raw': raw_parser,
 }
