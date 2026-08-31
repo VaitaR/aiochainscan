@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from ..core.endpoint import PARSERS, EndpointSpec
 from ..core.method import Method
 from .base import Scanner
@@ -12,6 +14,38 @@ class EtherscanLikeScanner(Scanner):
 
     auth_mode = 'query'
     auth_field = 'apikey'
+
+    async def fetch_page(
+        self,
+        method: Method,
+        params: dict[str, Any],
+    ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+        """
+        Fetch one page using Etherscan page/offset pagination.
+
+        The cursor encodes the next ``page``/``offset`` pair and is merged
+        back into ``params`` by the caller (base cursor contract). It is
+        ``None`` once no full page can remain: an empty page, a partial page
+        (``len(items) < offset``), or when ``offset`` is missing from
+        ``params``. This mirrors the classic stop condition exactly.
+
+        Args:
+            method: Logical method to execute
+            params: Parameters for the method; must include ``offset`` (page
+                size) and, for pages after the first, the merged cursor
+
+        Returns:
+            Tuple of (items, next_cursor)
+        """
+        result = await self.call(method, **params)
+        items = self._coerce_items(result)
+
+        offset = params.get('offset')
+        if not items or not isinstance(offset, int) or len(items) < offset:
+            return items, None
+
+        page = params.get('page', 1)
+        return items, {'page': page + 1, 'offset': offset}
 
     SPECS = {
         Method.ACCOUNT_BALANCE: EndpointSpec(

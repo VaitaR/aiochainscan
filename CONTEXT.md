@@ -8,3 +8,4 @@ One-line entries for domain terms used across aiochainscan.
 - **Scanner** — Per-explorer API adapter (`scanners/`) mapping `Method` enum values to `EndpointSpec` (path, params, parser) via a `SPECS` dict.
 - **EndpointSpec** — Frozen dataclass in `core/endpoint.py` describing one scanner endpoint; `PARSERS` registry holds shared response parsers (`etherscan`, `raw`).
 - **Streaming aggregation** — Pagination strategy behind `get_all_*`: pages are fetched and materialized via a streaming path so `iter_*_streaming` can run in constant memory.
+- **Page cursor** — Opaque dict returned by `Scanner.fetch_page` next to the items; `None` means "no more pages", otherwise the caller merges it into the params of the next `fetch_page` call (e.g. BlockScout V2 `next_page_params`, Etherscan page/offset).

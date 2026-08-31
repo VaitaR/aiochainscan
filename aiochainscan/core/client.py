@@ -570,92 +570,39 @@ class ChainscanClient(
 
         # For simple pagination without decoding and no block range, use existing logic
         if abi is None and from_block == 0 and (to_block is None or to_block == 'latest'):
-            # Use existing simple pagination (backward compatibility)
-            # BlockScout V2 has special pagination with next_page_params
+            # Simple pagination flows through the scanner port: fetch_page()
+            # returns (items, next_cursor) where a None cursor ends iteration.
             if self.scanner_name == 'blockscout' and self.scanner_version == 'v2':
-                # Import here to avoid circular dependency
-                from ..scanners.blockscout_v2 import BlockScoutV2Scanner
-
-                scanner = self._scanner
-                if not isinstance(scanner, BlockScoutV2Scanner):
-                    raise TypeError(f'Expected BlockScoutV2Scanner, got {type(scanner).__name__}')
-
-                # Build initial request params
-                spec = scanner.SPECS[Method.ACCOUNT_TRANSACTIONS]
-                url = scanner._build_url(spec, address=address)
-                query_params = scanner._build_query_params(spec, address=address)
-
-                headers = {
-                    'Accept': 'application/json',
-                    'Accept-Encoding': 'gzip, deflate',
-                }
-
-                # Pagination loop using next_page_params
-                # Uses self._network.request() which has proper retry logic via RetryPolicy
-                while True:
-                    # self._network.request() wraps calls with retry policy
-                    # This ensures retries happen at page-fetch level, not generator level
-                    raw_response = await self._network.request(
-                        method='GET',
-                        url=url,
-                        params=query_params if query_params else None,
-                        headers=headers,
-                    )
-
-                    # Extract items from response (raw_response is already parsed JSON)
-                    if isinstance(raw_response, dict):
-                        items = raw_response.get('items', [])
-                        next_page_params = raw_response.get('next_page_params')
-                    else:
-                        # Fallback for list responses
-                        items = raw_response if isinstance(raw_response, list) else []
-                        next_page_params = None
-
-                    for tx in items:
-                        yield _maybe_decode(tx)
-
-                    # Check for next page
-                    if not next_page_params:
-                        break
-
-                    # Update query params with next_page_params for next iteration
-                    query_params = {**query_params, **next_page_params}
-
+                # BlockScout V2 cursors come from next_page_params
+                params: dict[str, Any] = {'address': address}
+            elif self.scanner_name == 'etherscan':
+                # Etherscan paginates via page/offset
+                params = {'address': address, 'page': 1, 'offset': batch_size}
+            else:
+                # For other scanners (e.g., blockscout_v1), fetch once (no pagination)
+                txs = await self.call(
+                    Method.ACCOUNT_TRANSACTIONS,
+                    address=address,
+                )
+                items = txs if isinstance(txs, list) else txs.get('items', [])
+                for tx in items:
+                    yield _maybe_decode(tx)
                 return
 
-            # For Etherscan, use page-based pagination
-            if self.scanner_name == 'etherscan':
-                page = 1
-                while True:
-                    txs = await self.call(
-                        Method.ACCOUNT_TRANSACTIONS,
-                        address=address,
-                        page=page,
-                        offset=batch_size,
-                    )
+            # Pagination loop driven entirely by the scanner's cursor.
+            # Each page fetch goes through the scanner (and its injected
+            # Network client), so retries happen at page-fetch level, not at
+            # generator level.
+            while True:
+                items, cursor = await self._scanner.fetch_page(Method.ACCOUNT_TRANSACTIONS, params)
 
-                    # Handle both list and dict responses
-                    items = txs if isinstance(txs, list) else txs.get('items', [])
-                    if not items:
-                        break
+                for tx in items:
+                    yield _maybe_decode(tx)
 
-                    for tx in items:
-                        yield _maybe_decode(tx)
+                if cursor is None:
+                    break
 
-                    if len(items) < batch_size:
-                        break
-
-                    page += 1
-                return
-
-            # For other scanners (e.g., blockscout_v1), fetch once (no pagination)
-            txs = await self.call(
-                Method.ACCOUNT_TRANSACTIONS,
-                address=address,
-            )
-            items = txs if isinstance(txs, list) else txs.get('items', [])
-            for tx in items:
-                yield _maybe_decode(tx)
+                params = {**params, **cursor}
             return
 
         end_block = _resolve_end_block_int(to_block)

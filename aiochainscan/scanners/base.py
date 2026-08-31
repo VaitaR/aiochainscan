@@ -77,6 +77,58 @@ class Scanner(ABC):
         self._network_client = network_client
         self._owns_network = False  # Scanner doesn't own injected client
 
+    async def fetch_page(
+        self,
+        method: Method,
+        params: dict[str, Any],
+    ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+        """
+        Fetch a single page of results plus the cursor to the next page.
+
+        This is the pagination seam of the Scanner port: page cursors flow
+        *through* this interface, so callers never reach into scanner
+        internals (``SPECS`` / ``_build_url`` / ``_build_query_params``).
+
+        Cursor contract:
+        - Returns ``(items, next_cursor)``.
+        - ``next_cursor is None`` means "no more pages"; callers must stop.
+        - ``next_cursor`` is opaque to callers. To fetch the next page, merge
+          it into ``params`` (``params = {**params, **next_cursor}``) and call
+          ``fetch_page`` again. Callers must not inspect or modify its contents.
+        - Exceptions from the underlying request machinery propagate
+          unchanged; this method adds no retry or wrapping of its own.
+
+        The default implementation routes through :meth:`call` and always
+        terminates after a single page (cursor is ``None``). Scanners with
+        native pagination override this method to surface their cursor
+        (e.g. BlockScout V2 ``next_page_params``, Etherscan page/offset).
+
+        Args:
+            method: Logical method to execute
+            params: Parameters for the method (include the previous cursor
+                via merge when fetching subsequent pages)
+
+        Returns:
+            Tuple of (items, next_cursor) where ``next_cursor is None``
+            signals the end of pagination
+
+        Raises:
+            ValueError: If method is not supported
+            Various network/API errors
+        """
+        result = await self.call(method, **params)
+        return self._coerce_items(result), None
+
+    @staticmethod
+    def _coerce_items(result: Any) -> list[dict[str, Any]]:
+        """Best-effort coercion of a parsed response into a list of items."""
+        if isinstance(result, list):
+            return list(result)
+        if isinstance(result, dict):
+            items = result.get('items')
+            return list(items) if items else []
+        return []
+
     async def call(self, method: Method, **params: Any) -> Any:
         """
         Execute a logical method call.
