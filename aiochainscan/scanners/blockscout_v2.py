@@ -282,6 +282,102 @@ class BlockScoutV2Scanner(Scanner):
 
         return query_params
 
+    async def _request_raw(self, spec: EndpointSpec, **params: Any) -> Any:
+        """
+        Perform the HTTP request for an endpoint spec and return the raw response.
+
+        Shared by :meth:`call` (which applies the spec parser) and
+        :meth:`fetch_page` (which needs the unparsed envelope to extract
+        ``next_page_params``).
+
+        Args:
+            spec: Endpoint specification
+            **params: Parameters for the method
+
+        Returns:
+            Raw (already JSON-parsed) response body
+
+        Raises:
+            RuntimeError: If no network client is injected
+            ChainscanNetworkError: On network failures
+        """
+        # Build URL with path parameters substituted
+        url = self._build_url(spec, **params)
+
+        # Build query parameters (excluding path params)
+        query_params = self._build_query_params(spec, **params)
+
+        # Headers that disable brotli compression (not always supported)
+        headers = {
+            'Accept': 'application/json',
+            'Accept-Encoding': 'gzip, deflate',
+        }
+
+        if self._network_client is None:
+            raise RuntimeError(
+                f'{self.name} v{self.version}: network_client is required. '
+                'Create scanner via ChainscanClient.from_config() which injects it automatically.'
+            )
+
+        if spec.http_method == 'GET':
+            return await self._network_client.request(
+                method='GET',
+                url=url,
+                params=query_params if query_params else None,
+                headers=headers,
+            )
+        else:  # POST
+            return await self._network_client.request(
+                method='POST',
+                url=url,
+                json_data=query_params if query_params else None,
+                headers={**headers, 'Content-Type': 'application/json'},
+            )
+
+    async def fetch_page(
+        self,
+        method: Method,
+        params: dict[str, Any],
+    ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+        """
+        Fetch one page, preserving BlockScout V2's ``next_page_params`` cursor.
+
+        Follows the base cursor contract: merge a non-``None`` cursor into
+        ``params`` for the next call; ``None`` terminates pagination.
+
+        Args:
+            method: Logical method to execute
+            params: Parameters for the method (merged cursor included for
+                subsequent pages)
+
+        Returns:
+            Tuple of (items, next_cursor)
+        """
+        if method not in self.SPECS:
+            available = [str(m) for m in self.SPECS]
+            raise ValueError(
+                f'Method {method} not supported by {self.name} v{self.version}. '
+                f'Available: {", ".join(available)}'
+            )
+
+        spec = self.SPECS[method]
+        raw_response = await self._request_raw(spec, **params)
+
+        if isinstance(raw_response, dict):
+            items = raw_response.get('items', [])
+            next_cursor = raw_response.get('next_page_params')
+        elif isinstance(raw_response, list):
+            # Fallback for list responses
+            items = raw_response
+            next_cursor = None
+        else:
+            items, next_cursor = [], None
+
+        return (
+            list(items) if items else [],
+            dict(next_cursor) if next_cursor else None,
+        )
+
     async def call(self, method: Method, **params: Any) -> Any:
         """
         Execute a logical method call against Blockscout V2 API.
@@ -311,18 +407,6 @@ class BlockScoutV2Scanner(Scanner):
 
         spec = self.SPECS[method]
 
-        # Build URL with path parameters substituted
-        url = self._build_url(spec, **params)
-
-        # Build query parameters (excluding path params)
-        query_params = self._build_query_params(spec, **params)
-
-        # Headers that disable brotli compression (not always supported)
-        headers = {
-            'Accept': 'application/json',
-            'Accept-Encoding': 'gzip, deflate',
-        }
-
         if self._network_client is None:
             raise RuntimeError(
                 f'{self.name} v{self.version}: network_client is required. '
@@ -330,20 +414,7 @@ class BlockScoutV2Scanner(Scanner):
             )
 
         try:
-            if spec.http_method == 'GET':
-                raw_response = await self._network_client.request(
-                    method='GET',
-                    url=url,
-                    params=query_params if query_params else None,
-                    headers=headers,
-                )
-            else:  # POST
-                raw_response = await self._network_client.request(
-                    method='POST',
-                    url=url,
-                    json_data=query_params if query_params else None,
-                    headers={**headers, 'Content-Type': 'application/json'},
-                )
+            raw_response = await self._request_raw(spec, **params)
 
             return spec.parse_response(raw_response)
 
