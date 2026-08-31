@@ -6,6 +6,7 @@ import logging
 from typing import TYPE_CHECKING, Any, Protocol
 
 from ...domain.models import Address
+from ...services.pagination import collect_all
 from ..method import Method
 from ..types import JSONList
 
@@ -75,22 +76,20 @@ class LogsMixin:
         topic3: str | None = None,
         on_progress: ProgressCallback | None = None,
     ) -> JSONList:
-        all_logs: JSONList = []
-        async for batch in self.iter_logs_streaming(
-            address=address,
-            from_block=from_block,
-            to_block=to_block,
-            topic0=topic0,
-            topic1=topic1,
-            topic2=topic2,
-            topic3=topic3,
-            batch_size=1000,
-            on_progress=on_progress,
-        ):
-            all_logs.extend(batch)
-            if len(all_logs) == AGGREGATION_WARNING_THRESHOLD:
-                logger.warning(
-                    'Aggregating >100k logs in memory. '
-                    'Consider using iter_logs_streaming() to avoid OOM.'
-                )
-        return all_logs
+        return await collect_all(
+            self.iter_logs_streaming(
+                address=address,
+                from_block=from_block,
+                to_block=to_block,
+                topic0=topic0,
+                topic1=topic1,
+                topic2=topic2,
+                topic3=topic3,
+                batch_size=1000,
+                on_progress=on_progress,
+            ),
+            threshold=AGGREGATION_WARNING_THRESHOLD,
+            warning='Aggregating >100k logs in memory. '
+            'Consider using iter_logs_streaming() to avoid OOM.',
+            logger=logger,
+        )

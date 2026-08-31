@@ -2,7 +2,7 @@
 Unified client for blockchain scanner APIs.
 """
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from typing import TYPE_CHECKING, Any, Literal
 
 import httpx
@@ -19,6 +19,7 @@ from ..constants import MAX_BLOCK_NUMBER
 from ..ports.rate_limiter import RateLimiter, RetryPolicy
 from ..scanners import get_scanner_class
 from ..scanners.base import Scanner
+from ..services.pagination import iter_items, iter_pages, normalize_items, page_fetcher
 from .method import Method
 from .mixins import (
     AccountMixin,
@@ -66,6 +67,20 @@ def _resolve_end_block_param(to_block: int | str | None) -> int | str:
     if to_block is None or to_block == 'latest':
         return 'latest'
     return int(to_block)
+
+
+def _decode_with_abi(
+    decode_fn: Callable[[JSONDict, list[dict[str, Any]]], JSONDict],
+    abi: list[dict[str, Any]] | None,
+) -> Callable[[JSONDict], JSONDict] | None:
+    """Build a per-item decode hook over ``abi`` (``None`` passes items through)."""
+    if abi is None:
+        return None
+
+    def decode(item: JSONDict) -> JSONDict:
+        return decode_fn(dict(item), abi)
+
+    return decode
 
 
 class AccountFacade:
@@ -558,79 +573,41 @@ class ChainscanClient(
         """
         from ..decode import decode_transaction_input
 
-        def _maybe_decode(tx: dict[str, Any]) -> dict[str, Any]:
-            if abi is None:
-                return tx
-            tx_copy = dict(tx)
-            return decode_transaction_input(tx_copy, abi)
-
         # Validate batch_size to prevent infinite loops
         if batch_size < 1:
             raise ValueError(f'batch_size must be at least 1, got {batch_size}')
 
-        # For simple pagination without decoding and no block range, use existing logic
+        decode = _decode_with_abi(decode_transaction_input, abi)
+        fetch = page_fetcher(self._scanner, Method.ACCOUNT_TRANSACTIONS)
+
+        # For simple pagination without decoding and no block range, use
+        # cursor pagination through the scanner port: fetch_page() returns
+        # (items, next_cursor) where a None cursor ends iteration.
         if abi is None and from_block == 0 and (to_block is None or to_block == 'latest'):
-            # Simple pagination flows through the scanner port: fetch_page()
-            # returns (items, next_cursor) where a None cursor ends iteration.
-            if self.scanner_name == 'blockscout' and self.scanner_version == 'v2':
-                # BlockScout V2 cursors come from next_page_params
-                params: dict[str, Any] = {'address': address}
-            elif self.scanner_name == 'etherscan':
+            params: dict[str, Any] = {'address': address}
+            if self.scanner_name == 'etherscan':
                 # Etherscan paginates via page/offset
                 params = {'address': address, 'page': 1, 'offset': batch_size}
-            else:
-                # For other scanners (e.g., blockscout_v1), fetch once (no pagination)
-                txs = await self.call(
-                    Method.ACCOUNT_TRANSACTIONS,
-                    address=address,
-                )
-                items = txs if isinstance(txs, list) else txs.get('items', [])
-                for tx in items:
-                    yield _maybe_decode(tx)
-                return
 
-            # Pagination loop driven entirely by the scanner's cursor.
-            # Each page fetch goes through the scanner (and its injected
-            # Network client), so retries happen at page-fetch level, not at
-            # generator level.
-            while True:
-                items, cursor = await self._scanner.fetch_page(Method.ACCOUNT_TRANSACTIONS, params)
-
-                for tx in items:
-                    yield _maybe_decode(tx)
-
-                if cursor is None:
-                    break
-
-                params = {**params, **cursor}
+            async for tx in iter_items(fetch, params):
+                yield tx
             return
 
+        # Block-range (or decoding) pagination: page-numbered windows until a
+        # short page signals the end.
         end_block = _resolve_end_block_int(to_block)
-        page = 1
-        while True:
-            txs = await self.call(
-                Method.ACCOUNT_TRANSACTIONS,
-                address=address,
-                startblock=from_block,
-                endblock=end_block,
-                page=page,
-                offset=batch_size,
-                sort='asc',
-            )
-            items = (
-                txs
-                if isinstance(txs, list)
-                else txs.get('items', [])
-                if isinstance(txs, dict)
-                else []
-            )
-            if not items:
-                break
-            for tx in items:
-                yield _maybe_decode(tx)
-            if len(items) < batch_size:
-                break
-            page += 1
+        params = {
+            'address': address,
+            'startblock': from_block,
+            'endblock': end_block,
+            'page': 1,
+            'offset': batch_size,
+            'sort': 'asc',
+        }
+        async for tx in iter_items(
+            fetch, params, stop='page_size', page_size=batch_size, decode=decode
+        ):
+            yield tx
 
     # =========================================================================
     # BATCH STREAMING API - Memory-efficient batch iteration for whale addresses
@@ -686,39 +663,23 @@ class ChainscanClient(
             - iter_transactions_streaming: 1M txs = ~10MB RAM (yields batches)
         """
         end_block = _resolve_end_block_int(to_block)
-        page = 1
-        fetched = 0
-        while True:
-            txs = await self.call(
-                Method.ACCOUNT_TRANSACTIONS,
-                address=address,
-                startblock=from_block,
-                endblock=end_block,
-                page=page,
-                offset=batch_size,
-                sort='asc',
-            )
-            batch = (
-                txs
-                if isinstance(txs, list)
-                else txs.get('items', [])
-                if isinstance(txs, dict)
-                else []
-            )
-            if not batch:
-                break
-            fetched += len(batch)
-            if on_progress is not None:
-                await on_progress(
-                    fetched=fetched,
-                    total_expected=None,
-                    current_page=page,
-                    operation='transactions',
-                )
+        params: dict[str, Any] = {
+            'address': address,
+            'startblock': from_block,
+            'endblock': end_block,
+            'page': 1,
+            'offset': batch_size,
+            'sort': 'asc',
+        }
+        async for batch in iter_pages(
+            page_fetcher(self._scanner, Method.ACCOUNT_TRANSACTIONS),
+            params,
+            stop='page_size',
+            page_size=batch_size,
+            on_progress=on_progress,
+            operation='transactions',
+        ):
             yield batch
-            if len(batch) < batch_size:
-                break
-            page += 1
 
     async def iter_internal_transactions_streaming(
         self,
@@ -742,39 +703,23 @@ class ChainscanClient(
             Batches of internal transaction dictionaries
         """
         end_block = _resolve_end_block_int(to_block)
-        page = 1
-        fetched = 0
-        while True:
-            txs = await self.call(
-                Method.ACCOUNT_INTERNAL_TXS,
-                address=address,
-                startblock=from_block,
-                endblock=end_block,
-                page=page,
-                offset=batch_size,
-                sort='asc',
-            )
-            batch = (
-                txs
-                if isinstance(txs, list)
-                else txs.get('items', [])
-                if isinstance(txs, dict)
-                else []
-            )
-            if not batch:
-                break
-            fetched += len(batch)
-            if on_progress is not None:
-                await on_progress(
-                    fetched=fetched,
-                    total_expected=None,
-                    current_page=page,
-                    operation='internal_transactions',
-                )
+        params: dict[str, Any] = {
+            'address': address,
+            'startblock': from_block,
+            'endblock': end_block,
+            'page': 1,
+            'offset': batch_size,
+            'sort': 'asc',
+        }
+        async for batch in iter_pages(
+            page_fetcher(self._scanner, Method.ACCOUNT_INTERNAL_TXS),
+            params,
+            stop='page_size',
+            page_size=batch_size,
+            on_progress=on_progress,
+            operation='internal_transactions',
+        ):
             yield batch
-            if len(batch) < batch_size:
-                break
-            page += 1
 
     async def iter_token_transfers_streaming(
         self,
@@ -800,41 +745,25 @@ class ChainscanClient(
             Batches of token transfer dictionaries
         """
         end_block = _resolve_end_block_int(to_block)
-        page = 1
-        fetched = 0
-        while True:
-            params: dict[str, Any] = {
-                'address': address,
-                'startblock': from_block,
-                'endblock': end_block,
-                'page': page,
-                'offset': batch_size,
-                'sort': 'asc',
-            }
-            if contract_address is not None:
-                params['contractaddress'] = contract_address
-            txs = await self.call(Method.ACCOUNT_ERC20_TRANSFERS, **params)
-            batch = (
-                txs
-                if isinstance(txs, list)
-                else txs.get('items', [])
-                if isinstance(txs, dict)
-                else []
-            )
-            if not batch:
-                break
-            fetched += len(batch)
-            if on_progress is not None:
-                await on_progress(
-                    fetched=fetched,
-                    total_expected=None,
-                    current_page=page,
-                    operation='token_transfers',
-                )
+        params: dict[str, Any] = {
+            'address': address,
+            'startblock': from_block,
+            'endblock': end_block,
+            'page': 1,
+            'offset': batch_size,
+            'sort': 'asc',
+        }
+        if contract_address is not None:
+            params['contractaddress'] = contract_address
+        async for batch in iter_pages(
+            page_fetcher(self._scanner, Method.ACCOUNT_ERC20_TRANSFERS),
+            params,
+            stop='page_size',
+            page_size=batch_size,
+            on_progress=on_progress,
+            operation='token_transfers',
+        ):
             yield batch
-            if len(batch) < batch_size:
-                break
-            page += 1
 
     async def iter_logs_streaming(
         self,
@@ -866,47 +795,31 @@ class ChainscanClient(
             Batches of event log dictionaries
         """
         end_block = _resolve_end_block_param(to_block)
-        page = 1
-        fetched = 0
-        while True:
-            params: dict[str, Any] = {
-                'fromBlock': from_block,
-                'toBlock': end_block,
-                'page': page,
-                'offset': batch_size,
-            }
-            if address is not None:
-                params['address'] = address
-            if topic0 is not None:
-                params['topic0'] = topic0
-            if topic1 is not None:
-                params['topic1'] = topic1
-            if topic2 is not None:
-                params['topic2'] = topic2
-            if topic3 is not None:
-                params['topic3'] = topic3
-            logs = await self.call(Method.EVENT_LOGS, **params)
-            batch = (
-                logs
-                if isinstance(logs, list)
-                else logs.get('items', [])
-                if isinstance(logs, dict)
-                else []
-            )
-            if not batch:
-                break
-            fetched += len(batch)
-            if on_progress is not None:
-                await on_progress(
-                    fetched=fetched,
-                    total_expected=None,
-                    current_page=page,
-                    operation='logs',
-                )
+        params: dict[str, Any] = {
+            'fromBlock': from_block,
+            'toBlock': end_block,
+            'page': 1,
+            'offset': batch_size,
+        }
+        if address is not None:
+            params['address'] = address
+        if topic0 is not None:
+            params['topic0'] = topic0
+        if topic1 is not None:
+            params['topic1'] = topic1
+        if topic2 is not None:
+            params['topic2'] = topic2
+        if topic3 is not None:
+            params['topic3'] = topic3
+        async for batch in iter_pages(
+            page_fetcher(self._scanner, Method.EVENT_LOGS),
+            params,
+            stop='page_size',
+            page_size=batch_size,
+            on_progress=on_progress,
+            operation='logs',
+        ):
             yield batch
-            if len(batch) < batch_size:
-                break
-            page += 1
 
     @classmethod
     def get_available_scanners(cls) -> dict[tuple[str, str], type[Scanner]]:
@@ -987,50 +900,36 @@ class ChainscanClient(
         from ..decode import decode_log_data
 
         end_block = _resolve_end_block_param(to_block)
-        page = 1
-        while True:
-            params: dict[str, Any] = {
-                'address': address,
-                'fromBlock': from_block,
-                'toBlock': end_block,
-                'page': page,
-                'offset': batch_size,
-            }
+        params: dict[str, Any] = {
+            'address': address,
+            'fromBlock': from_block,
+            'toBlock': end_block,
+            'page': 1,
+            'offset': batch_size,
+        }
 
-            if topics:
-                if len(topics) > 0:
-                    params['topic0'] = topics[0]
-                if len(topics) > 1:
-                    params['topic1'] = topics[1]
-                if len(topics) > 2:
-                    params['topic2'] = topics[2]
-                if len(topics) > 3:
-                    params['topic3'] = topics[3]
+        if topics:
+            if len(topics) > 0:
+                params['topic0'] = topics[0]
+            if len(topics) > 1:
+                params['topic1'] = topics[1]
+            if len(topics) > 2:
+                params['topic2'] = topics[2]
+            if len(topics) > 3:
+                params['topic3'] = topics[3]
 
-            if topic_operators:
-                for i, operator in enumerate(topic_operators[:3]):
-                    params[f'topic{i}_{i + 1}_opr'] = operator
+        if topic_operators:
+            for i, operator in enumerate(topic_operators[:3]):
+                params[f'topic{i}_{i + 1}_opr'] = operator
 
-            logs = await self.call(Method.EVENT_LOGS, **params)
-            items = (
-                logs
-                if isinstance(logs, list)
-                else logs.get('items', [])
-                if isinstance(logs, dict)
-                else []
-            )
-            if not items:
-                break
-
-            for log in items:
-                if abi is None:
-                    yield log
-                else:
-                    yield decode_log_data(dict(log), abi)
-
-            if len(items) < batch_size:
-                break
-            page += 1
+        async for log in iter_items(
+            page_fetcher(self._scanner, Method.EVENT_LOGS),
+            params,
+            stop='page_size',
+            page_size=batch_size,
+            decode=_decode_with_abi(decode_log_data, abi),
+        ):
+            yield log
 
     # =========================================================================
     # DATAFRAME API - Polars integration for data analysis
@@ -1063,7 +962,7 @@ class ChainscanClient(
         from aiochainscan.services.analytics import token_portfolio_to_dataframe
 
         tokens = await self.call(Method.ACCOUNT_TOKEN_PORTFOLIO, address=address)
-        items = tokens if isinstance(tokens, list) else tokens.get('items', [])
+        items = normalize_items(tokens)
         return await token_portfolio_to_dataframe(items)
 
     def __str__(self) -> str:

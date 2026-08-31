@@ -487,17 +487,22 @@ class TestStreamingDecodeAndTopicOperators:
 
     @pytest.mark.asyncio
     async def test_iter_transactions_applies_abi_decode(
-        self, client: ChainscanClient, mock_call: AsyncMock, monkeypatch
+        self, client: ChainscanClient, monkeypatch
     ) -> None:
-        mock_call.side_effect = [
-            [
-                {
-                    'hash': '0x1',
-                    'input': '0xabc',
-                }
-            ],
-            [],
+        # Pagination flows through the scanner port (fetch_page seam).
+        fetch_page = AsyncMock()
+        fetch_page.side_effect = [
+            (
+                [
+                    {
+                        'hash': '0x1',
+                        'input': '0xabc',
+                    }
+                ],
+                None,
+            )
         ]
+        client._scanner.fetch_page = fetch_page  # type: ignore[assignment]
 
         def fake_decode(tx: dict[str, Any], abi: list[dict[str, Any]]) -> dict[str, Any]:
             tx['decoded_func'] = 'transfer'
@@ -516,18 +521,24 @@ class TestStreamingDecodeAndTopicOperators:
 
     @pytest.mark.asyncio
     async def test_iter_logs_preserves_topic_operators_and_decodes(
-        self, client: ChainscanClient, mock_call: AsyncMock, monkeypatch
+        self, client: ChainscanClient, monkeypatch
     ) -> None:
-        mock_call.side_effect = [
-            [
-                {
-                    'address': TEST_CONTRACT,
-                    'topics': ['0xabc'],
-                    'data': '0x',
-                }
-            ],
-            [],
+        # Pagination flows through the scanner port (fetch_page seam).
+        fetch_page = AsyncMock()
+        fetch_page.side_effect = [
+            (
+                [
+                    {
+                        'address': TEST_CONTRACT,
+                        'topics': ['0xabc'],
+                        'data': '0x',
+                    }
+                ],
+                {'page': 2, 'offset': 1},
+            ),
+            ([], None),
         ]
+        client._scanner.fetch_page = fetch_page  # type: ignore[assignment]
 
         def fake_decode(log: dict[str, Any], abi: list[dict[str, Any]]) -> dict[str, Any]:
             log['decoded_event'] = 'Transfer'
@@ -548,11 +559,13 @@ class TestStreamingDecodeAndTopicOperators:
 
         assert len(out) == 1
         assert out[0]['decoded_event'] == 'Transfer'
-        assert mock_call.await_count == 2
-        first_call_kwargs = mock_call.await_args_list[0].kwargs
-        assert first_call_kwargs['topic0'] == '0xtopic0'
-        assert first_call_kwargs['topic1'] == '0xtopic1'
-        assert first_call_kwargs['topic0_1_opr'] == 'and'
+        assert fetch_page.await_count == 2
+        first_call_params = fetch_page.await_args_list[0].args[1]
+        assert first_call_params['topic0'] == '0xtopic0'
+        assert first_call_params['topic1'] == '0xtopic1'
+        assert first_call_params['topic0_1_opr'] == 'and'
+        # Cursor merges into the second page's params
+        assert fetch_page.await_args_list[1].args[1]['page'] == 2
 
 
 # ---------------------------------------------------------------------------
