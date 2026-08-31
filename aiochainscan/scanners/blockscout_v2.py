@@ -439,71 +439,18 @@ class BlockScoutV2Scanner(Scanner):
             ) from e
 
     # ========================================================================
-    # Convenience methods for common operations
+    # Scanner-port methods (explicit dependencies, see docstrings)
     # ========================================================================
-
-    async def get_balance(self, address: str) -> str:
-        """
-        Get native coin balance for an address.
-
-        Args:
-            address: Ethereum address
-
-        Returns:
-            Balance in wei as string
-        """
-        result = await self.call(Method.ACCOUNT_BALANCE, address=address)
-        return str(result)
-
-    async def get_token_portfolio(
-        self, address: str, token_type: str = 'ERC-20'
-    ) -> list[dict[str, Any]]:
-        """
-        Get all tokens held by an address.
-
-        Args:
-            address: Ethereum address
-            token_type: Token type filter (default: ERC-20)
-
-        Returns:
-            List of token holdings with token info and balances
-        """
-        result = await self.call(
-            Method.ACCOUNT_TOKEN_PORTFOLIO,
-            address=address,
-            type=token_type,
-        )
-        return list(result) if result else []
-
-    async def get_transactions(self, address: str) -> list[dict[str, Any]]:
-        """
-        Get transactions for an address.
-
-        Args:
-            address: Ethereum address
-
-        Returns:
-            List of transactions
-        """
-        result = await self.call(Method.ACCOUNT_TRANSACTIONS, address=address)
-        return list(result) if result else []
-
-    async def get_contract_abi(self, address: str) -> list[dict[str, Any]] | None:
-        """
-        Get ABI for a verified smart contract.
-
-        Args:
-            address: Contract address
-
-        Returns:
-            ABI as list of dicts, or None if not verified
-        """
-        result = await self.call(Method.CONTRACT_ABI, address=address)
-        return list(result) if result else None
 
     async def get_address_info(self, address: str) -> dict[str, Any]:
         """
         Get full address information including ENS, balance, contract status.
+
+        This is a scanner-port method serving ENS reverse resolution: it is
+        injected into :class:`~aiochainscan.services.ens_resolver.ENSResolver`
+        (via its ``AddressInfoProvider`` port) so reverse lookups can read
+        ``ens_domain_name`` directly from the BlockScout V2 address endpoint.
+        It is not part of the generic ``call()``/``fetch_page()`` contract.
 
         Args:
             address: Ethereum address
@@ -511,9 +458,6 @@ class BlockScoutV2Scanner(Scanner):
         Returns:
             Full address info dict
         """
-        if Method.ACCOUNT_BALANCE not in self.SPECS:
-            raise ValueError('ACCOUNT_BALANCE method not supported')
-
         spec = self.SPECS[Method.ACCOUNT_BALANCE]
         url = self._build_url(spec, address=address)
 

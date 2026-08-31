@@ -83,67 +83,6 @@ def _decode_with_abi(
     return decode
 
 
-class AccountFacade:
-    """Account-oriented namespace facade over ``ChainscanClient``."""
-
-    def __init__(self, client: 'ChainscanClient') -> None:
-        self._client = client
-
-    async def get_balance(self, address: str, tag: str = 'latest') -> str:
-        return await self._client.get_balance(address, tag=tag)
-
-    async def get_transactions(
-        self,
-        address: str,
-        start_block: int = 0,
-        end_block: int | None = None,
-        page: int = 1,
-        offset: int = 100,
-    ) -> list[JSONDict]:
-        return await self._client.get_transactions(address, start_block, end_block, page, offset)
-
-    async def get_all_transactions(
-        self,
-        address: str,
-        from_block: int = 0,
-        to_block: int | str | None = None,
-        on_progress: 'ProgressCallback | None' = None,
-    ) -> list[JSONDict]:
-        return await self._client.get_all_transactions(address, from_block, to_block, on_progress)
-
-
-class ContractFacade:
-    """Contract-oriented namespace facade over ``ChainscanClient``."""
-
-    def __init__(self, client: 'ChainscanClient') -> None:
-        self._client = client
-
-    async def get_abi(self, address: str) -> str:
-        return await self._client.get_contract_abi(address)
-
-    async def get_source(self, address: str) -> JSONDict:
-        return await self._client.get_contract_source(address)
-
-    async def get_creation(self, addresses: list[str]) -> list[JSONDict]:
-        return await self._client.get_contract_creation(addresses)
-
-
-class BlockFacade:
-    """Block-oriented namespace facade over ``ChainscanClient``."""
-
-    def __init__(self, client: 'ChainscanClient') -> None:
-        self._client = client
-
-    async def get(self, block_number: int | str) -> JSONDict:
-        return await self._client.get_block(block_number)
-
-    async def get_reward(self, block_number: int) -> JSONDict:
-        return await self._client.get_block_reward(block_number)
-
-    async def get_by_timestamp(self, timestamp: int, closest: str = 'before') -> JSONDict:
-        return await self._client.get_block_by_timestamp(timestamp, closest=closest)
-
-
 class ChainscanClient(
     AccountMixin,
     ContractMixin,
@@ -245,11 +184,6 @@ class ChainscanClient(
 
         # Lazy-initialized ENS resolver
         self._ens_resolver: ENSResolver | None = None
-
-        # Namespace facades (composition-friendly API surface)
-        self.account = AccountFacade(self)
-        self.contracts = ContractFacade(self)
-        self.blocks = BlockFacade(self)
 
     @classmethod
     def from_config(
