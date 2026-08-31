@@ -6,6 +6,7 @@ import logging
 from typing import TYPE_CHECKING, Any, Protocol
 
 from ...domain.models import Address
+from ...services.pagination import collect_all, normalize_items
 from ..method import Method
 from ..types import JSONList
 
@@ -183,13 +184,7 @@ class AccountMixin:
     async def get_nft_portfolio(self: _AccountClientProtocol, address: str) -> JSONList:
         """Get all NFTs owned by an address."""
         result: Any = await self.call(Method.ACCOUNT_NFT_PORTFOLIO, address=str(Address(address)))
-        items: JSONList = (
-            result
-            if isinstance(result, list)
-            else result.get('items', [])
-            if isinstance(result, dict)
-            else []
-        )
+        items: JSONList = normalize_items(result)
         return items
 
     async def get_all_transactions(
@@ -200,21 +195,19 @@ class AccountMixin:
         on_progress: ProgressCallback | None = None,
     ) -> JSONList:
         """Get all transactions by aggregating streaming batches."""
-        all_txs: JSONList = []
-        async for batch in self.iter_transactions_streaming(
-            address=address,
-            from_block=from_block,
-            to_block=to_block,
-            batch_size=1000,
-            on_progress=on_progress,
-        ):
-            all_txs.extend(batch)
-            if len(all_txs) == AGGREGATION_WARNING_THRESHOLD:
-                logger.warning(
-                    'Aggregating >100k transactions in memory. '
-                    'Consider using iter_transactions_streaming() to avoid OOM.'
-                )
-        return all_txs
+        return await collect_all(
+            self.iter_transactions_streaming(
+                address=address,
+                from_block=from_block,
+                to_block=to_block,
+                batch_size=1000,
+                on_progress=on_progress,
+            ),
+            threshold=AGGREGATION_WARNING_THRESHOLD,
+            warning='Aggregating >100k transactions in memory. '
+            'Consider using iter_transactions_streaming() to avoid OOM.',
+            logger=logger,
+        )
 
     async def get_all_token_transfers(
         self: _AccountClientProtocol,
@@ -225,22 +218,20 @@ class AccountMixin:
         on_progress: ProgressCallback | None = None,
     ) -> JSONList:
         """Get all ERC20 token transfers by aggregating streaming batches."""
-        all_transfers: JSONList = []
-        async for batch in self.iter_token_transfers_streaming(
-            address=address,
-            from_block=from_block,
-            to_block=to_block,
-            contract_address=contract_address,
-            batch_size=1000,
-            on_progress=on_progress,
-        ):
-            all_transfers.extend(batch)
-            if len(all_transfers) == AGGREGATION_WARNING_THRESHOLD:
-                logger.warning(
-                    'Aggregating >100k token transfers in memory. '
-                    'Consider using iter_token_transfers_streaming() to avoid OOM.'
-                )
-        return all_transfers
+        return await collect_all(
+            self.iter_token_transfers_streaming(
+                address=address,
+                from_block=from_block,
+                to_block=to_block,
+                contract_address=contract_address,
+                batch_size=1000,
+                on_progress=on_progress,
+            ),
+            threshold=AGGREGATION_WARNING_THRESHOLD,
+            warning='Aggregating >100k token transfers in memory. '
+            'Consider using iter_token_transfers_streaming() to avoid OOM.',
+            logger=logger,
+        )
 
     async def get_all_internal_transactions(
         self: _AccountClientProtocol,
@@ -250,18 +241,16 @@ class AccountMixin:
         on_progress: ProgressCallback | None = None,
     ) -> JSONList:
         """Get all internal transactions by aggregating streaming batches."""
-        all_txs: JSONList = []
-        async for batch in self.iter_internal_transactions_streaming(
-            address=address,
-            from_block=from_block,
-            to_block=to_block,
-            batch_size=1000,
-            on_progress=on_progress,
-        ):
-            all_txs.extend(batch)
-            if len(all_txs) == AGGREGATION_WARNING_THRESHOLD:
-                logger.warning(
-                    'Aggregating >100k internal transactions in memory. '
-                    'Consider using iter_internal_transactions_streaming() to avoid OOM.'
-                )
-        return all_txs
+        return await collect_all(
+            self.iter_internal_transactions_streaming(
+                address=address,
+                from_block=from_block,
+                to_block=to_block,
+                batch_size=1000,
+                on_progress=on_progress,
+            ),
+            threshold=AGGREGATION_WARNING_THRESHOLD,
+            warning='Aggregating >100k internal transactions in memory. '
+            'Consider using iter_internal_transactions_streaming() to avoid OOM.',
+            logger=logger,
+        )

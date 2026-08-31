@@ -24,6 +24,7 @@ except ImportError:
 
 from aiochainscan.core.client import ChainscanClient
 from aiochainscan.core.method import Method
+from aiochainscan.services.pagination import normalize_items
 
 
 def create_mcp_server() -> FastMCPType:
@@ -81,7 +82,7 @@ def create_mcp_server() -> FastMCPType:
 
         async with ChainscanClient.from_config('blockscout_v2', network) as client:
             txs = await client.call(Method.ACCOUNT_TRANSACTIONS, address=address)
-            items = txs[:limit] if isinstance(txs, list) else txs.get('items', [])[:limit]
+            items = normalize_items(txs)[:limit]
 
             if not items:
                 return f'No transactions found for {address} on {network}'
@@ -111,7 +112,7 @@ def create_mcp_server() -> FastMCPType:
         """
         async with ChainscanClient.from_config('blockscout_v2', network) as client:
             tokens = await client.call(Method.ACCOUNT_TOKEN_PORTFOLIO, address=address)
-            items = tokens[:20] if isinstance(tokens, list) else tokens.get('items', [])[:20]
+            items = normalize_items(tokens)[:20]
 
             if not items:
                 return f'No tokens found for {address} on {network}'
