@@ -9,6 +9,14 @@ class ChainscanClientError(Exception):
     pass
 
 
+class ChainscanDependencyError(ChainscanClientError):
+    """An optional dependency required for the requested operation is missing.
+
+    Raised when neither the fastabi Rust extension (bundled in all wheels)
+    nor the pure-Python fallback packages are importable.
+    """
+
+
 class ChainscanClientContentTypeError(ChainscanClientError):
     def __init__(self, status: int, content: Any) -> None:
         self.status: int = status

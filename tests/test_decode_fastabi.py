@@ -36,7 +36,7 @@ class TestFastAbiAvailability:
     def test_fastabi_import_success(self):
         """Test that fastabi can be imported when available."""
         try:
-            from aiochainscan_fastabi import decode_input as fast_decode_input
+            from aiochainscan.aiochainscan_fastabi import decode_input as fast_decode_input
 
             assert callable(fast_decode_input)
         except ImportError:
@@ -56,7 +56,7 @@ class TestFastAbiDecoding:
     def setup_method(self):
         """Setup test data."""
         try:
-            from aiochainscan_fastabi import decode_input as fast_decode_input
+            from aiochainscan.aiochainscan_fastabi import decode_input as fast_decode_input
 
             self.fast_decode_input = fast_decode_input
             self.fastabi_available = True
@@ -166,7 +166,7 @@ class TestPerformanceBenchmarks:
     def setup_method(self):
         """Setup test data for benchmarks."""
         try:
-            from aiochainscan_fastabi import decode_input as fast_decode_input
+            from aiochainscan.aiochainscan_fastabi import decode_input as fast_decode_input
 
             self.fast_decode_input = fast_decode_input
             self.fastabi_available = True
@@ -288,7 +288,7 @@ class TestCompatibility:
         """Test that fastabi and Python produce identical results."""
         if not hasattr(self, 'fastabi_available'):
             try:
-                from aiochainscan_fastabi import decode_input as fast_decode_input
+                from aiochainscan.aiochainscan_fastabi import decode_input as fast_decode_input
 
                 self.fast_decode_input = fast_decode_input
                 self.fastabi_available = True
@@ -328,7 +328,7 @@ class TestGilRelease:
     def test_all_functions_return_json_strings(self):
         """Verify all fastabi functions return JSON strings (not Python objects)."""
         try:
-            from aiochainscan_fastabi import (
+            from aiochainscan.aiochainscan_fastabi import (
                 decode_input,
                 decode_many,
                 decode_many_flat,
@@ -370,7 +370,7 @@ class TestGilRelease:
     def test_batch_decode_large_batch_no_gil_blocking(self):
         """Test that large batch decoding doesn't block by creating Python objects in Rust."""
         try:
-            from aiochainscan_fastabi import decode_many
+            from aiochainscan.aiochainscan_fastabi import decode_many
         except ImportError:
             pytest.skip('fastabi not available')
 

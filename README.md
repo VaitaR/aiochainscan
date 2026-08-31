@@ -39,6 +39,23 @@ cd aiochainscan
 pip install .
 ```
 
+The dependency footprint is intentionally minimal — only `httpx`, `orjson`,
+`tenacity` and `aiolimiter`. Prebuilt wheels bundle the fastabi Rust
+extension, so no Rust toolchain is required when installing from wheels.
+
+**Optional extras:**
+
+| Extra | Purpose |
+|---|---|
+| `data` | Polars DataFrames (`get_transactions_df` and friends) |
+| `mcp` | MCP server for AI agents (`aiochainscan.mcp_server`) |
+| `http2` | HTTP/2 transport (`http2=True`; off by default — Cloudflare WAF risk) |
+| `fallback` | Pure-Python keccak/ABI decoding for environments without fastabi |
+
+```sh
+pip install "aiochainscan[data]"   # example
+```
+
 **Verify installation:**
 ```python
 import aiochainscan

@@ -402,6 +402,8 @@ async with ChainscanClient.from_config("etherscan", "ethereum") as client:
 pip install aiochainscan                 # Basic (BlockScout V2, no API key)
 pip install aiochainscan[data]           # + Polars DataFrames
 pip install aiochainscan[mcp]            # + MCP server support
+pip install aiochainscan[http2]          # + HTTP/2 transport (opt-in)
+pip install aiochainscan[fallback]       # + pure-Python keccak/ABI (without fastabi)
 ```
 
 ## Environment Setup

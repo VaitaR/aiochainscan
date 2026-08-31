@@ -92,7 +92,7 @@ def test_no_import_side_effects():
         m for m in new_modules if not m.startswith('aiochainscan') and not m.startswith('_')
     ]
 
-    # Some external dependencies are expected (httpx, pydantic, etc.)
+    # Some external dependencies are expected (httpx, orjson, etc.)
     # But we shouldn't be importing heavy things like numpy, pandas unexpectedly
     unexpected = [m for m in external_modules if m.startswith(('numpy', 'pandas', 'scipy'))]
     assert len(unexpected) == 0, f'Unexpected heavy imports: {unexpected}'
