@@ -91,7 +91,7 @@ class TestSinglePageConvenienceMethods:
     ) -> None:
         mock_call.return_value = {'number': '123'}
         result = await client.blocks.get(123)
-        mock_call.assert_awaited_once_with(Method.BLOCK_BY_NUMBER, blockno=123)
+        mock_call.assert_awaited_once_with(Method.BLOCK_BY_NUMBER, block_number=123)
         assert result == {'number': '123'}
 
     @pytest.mark.asyncio
@@ -212,14 +212,14 @@ class TestSinglePageConvenienceMethods:
     async def test_get_block(self, client: ChainscanClient, mock_call: AsyncMock) -> None:
         mock_call.return_value = {'blockNumber': '123'}
         result = await client.get_block(123)
-        mock_call.assert_awaited_once_with(Method.BLOCK_BY_NUMBER, blockno=123)
+        mock_call.assert_awaited_once_with(Method.BLOCK_BY_NUMBER, block_number=123)
         assert result == {'blockNumber': '123'}
 
     @pytest.mark.asyncio
     async def test_get_block_reward(self, client: ChainscanClient, mock_call: AsyncMock) -> None:
         mock_call.return_value = {'blockReward': '2000000000000000000'}
         result = await client.get_block_reward(100)
-        mock_call.assert_awaited_once_with(Method.BLOCK_REWARD, blockno=100)
+        mock_call.assert_awaited_once_with(Method.BLOCK_REWARD, block_number=100)
         assert result == {'blockReward': '2000000000000000000'}
 
     @pytest.mark.asyncio
@@ -228,7 +228,7 @@ class TestSinglePageConvenienceMethods:
     ) -> None:
         mock_call.return_value = {'EstimateTimeInSec': '120'}
         result = await client.get_block_countdown(999999)
-        mock_call.assert_awaited_once_with(Method.BLOCK_COUNTDOWN, blockno=999999)
+        mock_call.assert_awaited_once_with(Method.BLOCK_COUNTDOWN, block_number=999999)
         assert result == {'EstimateTimeInSec': '120'}
 
     @pytest.mark.asyncio
@@ -285,7 +285,7 @@ class TestSinglePageConvenienceMethods:
     async def test_get_token_supply(self, client: ChainscanClient, mock_call: AsyncMock) -> None:
         mock_call.return_value = '1000000000000'
         result = await client.get_token_supply(TEST_CONTRACT)
-        mock_call.assert_awaited_once_with(Method.TOKEN_SUPPLY, contractaddress=TEST_CONTRACT)
+        mock_call.assert_awaited_once_with(Method.TOKEN_SUPPLY, contract_address=TEST_CONTRACT)
         assert result == '1000000000000'
 
     @pytest.mark.asyncio
@@ -294,7 +294,7 @@ class TestSinglePageConvenienceMethods:
         result = await client.get_token_info(TEST_CONTRACT)
         mock_call.assert_awaited_once_with(
             Method.TOKEN_INFO,
-            contractaddress=str(Address(TEST_CONTRACT)),
+            contract_address=str(Address(TEST_CONTRACT)),
         )
         assert result == {'symbol': 'USDT', 'decimals': '6'}
 
@@ -323,7 +323,7 @@ class TestSinglePageConvenienceMethods:
     async def test_get_gas_estimate(self, client: ChainscanClient, mock_call: AsyncMock) -> None:
         mock_call.return_value = '120'
         result = await client.get_gas_estimate(2000000000)
-        mock_call.assert_awaited_once_with(Method.GAS_ESTIMATE, gasprice=2000000000)
+        mock_call.assert_awaited_once_with(Method.GAS_ESTIMATE, gas_price=2000000000)
         assert result == '120'
 
     @pytest.mark.asyncio

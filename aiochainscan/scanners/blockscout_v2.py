@@ -202,6 +202,14 @@ class BlockScoutV2Scanner(Scanner):
             parser=_parse_contract_abi,
             requires_api_key=False,
         ),
+        Method.BLOCK_BY_NUMBER: EndpointSpec(
+            http_method='GET',
+            path='/api/v2/blocks/{block_number}',
+            query={},
+            param_map={'block_number': 'block_number'},
+            parser=_parse_raw,
+            requires_api_key=False,
+        ),
     }
 
     def __init__(

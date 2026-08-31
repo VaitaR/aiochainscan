@@ -24,7 +24,7 @@ class StatsMixin:
         return result
 
     async def get_gas_estimate(self: _StatsClientProtocol, gas_price: int) -> str:
-        result: str = await self.call(Method.GAS_ESTIMATE, gasprice=gas_price)
+        result: str = await self.call(Method.GAS_ESTIMATE, gas_price=gas_price)
         return str(result)
 
     async def get_eth_supply(self: _StatsClientProtocol) -> str:
