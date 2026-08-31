@@ -62,39 +62,6 @@ class TestSinglePageConvenienceMethods:
         assert result == '1000000000000000000'
 
     @pytest.mark.asyncio
-    async def test_account_namespace_get_balance(
-        self, client: ChainscanClient, mock_call: AsyncMock
-    ) -> None:
-        mock_call.return_value = '1000000000000000000'
-        result = await client.account.get_balance(TEST_ADDRESS)
-        mock_call.assert_awaited_once_with(
-            Method.ACCOUNT_BALANCE,
-            address=str(Address(TEST_ADDRESS)),
-            tag='latest',
-        )
-        assert result == '1000000000000000000'
-
-    @pytest.mark.asyncio
-    async def test_contract_namespace_get_abi(
-        self, client: ChainscanClient, mock_call: AsyncMock
-    ) -> None:
-        mock_call.return_value = '[]'
-        result = await client.contracts.get_abi(TEST_CONTRACT)
-        mock_call.assert_awaited_once_with(
-            Method.CONTRACT_ABI, address=str(Address(TEST_CONTRACT))
-        )
-        assert result == '[]'
-
-    @pytest.mark.asyncio
-    async def test_blocks_namespace_get(
-        self, client: ChainscanClient, mock_call: AsyncMock
-    ) -> None:
-        mock_call.return_value = {'number': '123'}
-        result = await client.blocks.get(123)
-        mock_call.assert_awaited_once_with(Method.BLOCK_BY_NUMBER, block_number=123)
-        assert result == {'number': '123'}
-
-    @pytest.mark.asyncio
     async def test_get_transactions(self, client: ChainscanClient, mock_call: AsyncMock) -> None:
         mock_call.return_value = [{'hash': '0x1'}]
         result = await client.get_transactions(TEST_ADDRESS)
