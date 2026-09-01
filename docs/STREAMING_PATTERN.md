@@ -7,7 +7,7 @@ The Streaming Pattern provides AsyncIterator-based batch fetching to handle whal
 ### Problem: Traditional Bulk Fetch
 
 ```python
-# ❌ Traditional approach - loads ALL data into memory
+# Materialized approach: loads all data into memory
 transactions = await client.fetch_all_transactions(whale_address)
 # For 1M transactions: ~2GB RAM required
 # For 10M transactions: OOM crash
@@ -16,7 +16,7 @@ transactions = await client.fetch_all_transactions(whale_address)
 ### Solution: Streaming Pattern
 
 ```python
-# ✅ Streaming approach - constant memory usage
+# Streaming approach: processes one batch at a time
 async for batch in client.iter_transactions_streaming(whale_address, batch_size=1000):
     # Process 1000 transactions at a time
     # Memory usage: ~10MB (constant, regardless of total dataset size)
@@ -253,7 +253,7 @@ for address in whale_addresses:
 
 ## Integration with StreamingDecoder
 
-The streaming pattern works seamlessly with `StreamingDecoder` for ABI decoding:
+The streaming pattern can be combined with `StreamingDecoder` for ABI decoding:
 
 ```python
 # Use existing iter_transactions() for decoding

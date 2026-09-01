@@ -1,14 +1,15 @@
-# SmartContract API - High-Level Contract Abstraction
+# SmartContract API
 
 ## Overview
 
-The SmartContract API provides a high-level abstraction for interacting with smart contracts on EVM-compatible blockchains. It automatically handles:
+The SmartContract API fetches verified contract metadata and exposes decoded
+event and transaction iterators for EVM-compatible chains.
 
-- ✅ **Automatic ABI Fetching** - No need to manually retrieve contract ABIs
-- ✅ **Proxy Contract Resolution** - Automatically detects and resolves proxy contracts to their implementation
-- ✅ **Event Decoding** - Iterate through decoded event logs with human-readable arguments
-- ✅ **Transaction Decoding** - Iterate through decoded function calls with parsed parameters
-- ✅ **Memory-Efficient Streaming** - Process large datasets without loading everything into memory
+- ABI fetching from the configured explorer
+- proxy implementation metadata when the explorer reports it
+- decoded event iteration
+- decoded transaction iteration
+- streaming iteration without collecting the full result
 
 ## Quick Start
 
@@ -17,17 +18,13 @@ import asyncio
 from aiochainscan import ChainscanClient
 
 async def main():
-    # Create client
-    client = ChainscanClient.from_config('etherscan', 'ethereum')
+    async with ChainscanClient.from_config('etherscan', 'ethereum') as client:
+        usdt = await client.get_contract(
+            '0xdac17f958d2ee523a2206206994597c13d831ec7'
+        )
 
-    # Get contract (auto-fetches ABI, resolves proxy)
-    usdt = await client.get_contract("0xdac17f958d2ee523a2206206994597c13d831ec7")
-
-    # Iterate through Transfer events
-    async for event in usdt.iter_events("Transfer", limit=10):
-        print(f"{event.args['from']} → {event.args['to']}: {event.args['value']}")
-
-    await client.close()
+        async for event in usdt.iter_events('Transfer', limit=10):
+            print(event.args['from'], event.args['to'], event.args['value'])
 
 asyncio.run(main())
 ```
@@ -361,10 +358,9 @@ The SmartContract API works with any scanner that supports:
 - `EVENT_LOGS` method (for event iteration)
 - `ACCOUNT_TRANSACTIONS` method (for transaction iteration)
 
-Tested scanners:
-- ✅ Etherscan (all networks)
-- ✅ BlockScout V2
-- ✅ BlockScout V1
+Scanner support depends on the methods declared by each scanner. Etherscan and
+Blockscout v1 declare the Etherscan-compatible surface. Blockscout v2 declares
+a smaller subset and does not provide every method listed above.
 
 ## Migration from Manual ABI Management
 
@@ -384,24 +380,12 @@ for tx in txs:
 
 **After (v0.4.0):**
 ```python
-# Automatic!
 contract = await client.get_contract("0x...")
 async for tx in contract.iter_transactions():
     print(tx.function_name, tx.args)
 ```
 
-## Changelog
-
-### v0.4.0 (2026-02-23)
-- ✨ **NEW**: SmartContract high-level API
-- ✨ **NEW**: Automatic proxy detection and resolution
-- ✨ **NEW**: Event iteration with `iter_events()`
-- ✨ **NEW**: Transaction iteration with `iter_transactions()`
-- ✨ **NEW**: `ChainscanClient.get_contract()` method
-- ✨ **NEW**: `DecodedEvent` and `DecodedTransaction` data classes
-
 ## See Also
 
-- [Examples](../examples/smart_contract_demo.py) - Full working examples
-- [API Reference](../README.md) - Complete API documentation
-- [Architecture](ARCHITECTURE_REFACTOR.md) - System architecture overview
+- [Example](../examples/smart_contract_demo.py)
+- [Project README](../README.md)
