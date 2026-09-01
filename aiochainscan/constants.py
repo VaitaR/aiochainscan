@@ -74,6 +74,12 @@ NETWORK_DEFAULT_TIMEOUT: float = 10.0
 #: Default maximum connections in connection pool
 NETWORK_MAX_CONNECTIONS: int = 10
 
+#: Maximum response body size buffered and parsed by the transport
+NETWORK_MAX_RESPONSE_BYTES: int = 64 * 1024 * 1024
+
+#: Maximum size of response/error excerpts retained in exception messages
+NETWORK_ERROR_EXCERPT_BYTES: int = 4_096
+
 # =============================================================================
 # BATCH PROCESSING
 # =============================================================================

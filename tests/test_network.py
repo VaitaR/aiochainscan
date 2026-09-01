@@ -18,8 +18,9 @@ from aiochainscan.exceptions import (
     ChainscanClientProxyError,
     ChainscanNetworkError,
     ChainscanRateLimitError,
+    ChainscanResponseTooLargeError,
 )
-from aiochainscan.network import Network, _redact_url
+from aiochainscan.network import Network, _redact_headers, _redact_payload, _redact_url
 
 
 @pytest_asyncio.fixture
@@ -328,12 +329,107 @@ async def test_close_session(nw):
     await nw.close()
     assert nw._client is None
 
-    # Initialize client and then close
-    await nw._ensure_client()
-    assert nw._client is not None
+    # Close is terminal and cannot lazily reopen the transport.
+    with pytest.raises(ChainscanClientError, match='Network is closed'):
+        await nw._ensure_client()
 
-    await nw.close()
-    assert nw._client is None
+
+def test_redact_headers_and_payload() -> None:
+    headers = _redact_headers(
+        {
+            'Authorization': 'Bearer secret',
+            'X-Access-Token': 'token-secret',
+            'Cookie': 'session-secret',
+            'Proxy-Authorization': 'proxy-secret',
+            'X-Trace': 'keep-me',
+        }
+    )
+    assert headers == {
+        'Authorization': '***REDACTED***',
+        'X-Access-Token': '***REDACTED***',
+        'Cookie': '***REDACTED***',
+        'Proxy-Authorization': '***REDACTED***',
+        'X-Trace': 'keep-me',
+    }
+
+    payload = _redact_payload({'api_key': 'secret', 'nested': {'token': 'secret', 'ok': 1}})
+    assert payload == {
+        'api_key': '***REDACTED***',
+        'nested': {'token': '***REDACTED***', 'ok': 1},
+    }
+
+
+def test_redact_url_userinfo_and_sensitive_query_names() -> None:
+    redacted = _redact_url(
+        'https://user:password@example.com/api?access_token=secret&foo=bar&secret=x'
+    )
+    assert 'user' not in redacted
+    assert 'password' not in redacted
+    assert '=x' not in redacted
+    assert 'access_token=%2A%2A%2AREDACTED%2A%2A%2A' in redacted
+    assert 'foo=bar' in redacted
+
+
+def test_http_status_error_chain_is_sanitized(ub) -> None:
+    response = httpx.Response(
+        503,
+        request=httpx.Request('GET', 'https://user:secret@example.com/api?token=secret'),
+        text='service unavailable',
+    )
+    network = Network(ub)
+
+    with pytest.raises(ChainscanNetworkError) as exc_info:
+        network._handle_response(response)
+
+    assert not isinstance(exc_info.value.__cause__, httpx.HTTPStatusError)
+    assert not isinstance(exc_info.value.__context__, httpx.HTTPStatusError)
+    assert 'secret' not in str(exc_info.value)
+
+
+@pytest.mark.parametrize('payload', [['error'], 'error'])
+@pytest.mark.asyncio
+async def test_top_level_list_and_string_payloads_are_valid(nw, payload) -> None:
+    response = httpx.Response(
+        200,
+        headers={'content-type': 'application/json'},
+        content=orjson.dumps(payload),
+    )
+    assert nw._handle_response(response) == payload
+
+
+@pytest.mark.asyncio
+async def test_dict_error_string_and_list_are_inspected(nw) -> None:
+    with pytest.raises(ChainscanClientProxyError) as string_error:
+        nw._handle_response(
+            httpx.Response(
+                200,
+                headers={'content-type': 'application/json'},
+                json={'error': 'proxy failed'},
+            )
+        )
+    assert string_error.value.message == 'proxy failed'
+
+    with pytest.raises(ChainscanClientProxyError) as list_error:
+        nw._handle_response(
+            httpx.Response(
+                200,
+                headers={'content-type': 'application/json'},
+                json={'error': ['proxy failed']},
+            )
+        )
+    assert list_error.value.message == '<list with 1 items>'
+
+
+def test_response_size_is_rejected_before_json_parsing(ub) -> None:
+    network = Network(ub, max_response_bytes=10)
+    response = httpx.Response(
+        200,
+        headers={'content-type': 'application/json'},
+        content=b'{"result":"too large"}',
+    )
+
+    with pytest.raises(ChainscanResponseTooLargeError, match='exceeds'):
+        network._handle_response(response)
 
 
 def test_redact_url_query_api_key() -> None:

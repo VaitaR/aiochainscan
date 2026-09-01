@@ -11,13 +11,14 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
 
 from aiochainscan.adapters.aiolimiter_adapter import AioLimiterAdapter
 from aiochainscan.adapters.tenacity_retry import TenacityRetryAdapter
-from aiochainscan.exceptions import ChainscanRateLimitError
+from aiochainscan.exceptions import ChainscanClientError, ChainscanRateLimitError
 from aiochainscan.network import Network
 
 
@@ -158,17 +159,148 @@ async def test_network_close_idempotent() -> None:
     await network.close()
     assert network._client is None
 
-    # Initialize client
-    await network._ensure_client()
-    assert network._client is not None
-
-    # Close with client
-    await network.close()
-    assert network._client is None
+    # A closed network cannot be reopened.
+    with pytest.raises(ChainscanClientError, match='Network is closed'):
+        await network._ensure_client()
 
     # Close again after closing
     await network.close()
     assert network._client is None
+
+
+class ImmediateRateLimiter:
+    async def acquire(self, key: str = 'default') -> None:
+        return None
+
+
+@pytest.mark.asyncio
+async def test_close_waits_for_in_flight_request_and_is_shared() -> None:
+    started = asyncio.Event()
+    release_request = asyncio.Event()
+
+    async def get(*args: Any, **kwargs: Any) -> httpx.Response:
+        started.set()
+        await release_request.wait()
+        return httpx.Response(
+            200,
+            request=httpx.Request('GET', 'https://example.com'),
+            json={'result': 'ok'},
+        )
+
+    client = MagicMock(spec=httpx.AsyncClient)
+    client.get = AsyncMock(side_effect=get)
+    client.aclose = AsyncMock()
+    network = Network(
+        StubUrlBuilder('https://example.com'),
+        rate_limiter=ImmediateRateLimiter(),
+        retry_policy=TenacityRetryAdapter(max_attempts=1),
+    )
+    network._client = client
+
+    request_task = asyncio.create_task(network.request('GET', 'https://example.com'))
+    await started.wait()
+    close_one = asyncio.create_task(network.close())
+    close_two = asyncio.create_task(network.close())
+    await asyncio.sleep(0)
+
+    assert client.aclose.await_count == 0
+    assert network._active_requests == 1
+
+    release_request.set()
+    assert await request_task == 'ok'
+    await asyncio.gather(close_one, close_two)
+
+    client.aclose.assert_awaited_once()
+    assert network._active_requests == 0
+    assert network._client is None
+
+
+@pytest.mark.asyncio
+async def test_cancelled_close_waiter_does_not_cancel_cleanup() -> None:
+    cleanup_started = asyncio.Event()
+    release_cleanup = asyncio.Event()
+
+    async def cleanup() -> None:
+        cleanup_started.set()
+        await release_cleanup.wait()
+
+    client = MagicMock(spec=httpx.AsyncClient)
+    client.aclose = AsyncMock(side_effect=cleanup)
+    network = Network(StubUrlBuilder('https://example.com'))
+    network._client = client
+
+    close_task = asyncio.create_task(network.close())
+    await cleanup_started.wait()
+    waiter = asyncio.create_task(network.close())
+    await asyncio.sleep(0)
+    waiter.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await waiter
+
+    assert not release_cleanup.is_set()
+    assert network._close_task is not None
+    assert not network._close_task.cancelled()
+    release_cleanup.set()
+    await close_task
+    client.aclose.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_post_close_request_rejected_without_reopening() -> None:
+    client = MagicMock(spec=httpx.AsyncClient)
+    client.aclose = AsyncMock()
+    network = Network(
+        StubUrlBuilder('https://example.com'),
+        rate_limiter=ImmediateRateLimiter(),
+        retry_policy=TenacityRetryAdapter(max_attempts=1),
+    )
+    await network.close()
+
+    with pytest.raises(ChainscanClientError, match='Network is closed'):
+        await network.request('GET', 'https://example.com')
+    assert network._client is None
+    client.get.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_active_request_accounting_releases_on_failure_and_cancellation() -> None:
+    failing_client = MagicMock(spec=httpx.AsyncClient)
+    failing_client.get = AsyncMock(side_effect=RuntimeError('failure'))
+    failing_client.aclose = AsyncMock()
+    failing_network = Network(
+        StubUrlBuilder('https://example.com'),
+        rate_limiter=ImmediateRateLimiter(),
+        retry_policy=TenacityRetryAdapter(max_attempts=1, retry_exceptions=()),
+    )
+    failing_network._client = failing_client
+    with pytest.raises(RuntimeError, match='failure'):
+        await failing_network.request('GET', 'https://example.com')
+    assert failing_network._active_requests == 0
+    await failing_network.close()
+
+    release_request = asyncio.Event()
+    cancelling_client = MagicMock(spec=httpx.AsyncClient)
+
+    async def blocked_get(*args: Any, **kwargs: Any) -> httpx.Response:
+        await release_request.wait()
+        return httpx.Response(200, request=httpx.Request('GET', 'https://example.com'), json={})
+
+    cancelling_client.get = AsyncMock(side_effect=blocked_get)
+    cancelling_client.aclose = AsyncMock()
+    cancelling_network = Network(
+        StubUrlBuilder('https://example.com'),
+        rate_limiter=ImmediateRateLimiter(),
+        retry_policy=TenacityRetryAdapter(max_attempts=1),
+    )
+    cancelling_network._client = cancelling_client
+    request_task = asyncio.create_task(cancelling_network.request('GET', 'https://example.com'))
+    while cancelling_network._active_requests == 0:
+        await asyncio.sleep(0)
+    request_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await request_task
+    assert cancelling_network._active_requests == 0
+    await cancelling_network.close()
 
 
 @pytest.mark.asyncio

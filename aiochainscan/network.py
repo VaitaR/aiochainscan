@@ -14,17 +14,20 @@ connection resets and protocol errors.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import urllib.parse
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 
 import httpx
 import orjson
 
 from aiochainscan.constants import (
     NETWORK_DEFAULT_TIMEOUT,
+    NETWORK_ERROR_EXCERPT_BYTES,
     NETWORK_MAX_CONNECTIONS,
+    NETWORK_MAX_RESPONSE_BYTES,
     RATE_DEFAULT_BURST,
     RATE_DEFAULT_RPS,
     RATE_TIME_PERIOD,
@@ -40,15 +43,65 @@ from aiochainscan.exceptions import (
     ChainscanClientProxyError,
     ChainscanNetworkError,
     ChainscanRateLimitError,
+    ChainscanResponseTooLargeError,
 )
 from aiochainscan.ports.rate_limiter import RateLimiter, RetryPolicy
 
-if TYPE_CHECKING:
-    pass
-
 # Sensitive headers that should be redacted in logs
-SENSITIVE_HEADERS = {'authorization', 'x-api-key', 'apikey'}
-SENSITIVE_QUERY_PARAMS = {'apikey', 'api_key', 'key'}
+SENSITIVE_HEADERS = {
+    'authorization',
+    'cookie',
+    'proxy-authorization',
+    'x-api-key',
+    'x-apikey',
+    'apikey',
+    'api-key',
+    'token',
+    'x-token',
+    'access-token',
+    'x-access-token',
+    'auth-token',
+    'x-auth-token',
+}
+SENSITIVE_QUERY_PARAMS = {
+    'apikey',
+    'api_key',
+    'api-key',
+    'key',
+    'token',
+    'access_token',
+    'access-token',
+    'auth_token',
+    'auth-token',
+    'authorization',
+    'auth',
+    'access_key',
+    'client_secret',
+    'password',
+    'secret',
+}
+_NORMALIZED_SENSITIVE_QUERY_PARAMS = {param.replace('-', '_') for param in SENSITIVE_QUERY_PARAMS}
+
+
+def _is_sensitive_header(name: str) -> bool:
+    normalized = name.lower()
+    compact = normalized.replace('-', '').replace('_', '')
+    return (
+        normalized in SENSITIVE_HEADERS
+        or 'authorization' in normalized
+        or 'apikey' in compact
+        or 'token' in compact
+    )
+
+
+def _is_sensitive_query_name(name: str) -> bool:
+    normalized = name.lower().replace('-', '_')
+    return (
+        normalized in _NORMALIZED_SENSITIVE_QUERY_PARAMS
+        or normalized.endswith('_key')
+        or normalized.endswith('_token')
+    )
+
 
 # Key-shaped path segments (e.g. NodeReal rides the API key in the URL path:
 # /v1/{key}, open-platform.nodereal.io/{key}/bsc-mainnet/...). Exactly 32 hex
@@ -61,9 +114,7 @@ def _redact_headers(headers: dict[str, str] | None) -> dict[str, str] | None:
     """Redact sensitive headers for safe logging."""
     if headers is None:
         return None
-    return {
-        k: ('***REDACTED***' if k.lower() in SENSITIVE_HEADERS else v) for k, v in headers.items()
-    }
+    return {k: ('***REDACTED***' if _is_sensitive_header(k) else v) for k, v in headers.items()}
 
 
 def _redact_url(url: str | httpx.URL) -> str:
@@ -72,21 +123,45 @@ def _redact_url(url: str | httpx.URL) -> str:
     query_pairs = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
 
     redacted_pairs = [
-        (k, '***REDACTED***' if k.lower() in SENSITIVE_QUERY_PARAMS else v) for k, v in query_pairs
+        (k, '***REDACTED***' if _is_sensitive_query_name(k) else v) for k, v in query_pairs
     ]
     redacted_query = urllib.parse.urlencode(redacted_pairs, doseq=True)
     redacted_path = SENSITIVE_PATH_SEGMENT.sub('***REDACTED***', parsed.path)
-    return urllib.parse.urlunparse(parsed._replace(path=redacted_path, query=redacted_query))
+    netloc = parsed.netloc
+    if '@' in netloc:
+        netloc = f'***REDACTED***@{netloc.rsplit("@", 1)[1]}'
+    return urllib.parse.urlunparse(
+        parsed._replace(netloc=netloc, path=redacted_path, query=redacted_query)
+    )
 
 
 def _redact_payload(payload: dict[str, Any] | None) -> dict[str, Any] | None:
     """Redact sensitive values in request payload/query dictionaries."""
     if payload is None:
         return None
-    return {
-        k: ('***REDACTED***' if k.lower() in SENSITIVE_QUERY_PARAMS else v)
-        for k, v in payload.items()
-    }
+
+    def redact_value(value: Any) -> Any:
+        if isinstance(value, dict):
+            return {
+                k: ('***REDACTED***' if _is_sensitive_query_name(k) else redact_value(v))
+                for k, v in value.items()
+            }
+        if isinstance(value, list):
+            return [redact_value(item) for item in value]
+        return value
+
+    return cast(dict[str, Any], redact_value(payload))
+
+
+def _excerpt(value: Any, limit: int = NETWORK_ERROR_EXCERPT_BYTES) -> Any:
+    """Return a bounded representation suitable for an exception message."""
+    if isinstance(value, str):
+        return value if len(value) <= limit else f'{value[:limit]}... [truncated]'
+    if isinstance(value, bytes):
+        return value[:limit].decode('utf-8', errors='replace')
+    if isinstance(value, dict | list):
+        return f'<{type(value).__name__} with {len(value)} items>'
+    return value
 
 
 class Network:
@@ -113,6 +188,7 @@ class Network:
         retry_policy: RetryPolicy | None = None,
         http2: bool = False,
         max_connections: int | None = None,
+        max_response_bytes: int = NETWORK_MAX_RESPONSE_BYTES,
     ) -> None:
         """Initialize Network transport.
 
@@ -124,7 +200,11 @@ class Network:
             retry_policy: Retry policy implementation (default: TenacityRetryAdapter).
             http2: Whether to use HTTP/2 (default False for API stability).
             max_connections: Maximum connections in the pool (default 10).
+            max_response_bytes: Maximum buffered response size (default 64 MiB).
         """
+        if max_response_bytes <= 0:
+            raise ValueError('max_response_bytes must be greater than zero')
+
         self._url_builder = url_builder
         self._timeout = self._prepare_timeout(timeout)
         self._proxy = proxy
@@ -132,6 +212,7 @@ class Network:
         self._max_connections = (
             max_connections if max_connections is not None else NETWORK_MAX_CONNECTIONS
         )
+        self._max_response_bytes = max_response_bytes
 
         # Rate limiting with token bucket algorithm (default: 5 req/s, burst=1)
         # Lazy import to avoid circular dependency and support DI
@@ -171,6 +252,12 @@ class Network:
 
         self._client: httpx.AsyncClient | None = None
         self._logger = logging.getLogger(__name__)
+        self._state_lock = asyncio.Lock()
+        self._active_requests = 0
+        self._active_requests_zero = asyncio.Event()
+        self._active_requests_zero.set()
+        self._closed = False
+        self._close_task: asyncio.Task[None] | None = None
 
     def _prepare_timeout(self, timeout: float | httpx.Timeout | None) -> httpx.Timeout:
         """Convert timeout parameter to httpx.Timeout."""
@@ -183,6 +270,27 @@ class Network:
 
     async def _ensure_client(self) -> httpx.AsyncClient:
         """Lazily initialize the httpx client."""
+        async with self._state_lock:
+            self._raise_if_closed()
+            return self._get_or_create_client()
+
+    async def close(self) -> None:
+        """Close the underlying HTTP client and release resources."""
+        async with self._state_lock:
+            if not self._closed:
+                self._closed = True
+                self._close_task = asyncio.create_task(self._finish_close(self._client))
+            close_task = self._close_task
+
+        if close_task is not None:
+            # A cancelled waiter must not cancel the shared cleanup task.
+            await asyncio.shield(close_task)
+
+    def _raise_if_closed(self) -> None:
+        if self._closed:
+            raise ChainscanClientError('Network is closed')
+
+    def _get_or_create_client(self) -> httpx.AsyncClient:
         if self._client is None:
             limits = httpx.Limits(
                 max_connections=self._max_connections,
@@ -196,10 +304,26 @@ class Network:
             )
         return self._client
 
-    async def close(self) -> None:
-        """Close the underlying HTTP client and release resources."""
-        if self._client is not None:
-            await self._client.aclose()
+    async def _start_request(self) -> httpx.AsyncClient:
+        """Admit one request and account for it atomically with client access."""
+        async with self._state_lock:
+            self._raise_if_closed()
+            client = self._get_or_create_client()
+            self._active_requests += 1
+            self._active_requests_zero.clear()
+            return client
+
+    async def _finish_request(self) -> None:
+        async with self._state_lock:
+            self._active_requests -= 1
+            if self._active_requests == 0:
+                self._active_requests_zero.set()
+
+    async def _finish_close(self, client: httpx.AsyncClient | None) -> None:
+        await self._active_requests_zero.wait()
+        if client is not None:
+            await client.aclose()
+        async with self._state_lock:
             self._client = None
 
     async def get(
@@ -262,28 +386,30 @@ class Network:
             # Acquire rate limit token before making request
             await self._rate_limiter.acquire('network:request')
 
-            client = await self._ensure_client()
-
-            if method == 'GET':
-                response = await client.get(url, params=params, headers=headers)
-            elif method == 'POST':
-                if json_data is not None:
-                    response = await client.post(url, json=json_data, headers=headers)
+            client = await self._start_request()
+            try:
+                if method == 'GET':
+                    response = await client.get(url, params=params, headers=headers)
+                elif method == 'POST':
+                    if json_data is not None:
+                        response = await client.post(url, json=json_data, headers=headers)
+                    else:
+                        response = await client.post(url, data=data, headers=headers)
                 else:
-                    response = await client.post(url, data=data, headers=headers)
-            else:
-                raise ValueError(f'Unsupported HTTP method: {method}')
+                    raise ValueError(f'Unsupported HTTP method: {method}')
 
-            self._logger.debug(
-                '[%s %s] url=%r params=%r headers=%r',
-                method,
-                response.status_code,
-                _redact_url(response.url),
-                _redact_payload(params),
-                _redact_headers(headers),
-            )
+                self._logger.debug(
+                    '[%s %s] url=%r params=%r headers=%r',
+                    method,
+                    response.status_code,
+                    _redact_url(response.url),
+                    _redact_payload(params),
+                    _redact_headers(headers),
+                )
 
-            return self._handle_response(response)
+                return self._handle_response(response)
+            finally:
+                await self._finish_request()
 
         # Use retry policy to handle transient errors
         return await self._retry_policy.run(do_request)
@@ -301,31 +427,33 @@ class Network:
             # Acquire rate limit token before making request
             await self._rate_limiter.acquire('network:request')
 
-            client = await self._ensure_client()
+            client = await self._start_request()
+            try:
+                if method == 'GET':
+                    response = await client.get(
+                        self._url_builder.API_URL,
+                        params=params,
+                        headers=headers,
+                    )
+                else:  # POST
+                    response = await client.post(
+                        self._url_builder.API_URL,
+                        data=data,
+                        headers=headers,
+                    )
 
-            if method == 'GET':
-                response = await client.get(
-                    self._url_builder.API_URL,
-                    params=params,
-                    headers=headers,
+                self._logger.debug(
+                    '[%s %s] url=%r data=%r headers=%r',
+                    method,
+                    response.status_code,
+                    _redact_url(response.url),
+                    _redact_payload(data),
+                    _redact_headers(headers),
                 )
-            else:  # POST
-                response = await client.post(
-                    self._url_builder.API_URL,
-                    data=data,
-                    headers=headers,
-                )
 
-            self._logger.debug(
-                '[%s %s] url=%r data=%r headers=%r',
-                method,
-                response.status_code,
-                _redact_url(response.url),
-                _redact_payload(data),
-                _redact_headers(headers),
-            )
-
-            return self._handle_response(response)
+                return self._handle_response(response)
+            finally:
+                await self._finish_request()
 
         # Use retry policy to handle transient errors
         return await self._retry_policy.run(do_request)
@@ -347,36 +475,40 @@ class Network:
         """
         status_code = response.status_code
 
-        # Check for HTTP-level errors (4xx, 5xx)
-        try:
-            response.raise_for_status()
-        except httpx.HTTPStatusError as e:
-            # Convert to our exception types for consistent handling
+        content = response.content
+        content_size = len(content)
+        if content_size > self._max_response_bytes:
+            raise ChainscanResponseTooLargeError(content_size, self._max_response_bytes)
+
+        # Classify HTTP-level errors directly. Calling response.raise_for_status()
+        # would create an httpx.HTTPStatusError containing the original request,
+        # which can retain credentials in the exception chain.
+        if status_code >= 400:
             if status_code == 429:
-                raise ChainscanRateLimitError('HTTP 429', 'Too Many Requests') from e
+                raise ChainscanRateLimitError('HTTP 429', 'Too Many Requests')
             safe_url = _redact_url(response.url)
             if 500 <= status_code <= 599:
                 raise ChainscanNetworkError(
                     f'HTTP {status_code} for {safe_url}: {response.reason_phrase}',
                     retryable=True,
-                ) from e
+                )
             raise ChainscanClientError(
                 f'HTTP {status_code} for {safe_url}: {response.reason_phrase}'
-            ) from e
+            )
 
         # Parse JSON response
         content_type = response.headers.get('content-type', '')
         if 'application/json' not in content_type:
-            raise ChainscanClientContentTypeError(status_code, response.text)
+            raise ChainscanClientContentTypeError(status_code, _excerpt(content))
 
         try:
             # Use orjson for 3-5x faster parsing compared to stdlib json
             # response.content returns bytes, which orjson handles directly
-            response_json = orjson.loads(response.content)
+            response_json = orjson.loads(content)
         except orjson.JSONDecodeError as e:
-            raise ChainscanClientContentTypeError(status_code, response.text) from e
+            raise ChainscanClientContentTypeError(status_code, _excerpt(content)) from e
 
-        self._logger.debug('Response: %r', str(response_json)[0:200])
+        self._logger.debug('Response parsed as %s', type(response_json).__name__)
 
         # Check for API-level errors
         self._raise_if_error(response_json)
@@ -396,12 +528,15 @@ class Network:
         return cast(dict[str, Any] | list[Any] | str, payload)
 
     @staticmethod
-    def _raise_if_error(response_json: dict[str, Any]) -> None:
+    def _raise_if_error(response_json: Any) -> None:
         """Check response for API errors and raise appropriate exceptions."""
-        status = response_json.get('status') if isinstance(response_json, dict) else None
+        if not isinstance(response_json, dict):
+            return
+
+        status = response_json.get('status')
         if status not in (None, '1', 1, 'OK', 'ok', 'Success', 'success'):
-            message = response_json.get('message') if isinstance(response_json, dict) else None
-            result = response_json.get('result') if isinstance(response_json, dict) else None
+            message = _excerpt(response_json.get('message'))
+            result = _excerpt(response_json.get('result'))
 
             # Detect hidden rate limit errors (HTTP 200 with rate limit message)
             # Etherscan returns: {"status":"0","message":"NOTOK","result":"Max rate limit reached"}
@@ -416,5 +551,8 @@ class Network:
 
         if 'error' in response_json:
             err = response_json['error']
-            code, message = err.get('code'), err.get('message')
+            if isinstance(err, dict):
+                code, message = err.get('code'), _excerpt(err.get('message'))
+            else:
+                code, message = None, _excerpt(err)
             raise ChainscanClientProxyError(code, message)

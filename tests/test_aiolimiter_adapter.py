@@ -8,6 +8,7 @@ import time
 import pytest
 
 from aiochainscan.adapters.aiolimiter_adapter import AioLimiterAdapter
+from aiochainscan.adapters.simple_rate_limiter import SimpleRateLimiter
 
 
 class TestAioLimiterAdapter:
@@ -164,3 +165,18 @@ class TestAioLimiterAdapter:
         # Should only have one limiter for the key
         assert 'concurrent_key' in limiter._limiters
         assert len([k for k in limiter._limiters if k == 'concurrent_key']) == 1
+
+
+@pytest.mark.asyncio
+async def test_simple_limiter_serializes_same_key_without_cross_key_locking() -> None:
+    limiter = SimpleRateLimiter(min_interval_seconds=0.05)
+    start = time.monotonic()
+    await asyncio.gather(limiter.acquire('same'), limiter.acquire('same'))
+    same_key_elapsed = time.monotonic() - start
+
+    start = time.monotonic()
+    await asyncio.gather(limiter.acquire('one'), limiter.acquire('two'))
+    different_key_elapsed = time.monotonic() - start
+
+    assert same_key_elapsed >= 0.04
+    assert different_key_elapsed < 0.04
