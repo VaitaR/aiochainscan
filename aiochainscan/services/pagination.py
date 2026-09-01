@@ -25,6 +25,7 @@ layer (each :data:`PageFetch` call lands there), never at generator level.
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any, Protocol, runtime_checkable
@@ -33,6 +34,8 @@ from ..core.types import JSONDict
 from ..domain.method import Method
 from ..exceptions import ChainscanDataError
 from ..ports.progress import ProgressCallback
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     'Cursor',
@@ -43,6 +46,7 @@ __all__ = [
     'iter_pages',
     'normalize_items',
     'page_fetcher',
+    'validate_batch_size',
 ]
 
 type Cursor = dict[str, Any] | None
@@ -53,6 +57,22 @@ type PageFetch = Callable[[dict[str, Any]], Awaitable[tuple[list[JSONDict], Curs
 
 type ItemDecode = Callable[[JSONDict], JSONDict]
 """Per-item hook applied when flattening batches (e.g. ABI decoding)."""
+
+
+def validate_batch_size(batch_size: int) -> None:
+    """Validate the positive page size required by public streaming methods."""
+    if batch_size < 1:
+        raise ValueError(f'batch_size must be at least 1, got {batch_size}')
+
+
+def _request_fingerprint(params: dict[str, Any]) -> str:
+    """Create a deterministic fingerprint for a JSON-like request state."""
+    try:
+        return json.dumps(params, sort_keys=True, separators=(',', ':'), ensure_ascii=False)
+    except (TypeError, ValueError) as exc:
+        raise ChainscanDataError(
+            'Pagination request parameters must be JSON-like to detect cursor cycles.'
+        ) from exc
 
 
 @runtime_checkable
@@ -140,17 +160,29 @@ async def iter_pages(
     """
     page = 1
     fetched = 0
+    seen_states: set[str] = set()
     while True:
+        fingerprint = _request_fingerprint(params)
+        if fingerprint in seen_states:
+            raise ChainscanDataError('Pagination cursor repeats a prior request state.')
+        seen_states.add(fingerprint)
+
         items, cursor = await fetch(params)
         if items:
             fetched += len(items)
             if on_progress is not None:
-                await on_progress(
-                    fetched=fetched,
-                    total_expected=None,
-                    current_page=page,
-                    operation=operation,
-                )
+                try:
+                    await on_progress(
+                        fetched=fetched,
+                        total_expected=None,
+                        current_page=page,
+                        operation=operation,
+                    )
+                except Exception:
+                    logger.warning(
+                        'Progress callback failed during pagination; continuing.',
+                        exc_info=True,
+                    )
             yield items
         if cursor is None:
             return

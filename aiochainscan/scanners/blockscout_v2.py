@@ -190,7 +190,13 @@ class BlockScoutV2Scanner(Scanner):
             http_method='GET',
             path='/api/v2/addresses/{address}/transactions',
             query={},
-            param_map={'address': 'address'},
+            param_map={
+                'address': 'address',
+                # BlockScout returns these fields in next_page_params.
+                'block_number': 'block_number',
+                'index': 'index',
+                'items_count': 'items_count',
+            },
             parser=_parse_transactions,
             requires_api_key=False,
         ),
@@ -285,7 +291,9 @@ class BlockScoutV2Scanner(Scanner):
             # Skip if this is a path parameter
             if placeholder not in spec.path and value is not None:
                 # Map to scanner-specific name if defined
-                scanner_param = spec.param_map.get(param_name, param_name)
+                if param_name not in spec.param_map:
+                    continue
+                scanner_param = spec.param_map[param_name]
                 query_params[scanner_param] = value
 
         return query_params

@@ -23,7 +23,13 @@ from ..constants import MAX_BLOCK_NUMBER
 from ..ports.rate_limiter import RateLimiter, RetryPolicy
 from ..scanners import get_scanner_class
 from ..scanners.base import Scanner
-from ..services.pagination import iter_items, iter_pages, normalize_items, page_fetcher
+from ..services.pagination import (
+    iter_items,
+    iter_pages,
+    normalize_items,
+    page_fetcher,
+    validate_batch_size,
+)
 from .method import Method
 from .mixins import (
     AccountMixin,
@@ -388,9 +394,7 @@ class ChainscanClient(
         """
         from ..decode import decode_transaction_input
 
-        # Validate batch_size to prevent infinite loops
-        if batch_size < 1:
-            raise ValueError(f'batch_size must be at least 1, got {batch_size}')
+        validate_batch_size(batch_size)
 
         decode = _decode_with_abi(decode_transaction_input, abi)
         fetch = page_fetcher(self._scanner, Method.ACCOUNT_TRANSACTIONS)
@@ -398,26 +402,24 @@ class ChainscanClient(
         # For simple pagination without decoding and no block range, use
         # cursor pagination through the scanner port: fetch_page() returns
         # (items, next_cursor) where a None cursor ends iteration.
-        if abi is None and from_block == 0 and (to_block is None or to_block == 'latest'):
+        is_blockscout_v2 = self.scanner_name in {'blockscout', 'blockscout_v2'} and (
+            self.scanner_version == 'v2'
+        )
+        if is_blockscout_v2:
             params: dict[str, Any] = {'address': address}
-            if self.scanner_name == 'etherscan':
-                # Etherscan paginates via page/offset
-                params = {'address': address, 'page': 1, 'offset': batch_size}
+        elif abi is None and from_block == 0 and (to_block is None or to_block == 'latest'):
+            params = {'address': address, 'page': 1, 'offset': batch_size}
+        else:
+            end_block = _resolve_end_block_int(to_block)
+            params = {
+                'address': address,
+                'startblock': from_block,
+                'endblock': end_block,
+                'page': 1,
+                'offset': batch_size,
+                'sort': 'asc',
+            }
 
-            async for tx in iter_items(fetch, params):
-                yield tx
-            return
-
-        # Block-range (or decoding) pagination follows the scanner cursor.
-        end_block = _resolve_end_block_int(to_block)
-        params = {
-            'address': address,
-            'startblock': from_block,
-            'endblock': end_block,
-            'page': 1,
-            'offset': batch_size,
-            'sort': 'asc',
-        }
         async for tx in iter_items(fetch, params, decode=decode):
             yield tx
 
@@ -474,6 +476,7 @@ class ChainscanClient(
             - iter_transactions: 1M txs = ~100MB RAM (yields one at a time)
             - iter_transactions_streaming: 1M txs = ~10MB RAM (yields batches)
         """
+        validate_batch_size(batch_size)
         end_block = _resolve_end_block_int(to_block)
         params: dict[str, Any] = {
             'address': address,
@@ -512,6 +515,7 @@ class ChainscanClient(
         Yields:
             Batches of internal transaction dictionaries
         """
+        validate_batch_size(batch_size)
         end_block = _resolve_end_block_int(to_block)
         params: dict[str, Any] = {
             'address': address,
@@ -552,6 +556,7 @@ class ChainscanClient(
         Yields:
             Batches of token transfer dictionaries
         """
+        validate_batch_size(batch_size)
         end_block = _resolve_end_block_int(to_block)
         params: dict[str, Any] = {
             'address': address,
@@ -600,6 +605,7 @@ class ChainscanClient(
         Yields:
             Batches of event log dictionaries
         """
+        validate_batch_size(batch_size)
         end_block = _resolve_end_block_param(to_block)
         params: dict[str, Any] = {
             'fromBlock': from_block,
@@ -703,6 +709,7 @@ class ChainscanClient(
         """
         from ..decode import decode_log_data
 
+        validate_batch_size(batch_size)
         end_block = _resolve_end_block_param(to_block)
         params: dict[str, Any] = {
             'address': address,

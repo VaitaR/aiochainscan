@@ -247,6 +247,23 @@ class TestIterPagesCursorIntegrity:
         assert batches == [[{'h': 1}], [{'h': 2}]]
         assert len(fetch.seen_params) == 2
 
+    @pytest.mark.asyncio
+    async def test_cursor_cycle_raises_before_duplicate_request(self) -> None:
+        fetch = FakePageFetch(
+            [
+                ([{'h': 1}], {'cursor': {'state': ['b']}}),
+                ([{'h': 2}], {'cursor': {'state': ['a']}}),
+            ]
+        )
+
+        batches: list[list[dict[str, Any]]] = []
+        with pytest.raises(ChainscanDataError, match='repeats'):
+            async for batch in iter_pages(fetch, {'cursor': {'state': ['a']}}):
+                batches.append(batch)
+
+        assert batches == [[{'h': 1}], [{'h': 2}]]
+        assert len(fetch.seen_params) == 2
+
 
 # ---------------------------------------------------------------------------
 # progress callback
@@ -302,6 +319,31 @@ class TestIterPagesProgress:
         batches = [batch async for batch in iter_pages(fetch, {})]
 
         assert batches == [[{'h': 1}]]
+
+    @pytest.mark.asyncio
+    async def test_progress_callback_failure_does_not_stop_page_delivery(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        fetch = FakePageFetch(
+            [
+                ([{'h': 1}], {'page': 2}),
+                ([{'h': 2}], None),
+            ]
+        )
+
+        async def failing_progress(**_kwargs: Any) -> None:
+            raise RuntimeError('progress failed')
+
+        with caplog.at_level(logging.WARNING):
+            batches = [
+                batch
+                async for batch in iter_pages(
+                    fetch, {'page': 1}, on_progress=failing_progress, operation='transactions'
+                )
+            ]
+
+        assert batches == [[{'h': 1}], [{'h': 2}]]
+        assert 'Progress callback failed during pagination' in caplog.text
 
 
 # ---------------------------------------------------------------------------
