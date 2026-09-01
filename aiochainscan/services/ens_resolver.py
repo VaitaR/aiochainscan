@@ -33,7 +33,9 @@ from __future__ import annotations
 import asyncio
 from typing import Any, Protocol, runtime_checkable
 
+from ..constants import BATCH_DEFAULT_CONCURRENCY, ENS_MAX_NAME_LENGTH
 from ..domain.method import Method
+from ..domain.models import Address
 from ..ports.cache import Cache
 
 # ENS contract addresses on Ethereum mainnet
@@ -45,6 +47,16 @@ COMMON_ENS_NAMES = {
     'vitalik.eth': '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045',
     'nick.eth': '0xb8c2C29ee19D8307cb7255e1Cd9CbDE883A267d5',
 }
+
+
+def _normalize_ens_name(value: Any) -> str | None:
+    """Return a bounded ``.eth`` name, or ``None`` for untrusted input."""
+    if not isinstance(value, str):
+        return None
+    name = value.strip().lower()
+    if not name or len(name) > ENS_MAX_NAME_LENGTH or not name.endswith('.eth'):
+        return None
+    return name
 
 
 @runtime_checkable
@@ -117,9 +129,17 @@ class ENSResolver:
 
         # Initialize cache
         self._cache: Cache | None = cache if enable_cache else None
-        if self._cache is not None:
-            # Pre-warm with common names
-            asyncio.create_task(self._prewarm_cache())
+        self._cache_prewarmed = False
+        self._prewarm_lock = asyncio.Lock()
+
+    async def _ensure_cache_prewarmed(self) -> None:
+        """Pre-warm the cache once, from an awaited public operation."""
+        if self._cache is None or self._cache_prewarmed:
+            return
+        async with self._prewarm_lock:
+            if not self._cache_prewarmed:
+                await self._prewarm_cache()
+                self._cache_prewarmed = True
 
     async def _prewarm_cache(self) -> None:
         """Pre-warm cache with common ENS names."""
@@ -127,9 +147,14 @@ class ENSResolver:
             return
 
         for name, address in COMMON_ENS_NAMES.items():
-            # Cache both forward and reverse
-            await self._cache.set(f'name:{name}', address, ttl_seconds=self.cache_ttl)
-            await self._cache.set(f'addr:{address.lower()}', name, ttl_seconds=self.cache_ttl)
+            # Seed only missing entries: an injected cache may contain fresher or
+            # application-specific values that must not be overwritten.
+            name_key = f'name:{name}'
+            address_key = f'addr:{address.lower()}'
+            if await self._cache.get(name_key) is None:
+                await self._cache.set(name_key, address, ttl_seconds=self.cache_ttl)
+            if await self._cache.get(address_key) is None:
+                await self._cache.set(address_key, name, ttl_seconds=self.cache_ttl)
 
     def _is_ens_supported(self) -> bool:
         """Check if ENS is supported on the current network."""
@@ -161,10 +186,12 @@ class ENSResolver:
                 f'Current network: {self.client.network} (chain_id={self.client.chain_id})'
             )
 
-        if not name or not name.endswith('.eth'):
+        normalized_name = _normalize_ens_name(name)
+        if normalized_name is None:
             return None
+        name = normalized_name
 
-        name = name.lower().strip()
+        await self._ensure_cache_prewarmed()
 
         # Check cache
         if self._cache is not None:
@@ -208,14 +235,20 @@ class ENSResolver:
                 f'Current network: {self.client.network} (chain_id={self.client.chain_id})'
             )
 
-        if not address or not address.startswith('0x'):
+        if not isinstance(address, str):
             return None
+        try:
+            normalized_address = Address(address)
+        except ValueError:
+            return None
+        address = str(normalized_address)
+        address_key = address.lower()
 
-        address = address.lower().strip()
+        await self._ensure_cache_prewarmed()
 
         # Check cache
         if self._cache is not None:
-            cached = await self._cache.get(f'addr:{address}')
+            cached = await self._cache.get(f'addr:{address_key}')
             if cached:
                 return str(cached)
 
@@ -224,7 +257,7 @@ class ENSResolver:
 
         # Cache result if found
         if name and self._cache is not None:
-            await self._cache.set(f'addr:{address}', name, ttl_seconds=self.cache_ttl)
+            await self._cache.set(f'addr:{address_key}', name, ttl_seconds=self.cache_ttl)
             # Also cache forward lookup
             await self._cache.set(f'name:{name.lower()}', address, ttl_seconds=self.cache_ttl)
 
@@ -263,16 +296,22 @@ class ENSResolver:
         if not self._is_ens_supported():
             return {}
 
-        # Resolve in parallel with structured concurrency
-        async with asyncio.TaskGroup() as tg:
-            tasks = [tg.create_task(self._safe_resolve(name)) for name in names]
-
-        # Build result dict (only successful resolutions)
         resolved: dict[str, str] = {}
-        for name, task in zip(names, tasks, strict=False):
-            result = task.result()
-            if isinstance(result, str):
-                resolved[name] = result
+        unique_names: dict[str, list[str]] = {}
+        for name in names:
+            key = name.strip().lower() if isinstance(name, str) else str(name)
+            unique_names.setdefault(key, []).append(name)
+
+        unique_values = list(unique_names.values())
+        for start in range(0, len(unique_values), BATCH_DEFAULT_CONCURRENCY):
+            chunk = unique_values[start : start + BATCH_DEFAULT_CONCURRENCY]
+            async with asyncio.TaskGroup() as tg:
+                tasks = [tg.create_task(self._safe_resolve(names[0])) for names in chunk]
+            for aliases, task in zip(chunk, tasks, strict=True):
+                result = task.result()
+                if isinstance(result, str):
+                    for name in aliases:
+                        resolved[name] = result
         return resolved
 
     async def lookup_addresses(self, addresses: list[str]) -> dict[str, str]:
@@ -297,16 +336,28 @@ class ENSResolver:
         if not self._is_ens_supported():
             return {}
 
-        # Lookup in parallel with structured concurrency
-        async with asyncio.TaskGroup() as tg:
-            tasks = [tg.create_task(self._safe_lookup(addr)) for addr in addresses]
-
-        # Build result dict (only successful lookups)
         looked_up: dict[str, str] = {}
-        for addr, task in zip(addresses, tasks, strict=False):
-            result = task.result()
-            if isinstance(result, str):
-                looked_up[addr] = result
+        unique_addresses: dict[str, list[str]] = {}
+        for address in addresses:
+            if isinstance(address, str):
+                try:
+                    key = str(Address(address)).lower()
+                except ValueError:
+                    key = address
+            else:
+                key = str(address)
+            unique_addresses.setdefault(key, []).append(address)
+
+        unique_values = list(unique_addresses.values())
+        for start in range(0, len(unique_values), BATCH_DEFAULT_CONCURRENCY):
+            chunk = unique_values[start : start + BATCH_DEFAULT_CONCURRENCY]
+            async with asyncio.TaskGroup() as tg:
+                tasks = [tg.create_task(self._safe_lookup(addresses[0])) for addresses in chunk]
+            for aliases, task in zip(chunk, tasks, strict=True):
+                result = task.result()
+                if isinstance(result, str):
+                    for address in aliases:
+                        looked_up[address] = result
         return looked_up
 
     async def _resolve_via_scanner(self, name: str) -> str | None:
@@ -335,9 +386,10 @@ class ENSResolver:
         if self._address_info_scanner is not None:
             try:
                 info = await self._address_info_scanner.get_address_info(address)
-                ens_name = info.get('ens_domain_name')
-                if ens_name:
-                    return str(ens_name)
+                if isinstance(info, dict):
+                    ens_name = _normalize_ens_name(info.get('ens_domain_name'))
+                    if ens_name is not None:
+                        return ens_name
             except Exception:
                 # Fall through to ENS contract fallback
                 # Catch all exceptions including 422 errors for invalid addresses
@@ -529,7 +581,7 @@ class ENSResolver:
             length_hex = hex_data[64:128]
             length = int(length_hex, 16)
 
-            if length == 0 or length > 1000:  # Sanity check
+            if length == 0 or length > ENS_MAX_NAME_LENGTH:  # Sanity check
                 return None
 
             # Get string data (starts at char 128)

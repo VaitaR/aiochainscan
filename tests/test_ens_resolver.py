@@ -11,10 +11,30 @@ Tests:
 - Error handling
 """
 
+import asyncio
+import warnings
+from unittest.mock import AsyncMock
+
 import pytest
 
 from aiochainscan import ChainscanClient
+from aiochainscan.adapters.memory_cache import InMemoryCache
+from aiochainscan.constants import BATCH_DEFAULT_CONCURRENCY, ENS_MAX_NAME_LENGTH
 from aiochainscan.services.ens_resolver import ENSResolver
+
+
+class UnitENSClient:
+    chain_id = 1
+    network = 'ethereum'
+
+    def __init__(self) -> None:
+        self.call = AsyncMock(return_value='0x')
+
+
+class UnitAddressInfoScanner:
+    def __init__(self, metadata: object) -> None:
+        self.metadata = metadata
+        self.get_address_info = AsyncMock(return_value={'ens_domain_name': metadata})
 
 
 class TestENSResolver:
@@ -285,6 +305,90 @@ class TestENSResolver:
 
         # Test invalid format
         assert resolver._decode_string('0x1234') is None
+
+    def test_sync_construction_has_no_background_coroutine(self):
+        client = UnitENSClient()
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter('always')
+            resolver = ENSResolver(client, cache=InMemoryCache())
+
+        assert resolver._cache_prewarmed is False
+        assert not [warning for warning in caught if issubclass(warning.category, RuntimeWarning)]
+
+    @pytest.mark.asyncio
+    async def test_cache_prewarm_is_lazy_and_awaited(self):
+        client = UnitENSClient()
+        resolver = ENSResolver(client, cache=InMemoryCache())
+
+        assert await resolver.resolve_name('vitalik.eth') == (
+            '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045'
+        )
+        assert resolver._cache_prewarmed is True
+        client.call.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_batch_resolve_is_deduplicated_and_bounded(self, monkeypatch):
+        resolver = ENSResolver(UnitENSClient(), enable_cache=False)
+        active = 0
+        maximum = 0
+        calls: list[str] = []
+
+        async def resolve(name: str) -> str:
+            nonlocal active, maximum
+            active += 1
+            maximum = max(maximum, active)
+            calls.append(name)
+            await asyncio.sleep(0)
+            active -= 1
+            return f'address:{name}'
+
+        monkeypatch.setattr(resolver, '_safe_resolve', resolve)
+        names = [f'name-{index}.eth' for index in range(BATCH_DEFAULT_CONCURRENCY + 2)]
+        names.extend([names[0], names[1]])
+
+        result = await resolver.resolve_names(names)
+
+        assert len(calls) == BATCH_DEFAULT_CONCURRENCY + 2
+        assert maximum <= BATCH_DEFAULT_CONCURRENCY
+        assert result[names[0]] == f'address:{names[0]}'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        'name',
+        ['', 'not-ens-name.com', 'a' * (ENS_MAX_NAME_LENGTH + 1) + '.eth'],
+    )
+    async def test_overlong_or_invalid_name_does_not_call_provider(self, name):
+        client = UnitENSClient()
+        resolver = ENSResolver(client, enable_cache=False)
+
+        assert await resolver.resolve_name(name) is None
+        client.call.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_invalid_address_does_not_build_reverse_lookup(self):
+        client = UnitENSClient()
+        scanner = UnitAddressInfoScanner('valid.eth')
+        resolver = ENSResolver(client, address_info_scanner=scanner, enable_cache=False)
+
+        assert await resolver.lookup_address('0x123') is None
+        scanner.get_address_info.assert_not_awaited()
+        client.call.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        'metadata', ['not-an-ens-name', 'a' * (ENS_MAX_NAME_LENGTH + 1) + '.eth']
+    )
+    async def test_invalid_scanner_metadata_is_ignored(self, metadata):
+        client = UnitENSClient()
+        scanner = UnitAddressInfoScanner(metadata)
+        resolver = ENSResolver(client, address_info_scanner=scanner, enable_cache=False)
+
+        result = await resolver.lookup_address('0x1111111111111111111111111111111111111111')
+
+        assert result is None
+        scanner.get_address_info.assert_awaited_once()
+        client.call.assert_awaited()
 
 
 @pytest.mark.integration

@@ -55,11 +55,18 @@ SAMPLE_ERC20_ABI = [
 ]
 
 
+async def _stream(items):
+    for item in items:
+        yield item
+
+
 @pytest.fixture
 def mock_client():
     """Create a mock ChainscanClient."""
     client = MagicMock(spec=ChainscanClient)
     client.call = AsyncMock()
+    client.iter_logs = MagicMock()
+    client.iter_transactions = MagicMock()
     return client
 
 
@@ -270,7 +277,7 @@ class TestSmartContractIterEvents:
             }
         ]
 
-        sample_contract.client.call.return_value = sample_logs
+        sample_contract.client.iter_logs.side_effect = lambda *args, **kwargs: _stream(sample_logs)
 
         events = []
         async for event in sample_contract.iter_events('Transfer', limit=10):
@@ -284,6 +291,47 @@ class TestSmartContractIterEvents:
             events[0].tx_hash
             == '0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890'
         )
+
+    @pytest.mark.asyncio
+    async def test_iter_events_traverses_two_pages(self, sample_contract):
+        first_page = {
+            'address': sample_contract.address,
+            'decoded_data': {'event': 'Transfer', 'value': 1},
+            'blockNumber': '10',
+            'transactionHash': '0x' + '1' * 64,
+            'logIndex': '0',
+        }
+        second_page = {
+            'address': sample_contract.address,
+            'decoded_data': {'event': 'Transfer', 'value': 2},
+            'blockNumber': '11',
+            'transactionHash': '0x' + '2' * 64,
+            'logIndex': '0',
+        }
+        seen: list[dict[str, object]] = []
+
+        async def iter_pages(*args, **kwargs):
+            seen.append(kwargs)
+            yield first_page
+            yield second_page
+
+        sample_contract.client.iter_logs.side_effect = iter_pages
+
+        events = [
+            event
+            async for event in sample_contract.iter_events('Transfer', from_block=10, to_block=11)
+        ]
+
+        assert [event.args['value'] for event in events] == [1, 2]
+        assert seen == [
+            {
+                'abi': SAMPLE_ERC20_ABI,
+                'from_block': 10,
+                'to_block': 11,
+                'batch_size': 1000,
+                'topics': ['0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef'],
+            }
+        ]
 
     @pytest.mark.asyncio
     async def test_iter_events_with_limit(self, sample_contract):
@@ -305,7 +353,7 @@ class TestSmartContractIterEvents:
             for i in range(5)
         ]
 
-        sample_contract.client.call.return_value = sample_logs
+        sample_contract.client.iter_logs.side_effect = lambda *args, **kwargs: _stream(sample_logs)
 
         events = []
         async for event in sample_contract.iter_events('Transfer', limit=3):
@@ -324,16 +372,15 @@ class TestSmartContractIterEvents:
     @pytest.mark.asyncio
     async def test_iter_events_all_events(self, sample_contract):
         """Test iterating all events (no event_name filter)."""
-        sample_contract.client.call.return_value = []
+        sample_contract.client.iter_logs.side_effect = lambda *args, **kwargs: _stream([])
 
         events = []
         async for event in sample_contract.iter_events():
             events.append(event)
 
-        # Should call EVENT_LOGS without topic filter
-        call_args = sample_contract.client.call.call_args
-        assert call_args[0][0] == Method.EVENT_LOGS
-        assert 'topic0' not in call_args[1]
+        call_args = sample_contract.client.iter_logs.call_args
+        assert call_args is not None
+        assert call_args.kwargs['topics'] is None
 
 
 class TestSmartContractIterTransactions:
@@ -357,11 +404,9 @@ class TestSmartContractIterTransactions:
         ]
 
         # Mock client.call to return transactions
-        sample_contract.client.call.return_value = sample_txs
-
-        # Ensure iter_transactions attribute doesn't exist or isn't callable
-        if hasattr(sample_contract.client, 'iter_transactions'):
-            delattr(sample_contract.client, 'iter_transactions')
+        sample_contract.client.iter_transactions.side_effect = lambda *args, **kwargs: _stream(
+            sample_txs
+        )
 
         transactions = []
         async for tx in sample_contract.iter_transactions(limit=10):
@@ -375,6 +420,42 @@ class TestSmartContractIterTransactions:
             == '0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890'
         )
         assert transactions[0].value_wei == 1000000000000000000
+
+        assert sample_contract.client.iter_transactions.call_args is not None
+        assert sample_contract.client.iter_transactions.call_args.kwargs == {
+            'abi': SAMPLE_ERC20_ABI,
+            'from_block': 0,
+            'to_block': None,
+            'batch_size': 1000,
+        }
+
+    @pytest.mark.asyncio
+    async def test_iter_transactions_blockscout_v2_shape(self, sample_contract):
+        tx = {
+            'hash': '0x' + 'a' * 64,
+            'from': {'hash': '0xa1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2'},
+            'to': {'hash': sample_contract.address},
+            'value': '5000000000000000000',
+            'input': '0x',
+            'block_number': 123456,
+            'gas_limit': '50000',
+            'gas_price': '1000000000',
+            'decoded_func': 'transfer',
+            'decoded_data': {'to': '0xb2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3', 'value': 100},
+        }
+        sample_contract.client.iter_transactions.side_effect = lambda *args, **kwargs: _stream(
+            [tx]
+        )
+
+        transactions = [tx async for tx in sample_contract.iter_transactions()]
+
+        assert len(transactions) == 1
+        assert transactions[0].from_address == '0xa1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2'
+        assert transactions[0].to_address == sample_contract.address
+        assert transactions[0].block_number == 123456
+        assert transactions[0].gas == 50000
+        assert transactions[0].gas_price_wei == 1000000000
+        assert transactions[0].raw_transaction is tx
 
     @pytest.mark.asyncio
     async def test_iter_transactions_filter_to_contract(self, sample_contract):
@@ -402,11 +483,9 @@ class TestSmartContractIterTransactions:
             },
         ]
 
-        sample_contract.client.call.return_value = sample_txs
-
-        # Ensure iter_transactions attribute doesn't exist or isn't callable
-        if hasattr(sample_contract.client, 'iter_transactions'):
-            delattr(sample_contract.client, 'iter_transactions')
+        sample_contract.client.iter_transactions.side_effect = lambda *args, **kwargs: _stream(
+            sample_txs
+        )
 
         transactions = []
         async for tx in sample_contract.iter_transactions():
@@ -423,7 +502,7 @@ class TestSmartContractIterTransactions:
     async def test_iter_transactions_with_streaming(self, sample_contract):
         """Test transaction iteration using client's streaming API."""
 
-        async def mock_iter_transactions(address):
+        async def mock_iter_transactions(address, **kwargs):
             """Mock async generator for iter_transactions."""
             sample_txs = [
                 {
