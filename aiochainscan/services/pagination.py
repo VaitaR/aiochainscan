@@ -27,10 +27,11 @@ from __future__ import annotations
 
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
-from typing import Any, Literal
+from typing import Any
 
 from ..core.method import Method
 from ..core.types import JSONDict
+from ..exceptions import ChainscanDataError
 from ..ports.progress import ProgressCallback
 from ..scanners.base import Scanner
 
@@ -38,7 +39,6 @@ __all__ = [
     'Cursor',
     'ItemDecode',
     'PageFetch',
-    'StopMode',
     'collect_all',
     'iter_items',
     'iter_pages',
@@ -54,9 +54,6 @@ type PageFetch = Callable[[dict[str, Any]], Awaitable[tuple[list[JSONDict], Curs
 
 type ItemDecode = Callable[[JSONDict], JSONDict]
 """Per-item hook applied when flattening batches (e.g. ABI decoding)."""
-
-type StopMode = Literal['cursor', 'page_size']
-"""When to stop paginating (see :func:`iter_pages`)."""
 
 
 def normalize_items(response: Any) -> list[JSONDict]:
@@ -105,8 +102,6 @@ async def iter_pages(
     fetch: PageFetch,
     params: dict[str, Any],
     *,
-    stop: StopMode = 'cursor',
-    page_size: int | None = None,
     on_progress: ProgressCallback | None = None,
     operation: str = 'fetch',
 ) -> AsyncIterator[list[JSONDict]]:
@@ -115,27 +110,17 @@ async def iter_pages(
     Loop invariant (identical for every caller):
 
     1. Fetch a page via ``fetch(params)``.
-    2. An empty page terminates silently (no yield, no progress).
+    2. An empty page produces no yield or progress callback.
     3. Accumulate the fetched count and invoke ``on_progress`` (if given)
        *before* yielding the batch.
-    4. Decide whether another page follows:
-
-       - ``stop='cursor'``: continue iff the scanner returned a cursor
-         (the scanner is the sole pagination authority).
-       - ``stop='page_size'``: additionally stop when the page was short
-         (``len(items) < page_size``) even if a cursor was returned — the
-         classic "last page is partial" heuristic, kept for callers whose
-         params pin an explicit ``page``/``offset`` window.
-
-    5. Merge the cursor into ``params`` and advance the page counter.
+    4. Continue iff the scanner returned a cursor. Merge it into ``params``;
+       if that does not change the request parameters, raise a data error.
+    5. Advance the page counter.
 
     Args:
         fetch: Async page fetch (see :func:`page_fetcher`).
         params: Initial request params; may include ``page``/``offset`` for
             page-numbered APIs. Non-``None`` cursors are merged on top.
-        stop: Stop strategy; ``'page_size'`` requires ``page_size``.
-        page_size: Page size used for the short-page check and progress
-            accounting context (required when ``stop='page_size'``).
         on_progress: Optional callback invoked once per non-empty page with
             ``(fetched, total_expected=None, current_page, operation)``.
         operation: Operation label forwarded to ``on_progress``.
@@ -150,23 +135,22 @@ async def iter_pages(
     fetched = 0
     while True:
         items, cursor = await fetch(params)
-        if not items:
+        if items:
+            fetched += len(items)
+            if on_progress is not None:
+                await on_progress(
+                    fetched=fetched,
+                    total_expected=None,
+                    current_page=page,
+                    operation=operation,
+                )
+            yield items
+        if cursor is None:
             return
-        fetched += len(items)
-        if on_progress is not None:
-            await on_progress(
-                fetched=fetched,
-                total_expected=None,
-                current_page=page,
-                operation=operation,
-            )
-        yield items
-        if stop == 'page_size':
-            if cursor is None or (page_size is not None and len(items) < page_size):
-                return
-        elif cursor is None:
-            return
-        params = {**params, **cursor}
+        next_params = {**params, **cursor}
+        if next_params == params:
+            raise ChainscanDataError('Pagination cursor does not advance request parameters.')
+        params = next_params
         page += 1
 
 
@@ -174,8 +158,6 @@ async def iter_items(
     fetch: PageFetch,
     params: dict[str, Any],
     *,
-    stop: StopMode = 'cursor',
-    page_size: int | None = None,
     decode: ItemDecode | None = None,
 ) -> AsyncIterator[JSONDict]:
     """Iterate over all items one by one (flattened batches).
@@ -187,15 +169,13 @@ async def iter_items(
     Args:
         fetch: Async page fetch (see :func:`page_fetcher`).
         params: Initial request params (cursor-merged per page).
-        stop: Stop strategy (see :func:`iter_pages`).
-        page_size: Page size for the ``'page_size'`` stop strategy.
         decode: Optional per-item hook (e.g. ABI decoding). Receives the raw
             item and must return the item to yield.
 
     Yields:
         Item dictionaries (decoded when ``decode`` is given).
     """
-    async for batch in iter_pages(fetch, params, stop=stop, page_size=page_size):
+    async for batch in iter_pages(fetch, params):
         for item in batch:
             yield decode(item) if decode is not None else item
 
