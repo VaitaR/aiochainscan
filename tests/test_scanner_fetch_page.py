@@ -274,6 +274,25 @@ class TestBlockScoutV2FetchPage:
         assert net.calls[1]['params'] == {'block_number': 5, 'index': 1}
 
     @pytest.mark.asyncio
+    async def test_unsupported_public_params_are_filtered_by_endpoint_spec(self) -> None:
+        net = FakeNetwork([{'items': [], 'next_page_params': None}])
+        scanner = _blockscout_scanner(net)
+
+        await scanner.fetch_page(
+            Method.ACCOUNT_TRANSACTIONS,
+            {
+                'address': '0xabc',
+                'start_block': 1,
+                'end_block': 2,
+                'page': 1,
+                'offset': 10,
+                'tag': 'latest',
+            },
+        )
+
+        assert net.calls[0]['params'] is None
+
+    @pytest.mark.asyncio
     async def test_list_response_fallback_yields_no_cursor(self) -> None:
         net = FakeNetwork([[{'hash': '0x1'}, {'hash': '0x2'}]])
         scanner = _blockscout_scanner(net)
@@ -477,13 +496,25 @@ class TestClientIterTransactionsOverPort:
         assert net.calls[1]['params']['page'] == 2
 
     @pytest.mark.asyncio
-    async def test_other_scanners_fetch_single_page(self) -> None:
-        net = FakeNetwork([{'status': '1', 'message': 'OK', 'result': [{'hash': '0x1'}]}])
+    async def test_blockscout_v1_uses_etherscan_pagination(self) -> None:
+        net = FakeNetwork(
+            [
+                {
+                    'status': '1',
+                    'message': 'OK',
+                    'result': [{'hash': '0x1'}, {'hash': '0x2'}],
+                },
+                {'status': '1', 'message': 'OK', 'result': [{'hash': '0x3'}]},
+            ]
+        )
         scanner = _etherscan_scanner(net)
         client = _bare_client('blockscout', 'v1', scanner)
         client._network = net
 
-        txs = [tx async for tx in client.iter_transactions('0xabc')]
+        txs = [tx async for tx in client.iter_transactions('0xabc', batch_size=2)]
 
-        assert [tx['hash'] for tx in txs] == ['0x1']
-        assert len(net.calls) == 1
+        assert [tx['hash'] for tx in txs] == ['0x1', '0x2', '0x3']
+        assert len(net.calls) == 2
+        assert net.calls[0]['params']['page'] == 1
+        assert net.calls[0]['params']['offset'] == 2
+        assert net.calls[1]['params']['page'] == 2

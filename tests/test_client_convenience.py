@@ -70,6 +70,31 @@ class TestSinglePageConvenienceMethods:
         assert result == [{'hash': '0x1'}]
 
     @pytest.mark.asyncio
+    async def test_get_transactions_non_list(
+        self, client: ChainscanClient, mock_call: AsyncMock
+    ) -> None:
+        mock_call.return_value = {'items': [{'hash': '0x1'}]}
+        assert await client.get_transactions(TEST_ADDRESS) == []
+
+    @pytest.mark.asyncio
+    async def test_blockscout_v1_forwards_transaction_filters(
+        self, client: ChainscanClient, mock_call: AsyncMock
+    ) -> None:
+        client.scanner_name = 'blockscout'
+        mock_call.return_value = []
+
+        await client.get_transactions(TEST_ADDRESS, start_block=5, end_block=10, page=2, offset=25)
+
+        mock_call.assert_awaited_once_with(
+            Method.ACCOUNT_TRANSACTIONS,
+            address=str(Address(TEST_ADDRESS)),
+            start_block=5,
+            end_block=10,
+            page=2,
+            offset=25,
+        )
+
+    @pytest.mark.asyncio
     async def test_get_token_transfers(
         self, client: ChainscanClient, mock_call: AsyncMock
     ) -> None:
@@ -155,6 +180,13 @@ class TestSinglePageConvenienceMethods:
         assert mock_call.await_args is not None
         assert mock_call.await_args[0][0] == Method.ACCOUNT_TOKEN_PORTFOLIO
         assert result == [{'symbol': 'USDC'}]
+
+    @pytest.mark.asyncio
+    async def test_get_token_portfolio_non_list(
+        self, client: ChainscanClient, mock_call: AsyncMock
+    ) -> None:
+        mock_call.return_value = {'items': [{'symbol': 'USDC'}]}
+        assert await client.get_token_portfolio(TEST_ADDRESS) == []
 
     @pytest.mark.asyncio
     async def test_get_nft_portfolio(self, client: ChainscanClient, mock_call: AsyncMock) -> None:
@@ -248,6 +280,13 @@ class TestSinglePageConvenienceMethods:
         assert result == '[{"type":"function"}]'
 
     @pytest.mark.asyncio
+    async def test_get_contract_abi_serializes_list(
+        self, client: ChainscanClient, mock_call: AsyncMock
+    ) -> None:
+        mock_call.return_value = [{'type': 'function'}]
+        assert await client.get_contract_abi(TEST_CONTRACT) == '[{"type": "function"}]'
+
+    @pytest.mark.asyncio
     async def test_get_contract_source(
         self, client: ChainscanClient, mock_call: AsyncMock
     ) -> None:
@@ -258,6 +297,20 @@ class TestSinglePageConvenienceMethods:
             address=str(Address(TEST_CONTRACT)),
         )
         assert result == {'SourceCode': 'pragma solidity'}
+
+    @pytest.mark.asyncio
+    async def test_get_contract_source_selects_first_dict_from_list(
+        self, client: ChainscanClient, mock_call: AsyncMock
+    ) -> None:
+        mock_call.return_value = [{'SourceCode': 'pragma solidity'}, {'ignored': True}]
+        assert await client.get_contract_source(TEST_CONTRACT) == {'SourceCode': 'pragma solidity'}
+
+    @pytest.mark.asyncio
+    async def test_get_contract_source_non_dict_returns_empty(
+        self, client: ChainscanClient, mock_call: AsyncMock
+    ) -> None:
+        mock_call.return_value = 'No records found'
+        assert await client.get_contract_source(TEST_CONTRACT) == {}
 
     @pytest.mark.asyncio
     async def test_get_contract_creation(
@@ -585,6 +638,28 @@ class TestStreamingDecodeAndTopicOperators:
         assert first_call_params['topic0_1_opr'] == 'and'
         # Cursor merges into the second page's params
         assert fetch_page.await_args_list[1].args[1]['page'] == 2
+
+
+class TestBatchSizeValidation:
+    @pytest.mark.parametrize(
+        'method_name',
+        [
+            'iter_transactions',
+            'iter_transactions_streaming',
+            'iter_internal_transactions_streaming',
+            'iter_token_transfers_streaming',
+            'iter_logs_streaming',
+            'iter_logs',
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_non_positive_batch_size_fails_before_fetch(
+        self, client: ChainscanClient, method_name: str
+    ) -> None:
+        method = getattr(client, method_name)
+        with pytest.raises(ValueError, match='batch_size must be at least 1'):
+            async for _ in method(TEST_CONTRACT, batch_size=0):
+                pass
 
 
 # ---------------------------------------------------------------------------

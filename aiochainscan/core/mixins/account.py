@@ -59,10 +59,9 @@ class AccountMixin:
         """Get account balance in Wei as string."""
         addr = Address(address)
         params: dict[str, Any] = {'address': str(addr)}
-        if self.scanner_name == 'etherscan':
-            params['tag'] = tag
-        result: str = await self.call(Method.ACCOUNT_BALANCE, **params)
-        return result
+        params['tag'] = tag
+        result: Any = await self.call(Method.ACCOUNT_BALANCE, **params)
+        return str(result)
 
     async def get_transactions(
         self: _AccountClientProtocol,
@@ -75,14 +74,11 @@ class AccountMixin:
         """Get list of normal transactions for address."""
         addr = Address(address)
         params: dict[str, Any] = {'address': str(addr)}
-        if self.scanner_name == 'etherscan':
-            params['start_block'] = start_block
-            params['page'] = page
-            params['offset'] = offset
-            if end_block is not None:
-                params['end_block'] = end_block
-        result: JSONList = await self.call(Method.ACCOUNT_TRANSACTIONS, **params)
-        return result
+        params.update({'start_block': start_block, 'page': page, 'offset': offset})
+        if end_block is not None:
+            params['end_block'] = end_block
+        result: Any = await self.call(Method.ACCOUNT_TRANSACTIONS, **params)
+        return result if isinstance(result, list) else []
 
     async def get_token_transfers(
         self: _AccountClientProtocol,
@@ -94,14 +90,13 @@ class AccountMixin:
         """Get ERC20 token transfers for address."""
         addr = Address(address)
         params: dict[str, Any] = {'address': str(addr)}
-        if self.scanner_name == 'etherscan':
-            params['start_block'] = start_block
-            if contract_address:
-                params['contract_address'] = str(Address(contract_address))
-            if end_block is not None:
-                params['end_block'] = end_block
-        result: JSONList = await self.call(Method.ACCOUNT_ERC20_TRANSFERS, **params)
-        return result
+        params['start_block'] = start_block
+        if contract_address:
+            params['contract_address'] = str(Address(contract_address))
+        if end_block is not None:
+            params['end_block'] = end_block
+        result: Any = await self.call(Method.ACCOUNT_ERC20_TRANSFERS, **params)
+        return result if isinstance(result, list) else []
 
     async def get_internal_transactions(
         self: _AccountClientProtocol,
@@ -128,10 +123,10 @@ class AccountMixin:
 
     async def get_token_portfolio(self: _AccountClientProtocol, address: str) -> JSONList:
         """Get all ERC20 tokens held by address."""
-        result: JSONList = await self.call(
+        result: Any = await self.call(
             Method.ACCOUNT_TOKEN_PORTFOLIO, address=str(Address(address))
         )
-        return result
+        return result if isinstance(result, list) else []
 
     async def get_erc721_transfers(
         self: _AccountClientProtocol,

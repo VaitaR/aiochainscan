@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any, Protocol, cast
 
 from ...domain.contract import SmartContract
@@ -19,13 +20,17 @@ class ContractMixin:
 
     async def get_contract_abi(self: _ContractClientProtocol, address: str) -> str:
         """Get contract ABI as JSON string."""
-        result: str = await self.call(Method.CONTRACT_ABI, address=str(Address(address)))
-        return result
+        result: Any = await self.call(Method.CONTRACT_ABI, address=str(Address(address)))
+        return result if isinstance(result, str) else json.dumps(result)
 
     async def get_contract_source(self: _ContractClientProtocol, address: str) -> JSONDict:
         """Get verified contract source code."""
-        result: JSONDict = await self.call(Method.CONTRACT_SOURCE, address=str(Address(address)))
-        return result
+        result: Any = await self.call(Method.CONTRACT_SOURCE, address=str(Address(address)))
+        if isinstance(result, dict):
+            return result
+        if isinstance(result, list):
+            return next((item for item in result if isinstance(item, dict)), {})
+        return {}
 
     async def get_contract_creation(
         self: _ContractClientProtocol, addresses: list[str]
