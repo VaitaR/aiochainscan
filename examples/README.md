@@ -21,6 +21,7 @@ do not require a key.
 | [02_export_to_csv.py](02_export_to_csv.py) | Export transaction data | None |
 | [03_multi_wallet_analysis.py](03_multi_wallet_analysis.py) | Query several wallets | None |
 | [04_etherscan_with_api_key.py](04_etherscan_with_api_key.py) | Use Etherscan v2 | `ETHERSCAN_KEY` |
+| [05_typed_responses.py](05_typed_responses.py) | Exact typing via `convert` helpers (dict responses, no Pydantic) | None |
 | [06_multichain_comparison.py](06_multichain_comparison.py) | Query more than one chain | Provider access |
 | [07_handling_whale_blocks.py](07_handling_whale_blocks.py) | Handle provider pagination limits | Provider access |
 

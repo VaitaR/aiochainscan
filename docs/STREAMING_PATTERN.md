@@ -8,7 +8,7 @@ The Streaming Pattern provides AsyncIterator-based batch fetching to handle whal
 
 ```python
 # Materialized approach: loads all data into memory
-transactions = await client.fetch_all_transactions(whale_address)
+transactions = await client.get_all_transactions(whale_address)
 # For 1M transactions: ~2GB RAM required
 # For 10M transactions: OOM crash
 ```
@@ -251,9 +251,11 @@ for address in whale_addresses:
     print(f"  Processed {total} transactions")
 ```
 
-## Integration with StreamingDecoder
+## ABI Decoding While Streaming
 
-The streaming pattern can be combined with `StreamingDecoder` for ABI decoding:
+Streaming batches can be combined with ABI decoding via `iter_transactions(abi=...)`
+(the standalone `StreamingDecoder` service was removed — decoding now lives in
+`ChainscanClient`):
 
 ```python
 # Use existing iter_transactions() for decoding
@@ -269,32 +271,14 @@ async for tx in client.iter_transactions(
     print(f"Args: {tx['decoded_data']}")
 ```
 
-## Low-Level API
+## Low-Level Pagination
 
-For advanced users, the low-level streaming API is available:
-
-```python
-from aiochainscan.services.fetch_all_streaming import (
-    fetch_all_transactions_streaming,
-    fetch_all_internal_streaming,
-    fetch_all_token_transfers_streaming,
-    fetch_all_logs_streaming,
-)
-
-# Direct access to streaming functions
-async for batch in fetch_all_transactions_streaming(
-    address=whale_address,
-    start_block=0,
-    end_block=None,
-    api_kind='eth',
-    network='ethereum',
-    api_key=api_key,
-    http=http_client,
-    endpoint_builder=endpoint_builder,
-    batch_size=1000,
-):
-    await process_batch(batch)
-```
+The legacy standalone streaming services (`services/fetch_all_streaming.py`,
+`StreamingDecoder`, `ChunkedBlockFetcher`) were removed. Pagination is
+implemented once in `services/pagination.py` (`iter_pages` / `iter_items` /
+`collect_all` over `Scanner.fetch_page` cursors) and consumed by the
+`ChainscanClient` streaming methods — use those instead of any direct
+service-level entrypoint.
 
 ## Migration Guide
 
@@ -303,11 +287,7 @@ async for batch in fetch_all_transactions_streaming(
 **Before:**
 ```python
 # Old approach - all in memory
-transactions = await client.fetch_all_transactions(
-    whale_address,
-    from_block=0,
-    to_block='latest'
-)
+transactions = await client.get_all_transactions(whale_address)
 
 for tx in transactions:
     await process_transaction(tx)
@@ -331,7 +311,7 @@ async for batch in client.iter_transactions_streaming(
 All existing bulk fetch methods remain available and work as before:
 ```python
 # Still works - uses streaming internally but returns all at once
-transactions = await client.fetch_all_transactions(whale_address)
+transactions = await client.get_all_transactions(whale_address)
 ```
 
 ## Best Practices
@@ -424,7 +404,7 @@ All paging strategies supported:
   ```
 - Or use traditional bulk fetch:
   ```python
-  all_items = await client.fetch_all_transactions(address)
+  all_items = await client.get_all_transactions(address)
   ```
 
 ## See Also

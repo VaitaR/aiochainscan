@@ -1,11 +1,10 @@
 # Quick Reference: ChainscanClient vs Facade Functions
 
-## 🚨 Important: Facade Functions are Deprecated
+> **Historical note:** the facade functions were removed in v0.5.0 —
+> `ChainscanClient` is the only public entrypoint. This page is kept as a
+> migration reference for code that still calls the old functions.
 
-If you see this warning, migrate to `ChainscanClient`:
-```
-DeprecationWarning: get_balance() is deprecated and will be removed in v0.5.0
-```
+## Migration Quick Reference
 
 ---
 
