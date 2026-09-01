@@ -6,17 +6,21 @@ from aiochainscan.domain.contract import DecodedEvent, DecodedTransaction, Smart
 from aiochainscan.exceptions import (
     ChainscanClientApiError,
     ChainscanClientError,
+    ChainscanDataError,
     ChainscanNetworkError,
     ChainscanRateLimitError,
     ChainscanWaitTimeoutError,
     PaginationDataLossError,
 )
 from aiochainscan.scanners import list_scanners, register_scanner
+from aiochainscan.services.chain_info import ChainInfo
 
 __version__ = '0.6.0'
 
 __all__ = [
+    'ChainInfo',
     'ChainscanClient',
+    'ChainscanDataError',
     'ChainscanClientApiError',
     'ChainscanClientError',
     'ChainscanNetworkError',

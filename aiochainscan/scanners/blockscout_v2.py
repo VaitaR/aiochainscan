@@ -22,7 +22,7 @@ from ..core.endpoint import EndpointSpec
 from ..core.method import Method
 from ..core.url_builder import UrlBuilder
 from ..crypto import to_checksum_address
-from ..exceptions import ChainscanClientApiError, ChainscanNetworkError
+from ..exceptions import ChainscanClientError, ChainscanNetworkError
 from . import register_scanner
 from .base import Scanner
 
@@ -311,6 +311,7 @@ class BlockScoutV2Scanner(Scanner):
         url_builder: UrlBuilder,
         chain_id: int | None = None,
         network_client: Network | None = None,
+        base_url: str | None = None,
     ) -> None:
         """
         Initialize BlockScout V2 scanner with network-specific instance.
@@ -321,16 +322,21 @@ class BlockScoutV2Scanner(Scanner):
             url_builder: UrlBuilder instance (used for compatibility)
             chain_id: Chain ID (optional, will be resolved from network)
             network_client: Optional Network instance for connection pooling
+            base_url: Custom base URL for self-hosted BlockScout instances
+                (overrides the per-network instance mapping; no API key needed)
         """
-        super().__init__(api_key, network, url_builder, chain_id, network_client)
+        super().__init__(api_key, network, url_builder, chain_id, network_client, base_url)
 
-        # Get base URL for this network
-        self.base_url = self.BASE_URLS.get(network)
-        if not self.base_url:
-            available = ', '.join(sorted(self.BASE_URLS.keys()))
-            raise ValueError(
-                f"Network '{network}' not mapped to Blockscout V2 instance. Available: {available}"
-            )
+        # Resolve the instance root: explicit self-hosted URL or the
+        # per-network public instance mapping.
+        if base_url is None:
+            self.base_url = self.BASE_URLS.get(network)
+            if not self.base_url:
+                available = ', '.join(sorted(self.BASE_URLS.keys()))
+                raise ValueError(
+                    f"Network '{network}' not mapped to Blockscout V2 instance. "
+                    f'Available: {available}'
+                )
 
     def _build_url(self, spec: EndpointSpec, **params: Any) -> str:
         """
@@ -530,11 +536,10 @@ class BlockScoutV2Scanner(Scanner):
 
             return spec.parse_response(raw_response)
 
-        except ChainscanClientApiError:
-            # Re-raise our own exceptions
-            raise
-        except ChainscanNetworkError:
-            # Re-raise our own exceptions
+        except ChainscanClientError:
+            # Re-raise our own exceptions (transport, API and validation
+            # errors such as the expected-chain guard) unchanged — never
+            # mask them as opaque network failures.
             raise
         except Exception as e:
             raise ChainscanNetworkError(

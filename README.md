@@ -90,6 +90,38 @@ ID. The built-in scanner names are:
 Scanner support is checked at call time. A convenience method that is not
 declared by the selected scanner raises `ValueError`.
 
+### Self-hosted instances and proxies
+
+Instead of a chain name, `from_config` accepts a base URL — any string with a
+`scheme://` prefix is treated as an instance root, anything else resolves
+through the chain registry as before:
+
+```python
+# Self-hosted BlockScout — keyless, any chain (even private ones)
+async with ChainscanClient.from_config(
+    'blockscout_v2', 'https://my-blockscout.internal', expected_chain_id=100
+) as client:
+    info = await client.get_chain_info()   # ChainInfo(chain_id=..., explorer_url=...)
+    await client.validate_chain(100)       # ChainscanDataError on mismatch
+
+    await client.get_balance('0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045')
+
+# Etherscan v2 behind a proxy — API key still required, chain id mandatory
+client = ChainscanClient.from_config(
+    'etherscan', 'https://eth-proxy.internal',
+    api_key='...', expected_chain_id=137,
+)
+```
+
+Base URLs are validated (`https` by default — cleartext `http` requires
+`allow_http=True`; credentials, query strings and `..` segments are refused).
+`expected_chain_id` is checked once before the first request and a mismatch
+fails fast with `ChainscanDataError`. Chain identity is resolved through the
+provider itself — BlockScout via its JSON-RPC `eth_chainId` endpoint, Etherscan
+via the keyless `v2/chainlist` registry — and cached for an hour in a
+process-shared cache, so the ~60-network chainlist is downloaded at most once.
+NodeReal does not support custom base URLs (its API key rides in the URL path).
+
 Common operations:
 
 ```python
