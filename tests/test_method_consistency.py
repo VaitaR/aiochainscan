@@ -41,6 +41,7 @@ from aiochainscan.core.mixins import (
 from aiochainscan.scanners._etherscan_like import EtherscanLikeScanner
 from aiochainscan.scanners.blockscout_v2 import BlockScoutV2Scanner
 from aiochainscan.scanners.etherscan_v2 import EtherscanV2
+from aiochainscan.scanners.nodereal import NodeRealScanner
 
 CHECKSUM_ADDRESS = '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045'
 CONTRACT_ADDRESS = '0xdAC17F958D2ee523a2206208994597C13D831ec7'
@@ -53,12 +54,14 @@ SPEC_FAMILIES: dict[str, dict[Method, Any]] = {
     'etherscan-like (etherscan base, blockscout v1)': EtherscanLikeScanner.SPECS,
     'etherscan v2': EtherscanV2.SPECS,
     'blockscout v2': BlockScoutV2Scanner.SPECS,
+    'nodereal v1': NodeRealScanner.SPECS,
 }
 
 # Scanner name (as set on ChainscanClient) -> spec families exercised with it.
 SPECS_BY_SCANNER_NAME: dict[str, list[str]] = {
     'etherscan': ['etherscan-like (etherscan base, blockscout v1)', 'etherscan v2'],
     'blockscout': ['blockscout v2'],
+    'nodereal': ['nodereal v1'],
 }
 
 # Every convenience method that reaches scanner specs directly via ``call()``.

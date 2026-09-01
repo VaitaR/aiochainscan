@@ -167,6 +167,38 @@ class TestPhantomScannerRejection:
             resolve_scanner_target(phantom, 'ethereum')
 
 
+class TestNodeRealResolution:
+    """from_config('nodereal', 'bsc') resolution wiring."""
+
+    def test_nodereal_bsc_mainnet(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setenv('NODEREAL_KEY', 'nrkey123')
+        target = resolve_scanner_target('nodereal', 'bsc')
+        assert target.scanner_name == 'nodereal'
+        assert target.scanner_version == 'v1'
+        assert target.network == 'bsc'
+        assert target.api_kind == 'nodereal'
+        assert target.api_key == 'nrkey123'
+        assert target.chain_id == 56
+
+    def test_nodereal_bnb_alias_maps_config_lookup(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setenv('NODEREAL_KEY', 'nrkey123')
+        target = resolve_scanner_target('nodereal', 'bnb')
+        assert target.network == 'bnb'
+        assert target.chain_id == 56
+        assert target.api_key == 'nrkey123'  # alias mapped to 'bsc' for config lookup
+
+    def test_nodereal_testnet(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setenv('NODEREAL_API_KEY', 'nrkey456')
+        target = resolve_scanner_target('nodereal', 'bsc-testnet')
+        assert target.network == 'bsc-testnet'
+        assert target.chain_id == 97
+        assert target.api_key == 'nrkey456'
+
+    def test_nodereal_missing_key_raises(self, clean_key_env):  # noqa: ARG001
+        with pytest.raises(ValueError, match='API key required for NodeReal'):
+            resolve_scanner_target('nodereal', 'bsc')
+
+
 class TestErrorBehavior:
     """Exact error surface for bad networks."""
 
