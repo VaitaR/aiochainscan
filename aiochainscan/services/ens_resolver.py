@@ -31,13 +31,10 @@ Example:
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
-if TYPE_CHECKING:
-    from ..core.client import ChainscanClient
-
-from ..adapters.memory_cache import InMemoryCache
-from ..core.method import Method
+from ..domain.method import Method
+from ..ports.cache import Cache
 
 # ENS contract addresses on Ethereum mainnet
 ENS_REGISTRY_ADDRESS = '0x00000000000C2E074eC69A0dFb2997BA6C7d2e1e'
@@ -67,6 +64,15 @@ class AddressInfoProvider(Protocol):
         ...
 
 
+class ENSClient(Protocol):
+    """Client capabilities required by the ENS resolver."""
+
+    chain_id: int
+    network: str
+
+    async def call(self, method: Method, **params: Any) -> Any: ...
+
+
 class ENSResolver:
     """
     ENS resolver with multi-scanner support and caching.
@@ -81,11 +87,12 @@ class ENSResolver:
 
     def __init__(
         self,
-        client: ChainscanClient,
+        client: ENSClient,
         cache_ttl: int = 3600,
         enable_cache: bool = True,
         *,
         address_info_scanner: AddressInfoProvider | None = None,
+        cache: Cache | None = None,
     ):
         """
         Initialize ENS resolver.
@@ -100,6 +107,8 @@ class ENSResolver:
                 reverse-resolve addresses via ``ens_domain_name``. Injected by
                 the client at construction; never discovered through the
                 client's privates.
+            cache: Optional cache adapter. If caching is enabled without an
+                injected cache, resolution remains uncached.
         """
         self.client = client
         self.cache_ttl = cache_ttl
@@ -107,15 +116,14 @@ class ENSResolver:
         self._address_info_scanner = address_info_scanner
 
         # Initialize cache
-        self._cache: InMemoryCache | None = None
-        if enable_cache:
-            self._cache = InMemoryCache(max_size=5000)
+        self._cache: Cache | None = cache if enable_cache else None
+        if self._cache is not None:
             # Pre-warm with common names
             asyncio.create_task(self._prewarm_cache())
 
     async def _prewarm_cache(self) -> None:
         """Pre-warm cache with common ENS names."""
-        if not self._cache:
+        if self._cache is None:
             return
 
         for name, address in COMMON_ENS_NAMES.items():
@@ -159,7 +167,7 @@ class ENSResolver:
         name = name.lower().strip()
 
         # Check cache
-        if self._cache:
+        if self._cache is not None:
             cached = await self._cache.get(f'name:{name}')
             if cached:
                 return str(cached)
@@ -168,7 +176,7 @@ class ENSResolver:
         address = await self._resolve_via_scanner(name)
 
         # Cache result if found
-        if address and self._cache:
+        if address and self._cache is not None:
             await self._cache.set(f'name:{name}', address, ttl_seconds=self.cache_ttl)
             # Also cache reverse lookup
             await self._cache.set(f'addr:{address.lower()}', name, ttl_seconds=self.cache_ttl)
@@ -206,7 +214,7 @@ class ENSResolver:
         address = address.lower().strip()
 
         # Check cache
-        if self._cache:
+        if self._cache is not None:
             cached = await self._cache.get(f'addr:{address}')
             if cached:
                 return str(cached)
@@ -215,7 +223,7 @@ class ENSResolver:
         name = await self._reverse_lookup_via_scanner(address)
 
         # Cache result if found
-        if name and self._cache:
+        if name and self._cache is not None:
             await self._cache.set(f'addr:{address}', name, ttl_seconds=self.cache_ttl)
             # Also cache forward lookup
             await self._cache.set(f'name:{name.lower()}', address, ttl_seconds=self.cache_ttl)
@@ -536,7 +544,7 @@ class ENSResolver:
 
     async def clear_cache(self) -> None:
         """Clear the ENS resolution cache."""
-        if self._cache:
+        if self._cache is not None:
             await self._cache.clear()
 
     def __str__(self) -> str:
