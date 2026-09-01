@@ -328,6 +328,7 @@ Every `Method` enum value (33 total) maps to typed convenience methods on `Chain
 | `crypto.py` | Keccak-256, EIP-55 checksum | fastabi → eth-utils fallback chain |
 | `decode.py` | ABI decoding (Python) | Wraps Rust FFI, orjson parsing |
 | `fastabi/src/lib.rs` | ABI decoding (Rust) | Returns JSON, LRU cache |
+| `mcp/` | MCP server for AI agents | Adapter over `ChainscanClient` — see MCP Server section |
 
 ---
 
@@ -335,7 +336,7 @@ Every `Method` enum value (33 total) maps to typed convenience methods on `Chain
 
 | Scanner | Version | Free? | Key Env Var | Method coverage |
 |---------|---------|-------|-------------|-----------------|
-| BlockScout | v1 | ✅ Yes | - | Etherscan-like surface minus token holders (its Etherscan-compat layer answers "Unknown action" for the token module holder actions) |
+| BlockScout | v1 | ✅ Yes | - | Etherscan-like surface minus token holders (its Etherscan-compat layer answers "Unknown action" for the token module holder actions); `TX_BY_HASH`/`PROXY_*` served via the instance's `/api/eth-rpc` JSON-RPC (see below) |
 | BlockScout | **v2** | ✅ Yes | - | Subset: `ACCOUNT_BALANCE`, `ACCOUNT_TRANSACTIONS`, `ACCOUNT_TOKEN_PORTFOLIO`, `CONTRACT_ABI`, `BLOCK_BY_NUMBER`, `TOKEN_HOLDERS` (native `/api/v2/tokens/{addr}/holders`), `TOKEN_HOLDER_COUNT` (token info `holders_count`) |
 | Etherscan | v2 | ❌ No | `ETHERSCAN_KEY` | Full Etherscan-like surface + token holders (`tokenholderlist`/`topholders`/`tokenholdercount` are PRO endpoints) — all 33 `Method` values |
 | NodeReal | v1 | Free tier | `NODEREAL_KEY` | BSC-only subset (22 `Method` values) incl. the only `CONTRACT_ABI`/`CONTRACT_SOURCE`/`ACCOUNT_INTERNAL_TXS` alternative for keyless-free BSC analytics |
@@ -362,6 +363,50 @@ BscScan-compatible verified-contract REST on `open-platform.nodereal.io`. Networ
   items with hex `totalCount` cursors.
 - JSON-RPC `-32005` (usage limit) is translated to `ChainscanRateLimitError`
   so the transport retry policy applies.
+
+### BlockScout v1 proxy fallback (`/api/eth-rpc`)
+
+BlockScout's Etherscan-compat REST answers `"Unknown module"` for
+`module=proxy`, so `blockscout` v1 routes `TX_BY_HASH`, `PROXY_ETH_CALL` and
+`PROXY_GET_BALANCE` through the instance's JSON-RPC endpoint
+(`POST {base_url}/api/eth-rpc`) — the same keyless transport the chain-info
+probe uses. The Network layer unwraps the JSON-RPC envelope and raises
+`ChainscanClientProxyError` for reverts; a `null` result (unknown tx) comes
+back as `None`. Verified live against `eth.blockscout.com`.
+
+---
+
+## MCP Server (`aiochainscan/mcp/`)
+
+Agent adapter over `ChainscanClient` — **run**: `python -m aiochainscan.mcp_server`
+(requires `mcp` extra). Structure:
+
+| File | Purpose |
+|------|---------|
+| `mcp/envelope.py` | `ToolResponse{data, notes, instructions, pagination, content_text}` + truncation (`{value_sample, value_truncated}`, 512 chars) + `format_units` (lossless int math) |
+| `mcp/cursors.py` | Opaque Base64URL cursors wrapping `fetch_page` scanner cursors (`InvalidCursorError` with "start over" advice) |
+| `mcp/abi_codec.py` | Pure-Python ABI encode (calldata) / decode (eth_call outputs) — covers what fastabi doesn't (it decodes *inputs* only). Cross-checked against `eth_abi` in tests |
+| `mcp/tools.py` | 12 tools as plain `client -> ToolResponse` functions (**no mcp import** — offline-testable) + `ClientPool` (one client per `(scanner, chain)`, connection pooling across calls) |
+| `mcp/server.py` | FastMCP wiring: envelope → `CallToolResult` (text + structuredContent), tool registration |
+| `mcp_server.py` | Entry point (historical import path preserved) |
+
+**Tools**: `get_wallet_balance`, `get_address_overview`, `get_transactions`,
+`get_transaction_info` (fastabi-decoded input via auto-ABI),
+`get_token_portfolio`, `get_token_info`, `get_token_holders`,
+`get_top_token_holders`, `get_contract_abi` (signature summary),
+`read_contract` (auto-ABI + eth_call, outputs decoded), `resolve_ens`,
+`list_chains`.
+
+**Contract rules**:
+- Curation caps: ≤50 items/page (`clamp_page_size`), curated field sets per tool.
+- Pagination = one `client.fetch_page` call per response; `next_call.params`
+  carries the new cursor — agents never parse cursors.
+- Unsupported scanner methods → envelope `notes` (with scanner hints), never a
+  crash; primary-call failures still raise (clean MCP error).
+- Default scanner `blockscout` (keyless, v1); override per call (`scanner=`)
+  or via `AIOCHAINSCAN_MCP_SCANNER`.
+- Tests: `tests/test_mcp_server.py` (offline stubs; FastMCP registration
+  tests need `uv run --extra mcp pytest`), `tests/test_blockscout_v1_ethrpc.py`.
 
 ---
 

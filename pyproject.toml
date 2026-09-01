@@ -217,7 +217,7 @@ ignore_missing_imports = true
 module = ["mcp", "mcp.*", "mcp.server.*", "mcp.server.fastmcp"]
 ignore_missing_imports = true
 
-# Ignore untyped decorators in mcp_server when mcp package is missing
+# Ignore untyped decorators in MCP server wiring when the mcp package is missing
 [[tool.mypy.overrides]]
-module = ["aiochainscan.mcp_server"]
+module = ["aiochainscan.mcp_server", "aiochainscan.mcp.server"]
 disable_error_code = ["misc"]
