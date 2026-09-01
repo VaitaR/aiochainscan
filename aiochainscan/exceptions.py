@@ -26,6 +26,17 @@ class ChainscanClientContentTypeError(ChainscanClientError):
         return f'[{self.status}] {self.content!r}'
 
 
+class ChainscanResponseTooLargeError(ChainscanClientError):
+    """Raised when a response exceeds the configured transport limit."""
+
+    def __init__(self, actual_bytes: int, max_bytes: int) -> None:
+        self.actual_bytes = actual_bytes
+        self.max_bytes = max_bytes
+        super().__init__(
+            f'Response body is too large: {actual_bytes} bytes exceeds the {max_bytes}-byte limit'
+        )
+
+
 class ChainscanClientApiError(ChainscanClientError):
     def __init__(self, message: str | None, result: Any) -> None:
         self.message: str | None = message
