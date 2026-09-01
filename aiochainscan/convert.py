@@ -157,9 +157,11 @@ def format_ether(wei: str | int, decimals: int = 18, precision: int = 6) -> str:
         raise ValueError(f'precision must be >= 0, got {precision}')
     value = to_decimal_amount(wei, decimals)
     with localcontext() as ctx:
-        # Integer digits + requested places: quantize never rounds beyond
-        # precision and never raises InvalidOperation on huge values.
-        ctx.prec = max(value.adjusted() + 1, 1) + precision
+        # Integer digits + requested places + one carry digit: ROUND_HALF_UP
+        # can grow the integer part by one place (9.9999995 -> 10.000000),
+        # and quantize raises InvalidOperation when the result would not fit
+        # the context precision.
+        ctx.prec = max(value.adjusted() + 1, 1) + precision + 1
         quantized = value.quantize(Decimal(1).scaleb(-precision), rounding=ROUND_HALF_UP)
     if quantized.is_zero():
         quantized = abs(quantized)  # avoid '-0.000000' for tiny negative dust
@@ -223,14 +225,19 @@ def to_datetime(ts: str | int) -> datetime:
     string or ``'0x...'`` hex string (proxy `block.timestamp` fields are hex).
 
     Raises:
-        ValueError: On unparsable input.
+        ValueError: On unparsable input or timestamps outside the datetime
+            range (the contract is ValueError-only, so ``OverflowError`` from
+            the datetime constructor is re-raised as ``ValueError``).
 
     Examples:
         >>> to_datetime('1609459200')
         datetime.datetime(2021, 1, 1, 0, 0, tzinfo=datetime.timezone.utc)
     """
     seconds = _parse_flexible_int(ts, 'unix timestamp')
-    return datetime.fromtimestamp(seconds, tz=UTC)
+    try:
+        return datetime.fromtimestamp(seconds, tz=UTC)
+    except (OverflowError, OSError) as exc:
+        raise ValueError(f'Unix timestamp out of range: {ts!r}') from exc
 
 
 def to_iso(ts: str | int) -> str:

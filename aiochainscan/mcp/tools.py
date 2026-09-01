@@ -11,7 +11,8 @@ multi-scanner client):
   partial failures) + ``instructions`` (bridges to the next tool) +
   ``content_text`` (compact summary).
 - **Opaque cursors**: paginated tools wrap the scanner ``fetch_page`` cursor
-  in a Base64URL token and return a ready-to-use ``next_call``.
+  in a tool-bound, key-whitelisted Base64URL token (see
+  :mod:`aiochainscan.mcp.cursors`) and return a ready-to-use ``next_call``.
 - **Curation**: fixed item caps per response, curated field sets, long
   strings flagged-and-truncated, raw input dropped once decoded.
 - **Honest degradation**: unsupported methods and best-effort sub-calls land
@@ -35,7 +36,7 @@ from ..decode import decode_transaction_input
 from ..domain.models import Address
 from ..exceptions import ChainscanClientError
 from .abi_codec import canonical_signature, decode_arguments, encode_arguments, selector
-from .cursors import decode_cursor, encode_cursor
+from .cursors import decode_tool_cursor, encode_cursor
 from .envelope import (
     NextCall,
     Pagination,
@@ -286,6 +287,46 @@ def _next_call_params(
     return merged
 
 
+# Scanner-cursor keys each paginated tool may merge back into request params
+# (union across the scanners that can serve the tool). Anything else inside a
+# cursor token — notably resource-identity params such as ``address``,
+# ``contract_address``, ``module`` or ``action`` — is rejected by
+# ``decode_tool_cursor``: a cursor may only advance pagination, never
+# re-target the query (see ``aiochainscan.mcp.cursors`` for the model).
+_TX_CURSOR_KEYS = frozenset(
+    {
+        'page',
+        'offset',  # Etherscan-like page/offset walk
+        'block_number',
+        'index',
+        'items_count',  # BlockScout V2 txlist cursor
+        '__nr_window',
+        '__nr_tip',
+        'pageKey',  # NodeReal window/pageKey cursor
+    }
+)
+_PORTFOLIO_CURSOR_KEYS = frozenset(
+    {
+        'page',
+        'offset',  # Etherscan-like page/offset walk
+        'page_size',  # NodeReal holdings cursor
+        'fiat_value',
+        'items_count',
+        'token',
+        'value',  # BlockScout V2 tokens cursor
+    }
+)
+_HOLDERS_CURSOR_KEYS = frozenset(
+    {
+        'page',
+        'offset',  # Etherscan-like page/offset walk
+        'value',
+        'address_hash',
+        'items_count',  # BlockScout V2 holders cursor
+    }
+)
+
+
 def _pagination(
     *,
     tool: str,
@@ -297,7 +338,7 @@ def _pagination(
     """Build the pagination block when more data is available."""
     if scanner_cursor is None:
         return None
-    token = encode_cursor({'cursor': scanner_cursor})
+    token = encode_cursor({'tool': tool, 'cursor': scanner_cursor})
     return Pagination(
         has_more=True,
         items_shown=items_shown,
@@ -434,7 +475,7 @@ async def get_transactions(
     page_size = clamp_page_size(limit)
     params: dict[str, Any] = {'address': wallet, 'page': 1, 'offset': page_size}
     if cursor is not None:
-        params.update(decode_cursor(cursor).get('cursor') or {})
+        params.update(decode_tool_cursor(cursor, 'get_transactions', _TX_CURSOR_KEYS))
 
     items, scanner_cursor = await client.fetch_page(Method.ACCOUNT_TRANSACTIONS, params)
     transactions = [_curate_transaction(item, client.currency) for item in items[:page_size]]
@@ -602,7 +643,7 @@ async def get_token_portfolio(
     page_size = clamp_page_size(limit)
     params: dict[str, Any] = {'address': wallet, 'page': 1, 'offset': page_size}
     if cursor is not None:
-        params.update(decode_cursor(cursor).get('cursor') or {})
+        params.update(decode_tool_cursor(cursor, 'get_token_portfolio', _PORTFOLIO_CURSOR_KEYS))
 
     items, scanner_cursor = await client.fetch_page(Method.ACCOUNT_TOKEN_PORTFOLIO, params)
     tokens = [_token_fields(item) for item in items[:page_size]]
@@ -716,7 +757,7 @@ async def get_token_holders(
     page_size = clamp_page_size(limit)
     params: dict[str, Any] = {'contract_address': token, 'page': 1, 'offset': page_size}
     if cursor is not None:
-        params.update(decode_cursor(cursor).get('cursor') or {})
+        params.update(decode_tool_cursor(cursor, 'get_token_holders', _HOLDERS_CURSOR_KEYS))
     items, scanner_cursor = await client.fetch_page(Method.TOKEN_HOLDERS, params)
 
     holders = []

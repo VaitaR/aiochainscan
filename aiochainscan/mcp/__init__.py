@@ -16,7 +16,7 @@ The MCP layer is an adapter over :class:`aiochainscan.ChainscanClient`:
 tools compose client methods and never bypass the network layer.
 """
 
-from .cursors import InvalidCursorError, decode_cursor, encode_cursor
+from .cursors import InvalidCursorError, decode_cursor, decode_tool_cursor, encode_cursor
 from .envelope import (
     NextCall,
     Pagination,
@@ -33,6 +33,7 @@ __all__ = [
     'ToolResponse',
     'build_tool_response',
     'decode_cursor',
+    'decode_tool_cursor',
     'encode_cursor',
     'format_units',
     'truncate_long_strings',

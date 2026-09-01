@@ -10,7 +10,7 @@ from ...domain.models import Address
 from ...exceptions import ChainscanClientApiError, ChainscanRateLimitError
 from ..method import Method
 from ..types import JSONDict, JSONList
-from ._waiting import poll_until_final
+from ._waiting import api_error_text, poll_until_final
 
 
 class _ContractClientProtocol(Protocol):
@@ -90,7 +90,7 @@ class ContractMixin:
             try:
                 result: Any = await self.call(Method.CONTRACT_VERIFY_STATUS, guid=guid)
             except ChainscanClientApiError as exc:
-                verdict = f'{exc.message} {exc.result}'.lower()
+                verdict = api_error_text(exc)
                 if 'pending' in verdict or 'queue' in verdict:
                     return False, exc
                 raise

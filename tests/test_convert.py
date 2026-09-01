@@ -165,6 +165,17 @@ class TestFormatEther:
         # 28-digit Decimal context; must format exactly, not raise.
         assert format_ether(10**40) == '10000000000000000000000.000000'
 
+    def test_rounding_carry_grows_integer_part(self) -> None:
+        # 9999999500000000000 wei == 9.9999995 ether: half-up produces a
+        # carry into a new integer digit (10.000000). The context precision
+        # must reserve a digit for it — this used to raise InvalidOperation.
+        assert format_ether('9999999500000000000', 18, 6) == '10.000000'
+        assert format_ether('-9999999500000000000', 18, 6) == '-10.000000'
+        # All-nines boundary: 9.9999994 ether rounds down, no carry.
+        assert format_ether('9999999400000000000', 18, 6) == '9.999999'
+        # Carry with fewer decimals (9.95 -> 10.0 at precision 1).
+        assert format_ether('9950000000000000000', 18, 1) == '10.0'
+
     def test_error_negative_precision(self) -> None:
         with pytest.raises(ValueError, match='precision must be >= 0'):
             format_ether('1', precision=-1)
@@ -294,6 +305,15 @@ class TestToDatetime:
             to_datetime('')
         with pytest.raises(ValueError, match='Unix timestamp must be str or int'):
             to_datetime(None)  # type: ignore[arg-type]
+
+    def test_error_out_of_range_is_value_error(self) -> None:
+        # 2**64-1 seconds is far beyond year 9999: datetime raises
+        # OverflowError internally, but this module's contract is
+        # ValueError-only.
+        with pytest.raises(ValueError, match='out of range'):
+            to_datetime('0x' + 'f' * 16)
+        with pytest.raises(ValueError, match='out of range'):
+            to_datetime(-(2**64))
 
 
 class TestToIso:

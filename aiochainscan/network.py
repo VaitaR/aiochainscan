@@ -48,6 +48,18 @@ from aiochainscan.exceptions import (
 )
 from aiochainscan.ports.rate_limiter import RateLimiter, RetryPolicy
 
+# Transient failure classes for the first-request guard: a probe that hit one
+# of these (429 / 5xx / DNS / timeout) must not permanently brick the client —
+# the guard stays armed and the next request re-probes. Mirrors the transport
+# retry policy's ``retry_exceptions`` list.
+GUARD_TRANSIENT_EXCEPTIONS: tuple[type[BaseException], ...] = (
+    ChainscanRateLimitError,
+    ChainscanNetworkError,
+    httpx.TimeoutException,
+    httpx.NetworkError,
+    httpx.RemoteProtocolError,
+)
+
 # Sensitive headers that should be redacted in logs
 SENSITIVE_HEADERS = {
     'authorization',
@@ -207,8 +219,11 @@ class Network:
                 first admitted request (outside the retry policy). Used for
                 fail-fast configuration checks such as expected-chain-id
                 validation. The guard may itself issue requests through this
-                Network (re-entrancy is detected and allowed); a guard error
-                is remembered and re-raised for every subsequent request.
+                Network (re-entrancy is detected and allowed). A
+                configuration error is remembered and re-raised for every
+                subsequent request; a transient error (rate limit, network)
+                leaves the guard armed so the next request re-probes instead
+                of failing forever.
         """
         if max_response_bytes <= 0:
             raise ValueError('max_response_bytes must be greater than zero')
@@ -283,6 +298,13 @@ class Network:
         proceed or re-raise the remembered guard error. Re-entrancy: requests
         made by the guard itself (same task) skip the hook so the probe can
         reach the transport.
+
+        Failure memory: only configuration errors (anything outside
+        ``GUARD_TRANSIENT_EXCEPTIONS``) are cached as fatal — every later
+        request fails fast with the remembered error. Transient probe
+        failures are re-raised but NOT remembered: the guard stays armed and
+        the next request probes again, so one unlucky 429/DNS blip cannot
+        brick the client for its whole lifetime.
         """
         if self._first_request_guard is None:
             return
@@ -304,11 +326,15 @@ class Network:
             try:
                 await self._first_request_guard()
             except BaseException as e:
-                self._guard_error = e
+                if not isinstance(e, GUARD_TRANSIENT_EXCEPTIONS):
+                    self._guard_error = e
+                    self._guard_done = True
+                # Transient: nothing remembered — the guard re-runs on the
+                # next request.
                 raise
             finally:
                 self._guard_owner = None
-                self._guard_done = True
+            self._guard_done = True
 
     def _prepare_timeout(self, timeout: float | httpx.Timeout | None) -> httpx.Timeout:
         """Convert timeout parameter to httpx.Timeout."""

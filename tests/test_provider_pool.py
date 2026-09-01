@@ -27,9 +27,10 @@ Covered semantics (mirrors the P0.1 backlog item):
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from typing import Any
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import httpx
 import pytest
@@ -53,8 +54,12 @@ from aiochainscan.exceptions import (
     MethodNotDeclaredError,
     ProviderPoolExhaustedError,
 )
+from aiochainscan.scanners.blockscout_v1 import BlockScoutV1
+from aiochainscan.scanners.etherscan_v2 import EtherscanV2
 
 ADDR = '0x742d35Cc6634C0532925a3b8D9Fa7a3D91aC0b6f'
+TOKEN = '0xDaC17f958D2ee523A2206208994597c13d831EC7'
+HOLDER = '0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed'
 
 
 # ---------------------------------------------------------------------------
@@ -653,6 +658,103 @@ class TestPaginationBinding:
 
         assert items == [{'hash': '0xB1'}]
         assert cursor is None
+
+
+# ---------------------------------------------------------------------------
+# Regression: METHOD_UNDECLARED must fail over, never livelock
+# ---------------------------------------------------------------------------
+
+
+class _ReplayNetwork:
+    """Minimal Network stand-in replaying post-unwrap payloads."""
+
+    def __init__(self, responses: list[Any]) -> None:
+        self.responses = list(responses)
+        self.calls: list[dict[str, Any]] = []
+
+    async def request(self, **kwargs: Any) -> Any:
+        self.calls.append(kwargs)
+        response = self.responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+    async def get(self, **kwargs: Any) -> Any:
+        return await self.request(method='GET', **kwargs)
+
+    async def post(self, **kwargs: Any) -> Any:
+        return await self.request(method='POST', **kwargs)
+
+
+def _bare_client(scanner: Any, network: str) -> ChainscanClient:
+    """ChainscanClient shell around a real scanner (no full wiring)."""
+    client = ChainscanClient.__new__(ChainscanClient)
+    client.scanner_name = scanner.name
+    client.scanner_version = scanner.version
+    client.network = network
+    client._scanner = scanner
+    return client
+
+
+class TestPinnedStreamMethodUndeclared:
+    """Drive the REAL streaming path over real scanners.
+
+    ``_pinned_stream`` used to re-select the same METHOD_UNDECLARED provider
+    in a tight ``while True`` loop (no cooldown, no capability filter): the
+    declaring provider was never reached and the pool spun at 100% CPU.
+    """
+
+    @staticmethod
+    def _v1_client(network: _ReplayNetwork) -> ChainscanClient:
+        # BlockScout v1 does not declare the token-holder methods.
+        return _bare_client(
+            BlockScoutV1(
+                api_key='', network='eth', url_builder=MagicMock(), network_client=network
+            ),
+            'eth',
+        )
+
+    @staticmethod
+    def _etherscan_client(network: _ReplayNetwork) -> ChainscanClient:
+        return _bare_client(
+            EtherscanV2(
+                api_key='test_key',
+                network='main',
+                url_builder=MagicMock(),
+                network_client=network,
+            ),
+            'main',
+        )
+
+    async def test_stream_fails_over_to_declaring_provider(self) -> None:
+        holder_page = [{'TokenHolderAddress': HOLDER, 'TokenHolderQuantity': '5'}]
+        v1_network = _ReplayNetwork([])  # must never be asked
+        etherscan_network = _ReplayNetwork([holder_page])
+        pool = ChainscanPool(
+            [self._v1_client(v1_network), self._etherscan_client(etherscan_network)]
+        )
+
+        batches = [batch async for batch in pool.iter_token_holders_streaming(TOKEN, batch_size=2)]
+
+        assert batches == [[{'address': HOLDER, 'value': '5'}]]
+        assert pool.last_provider == 'etherscan/main'
+        # The non-declaring provider raised before any HTTP attempt.
+        assert v1_network.calls == []
+        assert len(etherscan_network.calls) == 1
+
+    async def test_no_provider_declares_terminates(self) -> None:
+        """Nobody declares the method → finite exhaustion, not a hang."""
+        pool = ChainscanPool([self._v1_client(_ReplayNetwork([]))])
+
+        async def collect() -> list[list[dict[str, Any]]]:
+            return [batch async for batch in pool.iter_token_holders_streaming(TOKEN)]
+
+        with pytest.raises(ProviderPoolExhaustedError) as excinfo:
+            await asyncio.wait_for(collect(), timeout=5.0)
+
+        attempts = excinfo.value.attempts
+        assert len(attempts) == 1
+        assert isinstance(attempts[0][1], MethodNotDeclaredError)
 
 
 # ---------------------------------------------------------------------------

@@ -83,6 +83,45 @@ class TestEthRpcRouting:
         assert network.calls[0]['json_data']['method'] == 'eth_getTransactionByHash'
         assert network.calls[0]['json_data']['params'] == ['0x' + 'ab' * 32]
 
+    async def test_block_by_number_routes_to_eth_rpc(self) -> None:
+        """Regression: ``module=proxy&action=eth_getBlockByNumber`` is dead on
+        live BlockScout (``{"message": "Unknown module"}``) — the block must
+        be served through ``/api/eth-rpc``. The JSON-RPC result (hex-quantity
+        block dict, full transactions) is passed through unchanged, matching
+        what the Etherscan proxy module returns for the same method."""
+        block = {
+            'number': '0x1b4',
+            'hash': '0x' + 'cd' * 32,
+            'parentHash': '0x' + 'ce' * 32,
+            'timestamp': '0x5beca34',
+            'transactions': [{'hash': '0x' + 'ab' * 32}],
+        }
+        network = FakeNetwork(block)
+        scanner = _scanner(network)
+        result = await scanner.call(Method.BLOCK_BY_NUMBER, block_number=436)
+        assert result == block
+        call = network.calls[0]
+        assert call['method'] == 'POST'
+        assert call['url'] == 'https://eth.blockscout.com/api/eth-rpc'
+        assert call['json_data'] == {
+            'jsonrpc': '2.0',
+            'method': 'eth_getBlockByNumber',
+            'params': ['0x1b4', True],
+            'id': 1,
+        }
+
+    async def test_block_by_number_latest_tag_passthrough(self) -> None:
+        network = FakeNetwork({'number': '0x2'})
+        scanner = _scanner(network)
+        await scanner.call(Method.BLOCK_BY_NUMBER, block_number='latest')
+        assert network.calls[0]['json_data']['params'] == ['latest', True]
+
+    async def test_block_by_number_decimal_string_becomes_hex_tag(self) -> None:
+        network = FakeNetwork({'number': '0x1298be0'})
+        scanner = _scanner(network)
+        await scanner.call(Method.BLOCK_BY_NUMBER, block_number='19500000')
+        assert network.calls[0]['json_data']['params'] == ['0x1298be0', True]
+
     async def test_custom_base_url_uses_own_root(self) -> None:
         network = FakeNetwork('0x1')
         scanner = BlockScoutV1(

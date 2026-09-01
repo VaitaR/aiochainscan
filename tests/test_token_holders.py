@@ -105,8 +105,14 @@ def _bare_client(scanner_name: str, scanner_version: str, scanner: Any) -> Chain
     return client
 
 
-def _etherscan_holder_page(entries: list[dict[str, str]]) -> dict[str, Any]:
-    return {'status': '1', 'message': 'OK', 'result': entries}
+def _etherscan_holder_page(entries: list[dict[str, str]]) -> list[dict[str, str]]:
+    """Payload the real Network seam delivers for a holders page.
+
+    ``Network._handle_response`` extracts the Etherscan envelope's ``result``
+    BEFORE ``spec.parse_response`` runs, so scanners and their parsers see the
+    bare item list — fakes must sit on that seam, not replay full envelopes.
+    """
+    return entries
 
 
 # ============================================================================
@@ -174,6 +180,28 @@ class TestEtherscanV2Specs:
 
 
 class TestEtherscanV2Normalization:
+    def test_parser_sees_post_unwrap_payload(self) -> None:
+        """Regression: the parser runs AFTER Network._handle_response has
+        extracted the envelope's ``result`` — its primary input is the bare
+        holder-item list, never ``{'result': [...]}``."""
+        payload = [
+            {'TokenHolderAddress': HOLDER_ONE, 'TokenHolderQuantity': '1000'},
+            {'TokenHolderAddress': HOLDER_TWO_LOWER, 'TokenHolderQuantity': '2000'},
+        ]
+        assert _parse_eth_holders(payload) == [
+            {'address': HOLDER_ONE, 'value': '1000'},
+            {'address': HOLDER_TWO, 'value': '2000'},
+        ]
+
+    def test_parser_tolerates_full_envelope(self) -> None:
+        """A ``{'result': [...]}`` envelope still parses (defensive path)."""
+        envelope = {
+            'status': '1',
+            'message': 'OK',
+            'result': [{'TokenHolderAddress': HOLDER_ONE, 'TokenHolderQuantity': '7'}],
+        }
+        assert _parse_eth_holders(envelope) == [{'address': HOLDER_ONE, 'value': '7'}]
+
     def test_parser_normalizes_pascal_case_fields(self) -> None:
         page = _etherscan_holder_page(
             [
@@ -229,6 +257,21 @@ class TestEtherscanV2Requests:
         assert params['offset'] == 100
         assert params['apikey'] == 'test_key'
 
+    async def test_call_parses_post_unwrap_network_payload(self) -> None:
+        """Regression (envelope seam): a Network that already unwrapped the
+        Etherscan ``result`` (the real transport behavior) must yield parsed
+        holders, not a silently empty list."""
+        network = FakeNetwork(
+            [
+                _etherscan_holder_page(
+                    [{'TokenHolderAddress': HOLDER_ONE, 'TokenHolderQuantity': '5'}]
+                )
+            ]
+        )
+        scanner = _etherscan(network)
+        items = await scanner.call(Method.TOKEN_HOLDERS, contract_address=TOKEN_CONTRACT)
+        assert items == [{'address': HOLDER_ONE, 'value': '5'}]
+
     async def test_call_top_holders_uses_offset_limit(self) -> None:
         network = FakeNetwork([_etherscan_holder_page([])])
         scanner = _etherscan(network)
@@ -239,7 +282,8 @@ class TestEtherscanV2Requests:
         assert 'page' not in params
 
     async def test_call_holder_count_scalar(self) -> None:
-        network = FakeNetwork([{'status': '1', 'message': 'OK', 'result': '30506'}])
+        # Post-unwrap payload: the real Network delivers the bare scalar.
+        network = FakeNetwork(['30506'])
         scanner = _etherscan(network)
         result = await scanner.call(Method.TOKEN_HOLDER_COUNT, contract_address=TOKEN_CONTRACT)
         assert result == '30506'

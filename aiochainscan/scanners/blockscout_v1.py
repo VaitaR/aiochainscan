@@ -26,9 +26,14 @@ if TYPE_CHECKING:
 #: Proxy-shaped methods the BlockScout compatibility REST answers with
 #: ``"Unknown module"`` for ``module=proxy`` — served instead through the
 #: instance's JSON-RPC endpoint (``POST {base_url}/api/eth-rpc``), the same
-#: keyless transport the chain-info probe uses.
+#: keyless transport the chain-info probe uses. ``BLOCK_BY_NUMBER`` is in
+#: the map because live BlockScout answers ``{"message": "Unknown module"}``
+#: for ``module=proxy&action=eth_getBlockByNumber`` too; the JSON-RPC result
+#: (raw hex-quantity block dict, full transactions) matches the shape the
+#: Etherscan proxy module returns, so it is passed through like TX_BY_HASH.
 _JSON_RPC_ACTIONS: dict[Method, str] = {
     Method.TX_BY_HASH: 'eth_getTransactionByHash',
+    Method.BLOCK_BY_NUMBER: 'eth_getBlockByNumber',
     Method.PROXY_ETH_CALL: 'eth_call',
     Method.PROXY_GET_BALANCE: 'eth_getBalance',
 }
@@ -148,9 +153,10 @@ class BlockScoutV1(EtherscanLikeScanner):
 
         BlockScout instances have different base URLs, so we need to
         construct the full URL manually. Proxy-shaped methods
-        (``eth_call``/``eth_getBalance``/``eth_getTransactionByHash``) route
-        through the instance's JSON-RPC endpoint because the compatibility
-        REST does not implement ``module=proxy``.
+        (``eth_call``/``eth_getBalance``/``eth_getTransactionByHash``/
+        ``eth_getBlockByNumber``) route through the instance's JSON-RPC
+        endpoint because the compatibility REST does not implement
+        ``module=proxy``.
         """
         rpc_action = _JSON_RPC_ACTIONS.get(method)
         if rpc_action is not None:
@@ -231,6 +237,17 @@ class BlockScoutV1(EtherscanLikeScanner):
             ]
         elif rpc_method == 'eth_getBalance':
             rpc_params = [params.get('address', ''), params.get('tag', 'latest')]
+        elif rpc_method == 'eth_getBlockByNumber':
+            # ``block_number`` arrives as int (convenience paths) or as a
+            # JSON-RPC tag ('latest', '0x...'); numeric forms become hex
+            # tags. Full transaction objects mirror the Etherscan-like
+            # spec's static ``boolean=true``.
+            tag = params.get('block_number', 'latest')
+            if isinstance(tag, int):
+                tag = hex(tag)
+            elif isinstance(tag, str) and tag.isdigit():
+                tag = hex(int(tag))
+            rpc_params = [tag, True]
         else:  # eth_getTransactionByHash
             rpc_params = [params.get('txhash', '')]
 
