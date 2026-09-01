@@ -43,8 +43,12 @@ jobs:
           # Ensure Rust is in PATH
           CIBW_ENVIRONMENT_LINUX: 'PATH="$HOME/.cargo/bin:$PATH"'
 
-          # Test that import works
-          CIBW_TEST_COMMAND: "python -c 'import aiochainscan; print(aiochainscan.__version__)'"
+          # Test the bundled native extension, not just package metadata
+          CIBW_TEST_COMMAND: >-
+            python -c "import json; from aiochainscan.aiochainscan_fastabi import decode_one;
+            result = json.loads(decode_one(b'', '[]'));
+            assert result == {'function_name': '', 'decoded_data': {}};
+            print('Native fastabi smoke test passed')"
 
       - name: Upload wheels
         uses: actions/upload-artifact@v4

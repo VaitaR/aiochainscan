@@ -59,18 +59,21 @@ jobs:
           python -c "from aiochainscan import ChainscanClient, Method, SmartContract, DecodedEvent, DecodedTransaction; print('✓ Modern public API imported')"
 
           # Verify CLI is available
-          which aiochainscan || echo "⚠ CLI not found"
-          aiochainscan --help || echo "⚠ CLI help failed"
+          which aiochainscan
+          aiochainscan --help
 
           deactivate
 
       - name: Test source distribution installation
         run: |
-          # Verify sdist was created correctly
-          ls -la dist/*.tar.gz
-          python -c "
+          # Verify the generated sdist was created correctly
+          sdist=$(find dist -maxdepth 1 -type f -name '*.tar.gz' -print -quit)
+          test -n "$sdist"
+          ls -la "$sdist"
+          SDIST_PATH="$sdist" python -c "
+          import os
           import tarfile, sys
-          sdist = sorted(__import__('glob').glob('dist/*.tar.gz'))[0]
+          sdist = os.environ['SDIST_PATH']
           with tarfile.open(sdist) as t:
               names = t.getnames()
               print(f'✓ Source distribution created: {sdist}')
@@ -86,6 +89,15 @@ jobs:
                   sys.exit(1)
               print('✓ Source distribution structure is valid')
           "
+
+          # Install the actual generated archive into a clean environment
+          python -m venv /tmp/test-sdist
+          source /tmp/test-sdist/bin/activate
+          python -m pip install --upgrade pip
+          python -m pip install "$sdist"
+          python -c "import aiochainscan; print('✓ Sdist install works')"
+          python -c "from aiochainscan.aiochainscan_fastabi import decode_one; import json; result = json.loads(decode_one(b'', '[]')); assert result == {'function_name': '', 'decoded_data': {}}; print('✓ Native fastabi smoke test passed')"
+          deactivate
 
       - name: Test editable install
         run: |
