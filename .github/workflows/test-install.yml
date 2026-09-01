@@ -176,24 +176,29 @@ jobs:
 
       - name: Check dependencies are installed
         run: |
+          set -euo pipefail
+          # These are the runtime dependencies declared in pyproject.toml.
           python -c "import httpx; print('✓ httpx')"
           python -c "import aiolimiter; print('✓ aiolimiter')"
           python -c "import tenacity; print('✓ tenacity')"
-          python -c "import eth_abi; print('✓ eth_abi')"
-          python -c "import structlog; print('✓ structlog')"
           python -c "import orjson; print('✓ orjson')"
-          python -c "import pydantic; print('✓ pydantic')"
 
       - name: Verify package structure
         run: |
+          set -euo pipefail
           python -c "
           import aiochainscan
           import os
+          import sys
           pkg_path = os.path.dirname(aiochainscan.__file__)
           print(f'Package location: {pkg_path}')
 
           # Check for key modules
-          modules = ['config', 'network', 'core', 'services', 'adapters', 'ports', 'domain']
+          modules = [
+              'config', 'network', 'core', 'services', 'adapters', 'ports',
+              'domain', 'scanners', 'utils', 'cli',
+          ]
+          missing = []
           for mod in modules:
               mod_path = os.path.join(pkg_path, mod + '.py')
               dir_path = os.path.join(pkg_path, mod)
@@ -201,4 +206,41 @@ jobs:
                   print(f'✓ {mod} exists')
               else:
                   print(f'✗ {mod} missing')
+                  missing.append(mod)
+          if missing:
+              print('✗ Required package modules missing: ' + ', '.join(missing))
+              sys.exit(1)
           "
+
+  test-optional-dependencies:
+    name: Test Optional Dependencies (Python 3.12)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Build and install optional extras
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip 'maturin>=1.8,<2.0'
+          maturin build --release --out dist/
+          wheel_path=$(find dist -maxdepth 1 -type f -name '*.whl' -print -quit)
+          test -n "$wheel_path"
+          python -m pip install "${wheel_path}[fallback,data,mcp]"
+
+      - name: Check optional packages
+        run: |
+          set -euo pipefail
+          python -c "import eth_abi; print('✓ fallback: eth_abi')"
+          python -c "import eth_utils; print('✓ fallback: eth_utils')"
+          python -c "import polars; print('✓ data: polars')"
+          python -c "import mcp; print('✓ mcp: mcp')"

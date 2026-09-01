@@ -97,8 +97,10 @@ class ConfigurationManager:
     @classmethod
     def reset_instance(cls) -> None:
         """Reset singleton instance (useful for testing or reconfiguration)."""
+        global _config_manager_instance
         with cls._lock:
             cls._instance = None
+            _config_manager_instance = None
 
     def reload(self, config_dir: Path | None = None) -> None:
         """
@@ -328,6 +330,38 @@ class ConfigurationManager:
                 requires_api_key=True,
                 special_config={'mega_node': True},
             ),
+            'blockscout_optimism': ScannerConfig(
+                name='BlockScout Optimism',
+                base_domain='optimism.blockscout.com',
+                currency='ETH',
+                supported_networks={'optimism'},
+                requires_api_key=False,
+                special_config={'public_api': True},
+            ),
+            'blockscout_arbitrum': ScannerConfig(
+                name='BlockScout Arbitrum',
+                base_domain='arbitrum.blockscout.com',
+                currency='ETH',
+                supported_networks={'arbitrum'},
+                requires_api_key=False,
+                special_config={'public_api': True},
+            ),
+            'blockscout_scroll': ScannerConfig(
+                name='BlockScout Scroll',
+                base_domain='scroll.blockscout.com',
+                currency='ETH',
+                supported_networks={'scroll'},
+                requires_api_key=False,
+                special_config={'public_api': True},
+            ),
+            'blockscout_linea': ScannerConfig(
+                name='BlockScout Linea',
+                base_domain='linea.blockscout.com',
+                currency='ETH',
+                supported_networks={'linea'},
+                requires_api_key=False,
+                special_config={'public_api': True},
+            ),
         }
 
     def _load_env_files(self) -> None:
@@ -550,7 +584,7 @@ class ConfigurationManager:
 
     def _get_api_key_suggestions(self, scanner_id: str) -> list[str]:
         """Get suggestions for API key environment variable names."""
-        scanner_name = self._scanners[scanner_id].name.upper().replace(' ', '_')
+        scanner_name = self.get_scanner_config(scanner_id).name.upper().replace(' ', '_')
         return [
             f'{scanner_name}_KEY',  # Primary format: ETHERSCAN_KEY
             f'{scanner_id.upper()}_KEY',  # Fallback: ETH_KEY

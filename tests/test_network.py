@@ -95,8 +95,8 @@ async def test_get(nw):
         await nw.get()
         mock.assert_called_once_with(
             'GET',
-            params={'chainid': '1'},
-            headers={'X-API-Key': nw._url_builder._API_KEY},
+            params={'chainid': '1', 'apikey': nw._url_builder._API_KEY},
+            headers={},
         )
 
 
@@ -107,24 +107,24 @@ async def test_post(nw):
         await nw.post()
         mock.assert_called_once_with(
             'POST',
-            data={'chainid': '1'},
-            headers={'X-API-Key': nw._url_builder._API_KEY},
+            data={'chainid': '1', 'apikey': nw._url_builder._API_KEY},
+            headers={},
         )
 
     with patch.object(nw, '_request', new=AsyncMock()) as mock:
         await nw.post({'some': 'data'})
         mock.assert_called_once_with(
             'POST',
-            data={'chainid': '1', 'some': 'data'},
-            headers={'X-API-Key': nw._url_builder._API_KEY},
+            data={'chainid': '1', 'some': 'data', 'apikey': nw._url_builder._API_KEY},
+            headers={},
         )
 
     with patch.object(nw, '_request', new=AsyncMock()) as mock:
         await nw.post({'some': 'data', 'null': None})
         mock.assert_called_once_with(
             'POST',
-            data={'chainid': '1', 'some': 'data'},
-            headers={'X-API-Key': nw._url_builder._API_KEY},
+            data={'chainid': '1', 'some': 'data', 'apikey': nw._url_builder._API_KEY},
+            headers={},
         )
 
 

@@ -1,5 +1,7 @@
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from aiochainscan.cli import (
     cmd_add_scanner,
@@ -314,6 +316,38 @@ class TestCmdTestScanner:
 
         # Verify asyncio.run was called
         mock_run.assert_called_once()
+
+    def test_test_scanner_api_failure_exits_and_closes_client(self):
+        """An API failure is diagnostic, nonzero, and still closes the client."""
+        from aiochainscan import ChainscanClient
+
+        client = MagicMock()
+        client.call = AsyncMock(side_effect=RuntimeError('provider unavailable'))
+        client.close = AsyncMock()
+        args = MagicMock(scanner='etherscan', network='main')
+
+        with (
+            patch.object(ChainscanClient, 'from_config', return_value=client),
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            cmd_test_scanner(args)
+
+        assert exc_info.value.code == 1
+        client.close.assert_awaited_once_with()
+
+    def test_test_scanner_success_closes_client(self):
+        """A successful diagnostic also closes the created client."""
+        from aiochainscan import ChainscanClient
+
+        client = MagicMock()
+        client.call = AsyncMock(return_value='100')
+        client.close = AsyncMock()
+        args = MagicMock(scanner='etherscan', network='main')
+
+        with patch.object(ChainscanClient, 'from_config', return_value=client):
+            cmd_test_scanner(args)
+
+        client.close.assert_awaited_once_with()
 
     def test_test_scanner_uses_universal_method(self):
         """Test that test_scanner function uses a universal method (ACCOUNT_BALANCE).

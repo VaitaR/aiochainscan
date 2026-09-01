@@ -156,30 +156,29 @@ def cmd_test_scanner(args: argparse.Namespace) -> None:
 
     async def test_scanner() -> None:
         print(f'🧪 Testing {args.scanner} scanner...')
+        client = None
 
         try:
             client = ChainscanClient.from_config(args.scanner, args.network)
             print('✅ Client created successfully')
 
             # Test a simple API call using a universally supported method
-            try:
-                # Use ACCOUNT_BALANCE as it's supported by all scanners
-                # Use a well-known address (Vitalik's) for consistent testing
-                result = await client.call(
-                    Method.ACCOUNT_BALANCE,
-                    address='0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045',
-                )
-                print(f'✅ API test successful - got response: {type(result)}')
-
-            except Exception as e:
-                print(f'⚠️ API test failed: {e}')
-
-            await client.close()
+            # Use ACCOUNT_BALANCE as it's supported by all scanners
+            # Use a well-known address (Vitalik's) for consistent testing
+            result = await client.call(
+                Method.ACCOUNT_BALANCE,
+                address='0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045',
+            )
+            print(f'✅ API test successful - got response: {type(result)}')
             print(f'✅ Scanner {args.scanner} is working correctly')
 
         except Exception as e:
+            print(f'❌ API test failed: {e}')
             print(f'❌ Scanner test failed: {e}')
             sys.exit(1)
+        finally:
+            if client is not None:
+                await client.close()
 
     asyncio.run(test_scanner())
 
@@ -195,7 +194,7 @@ Examples:
   %(prog)s check                             # Check configuration status
   %(prog)s generate-env                      # Generate .env template
   %(prog)s generate-env --output .env.dev    # Generate custom .env file
-  %(prog)s test eth                          # Test Ethereum scanner
+  %(prog)s test etherscan                    # Test Ethereum scanner
   %(prog)s add-scanner custom_chain --name "Custom Chain" --domain "customscan.io"
         """,
     )

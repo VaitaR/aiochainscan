@@ -72,6 +72,10 @@ URL_BUILDER_CURRENCIES: dict[str, str] = {
     'blockscout_base': 'ETH',
     'blockscout_bsc': 'BNB',
     'nodereal': 'BNB',
+    'blockscout_optimism': 'ETH',
+    'blockscout_arbitrum': 'ETH',
+    'blockscout_scroll': 'ETH',
+    'blockscout_linea': 'ETH',
 }
 
 
@@ -82,10 +86,14 @@ BLOCKSCOUT_HOSTS: dict[str, str] = {
     'blockscout_polygon': 'polygon.blockscout.com',
     'blockscout_base': 'base.blockscout.com',
     'blockscout_bsc': 'bsc.blockscout.com',
+    'blockscout_optimism': 'optimism.blockscout.com',
+    'blockscout_arbitrum': 'arbitrum.blockscout.com',
+    'blockscout_scroll': 'scroll.blockscout.com',
+    'blockscout_linea': 'linea.blockscout.com',
 }
 
 
-V2_HEADER_AUTH_API_KINDS: set[str] = {'eth', 'optimism', 'arbitrum', 'bsc', 'polygon', 'base'}
+V2_QUERY_AUTH_API_KINDS: set[str] = {'eth', 'optimism', 'arbitrum', 'bsc', 'polygon', 'base'}
 
 
 def get_url_builder_profile(api_kind: str, network: str) -> dict[str, str | None]:
@@ -109,12 +117,12 @@ def get_url_builder_profile(api_kind: str, network: str) -> dict[str, str | None
     currency = URL_BUILDER_CURRENCIES[kind]
     chainid = URL_BUILDER_CHAIN_IDS.get((kind, net))
 
-    if kind in V2_HEADER_AUTH_API_KINDS:
+    if kind in V2_QUERY_AUTH_API_KINDS:
         return {
             'base_url': 'https://etherscan.io',
             'api_url': 'https://api.etherscan.io/v2/api',
             'currency': currency,
-            'auth_mode': 'header',
+            'auth_mode': 'query',
             'chainid': chainid,
         }
 
@@ -470,6 +478,8 @@ BLOCKSCOUT_CONFIG_IDS: dict[str, str] = {
     'base': 'blockscout_base',
     'bsc': 'blockscout_bsc',
     'bnb': 'blockscout_bsc',
+    'scroll': 'blockscout_scroll',
+    'linea': 'blockscout_linea',
 }
 
 # Per-scanner network-name aliases, used for configuration-manager lookups only
@@ -572,17 +582,18 @@ def resolve_scanner_target(
     # Canonical network name: ints resolve via the registry, strings are preserved
     network_str = get_chain_name(chain_id) if isinstance(network, int) else str(network)
 
-    # Configuration-manager scanner id (BlockScout's id depends on the network)
-    if scanner == 'blockscout':
-        scanner_id = BLOCKSCOUT_CONFIG_IDS.get(network_str, f'blockscout_{network_str}')
-    else:
-        scanner_id = SCANNER_CONFIG_IDS.get(scanner, scanner)
-
     # Normalize network aliases for configuration lookup only
     config_network = network_str  # Preserve original for the client property
     aliases = SCANNER_NETWORK_ALIASES.get(scanner)
     if aliases is not None:
         config_network = aliases.get(network_str, network_str)
+
+    # Configuration-manager scanner id (BlockScout's id depends on the
+    # normalized network, so aliases must be resolved first).
+    if scanner == 'blockscout':
+        scanner_id = BLOCKSCOUT_CONFIG_IDS.get(config_network, f'blockscout_{config_network}')
+    else:
+        scanner_id = SCANNER_CONFIG_IDS.get(scanner, scanner)
 
     # Resolve the API key
     if scanner == 'blockscout_v2':
