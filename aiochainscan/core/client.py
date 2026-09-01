@@ -408,8 +408,7 @@ class ChainscanClient(
                 yield tx
             return
 
-        # Block-range (or decoding) pagination: page-numbered windows until a
-        # short page signals the end.
+        # Block-range (or decoding) pagination follows the scanner cursor.
         end_block = _resolve_end_block_int(to_block)
         params = {
             'address': address,
@@ -419,9 +418,7 @@ class ChainscanClient(
             'offset': batch_size,
             'sort': 'asc',
         }
-        async for tx in iter_items(
-            fetch, params, stop='page_size', page_size=batch_size, decode=decode
-        ):
+        async for tx in iter_items(fetch, params, decode=decode):
             yield tx
 
     # =========================================================================
@@ -489,8 +486,6 @@ class ChainscanClient(
         async for batch in iter_pages(
             page_fetcher(self._scanner, Method.ACCOUNT_TRANSACTIONS),
             params,
-            stop='page_size',
-            page_size=batch_size,
             on_progress=on_progress,
             operation='transactions',
         ):
@@ -529,8 +524,6 @@ class ChainscanClient(
         async for batch in iter_pages(
             page_fetcher(self._scanner, Method.ACCOUNT_INTERNAL_TXS),
             params,
-            stop='page_size',
-            page_size=batch_size,
             on_progress=on_progress,
             operation='internal_transactions',
         ):
@@ -573,8 +566,6 @@ class ChainscanClient(
         async for batch in iter_pages(
             page_fetcher(self._scanner, Method.ACCOUNT_ERC20_TRANSFERS),
             params,
-            stop='page_size',
-            page_size=batch_size,
             on_progress=on_progress,
             operation='token_transfers',
         ):
@@ -629,8 +620,6 @@ class ChainscanClient(
         async for batch in iter_pages(
             page_fetcher(self._scanner, Method.EVENT_LOGS),
             params,
-            stop='page_size',
-            page_size=batch_size,
             on_progress=on_progress,
             operation='logs',
         ):
@@ -740,8 +729,6 @@ class ChainscanClient(
         async for log in iter_items(
             page_fetcher(self._scanner, Method.EVENT_LOGS),
             params,
-            stop='page_size',
-            page_size=batch_size,
             decode=_decode_with_abi(decode_log_data, abi),
         ):
             yield log

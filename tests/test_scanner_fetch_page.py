@@ -394,6 +394,30 @@ class TestEtherscanLikeFetchPage:
 
 class TestClientIterTransactionsOverPort:
     @pytest.mark.asyncio
+    async def test_blockscout_streaming_continues_after_short_cursor_page(self) -> None:
+        net = FakeNetwork(
+            [
+                {
+                    'items': [{'hash': '0x1'}],
+                    'next_page_params': {'block_number': 5, 'index': 1},
+                },
+                {'items': [{'hash': '0x2'}], 'next_page_params': None},
+            ]
+        )
+        scanner = _blockscout_scanner(net)
+        client = _bare_client('blockscout', 'v2', scanner)
+        client._network = net
+
+        batches = [
+            batch async for batch in client.iter_transactions_streaming('0xabc', batch_size=10)
+        ]
+
+        assert batches == [[{'hash': '0x1'}], [{'hash': '0x2'}]]
+        assert len(net.calls) == 2
+        assert net.calls[1]['params']['block_number'] == 5
+        assert net.calls[1]['params']['index'] == 1
+
+    @pytest.mark.asyncio
     async def test_blockscout_pagination_via_fetch_page(self) -> None:
         net = FakeNetwork(
             [

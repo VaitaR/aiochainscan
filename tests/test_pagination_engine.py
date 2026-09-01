@@ -16,6 +16,7 @@ from typing import Any
 import pytest
 
 from aiochainscan.core.method import Method
+from aiochainscan.exceptions import ChainscanDataError
 from aiochainscan.scanners.base import Scanner
 from aiochainscan.services.pagination import (
     collect_all,
@@ -191,59 +192,60 @@ class TestIterPagesCursorMode:
 
 
 # ---------------------------------------------------------------------------
-# iter_pages: page_size mode
+# iter_pages: cursor integrity
 # ---------------------------------------------------------------------------
 
 
-class TestIterPagesPageSizeMode:
+class TestIterPagesCursorIntegrity:
     @pytest.mark.asyncio
-    async def test_full_page_with_cursor_continues(self) -> None:
+    async def test_short_page_with_cursor_continues(self) -> None:
         fetch = FakePageFetch(
             [
-                ([{'h': i} for i in range(3)], {'page': 2}),
-                ([{'h': i} for i in range(3, 6)], {'page': 3}),
-                ([{'h': 6}], None),
+                ([{'h': 1}], {'page': 2}),
+                ([{'h': 2}], None),
             ]
         )
 
-        batches = [
-            batch
-            async for batch in iter_pages(
-                fetch, {'page': 1, 'offset': 3}, stop='page_size', page_size=3
-            )
-        ]
+        batches = [batch async for batch in iter_pages(fetch, {'page': 1, 'offset': 10})]
 
-        assert [len(b) for b in batches] == [3, 3, 1]
+        assert batches == [[{'h': 1}], [{'h': 2}]]
+        assert len(fetch.seen_params) == 2
         assert fetch.seen_params[1]['page'] == 2
-        assert fetch.seen_params[2]['page'] == 3
 
     @pytest.mark.asyncio
-    async def test_partial_page_stops_even_with_cursor(self) -> None:
-        fetch = FakePageFetch([([{'h': 1}], {'page': 2})])
+    async def test_empty_page_with_cursor_continues_without_yield_or_progress(self) -> None:
+        fetch = FakePageFetch([([], {'page': 2}), ([{'h': 2}], None)])
+        progress = ProgressRecorder()
 
-        batches = [
-            batch
-            async for batch in iter_pages(
-                fetch, {'page': 1, 'offset': 10}, stop='page_size', page_size=10
-            )
+        batches = [batch async for batch in iter_pages(fetch, {'page': 1}, on_progress=progress)]
+
+        assert batches == [[{'h': 2}]]
+        assert fetch.seen_params == [{'page': 1}, {'page': 2}]
+        assert progress.calls == [
+            {
+                'fetched': 1,
+                'total_expected': None,
+                'current_page': 2,
+                'operation': 'fetch',
+            }
         ]
-
-        assert batches == [[{'h': 1}]]
-        assert len(fetch.seen_params) == 1
 
     @pytest.mark.asyncio
-    async def test_none_cursor_stops_on_full_page(self) -> None:
-        fetch = FakePageFetch([([{'h': i} for i in range(3)], None)])
+    async def test_repeated_cursor_raises_data_error_after_non_empty_page(self) -> None:
+        fetch = FakePageFetch(
+            [
+                ([{'h': 1}], {'page': 2}),
+                ([{'h': 2}], {'page': 2}),
+            ]
+        )
 
-        batches = [
-            batch
-            async for batch in iter_pages(
-                fetch, {'page': 1, 'offset': 3}, stop='page_size', page_size=3
-            )
-        ]
+        batches: list[list[dict[str, Any]]] = []
+        with pytest.raises(ChainscanDataError, match='does not advance'):
+            async for batch in iter_pages(fetch, {'page': 1}):
+                batches.append(batch)
 
-        assert batches == [[{'h': 0}, {'h': 1}, {'h': 2}]]
-        assert len(fetch.seen_params) == 1
+        assert batches == [[{'h': 1}], [{'h': 2}]]
+        assert len(fetch.seen_params) == 2
 
 
 # ---------------------------------------------------------------------------
@@ -344,15 +346,6 @@ class TestIterItems:
 
         assert items == [original]
         assert items[0] is original
-
-    @pytest.mark.asyncio
-    async def test_page_size_stop_forwarded(self) -> None:
-        fetch = FakePageFetch([([{'h': 1}], {'page': 2})])
-
-        items = [item async for item in iter_items(fetch, {}, stop='page_size', page_size=10)]
-
-        assert items == [{'h': 1}]
-        assert len(fetch.seen_params) == 1
 
 
 # ---------------------------------------------------------------------------
