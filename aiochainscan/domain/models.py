@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from eth_utils.address import is_address, to_checksum_address
+from aiochainscan.crypto import is_address, to_checksum_address
 
 
 @dataclass(slots=True, frozen=True)

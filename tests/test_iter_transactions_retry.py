@@ -8,168 +8,178 @@ the retry decorator considers the function "successful" as soon as the generator
 OBJECT is returned. If a network error occurs on page 100 of iteration, the retry
 has already finished and won't help.
 
-The fix ensures that each page fetch goes through Network.request() which wraps
-calls with retry policy. This test verifies that behavior.
+The fix ensures that each page fetch goes through the Network layer, which wraps
+calls with retry policy. Pages are fetched through the Scanner port
+(``Scanner.fetch_page``), which routes every request through the scanner's
+injected Network client — the layer that owns retry. These tests use real
+scanner adapters plus a recording fake Network to prove each page fetch hits
+the Network layer.
 """
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 
 from aiochainscan.core.client import ChainscanClient
+from aiochainscan.core.url_builder import UrlBuilder
 from aiochainscan.exceptions import ChainscanNetworkError
+from aiochainscan.network import Network
+from aiochainscan.scanners.blockscout_v2 import BlockScoutV2Scanner
+from aiochainscan.scanners.etherscan_v2 import EtherscanV2
+
+
+class FakeNetwork:
+    """Minimal Network stand-in: records requests, replays canned responses."""
+
+    def __init__(self, responses: list[Any]) -> None:
+        self.responses = list(responses)
+        self.calls: list[dict[str, Any]] = []
+
+    async def request(self, **kwargs: Any) -> Any:
+        self.calls.append(kwargs)
+        response = self.responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+    async def get(self, **kwargs: Any) -> Any:
+        return await self.request(method='GET', **kwargs)
+
+    async def post(self, **kwargs: Any) -> Any:
+        return await self.request(method='POST', **kwargs)
+
+
+def _make_blockscout_client(responses: list[Any]) -> tuple[ChainscanClient, FakeNetwork]:
+    """Client shell with a real BlockScout V2 scanner over a fake Network."""
+    net = FakeNetwork(responses)
+    scanner = BlockScoutV2Scanner(
+        api_key='', network='ethereum', url_builder=MagicMock(), network_client=net
+    )
+    client = ChainscanClient.__new__(ChainscanClient)
+    client.scanner_name = 'blockscout'
+    client.scanner_version = 'v2'
+    client.api_kind = 'blockscout_eth'
+    client.network = 'ethereum'
+    client.api_key = ''
+    client._network = net
+    client._scanner = scanner
+    return client, net
+
+
+def _make_etherscan_client(responses: list[Any]) -> tuple[ChainscanClient, FakeNetwork]:
+    """Client shell with a real Etherscan V2 scanner over a fake Network."""
+    net = FakeNetwork(responses)
+    scanner = EtherscanV2(
+        api_key='test_key', network='main', url_builder=MagicMock(), network_client=net
+    )
+    client = ChainscanClient.__new__(ChainscanClient)
+    client.scanner_name = 'etherscan'
+    client.scanner_version = 'v2'
+    client.api_kind = 'eth'
+    client.network = 'ethereum'
+    client.api_key = 'test_key'
+    client._network = net
+    client._scanner = scanner
+    return client, net
 
 
 class TestIterTransactionsRetryBehavior:
-    """Test that iter_transactions uses Network layer with retry."""
-
-    @pytest.fixture
-    def mock_client_setup(self):
-        """Set up a mocked ChainscanClient for BlockScout V2."""
-        with patch.object(ChainscanClient, '__init__', lambda self, *args, **kwargs: None):
-            client = ChainscanClient.__new__(ChainscanClient)
-
-            # Set up required attributes
-            client.scanner_name = 'blockscout'
-            client.scanner_version = 'v2'
-            client.api_kind = 'blockscout_eth'
-            client.network = 'ethereum'
-            client.api_key = ''
-
-            # Mock network with request method
-            client._network = MagicMock()
-            client._network.request = AsyncMock()
-
-            # Mock scanner
-            from aiochainscan.scanners.blockscout_v2 import BlockScoutV2Scanner
-
-            mock_scanner = MagicMock(spec=BlockScoutV2Scanner)
-            mock_scanner.SPECS = BlockScoutV2Scanner.SPECS
-            mock_scanner._build_url = (
-                lambda spec,
-                **params: 'https://eth.blockscout.com/api/v2/addresses/0x123/transactions'
-            )
-            mock_scanner._build_query_params = lambda spec, **params: {}
-            client._scanner = mock_scanner
-
-            yield client
+    """Test that iter_transactions fetches each page through the Network layer."""
 
     @pytest.mark.asyncio
-    async def test_uses_network_request_not_raw_http(self, mock_client_setup):
-        """Verify iter_transactions uses self._network.request() for each page."""
-        client = mock_client_setup
+    async def test_uses_network_request_not_raw_http(self):
+        """Verify iter_transactions goes through the scanner's Network per page."""
+        client, net = _make_blockscout_client(
+            [
+                {
+                    'items': [{'hash': '0x111'}, {'hash': '0x222'}],
+                    'next_page_params': {'block_number': 12345, 'index': 1},
+                },
+                {'items': [{'hash': '0x333'}], 'next_page_params': None},
+            ]
+        )
 
-        # Mock two pages of results
-        page1_response = {
-            'items': [{'hash': '0x111'}, {'hash': '0x222'}],
-            'next_page_params': {'block_number': 12345, 'index': 1},
-        }
-        page2_response = {
-            'items': [{'hash': '0x333'}],
-            'next_page_params': None,  # Last page
-        }
-
-        client._network.request.side_effect = [page1_response, page2_response]
-
-        # Consume the generator
         results = []
         async for tx in client.iter_transactions('0x123'):
             results.append(tx)
 
-        # Should have called network.request twice (once per page)
-        assert client._network.request.call_count == 2
+        # Should have made two requests (one per page), both GET
+        assert len(net.calls) == 2
+        for call in net.calls:
+            assert call['method'] == 'GET'
 
-        # Verify the calls used GET method
-        calls = client._network.request.call_args_list
-        for call in calls:
-            assert call.kwargs['method'] == 'GET'
-
-        # Verify results
         assert len(results) == 3
         assert results[0]['hash'] == '0x111'
         assert results[2]['hash'] == '0x333'
 
     @pytest.mark.asyncio
-    async def test_retry_happens_at_page_level(self, mock_client_setup):
-        """Verify that if network.request raises, it can be retried per-page."""
-        client = mock_client_setup
+    async def test_retry_happens_at_page_level(self):
+        """Verify page fetches flow through the scanner's Network client.
 
-        # Simulate a transient failure followed by success
-        # This proves retry happens at page-fetch level, not generator level
-        page1_response = {
-            'items': [{'hash': '0x111'}],
-            'next_page_params': {'block_number': 12345, 'index': 1},
-        }
-
-        # First page succeeds, second page fails with retryable error
-        # The Network layer will retry internally, so we simulate
-        # the final success after internal retries
-        error = ChainscanNetworkError('Connection reset', retryable=True)  # noqa: F841
-        page2_response = {'items': [{'hash': '0x222'}], 'next_page_params': None}
-
-        # Network.request() already has retry logic built-in via RetryPolicy.run()
-        # So if it raises, it means retries were exhausted
-        # If it succeeds, it means either no error or retry succeeded
-        client._network.request.side_effect = [page1_response, page2_response]
+        Network.request() has retry logic built-in via RetryPolicy.run(); each
+        fetch_page call lands there, so retries apply per page, not per
+        generator.
+        """
+        client, net = _make_blockscout_client(
+            [
+                {
+                    'items': [{'hash': '0x111'}],
+                    'next_page_params': {'block_number': 12345, 'index': 1},
+                },
+                {'items': [{'hash': '0x222'}], 'next_page_params': None},
+            ]
+        )
 
         results = []
         async for tx in client.iter_transactions('0x123'):
             results.append(tx)
 
         assert len(results) == 2
-        # The key is that network.request was called twice - once per page
-        # Each call has retry built-in via Network layer
-        assert client._network.request.call_count == 2
+        # Each page hit the Network layer, where retry is applied per fetch
+        assert len(net.calls) == 2
 
     @pytest.mark.asyncio
-    async def test_pagination_params_passed_correctly(self, mock_client_setup):
+    async def test_pagination_params_passed_correctly(self):
         """Verify next_page_params are used for subsequent requests."""
-        client = mock_client_setup
-
-        page1_response = {
-            'items': [{'hash': '0x111'}],
-            'next_page_params': {'block_number': 12345, 'index': 5},
-        }
-        page2_response = {'items': [{'hash': '0x222'}], 'next_page_params': None}
-
-        client._network.request.side_effect = [page1_response, page2_response]
+        client, net = _make_blockscout_client(
+            [
+                {
+                    'items': [{'hash': '0x111'}],
+                    'next_page_params': {'block_number': 12345, 'index': 5},
+                },
+                {'items': [{'hash': '0x222'}], 'next_page_params': None},
+            ]
+        )
 
         async for _ in client.iter_transactions('0x123'):
             pass
 
         # First call should have no pagination params
-        first_call = client._network.request.call_args_list[0]  # noqa: F841
+        assert net.calls[0]['params'] is None
         # Second call should include next_page_params
-        second_call = client._network.request.call_args_list[1]
-
-        # The params should include the pagination info
-        second_params = second_call.kwargs.get('params', {})
+        second_params = net.calls[1]['params']
         assert second_params.get('block_number') == 12345
         assert second_params.get('index') == 5
 
     @pytest.mark.asyncio
-    async def test_handles_empty_response(self, mock_client_setup):
+    async def test_handles_empty_response(self):
         """Verify generator handles empty response gracefully."""
-        client = mock_client_setup
-
-        client._network.request.return_value = {'items': [], 'next_page_params': None}
+        client, net = _make_blockscout_client([{'items': [], 'next_page_params': None}])
 
         results = []
         async for tx in client.iter_transactions('0x123'):
             results.append(tx)
 
         assert len(results) == 0
-        assert client._network.request.call_count == 1
+        assert len(net.calls) == 1
 
     @pytest.mark.asyncio
-    async def test_handles_list_response_fallback(self, mock_client_setup):
+    async def test_handles_list_response_fallback(self):
         """Verify generator handles unexpected list response format."""
-        client = mock_client_setup
-
-        # Some APIs might return a list directly instead of {items: [...]}
-        client._network.request.return_value = [{'hash': '0x111'}, {'hash': '0x222'}]
+        client, net = _make_blockscout_client([[{'hash': '0x111'}, {'hash': '0x222'}]])
 
         results = []
         async for tx in client.iter_transactions('0x123'):
@@ -182,75 +192,48 @@ class TestRetryDuringMidIteration:
     """Test that retry actually works when error happens mid-iteration (page 3).
 
     NOTE: These tests verify the architecture is correct - actual retry is handled
-    by Network.request() via TenacityRetryAdapter. The iter_transactions generator
-    calls Network.request() for each page, which internally uses retry logic.
+    by Network.request() via TenacityRetryAdapter. iter_transactions fetches each
+    page through the scanner port (fetch_page), which routes through
+    Network.request(), so the retry logic applies per page fetch.
     """
 
-    @pytest.fixture
-    def mock_client_with_network(self):
-        """Set up client with a real Network instance that has mocked HTTP."""
-        with patch.object(ChainscanClient, '__init__', lambda self, *args, **kwargs: None):
-            client = ChainscanClient.__new__(ChainscanClient)
-
-            client.scanner_name = 'blockscout'
-            client.scanner_version = 'v2'
-            client.api_kind = 'blockscout_eth'
-            client.network = 'ethereum'
-            client.api_key = ''
-
-            # Create a real Network instance with mocked HTTP client
-            from aiochainscan.core.url_builder import UrlBuilder
-            from aiochainscan.network import Network
-
-            url_builder = MagicMock(spec=UrlBuilder)
-            url_builder.API_URL = 'https://eth.blockscout.com'
-
-            # Create Network - it will create default retry policy internally
-            network = Network(url_builder=url_builder)
-            client._network = network
-
-            # Mock scanner
-            from aiochainscan.scanners.blockscout_v2 import BlockScoutV2Scanner
-
-            mock_scanner = MagicMock(spec=BlockScoutV2Scanner)
-            mock_scanner.SPECS = BlockScoutV2Scanner.SPECS
-            mock_scanner._build_url = (
-                lambda spec,
-                **params: 'https://eth.blockscout.com/api/v2/addresses/0x123/transactions'
-            )
-            mock_scanner._build_query_params = lambda spec, **params: {}
-            client._scanner = mock_scanner
-
-            yield client, network
-
     @pytest.mark.asyncio
-    async def test_network_layer_has_retry_configured(self, mock_client_with_network):
+    async def test_network_layer_has_retry_configured(self):
         """
         Verify Network layer has ChainscanNetworkError in retry exceptions.
 
         This ensures that errors raised during pagination will be retried.
         """
-        client, network = mock_client_with_network
+        url_builder = MagicMock(spec=UrlBuilder)
+        url_builder.API_URL = 'https://eth.blockscout.com'
 
-        # Verify retry policy includes ChainscanNetworkError
+        network = Network(url_builder=url_builder)
+
         retry_exceptions = network._retry_policy.retry_exceptions
         assert (
             ChainscanNetworkError in retry_exceptions
         ), f'ChainscanNetworkError not in retry exceptions: {retry_exceptions}'
 
     @pytest.mark.asyncio
-    async def test_each_page_fetch_goes_through_retry_wrapped_method(
-        self, mock_client_with_network
-    ):
+    async def test_each_page_fetch_goes_through_retry_wrapped_method(self):
         """
         Verify that each page fetch in iter_transactions calls Network.request()
         which is wrapped with retry logic.
         """
-        client, network = mock_client_with_network
+        net = Network(url_builder=MagicMock(spec=UrlBuilder))
+        scanner = BlockScoutV2Scanner(
+            api_key='', network='ethereum', url_builder=MagicMock(), network_client=net
+        )
+        client = ChainscanClient.__new__(ChainscanClient)
+        client.scanner_name = 'blockscout'
+        client.scanner_version = 'v2'
+        client.api_kind = 'blockscout_eth'
+        client.network = 'ethereum'
+        client.api_key = ''
+        client._network = net
+        client._scanner = scanner
 
-        # Track calls to Network.request
         call_count = [0]
-        original_request = network.request  # noqa: F841
 
         page1 = {'items': [{'hash': '0x111'}], 'next_page_params': {'block': 1}}
         page2 = {'items': [{'hash': '0x222'}], 'next_page_params': None}
@@ -261,7 +244,7 @@ class TestRetryDuringMidIteration:
                 return page1
             return page2
 
-        network.request = tracked_request
+        net.request = tracked_request
 
         results = []
         async for tx in client.iter_transactions('0x123'):
@@ -275,105 +258,53 @@ class TestRetryDuringMidIteration:
 class TestRetryExhaustion:
     """Test behavior when all retries are exhausted."""
 
-    @pytest.fixture
-    def mock_client_simple(self):
-        """Set up a mocked ChainscanClient for BlockScout V2."""
-        with patch.object(ChainscanClient, '__init__', lambda self, *args, **kwargs: None):
-            client = ChainscanClient.__new__(ChainscanClient)
-
-            client.scanner_name = 'blockscout'
-            client.scanner_version = 'v2'
-            client.api_kind = 'blockscout_eth'
-            client.network = 'ethereum'
-            client.api_key = ''
-
-            # Mock network with request method
-            client._network = MagicMock()
-            client._network.request = AsyncMock()
-
-            # Mock scanner
-            from aiochainscan.scanners.blockscout_v2 import BlockScoutV2Scanner
-
-            mock_scanner = MagicMock(spec=BlockScoutV2Scanner)
-            mock_scanner.SPECS = BlockScoutV2Scanner.SPECS
-            mock_scanner._build_url = (
-                lambda spec,
-                **params: 'https://eth.blockscout.com/api/v2/addresses/0x123/transactions'
-            )
-            mock_scanner._build_query_params = lambda spec, **params: {}
-            client._scanner = mock_scanner
-
-            yield client
-
     @pytest.mark.asyncio
-    async def test_error_propagates_when_network_fails(self, mock_client_simple):
+    async def test_error_propagates_when_network_fails(self):
         """
-        Verify error propagates to user when network.request raises.
+        Verify error propagates to user when the page fetch raises.
 
         In production, Network.request would have already exhausted retries
         before raising. Here we simulate that final failure.
         """
-        client = mock_client_simple
+        client, net = _make_blockscout_client(
+            [
+                {'items': [{'hash': '0x111'}], 'next_page_params': {'block': 1}},
+                ChainscanNetworkError('All retries exhausted', retryable=True),
+            ]
+        )
 
-        page1 = {'items': [{'hash': '0x111'}], 'next_page_params': {'block': 1}}
-        error = ChainscanNetworkError('All retries exhausted', retryable=True)
-
-        client._network.request.side_effect = [page1, error]
-
+        received = []
         with pytest.raises(ChainscanNetworkError):
-            results = []
             async for tx in client.iter_transactions('0x123'):
-                results.append(tx)
+                received.append(tx)
+
+        # First page was yielded before the failure on the second fetch
+        assert [tx['hash'] for tx in received] == ['0x111']
 
 
 class TestEtherscanIterTransactionsRetry:
-    """Test iter_transactions retry for Etherscan (uses self.call())."""
-
-    @pytest.fixture
-    def mock_etherscan_client(self):
-        """Set up a mocked ChainscanClient for Etherscan."""
-        with patch.object(ChainscanClient, '__init__', lambda self, *args, **kwargs: None):
-            client = ChainscanClient.__new__(ChainscanClient)
-
-            client.scanner_name = 'etherscan'
-            client.scanner_version = 'v2'
-            client.api_kind = 'eth'
-            client.network = 'ethereum'
-            client.api_key = 'test_key'
-
-            # Mock the call method
-            client.call = AsyncMock()
-
-            yield client
+    """Test iter_transactions for Etherscan (page/offset via fetch_page)."""
 
     @pytest.mark.asyncio
-    async def test_etherscan_uses_call_method(self, mock_etherscan_client):
-        """Verify Etherscan path uses self.call() which has retry."""
-        client = mock_etherscan_client
-
-        # Mock paginated responses - batch_size=2 so we need 2 items per page
-        # to continue pagination. Last page with fewer items signals end.
-        page1 = [{'hash': '0x111'}, {'hash': '0x222'}]  # Full page, continue
-        page2 = [{'hash': '0x333'}]  # Partial page (< batch_size), stop here
-
-        client.call.side_effect = [page1, page2]
+    async def test_etherscan_paginates_until_partial_page(self):
+        """Verify Etherscan path pages through the scanner until a partial page."""
+        client, net = _make_etherscan_client(
+            [
+                # Full page (batch_size=2) -> continue
+                {'status': '1', 'message': 'OK', 'result': [{'hash': '0x111'}, {'hash': '0x222'}]},
+                # Partial page (< batch_size) -> stop here
+                {'status': '1', 'message': 'OK', 'result': [{'hash': '0x333'}]},
+            ]
+        )
 
         results = []
         async for tx in client.iter_transactions('0x123', batch_size=2):
             results.append(tx)
 
-        # Should call self.call() for each page until partial/empty page
-        assert client.call.call_count == 2
-
-        # Verify it called with pagination params
-        from aiochainscan.core.method import Method
-
-        calls = client.call.call_args_list
-        assert calls[0].args[0] == Method.ACCOUNT_TRANSACTIONS
-        assert calls[0].kwargs.get('page') == 1
-        assert calls[1].kwargs.get('page') == 2
-
-        assert len(results) == 3
+        assert len(net.calls) == 2
+        assert net.calls[0]['params']['page'] == 1
+        assert net.calls[1]['params']['page'] == 2
+        assert [tx['hash'] for tx in results] == ['0x111', '0x222', '0x333']
 
 
 class TestRetryActuallyFires:

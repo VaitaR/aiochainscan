@@ -791,6 +791,13 @@ fn decode_many_to_arrow(
     Ok(PyRecordBatch::new(batch))
 }
 
+/// Keccak-256 digest (Ethereum flavor, distinct from NIST SHA-3-256).
+#[pyfunction(name = "keccak256")]
+fn keccak256_py<'py>(py: Python<'py>, input: &[u8]) -> Bound<'py, PyBytes> {
+    let digest = keccak256(input);
+    PyBytes::new_bound(py, &digest)
+}
+
 /// Python module for fast ABI decoding
 #[pymodule]
 fn aiochainscan_fastabi(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -803,5 +810,6 @@ fn aiochainscan_fastabi(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(decode_many_hex, m)?)?;
     m.add_function(wrap_pyfunction!(decode_input, m)?)?; // Legacy
     m.add_function(wrap_pyfunction!(decode_many_to_arrow, m)?)?; // Zero-copy Arrow
+    m.add_function(wrap_pyfunction!(keccak256_py, m)?)?; // Hash primitive for selectors/EIP-55
     Ok(())
 }

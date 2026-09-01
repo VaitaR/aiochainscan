@@ -2,7 +2,10 @@
 Chain Registry - unified chain information and provider mappings.
 """
 
+from dataclasses import dataclass
 from typing import Any
+
+from .config import get_config_manager
 
 # ---------------------------------------------------------------------------
 # UrlBuilder registry-backed topology
@@ -417,3 +420,197 @@ def get_moralis_hex(chain_id: int) -> str:
     moralis_hex = info['moralis_hex']
     assert isinstance(moralis_hex, str)
     return moralis_hex
+
+
+# ---------------------------------------------------------------------------
+# Scanner target resolution — the single resolution point behind
+# ChainscanClient.from_config
+# ---------------------------------------------------------------------------
+
+# Default scanner version when none is provided (everything else defaults to v1)
+DEFAULT_SCANNER_VERSIONS: dict[str, str] = {
+    'etherscan': 'v2',
+    'blockscout_v2': 'v2',
+}
+
+# Configuration-manager scanner ids for non-BlockScout scanners (api key lookup).
+# There is deliberately no entry for 'moralis'/'routscan': no such scanner exists,
+# unknown names fall through as-is and the config manager raises its honest
+# 'Unknown scanner' error for them.
+SCANNER_CONFIG_IDS: dict[str, str] = {
+    'etherscan': 'eth',
+}
+
+# BlockScout configuration ids keyed by canonical network name
+BLOCKSCOUT_CONFIG_IDS: dict[str, str] = {
+    'ethereum': 'blockscout_eth',
+    'eth': 'blockscout_eth',
+    'polygon': 'blockscout_polygon',
+    'gnosis': 'blockscout_gnosis',
+    'optimism': 'blockscout_optimism',
+    'base': 'blockscout_base',
+    'bsc': 'blockscout_bsc',
+    'bnb': 'blockscout_bsc',
+}
+
+# Per-scanner network-name aliases, used for configuration-manager lookups only
+SCANNER_NETWORK_ALIASES: dict[str, dict[str, str]] = {
+    'etherscan': {
+        # All EtherscanV2 networks route through the single unified endpoint
+        # (api.etherscan.io/v2/api?chainid=...), so all map to 'main' for config lookup
+        'ethereum': 'main',
+        'eth': 'main',
+        'base': 'main',
+        'bsc': 'main',
+        'bnb': 'main',
+        'binance': 'main',
+        'polygon': 'main',
+        'matic': 'main',
+        'arbitrum': 'main',
+        'arb': 'main',
+        'optimism': 'main',
+        'op': 'main',
+        'sonic': 'main',
+    },
+    'blockscout': {'ethereum': 'eth', 'main': 'eth'},
+    'blockscout_v2': {'main': 'ethereum'},
+}
+
+# UrlBuilder api_kind per scanner name (BlockScout v1 uses its network-specific id)
+SCANNER_API_KINDS: dict[str, str] = {
+    'etherscan': 'eth',
+    'blockscout_v2': 'blockscout_eth',
+}
+
+
+@dataclass(frozen=True)
+class ScannerTarget:
+    """Fully resolved construction target for ``ChainscanClient``.
+
+    Carries exactly the values the scanner stack consumes: ``scanner_name`` /
+    ``scanner_version`` select the ``Scanner`` class, ``api_kind`` selects the
+    UrlBuilder profile, ``network`` is the canonical network name, ``api_key``
+    the resolved credential (``''`` when the scanner needs none) and
+    ``chain_id`` the numeric chain identifier.
+    """
+
+    scanner_name: str
+    scanner_version: str
+    network: str
+    api_kind: str
+    api_key: str
+    chain_id: int
+
+
+def resolve_scanner_target(
+    scanner: str,
+    network: str | int,
+    api_key: str | None = None,
+    scanner_version: str | None = None,
+) -> ScannerTarget:
+    """Resolve ``(scanner, network, api_key)`` into a :class:`ScannerTarget`.
+
+    Single resolution point for client construction: version defaulting, the
+    ``blockscout_v2`` → ``('blockscout', 'v2')`` rename, canonical network
+    normalization, UrlBuilder ``api_kind`` mapping and the api-key default
+    from the configuration manager (env vars / .env / config files).
+
+    Args:
+        scanner: Scanner implementation name (e.g. 'etherscan', 'blockscout',
+            'blockscout_v2'). Unknown names raise ``ValueError`` once they
+            reach the configuration manager or the scanner registry.
+        network: Chain name/alias or chain ID (e.g. 'ethereum', 'eth', 8453).
+        api_key: Explicit API key. When ``None`` (default), the key is looked
+            up via the configuration manager; when provided, credential
+            lookup is skipped (existence of the scanner is still enforced).
+        scanner_version: Explicit scanner version override. When ``None``,
+            defaults to 'v2' for etherscan/blockscout_v2, 'v1' otherwise.
+
+    Returns:
+        Frozen :class:`ScannerTarget` ready for client construction.
+
+    Raises:
+        ValueError: Unknown chain/network, unknown scanner, network not
+            supported by the scanner, or missing required API key.
+    """
+    # Default scanner version if not provided
+    if scanner_version is None:
+        scanner_version = DEFAULT_SCANNER_VERSIONS.get(scanner, 'v1')
+
+    # 'blockscout_v2' is a public alias for ('blockscout', 'v2')
+    actual_scanner_name = scanner
+    if scanner == 'blockscout_v2':
+        actual_scanner_name = 'blockscout'
+        scanner_version = 'v2'
+
+    # Canonical chain resolution — raises ValueError for unknown chains
+    chain_id = resolve_chain_id(network)
+
+    # Canonical network name: ints resolve via the registry, strings are preserved
+    network_str = get_chain_name(chain_id) if isinstance(network, int) else str(network)
+
+    # Configuration-manager scanner id (BlockScout's id depends on the network)
+    if scanner == 'blockscout':
+        scanner_id = BLOCKSCOUT_CONFIG_IDS.get(network_str, f'blockscout_{network_str}')
+    else:
+        scanner_id = SCANNER_CONFIG_IDS.get(scanner, scanner)
+
+    # Normalize network aliases for configuration lookup only
+    config_network = network_str  # Preserve original for the client property
+    aliases = SCANNER_NETWORK_ALIASES.get(scanner)
+    if aliases is not None:
+        config_network = aliases.get(network_str, network_str)
+
+    # Resolve the API key
+    if scanner == 'blockscout_v2':
+        resolved_api_key = ''  # BlockScout V2 doesn't require API key
+    elif api_key is not None:
+        resolved_api_key = api_key
+    else:
+        resolved_api_key = get_config_manager().create_client_config(scanner_id, config_network)[
+            'api_key'
+        ]
+
+    # UrlBuilder api_kind (BlockScout v1 uses the network-specific scanner id)
+    api_kind = scanner_id if scanner == 'blockscout' else SCANNER_API_KINDS.get(scanner, scanner)
+
+    return ScannerTarget(
+        scanner_name=actual_scanner_name,
+        scanner_version=scanner_version,
+        network=network_str,
+        api_kind=api_kind,
+        api_key=resolved_api_key,
+        chain_id=chain_id,
+    )
+
+
+def get_scanner_network_name(scanner_name: str, scanner_version: str, network: str) -> str:
+    """Map the unified network name to the scanner-specific network name.
+
+    Different scanners use different naming conventions for the same networks:
+    BlockScout v1 uses 'eth' for Ethereum mainnet, BlockScout v2 uses
+    'ethereum', and Etherscan uses 'main'. Other networks pass through
+    unchanged.
+
+    Args:
+        scanner_name: Name of the scanner (e.g. 'etherscan', 'blockscout')
+        scanner_version: Version of the scanner (e.g. 'v1', 'v2')
+        network: Unified network name (e.g. 'ethereum', 'polygon')
+
+    Returns:
+        Scanner-specific network name
+    """
+    if scanner_name == 'blockscout' and scanner_version == 'v1':
+        # v1 uses 'eth' for Ethereum mainnet
+        if network in ('ethereum', 'main'):
+            return 'eth'
+    elif scanner_name == 'blockscout' and scanner_version == 'v2':
+        # v2 uses 'ethereum' for Ethereum mainnet
+        if network == 'main':
+            return 'ethereum'
+    elif scanner_name == 'etherscan' and network == 'ethereum':
+        # Etherscan uses 'main' for Ethereum mainnet
+        return 'main'
+
+    # For other cases, use the network name as-is
+    return network

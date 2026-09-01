@@ -31,14 +31,13 @@ Example:
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from ..core.client import ChainscanClient
 
 from ..adapters.memory_cache import InMemoryCache
 from ..core.method import Method
-from ..exceptions import ChainscanClientApiError
 
 # ENS contract addresses on Ethereum mainnet
 ENS_REGISTRY_ADDRESS = '0x00000000000C2E074eC69A0dFb2997BA6C7d2e1e'
@@ -49,6 +48,23 @@ COMMON_ENS_NAMES = {
     'vitalik.eth': '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045',
     'nick.eth': '0xb8c2C29ee19D8307cb7255e1Cd9CbDE883A267d5',
 }
+
+
+@runtime_checkable
+class AddressInfoProvider(Protocol):
+    """Scanner-port subset the resolver needs for ENS reverse lookup.
+
+    A scanner satisfying this port can fetch full address info (including
+    ``ens_domain_name``) for an address. Satisfied by
+    :class:`~aiochainscan.scanners.blockscout_v2.BlockScoutV2Scanner` via its
+    ``get_address_info`` method, which exists precisely to serve ENS reverse
+    resolution. The concrete scanner is injected at construction by the client
+    (see ``ENSMixin.ens``) — the resolver never reaches through the client.
+    """
+
+    async def get_address_info(self, address: str) -> dict[str, Any]:
+        """Fetch full address information for ``address``."""
+        ...
 
 
 class ENSResolver:
@@ -68,18 +84,27 @@ class ENSResolver:
         client: ChainscanClient,
         cache_ttl: int = 3600,
         enable_cache: bool = True,
+        *,
+        address_info_scanner: AddressInfoProvider | None = None,
     ):
         """
         Initialize ENS resolver.
 
         Args:
-            client: ChainscanClient instance
+            client: ChainscanClient instance (used for chain/network checks and
+                ENS contract calls via ``PROXY_ETH_CALL``)
             cache_ttl: Cache TTL in seconds (default: 1 hour)
             enable_cache: Enable caching (default: True)
+            address_info_scanner: Optional scanner satisfying
+                :class:`AddressInfoProvider` (e.g. BlockScout V2) used to
+                reverse-resolve addresses via ``ens_domain_name``. Injected by
+                the client at construction; never discovered through the
+                client's privates.
         """
         self.client = client
         self.cache_ttl = cache_ttl
         self.enable_cache = enable_cache
+        self._address_info_scanner = address_info_scanner
 
         # Initialize cache
         self._cache: InMemoryCache | None = None
@@ -295,20 +320,17 @@ class ENSResolver:
         Reverse lookup using scanner-specific methods.
 
         Strategy:
-        1. BlockScout V2: Use address info endpoint (returns ens_domain_name)
-        2. Etherscan: Use ENS contract calls (fallback)
+        1. Injected ``AddressInfoProvider`` scanner (BlockScout V2): use the
+           address info endpoint (returns ``ens_domain_name``)
+        2. Etherscan and others: ENS contract calls (fallback)
         """
-        if self.client.scanner_name == 'blockscout' and self.client.scanner_version == 'v2':
+        if self._address_info_scanner is not None:
             try:
-                # Use the scanner's get_address_info method to get ens_domain_name
-                # Only BlockScoutV2Scanner has this method, so use getattr for type safety
-                get_address_info = getattr(self.client._scanner, 'get_address_info', None)
-                if get_address_info is not None and callable(get_address_info):
-                    info = await get_address_info(address)
-                    ens_name = info.get('ens_domain_name')
-                    if ens_name:
-                        return str(ens_name)
-            except (ChainscanClientApiError, AttributeError, KeyError, Exception):
+                info = await self._address_info_scanner.get_address_info(address)
+                ens_name = info.get('ens_domain_name')
+                if ens_name:
+                    return str(ens_name)
+            except Exception:
                 # Fall through to ENS contract fallback
                 # Catch all exceptions including 422 errors for invalid addresses
                 pass
@@ -442,7 +464,7 @@ class ENSResolver:
         Returns:
             32-byte namehash as hex string (without 0x prefix)
         """
-        from eth_hash.auto import keccak
+        from aiochainscan.crypto import keccak256
 
         if not name:
             return '0' * 64
@@ -452,8 +474,8 @@ class ENSResolver:
         if name:
             labels = name.split('.')
             for label in reversed(labels):
-                label_hash = keccak(label.encode('utf-8'))
-                node = keccak(node + label_hash)
+                label_hash = keccak256(label.encode('utf-8'))
+                node = keccak256(node + label_hash)
 
         return node.hex()
 
@@ -467,20 +489,10 @@ class ENSResolver:
         Returns:
             Checksummed address
         """
-        from eth_hash.auto import keccak
+        from aiochainscan.crypto import to_checksum_address
 
-        addr = address[2:].lower() if address.startswith('0x') else address.lower()
-        hash_result = keccak(addr.encode('utf-8')).hex()
-
-        checksum_addr = '0x'
-        for i, char in enumerate(addr):
-            if char in '0123456789':
-                checksum_addr += char
-            else:
-                # Use hash to determine if letter should be uppercase
-                checksum_addr += char.upper() if int(hash_result[i], 16) >= 8 else char
-
-        return checksum_addr
+        addr = address[2:] if address.startswith('0x') else address
+        return to_checksum_address(f'0x{addr}')
 
     def _decode_string(self, data: str) -> str | None:
         """

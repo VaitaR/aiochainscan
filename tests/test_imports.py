@@ -44,19 +44,6 @@ def test_scanners_registry():
     assert etherscan is not None
 
 
-def test_optional_dependencies_graceful():
-    """Test that optional dependencies fail gracefully if not installed."""
-    # aiohttp should be optional for httpx-only installations
-    try:
-        from aiochainscan.adapters import AiohttpClient
-
-        # If import succeeds, it should be the real class or None
-        assert AiohttpClient is None or callable(AiohttpClient)
-    except ImportError:
-        # This is also acceptable - optional dependency
-        pass
-
-
 def test_mcp_server_optional():
     """Test that MCP server is optional and doesn't block base imports."""
     try:
@@ -105,7 +92,7 @@ def test_no_import_side_effects():
         m for m in new_modules if not m.startswith('aiochainscan') and not m.startswith('_')
     ]
 
-    # Some external dependencies are expected (httpx, pydantic, etc.)
+    # Some external dependencies are expected (httpx, orjson, etc.)
     # But we shouldn't be importing heavy things like numpy, pandas unexpectedly
     unexpected = [m for m in external_modules if m.startswith(('numpy', 'pandas', 'scipy'))]
     assert len(unexpected) == 0, f'Unexpected heavy imports: {unexpected}'

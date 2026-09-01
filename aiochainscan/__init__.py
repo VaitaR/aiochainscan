@@ -12,7 +12,7 @@ from aiochainscan.exceptions import (
 )
 from aiochainscan.scanners import list_scanners, register_scanner
 
-__version__ = '0.5.0'
+__version__ = '0.6.0'
 
 __all__ = [
     'ChainscanClient',

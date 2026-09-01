@@ -79,7 +79,7 @@ class SmartContract:
 
     def _build_lookup_maps(self) -> None:
         """Build internal lookup maps for functions and events."""
-        from eth_utils import keccak  # type: ignore[attr-defined]
+        from aiochainscan.crypto import keccak_hex
 
         for item in self.abi:
             item_type = item.get('type')
@@ -98,7 +98,7 @@ class SmartContract:
                     inputs = item.get('inputs', [])
                     input_types = ','.join([param['type'] for param in inputs])
                     signature_text = f'{name}({input_types})'
-                    topic_hash = '0x' + keccak(signature_text.encode('utf-8')).hex()
+                    topic_hash = '0x' + keccak_hex(signature_text)
                     self._event_signature_map[topic_hash] = item
 
     @classmethod
@@ -273,12 +273,12 @@ class SmartContract:
                 raise ValueError(f"Event '{event_name}' not found in contract ABI")
 
             # Generate topic0 (event signature hash)
-            from eth_utils import keccak  # type: ignore[attr-defined]
+            from aiochainscan.crypto import keccak_hex
 
             inputs = event_abi.get('inputs', [])
             input_types = ','.join([param['type'] for param in inputs])
             signature_text = f'{event_name}({input_types})'
-            topic0 = '0x' + keccak(signature_text.encode('utf-8')).hex()
+            topic0 = '0x' + keccak_hex(signature_text)
             params['topic0'] = topic0
 
         # Fetch logs

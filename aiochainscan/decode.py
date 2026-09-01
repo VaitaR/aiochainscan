@@ -1,18 +1,36 @@
 from __future__ import annotations
 
-import logging
 from collections.abc import Sequence
 from typing import Any, cast
 
 import orjson
-from eth_abi.abi import decode
-from eth_utils import keccak  # type: ignore[attr-defined]
 
-from aiochainscan.ports.http_client import HttpClient
+from aiochainscan.crypto import keccak_hex
+from aiochainscan.exceptions import ChainscanDependencyError
+
+_eth_abi_decode: Any
+try:
+    from eth_abi.abi import decode as _eth_abi_decode
+
+    ETH_ABI_AVAILABLE = True
+except ImportError:
+    _eth_abi_decode = None
+    ETH_ABI_AVAILABLE = False
+
+
+def _abi_decode(types: list[str], data: bytes) -> tuple[Any, ...]:
+    """Pure-Python ABI decode fallback for environments without fastabi."""
+    if _eth_abi_decode is None:
+        raise ChainscanDependencyError(
+            'Pure-Python ABI decoding requires eth-abi. The fastabi Rust extension '
+            'covers decoding in all wheel installs; otherwise run: '
+            'pip install "aiochainscan[fallback]"'
+        )
+    return cast('tuple[Any, ...]', _eth_abi_decode(types, data))
+
 
 # orjson is a required dependency — always available
 ORJSON_AVAILABLE = True
-logger = logging.getLogger(__name__)
 
 
 def _parse_json(json_str: str) -> Any:
@@ -22,15 +40,19 @@ def _parse_json(json_str: str) -> Any:
 
 # Try to import fastabi Rust backend
 try:
-    from aiochainscan_fastabi import decode_input as _fast_decode_input_json
-    from aiochainscan_fastabi import decode_many as _fast_decode_many_json
-    from aiochainscan_fastabi import decode_many_direct as _fast_decode_many_direct_json
-    from aiochainscan_fastabi import decode_many_flat as _fast_decode_many_flat_json
-    from aiochainscan_fastabi import decode_many_hex as _fast_decode_many_hex_json
-    from aiochainscan_fastabi import decode_many_raw as _fast_decode_many_raw_json
-    from aiochainscan_fastabi import decode_many_to_arrow as _fast_decode_many_to_arrow
-    from aiochainscan_fastabi import decode_one as _fast_decode_one_json
-    from aiochainscan_fastabi import decode_one_direct as _fast_decode_one_direct_json
+    from aiochainscan.aiochainscan_fastabi import decode_input as _fast_decode_input_json
+    from aiochainscan.aiochainscan_fastabi import decode_many as _fast_decode_many_json
+    from aiochainscan.aiochainscan_fastabi import (
+        decode_many_direct as _fast_decode_many_direct_json,
+    )
+    from aiochainscan.aiochainscan_fastabi import decode_many_flat as _fast_decode_many_flat_json
+    from aiochainscan.aiochainscan_fastabi import decode_many_hex as _fast_decode_many_hex_json
+    from aiochainscan.aiochainscan_fastabi import decode_many_raw as _fast_decode_many_raw_json
+    from aiochainscan.aiochainscan_fastabi import (
+        decode_many_to_arrow as _fast_decode_many_to_arrow,
+    )
+    from aiochainscan.aiochainscan_fastabi import decode_one as _fast_decode_one_json
+    from aiochainscan.aiochainscan_fastabi import decode_one_direct as _fast_decode_one_direct_json
 
     FASTABI_AVAILABLE = True
     ARROW_AVAILABLE = True
@@ -84,42 +106,6 @@ except ImportError:
     ARROW_AVAILABLE = False
 
 FUNCTION_SELECTOR_LENGTH = 10  # '0x' + 4 bytes
-
-
-class SignatureDatabase:
-    """A class for interacting with an online signature database with in-memory caching."""
-
-    def __init__(self) -> None:
-        self.cache: dict[str, str] = {}
-        self.api_url: str = 'https://www.4byte.directory/api/v1/signatures/?hex_signature='
-
-    async def get_function_signature(self, selector: str, http_client: HttpClient) -> str | None:
-        if selector in self.cache:
-            return self.cache[selector]
-
-        try:
-            response = await http_client.get(f'{self.api_url}{selector}')
-            # Response is already parsed as JSON by HttpClient
-            if isinstance(response, dict):
-                data = cast(dict[str, Any], response)
-                results = cast(list[dict[str, Any]] | None, data.get('results'))
-                if results:
-                    signature = cast(str, results[0]['text_signature'])
-                    self.cache[selector] = signature  # Save to cache
-                    return signature
-        except Exception as exc:  # noqa: BLE001 - preserve compatibility across HTTP backends
-            logger.warning(
-                'Failed to fetch function signature for selector %s: %s',
-                selector,
-                exc,
-                exc_info=True,
-            )
-
-        return None
-
-
-# Create a single global instance
-sig_db = SignatureDatabase()
 
 
 def _preprocess_abi(
@@ -180,7 +166,7 @@ def _convert_large_ints_to_strings(data: Any) -> Any:
 
 # Function to generate Keccak hash of the input text
 def keccak_hash(text: str) -> str:
-    return keccak(text.encode('utf-8')).hex()
+    return keccak_hex(text)
 
 
 def _decode_transaction_input_fast(
@@ -236,7 +222,7 @@ def _decode_transaction_input_python(
         ]
         input_data = cast(str, transaction['input'])[FUNCTION_SELECTOR_LENGTH:]
         try:
-            decoded_input = decode(input_types, bytes.fromhex(input_data))
+            decoded_input = _abi_decode(input_types, bytes.fromhex(input_data))
 
             # Assign the function name directly to transaction
             transaction['decoded_func'] = function['name']
@@ -364,7 +350,7 @@ def decode_log_data(log: dict[str, Any], abi: list[dict[str, Any]]) -> dict[str,
         ]
         for i, param in enumerate(indexed_params):
             topic = log['topics'][i + 1]
-            decoded_log[cast(str, param['name'])] = decode(
+            decoded_log[cast(str, param['name'])] = _abi_decode(
                 [cast(str, param['type'])], bytes.fromhex(cast(str, topic)[2:])
             )[0]
 
@@ -376,7 +362,7 @@ def decode_log_data(log: dict[str, Any], abi: list[dict[str, Any]]) -> dict[str,
             non_indexed_types: list[str] = [
                 cast(str, param['type']) for param in non_indexed_params
             ]
-            non_indexed_values = decode(
+            non_indexed_values = _abi_decode(
                 non_indexed_types, bytes.fromhex(cast(str, log['data'])[2:])
             )
             for i, param in enumerate(non_indexed_params):
@@ -390,20 +376,6 @@ def decode_log_data(log: dict[str, Any], abi: list[dict[str, Any]]) -> dict[str,
         log['decoded_data'] = _convert_bytes_to_hex(log['decoded_data'])
 
     return log
-
-
-def decode_transaction_inputs_batch_zero_copy(
-    transactions: list[dict[str, Any]], abi: list[dict[str, Any]]
-) -> list[dict[str, Any]]:
-    """Deprecated: Use decode_transaction_inputs_batch instead."""
-    return decode_transaction_inputs_batch(transactions, abi)
-
-
-def decode_transaction_inputs_batch_optimized(
-    transactions: list[dict[str, Any]], abi: list[dict[str, Any]]
-) -> list[dict[str, Any]]:
-    """Deprecated: Use decode_transaction_inputs_batch instead."""
-    return decode_transaction_inputs_batch(transactions, abi)
 
 
 def decode_transaction_inputs_batch(
@@ -472,42 +444,3 @@ def decode_transaction_inputs_batch(
     except (ValueError, KeyError, TypeError, RuntimeError):
         # Fallback to Python implementation on any error
         return [decode_transaction_input(tx, abi) for tx in transactions]
-
-
-async def decode_input_with_online_lookup(
-    transaction: dict[str, Any], http_client: HttpClient
-) -> dict[str, Any]:
-    """
-    Attempts to decode transaction input using an online signature database.
-    This function makes a network request and may be slower.
-    Use it when an ABI is not available.
-
-    Args:
-        transaction: Transaction dictionary with 'input' field
-        http_client: HttpClient instance for making async HTTP requests
-
-    Returns:
-        Transaction dictionary with decoded_func and decoded_data fields
-    """
-    tx_copy = transaction.copy()
-    func_selector = tx_copy.get('input', '')[:FUNCTION_SELECTOR_LENGTH]
-
-    if len(func_selector) < FUNCTION_SELECTOR_LENGTH:
-        tx_copy['decoded_func'] = ''
-        tx_copy['decoded_data'] = {}
-        return tx_copy
-
-    # 1. Find signature via online database
-    signature_text = await sig_db.get_function_signature(func_selector, http_client)
-
-    if signature_text:
-        # 2. If found, generate a temporary ABI
-        temp_abi = generate_function_abi(signature_text)
-
-        # 3. Use our fast, optimized function for decoding
-        return decode_transaction_input(tx_copy, temp_abi)
-
-    # 4. If nothing is found, return the transaction with empty decoded fields
-    tx_copy['decoded_func'] = ''
-    tx_copy['decoded_data'] = {}
-    return tx_copy

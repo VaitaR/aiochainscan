@@ -1,7 +1,7 @@
 # aiochainscan - Agent Context Guide
 
 > **Purpose**: Quick context for LLM agents working on this codebase.
-> **Version**: 0.4.1 (February 2026)
+> **Version**: 0.6.0 (August 2026)
 
 ## What is this project?
 
@@ -18,7 +18,7 @@ Async Python wrapper for blockchain explorer APIs (Etherscan, BlockScout). Unifi
 ```python
 from aiochainscan import ChainscanClient
 
-async with ChainscanClient.from_config('blockscout_v2', 'ethereum') as client:
+async with ChainscanClient.from_config('etherscan', 'ethereum') as client:
     # ── Account ──────────────────────────────────────────────
     balance = await client.get_balance('0x...')                   # Wei string
     txs     = await client.get_transactions('0x...')              # single page
@@ -82,6 +82,12 @@ async with ChainscanClient.from_config('blockscout_v2', 'ethereum') as client:
     df = await client.get_token_portfolio_df('0x...')              # Polars
 ```
 
+> **Scanner coverage:** the full surface above is declared by the Etherscan-like
+> scanners (`etherscan` v2, `blockscout` v1). `blockscout_v2` declares a subset —
+> see the Scanner Support Matrix. Convenience methods not declared by the
+> configured scanner raise `ValueError` at call time; the Method ↔ mixin ↔
+> SPECS mapping is enforced by `tests/test_method_consistency.py`.
+
 ### ⚠️ Key Gotchas
 - `get_transactions()` returns **one page** (~50-100 items). Use `get_all_transactions()` for complete data.
 - `get_logs()` returns **≤1000 logs**. Use `get_all_logs()` for complete data.
@@ -94,9 +100,46 @@ async with ChainscanClient.from_config('blockscout_v2', 'ethereum') as client:
 
 ---
 
+## Multi-Agent Workflow (Worktrees & Scripts)
+
+**One session == one worktree == one branch.** Never switch branches or stash to share a directory with another agent session — parallel sessions on one checkout cause `.git/index.lock` collisions and lost work. Setup mirrors `lombard-data-analytics`.
+
+```bash
+make wt-new SLUG=my-task                 # .claude/worktrees/my-task on branch feat/my-task
+                                         # copies .env, runs uv sync --extra dev --frozen
+make wt-ls                               # list worktrees + merge status (dry-run)
+make wt-rm SLUG=my-task ARGS="--yes"     # teardown — refuses dirty or unmerged worktrees
+```
+
+Branch types: `feat | fix | chore | docs | arch | refactor` (2nd arg, default `feat`); base ref (3rd arg, default `origin/main`). Env knobs: `AIO_SKIP_SYNC=1`, `AIO_BUILD_FASTABI=1`.
+
+### Agent script toolkit (`scripts/agent/`)
+
+| Script | Purpose |
+|--------|---------|
+| `new-worktree.sh` | Bootstrap an isolated session worktree |
+| `rm-worktree.sh` | Safe teardown — removes only clean + merged worktrees, squash-merge aware, integration branches protected |
+| `preflight.sh` | Run BEFORE starting: env, deps, imports, test collection, fastabi status |
+| `validate_fast.sh` | The DONE gate — ruff, format, import-lint, mypy --strict, full pytest |
+| `safe_commit.sh` | `git add` + commit with index.lock retry (worktree-aware; use `make commit`) |
+| `ci_watch.sh` | Bounded GH Actions poller; exit status is the verdict |
+| `ruff_format_hook.py` | PostToolUse hook — auto-formats edited `*.py` |
+
+### ⚠️ GitHub Actions temporarily DISABLED (Actions-minutes budget)
+
+CI/CD, Test Installation and Build and Publish Wheels are `disabled_manually`. **Do not wait on CI — it will never run.** Use the local mirror instead:
+
+```bash
+make ci-local        # lint + format-check + import-lint + mypy --strict + pytest
+```
+
+Re-enable when the budget allows: `gh workflow enable ci.yml test-install.yml wheels.yml --repo VaitaR/aiochainscan`.
+
+---
+
 ## Complete Method Reference
 
-Every `Method` enum value (28 total) maps to typed convenience methods on `ChainscanClient`:
+Every `Method` enum value (30 total) maps to typed convenience methods on `ChainscanClient`:
 
 | Method Enum | Convenience Method(s) | Returns |
 |---|---|---|
@@ -157,18 +200,17 @@ Every `Method` enum value (28 total) maps to typed convenience methods on `Chain
                           │
 ┌─────────────────────────▼───────────────────────────────────┐
 │                   AGGREGATION SERVICES                       │
-│  account.py | logs.py | streaming_decoder.py | analytics.py  │
-│  ens_resolver.py | chunked_fetcher.py                        │
+│  pagination.py | analytics.py | ens_resolver.py              │
 └─────────────────────────┬───────────────────────────────────┘
                           │
 ┌─────────────────────────▼───────────────────────────────────┐
 │                     PORTS (Interfaces)                       │
-│  http.py | cache.py | telemetry.py | progress.py            │
+│  cache.py | progress.py | rate_limiter.py                   │
 └─────────────────────────┬───────────────────────────────────┘
                           │
 ┌─────────────────────────▼───────────────────────────────────┐
 │                    ADAPTERS (Implementations)                │
-│  aiohttp_client.py | memory_cache.py | aiolimiter_adapter   │
+│  memory_cache.py | aiolimiter_adapter | tenacity_retry      │
 └─────────────────────────┬───────────────────────────────────┘
                           │
 ┌─────────────────────────▼───────────────────────────────────┐
@@ -221,7 +263,7 @@ Every `Method` enum value (28 total) maps to typed convenience methods on `Chain
 | File | Purpose | Source of Truth For |
 |------|---------|---------------------|
 | `core/client.py` | **ChainscanClient** (~1800 lines) | All API interactions, 30+ convenience methods |
-| `core/method.py` | **Method** enum (28 values) | Supported operations |
+| `core/method.py` | **Method** enum (30 values) | Supported operations |
 | `domain/contract.py` | **SmartContract** | High-level contract API |
 | `domain/models.py` | **Address**, **TxHash** | Data validation, EIP-55 |
 | `config.py` | **ConfigurationManager** | Scanner configs (lazy-loaded) |
@@ -229,12 +271,10 @@ Every `Method` enum value (28 total) maps to typed convenience methods on `Chain
 ### Services (Business Logic)
 | File | Purpose | Key Pattern |
 |------|---------|-------------|
-| `services/paging_engine.py` | Pagination | Sliding window, dedup, fail-fast |
-| `services/streaming_decoder.py` | Memory-efficient decoding | AsyncIterator + `asyncio.to_thread` |
-| `services/chunked_fetcher.py` | Block range splitting | Prevents DB timeouts |
+| `services/pagination.py` | Pagination | `iter_pages`/`iter_items`/`collect_all` over `Scanner.fetch_page` cursors |
 | `services/ens_resolver.py` | ENS name resolution | Cache + BlockScout V2 |
 | `services/analytics.py` | Polars DataFrames | Column-oriented, Utf8 for Wei |
-| `services/logs.py` | Event log fetching | Whale block warning, sliding window |
+| `services/constants.py` | Shared service constants | - |
 
 ### Infrastructure
 | File | Purpose | Key Pattern |
@@ -242,6 +282,7 @@ Every `Method` enum value (28 total) maps to typed convenience methods on `Chain
 | `network.py` | HTTP transport | ALL HTTP must go through here |
 | `adapters/memory_cache.py` | In-memory LRU | O(1) ops, asyncio.Lock |
 | `adapters/aiolimiter_adapter.py` | Rate limiting | Token bucket, burst=1 |
+| `crypto.py` | Keccak-256, EIP-55 checksum | fastabi → eth-utils fallback chain |
 | `decode.py` | ABI decoding (Python) | Wraps Rust FFI, orjson parsing |
 | `fastabi/src/lib.rs` | ABI decoding (Rust) | Returns JSON, LRU cache |
 
@@ -249,10 +290,11 @@ Every `Method` enum value (28 total) maps to typed convenience methods on `Chain
 
 ## Scanner Support Matrix
 
-| Scanner | Version | Free? | Key Env Var |
-|---------|---------|-------|-------------|
-| BlockScout | v1, **v2** | ✅ Yes | - |
-| Etherscan | v2 | ❌ No | `ETHERSCAN_KEY` |
+| Scanner | Version | Free? | Key Env Var | Method coverage |
+|---------|---------|-------|-------------|-----------------|
+| BlockScout | v1 | ✅ Yes | - | Full Etherscan-like surface (inherits shared SPECS) |
+| BlockScout | **v2** | ✅ Yes | - | Subset: `ACCOUNT_BALANCE`, `ACCOUNT_TRANSACTIONS`, `ACCOUNT_TOKEN_PORTFOLIO`, `CONTRACT_ABI`, `BLOCK_BY_NUMBER` |
+| Etherscan | v2 | ❌ No | `ETHERSCAN_KEY` | Full Etherscan-like surface (all 30 `Method` values) |
 
 ---
 
@@ -336,7 +378,7 @@ from aiochainscan.exceptions import (
 ## Testing
 
 ```bash
-# Run all tests (587+ tests)
+# Run all tests (520+ tests)
 pytest tests/ -q
 
 # Type checking (strict)
@@ -347,24 +389,31 @@ ruff check . --fix
 ruff format .
 ```
 
+Or in one shot: `make ci-local` (mirrors the disabled GitHub CI). Agents: run `make validate` before claiming DONE and `make commit MSG="..." PATHS="..."` to commit.
+
 ---
 
 ## Rust FFI Notes (fastabi/)
 
-- **Build**: `cd aiochainscan/fastabi && maturin develop --release`
+- **Build**: `uv sync --extra dev` (compiles via maturin automatically), or `cd aiochainscan/fastabi && maturin develop --release`
 - **Cache**: LRU with 1000 entries max (~50MB)
 - **GIL**: Released during computation AND serialization
-- **Return format**: JSON string → parsed by orjson in Python
+- **Return format**: JSON string → parsed by orjson in Python; `keccak256` returns bytes
 - **Key invariant**: Never return PyDict/PyList directly (blocks GIL)
+- **Imports**: canonical module name is `aiochainscan.aiochainscan_fastabi` (NOT top-level `aiochainscan_fastabi`)
 
 ---
 
 ## Environment Setup
 
 ```bash
-pip install -e ".[dev]"
+uv sync --extra dev        # deps + fastabi build via maturin
+uv run pytest tests/ -q    # run tests
 export ETHERSCAN_KEY="your_key"  # Optional
 ```
+
+Required runtime deps are just: `httpx`, `orjson`, `tenacity`, `aiolimiter`.
+Everything else is an extra (`data`, `mcp`, `http2`, `fallback`).
 
 ---
 
@@ -372,8 +421,8 @@ export ETHERSCAN_KEY="your_key"  # Optional
 
 **Run BEFORE `git commit` — not after:**
 ```bash
-pytest tests/ -q                    # Verify all 587+ tests pass
-mypy aiochainscan --strict          # Type safety check (80 files)
+pytest tests/ -q                    # Verify all 520+ tests pass
+mypy aiochainscan --strict          # Type safety check (55 files)
 pre-commit run --all-files          # All linters (ruff, format, etc.)
 ```
 Only proceed to `git commit` when ALL three checks pass. Do NOT rely on post-commit hook to catch errors.

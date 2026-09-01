@@ -1,8 +1,7 @@
 # Progress Callbacks
 
-**Feature Status**: ✅ Implemented in v0.4.0+
-
-Progress callbacks provide real-time feedback during long-running data fetching operations, allowing you to track progress, display progress bars, or log status updates.
+Progress callbacks report updates during paginated data fetching. They can feed
+terminal output, progress bars, logs, or application-specific status handling.
 
 ## Table of Contents
 
@@ -44,7 +43,7 @@ async def fetch_with_progress():
         on_progress=console_progress()
     )
 
-    print(f"\n✅ Fetched {len(txs)} transactions")
+    print(f"Fetched {len(txs)} transactions")
     await client.close()
 ```
 
@@ -382,17 +381,17 @@ Progress callbacks are invoked **once per page fetch**, not per item. This means
 
 Your callback should be **lightweight and fast**:
 
-✅ **Good** (fast operations):
+Suitable operations:
 - Console output (`print`)
 - In-memory updates (counters, lists)
 - Simple calculations
 
-⚠️ **Be careful** (potentially slow):
+Potentially slow operations:
 - Database writes
 - Network requests
 - File I/O
 
-❌ **Avoid** (blocking operations):
+Blocking operations to avoid:
 - Synchronous database calls
 - Heavy computations
 - Long-running HTTP requests
@@ -581,14 +580,8 @@ txs = await client.get_all_transactions(address, on_progress=smart_progress)
 
 ## See Also
 
-- [Examples](../examples/progress_callback_demo.py) - Complete working examples
-- [Tests](../tests/test_progress_callbacks.py) - Unit tests demonstrating usage
-- [Paging Engine](../aiochainscan/services/paging_engine.py) - Implementation details
-- [Progress Helpers](../aiochainscan/utils/progress_helpers.py) - Built-in callback functions
-
----
-
-**Next Steps**:
-- Try `examples/progress_callback_demo.py` for hands-on examples
-- Read `STREAMING_DECODER.md` for streaming data processing
-- See `CHUNKED_STRATEGY.md` for handling large block ranges
+- [Example](../examples/progress_callback_demo.py)
+- [Pagination tests](../tests/test_pagination_engine.py)
+- [Pagination service](../aiochainscan/services/pagination.py)
+- [Progress helpers](../aiochainscan/utils/progress_helpers.py)
+- [Streaming pattern](STREAMING_PATTERN.md)

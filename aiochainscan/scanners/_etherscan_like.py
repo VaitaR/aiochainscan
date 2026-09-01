@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from ..core.endpoint import PARSERS, EndpointSpec
 from ..core.method import Method
 from .base import Scanner
@@ -13,12 +15,44 @@ class EtherscanLikeScanner(Scanner):
     auth_mode = 'query'
     auth_field = 'apikey'
 
+    async def fetch_page(
+        self,
+        method: Method,
+        params: dict[str, Any],
+    ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+        """
+        Fetch one page using Etherscan page/offset pagination.
+
+        The cursor encodes the next ``page``/``offset`` pair and is merged
+        back into ``params`` by the caller (base cursor contract). It is
+        ``None`` once no full page can remain: an empty page, a partial page
+        (``len(items) < offset``), or when ``offset`` is missing from
+        ``params``. This mirrors the classic stop condition exactly.
+
+        Args:
+            method: Logical method to execute
+            params: Parameters for the method; must include ``offset`` (page
+                size) and, for pages after the first, the merged cursor
+
+        Returns:
+            Tuple of (items, next_cursor)
+        """
+        result = await self.call(method, **params)
+        items = self._coerce_items(result)
+
+        offset = params.get('offset')
+        if not items or not isinstance(offset, int) or len(items) < offset:
+            return items, None
+
+        page = params.get('page', 1)
+        return items, {'page': page + 1, 'offset': offset}
+
     SPECS = {
         Method.ACCOUNT_BALANCE: EndpointSpec(
             http_method='GET',
             path='/api',
             query={'module': 'account', 'action': 'balance', 'tag': 'latest'},
-            param_map={'address': 'address'},
+            param_map={'address': 'address', 'tag': 'tag'},
             parser=PARSERS['etherscan'],
         ),
         Method.ACCOUNT_TRANSACTIONS: EndpointSpec(
@@ -64,6 +98,36 @@ class EtherscanLikeScanner(Scanner):
             },
             parser=PARSERS['etherscan'],
         ),
+        Method.ACCOUNT_ERC721_TRANSFERS: EndpointSpec(
+            http_method='GET',
+            path='/api',
+            query={'module': 'account', 'action': 'tokennfttx'},
+            param_map={
+                'address': 'address',
+                'contract_address': 'contractaddress',
+                'start_block': 'startblock',
+                'end_block': 'endblock',
+                'page': 'page',
+                'offset': 'offset',
+                'sort': 'sort',
+            },
+            parser=PARSERS['etherscan'],
+        ),
+        Method.ACCOUNT_ERC1155_TRANSFERS: EndpointSpec(
+            http_method='GET',
+            path='/api',
+            query={'module': 'account', 'action': 'token1155tx'},
+            param_map={
+                'address': 'address',
+                'contract_address': 'contractaddress',
+                'start_block': 'startblock',
+                'end_block': 'endblock',
+                'page': 'page',
+                'offset': 'offset',
+                'sort': 'sort',
+            },
+            parser=PARSERS['etherscan'],
+        ),
         Method.TX_BY_HASH: EndpointSpec(
             http_method='GET',
             path='/api',
@@ -75,6 +139,13 @@ class EtherscanLikeScanner(Scanner):
             http_method='GET',
             path='/api',
             query={'module': 'transaction', 'action': 'gettxreceiptstatus'},
+            param_map={'txhash': 'txhash'},
+            parser=PARSERS['etherscan'],
+        ),
+        Method.TX_STATUS_CHECK: EndpointSpec(
+            http_method='GET',
+            path='/api',
+            query={'module': 'transaction', 'action': 'getstatus'},
             param_map={'txhash': 'txhash'},
             parser=PARSERS['etherscan'],
         ),
@@ -92,6 +163,20 @@ class EtherscanLikeScanner(Scanner):
             param_map={'block_number': 'blockno'},
             parser=PARSERS['etherscan'],
         ),
+        Method.BLOCK_COUNTDOWN: EndpointSpec(
+            http_method='GET',
+            path='/api',
+            query={'module': 'block', 'action': 'getblockcountdown'},
+            param_map={'block_number': 'blockno'},
+            parser=PARSERS['etherscan'],
+        ),
+        Method.BLOCK_NUMBER_BY_TIMESTAMP: EndpointSpec(
+            http_method='GET',
+            path='/api',
+            query={'module': 'block', 'action': 'getblocknobytime'},
+            param_map={'timestamp': 'timestamp', 'closest': 'closest'},
+            parser=PARSERS['etherscan'],
+        ),
         Method.CONTRACT_ABI: EndpointSpec(
             http_method='GET',
             path='/api',
@@ -106,6 +191,13 @@ class EtherscanLikeScanner(Scanner):
             param_map={'address': 'address'},
             parser=PARSERS['etherscan'],
         ),
+        Method.CONTRACT_CREATION: EndpointSpec(
+            http_method='GET',
+            path='/api',
+            query={'module': 'contract', 'action': 'getcontractcreation'},
+            param_map={'contract_addresses': 'contractaddresses'},
+            parser=PARSERS['etherscan'],
+        ),
         Method.TOKEN_BALANCE: EndpointSpec(
             http_method='GET',
             path='/api',
@@ -118,6 +210,20 @@ class EtherscanLikeScanner(Scanner):
             path='/api',
             query={'module': 'stats', 'action': 'tokensupply'},
             param_map={'contract_address': 'contractaddress'},
+            parser=PARSERS['etherscan'],
+        ),
+        Method.TOKEN_INFO: EndpointSpec(
+            http_method='GET',
+            path='/api',
+            query={'module': 'token', 'action': 'tokeninfo'},
+            param_map={'contract_address': 'contractaddress'},
+            parser=PARSERS['etherscan'],
+        ),
+        Method.GAS_ESTIMATE: EndpointSpec(
+            http_method='GET',
+            path='/api',
+            query={'module': 'gastracker', 'action': 'gasestimate'},
+            param_map={'gas_price': 'gasprice'},
             parser=PARSERS['etherscan'],
         ),
         Method.GAS_ORACLE: EndpointSpec(
@@ -158,6 +264,13 @@ class EtherscanLikeScanner(Scanner):
             path='/api',
             query={'module': 'proxy', 'action': 'eth_call'},
             param_map={'to': 'to', 'data': 'data', 'tag': 'tag'},
+            parser=PARSERS['etherscan'],
+        ),
+        Method.PROXY_GET_BALANCE: EndpointSpec(
+            http_method='GET',
+            path='/api',
+            query={'module': 'proxy', 'action': 'eth_getBalance'},
+            param_map={'address': 'address', 'tag': 'tag'},
             parser=PARSERS['etherscan'],
         ),
         Method.ACCOUNT_TOKEN_PORTFOLIO: EndpointSpec(
