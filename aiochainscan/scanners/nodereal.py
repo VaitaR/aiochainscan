@@ -259,11 +259,6 @@ def _build_transfer_filter(
     filter_['maxCount'] = _int_to_hex_quantity(max(1, min(max_count, _TRANSFER_MAX_COUNT)))
     if page_key:
         filter_['pageKey'] = page_key
-    contract_address = _param(params, 'contract_address', 'contractaddress')
-    if contract_address:
-        # Declared for mixin compatibility; the wire API has no contract
-        # filter on nr_getTransactionByAddress — filtered client-side by the caller.
-        filter_['contractAddresses'] = [contract_address]
     return filter_
 
 
@@ -866,6 +861,14 @@ class NodeRealScanner(Scanner):
 
         next_page_key = str(raw.get('pageKey') or '')
         items = _parse_transfer_items(raw)
+        requested_contract = _param(params, 'contract_address', 'contractaddress')
+        if requested_contract:
+            normalized_contract = str(requested_contract).lower()
+            items = [
+                item
+                for item in items
+                if str(item.get('contractAddress') or '').lower() == normalized_contract
+            ]
 
         if next_page_key:
             cursor: dict[str, Any] = {
