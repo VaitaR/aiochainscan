@@ -52,7 +52,7 @@ class LogsMixin:
         params: dict[str, Any] = {
             'address': str(addr),
             'from_block': from_block,
-            'to_block': to_block or 'latest',
+            'to_block': to_block if to_block is not None else 'latest',
         }
         if topic0:
             params['topic0'] = topic0

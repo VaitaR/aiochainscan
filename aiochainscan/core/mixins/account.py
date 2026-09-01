@@ -98,7 +98,7 @@ class AccountMixin:
             params['start_block'] = start_block
             if contract_address:
                 params['contract_address'] = str(Address(contract_address))
-            if end_block:
+            if end_block is not None:
                 params['end_block'] = end_block
         result: JSONList = await self.call(Method.ACCOUNT_ERC20_TRANSFERS, **params)
         return result

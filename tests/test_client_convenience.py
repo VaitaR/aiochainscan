@@ -75,9 +75,38 @@ class TestSinglePageConvenienceMethods:
     ) -> None:
         mock_call.return_value = [{'hash': '0xT'}]
         result = await client.get_token_transfers(TEST_ADDRESS)
-        assert mock_call.await_args is not None
-        assert mock_call.await_args[0][0] == Method.ACCOUNT_ERC20_TRANSFERS
+        mock_call.assert_awaited_once_with(
+            Method.ACCOUNT_ERC20_TRANSFERS,
+            address=str(Address(TEST_ADDRESS)),
+            start_block=0,
+        )
         assert result == [{'hash': '0xT'}]
+
+    @pytest.mark.asyncio
+    async def test_get_token_transfers_forwards_zero_end_block(
+        self, client: ChainscanClient, mock_call: AsyncMock
+    ) -> None:
+        mock_call.return_value = []
+        await client.get_token_transfers(TEST_ADDRESS, end_block=0)
+        mock_call.assert_awaited_once_with(
+            Method.ACCOUNT_ERC20_TRANSFERS,
+            address=str(Address(TEST_ADDRESS)),
+            start_block=0,
+            end_block=0,
+        )
+
+    @pytest.mark.asyncio
+    async def test_get_token_transfers_forwards_nonzero_end_block(
+        self, client: ChainscanClient, mock_call: AsyncMock
+    ) -> None:
+        mock_call.return_value = []
+        await client.get_token_transfers(TEST_ADDRESS, end_block=200)
+        mock_call.assert_awaited_once_with(
+            Method.ACCOUNT_ERC20_TRANSFERS,
+            address=str(Address(TEST_ADDRESS)),
+            start_block=0,
+            end_block=200,
+        )
 
     @pytest.mark.asyncio
     async def test_get_internal_transactions(
@@ -299,9 +328,26 @@ class TestSinglePageConvenienceMethods:
     ) -> None:
         mock_call.return_value = [{'logIndex': '0'}]
         result = await client.get_logs(TEST_CONTRACT, from_block=100, to_block=200)
-        assert mock_call.await_args is not None
-        assert mock_call.await_args[0][0] == Method.EVENT_LOGS
+        mock_call.assert_awaited_once_with(
+            Method.EVENT_LOGS,
+            address=str(Address(TEST_CONTRACT)),
+            from_block=100,
+            to_block=200,
+        )
         assert result == [{'logIndex': '0'}]
+
+    @pytest.mark.asyncio
+    async def test_get_logs_forwards_zero_to_block(
+        self, client: ChainscanClient, mock_call: AsyncMock
+    ) -> None:
+        mock_call.return_value = []
+        await client.get_logs(TEST_CONTRACT, to_block=0)
+        mock_call.assert_awaited_once_with(
+            Method.EVENT_LOGS,
+            address=str(Address(TEST_CONTRACT)),
+            from_block=0,
+            to_block=0,
+        )
 
     @pytest.mark.asyncio
     async def test_get_logs_non_list_returns_empty(
@@ -309,6 +355,12 @@ class TestSinglePageConvenienceMethods:
     ) -> None:
         mock_call.return_value = 'No records found'
         result = await client.get_logs(TEST_CONTRACT)
+        mock_call.assert_awaited_once_with(
+            Method.EVENT_LOGS,
+            address=str(Address(TEST_CONTRACT)),
+            from_block=0,
+            to_block='latest',
+        )
         assert result == []
 
     @pytest.mark.asyncio
