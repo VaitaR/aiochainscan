@@ -86,6 +86,7 @@ ID. The built-in scanner names are:
 | `etherscan` | v2 | API key | Etherscan-compatible endpoint set |
 | `blockscout` | v1 | None for public instances | Etherscan-compatible endpoint set |
 | `blockscout_v2` | v2 | None for public instances | Native Blockscout v2 subset |
+| `nodereal` | v1 | API key (`NODEREAL_KEY`) | BSC-only subset (free tier) — see AGENTS.md for details |
 
 Scanner support is checked at call time. A convenience method that is not
 declared by the selected scanner raises `ValueError`.

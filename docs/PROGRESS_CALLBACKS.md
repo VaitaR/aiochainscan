@@ -293,7 +293,7 @@ Progress callbacks are supported in the following methods:
 ### ChainscanClient Methods
 
 ```python
-# High-level client methods (coming soon)
+# High-level client methods
 txs = await client.get_all_transactions(address, on_progress=callback)
 logs = await client.get_all_logs(address, on_progress=callback)
 
@@ -307,65 +307,11 @@ async for log in client.iter_logs(address, on_progress=callback):
 
 ### Low-Level Services
 
-```python
-from aiochainscan.services.fetch_all import fetch_all_transactions_fast
-
-# Direct service usage
-txs = await fetch_all_transactions_fast(
-    address=address,
-    start_block=0,
-    end_block=None,
-    api_kind='eth',
-    network='ethereum',
-    api_key=api_key,
-    http=http_client,
-    endpoint_builder=endpoint_builder,
-    on_progress=callback
-)
-```
-
-### Chunked Block Fetcher
-
-```python
-from aiochainscan.services.chunked_fetcher import ChunkedBlockFetcher
-
-fetcher = ChunkedBlockFetcher(
-    http=http_client,
-    endpoint_builder=endpoint_builder,
-    chunk_size=100_000
-)
-
-logs = await fetcher.fetch_logs(
-    address="0x...",
-    from_block=0,
-    to_block="latest",
-    api_kind="eth",
-    network="ethereum",
-    api_key=api_key,
-    on_chunk_complete=lambda chunk_num, total, items: print(f"Chunk {chunk_num}/{total}")
-)
-```
-
-### Streaming Decoder
-
-```python
-from aiochainscan.services.streaming_decoder import StreamingDecoder
-
-decoder = StreamingDecoder(
-    api_kind='eth',
-    network='ethereum',
-    api_key=api_key,
-    http=http_client,
-    endpoint_builder=endpoint_builder
-)
-
-async for tx in decoder.stream_transactions(
-    address=address,
-    abi=contract_abi,
-    on_progress=callback
-):
-    process(tx)
-```
+The legacy direct-service entrypoints (`services/fetch_all.py`,
+`services/chunked_fetcher.py`, `services/streaming_decoder.py`) were removed.
+Pagination now lives in `services/pagination.py` and is consumed by the
+`ChainscanClient` methods above — thread `on_progress` through those client
+methods rather than calling services directly.
 
 ## Performance Considerations
 

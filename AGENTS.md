@@ -353,9 +353,9 @@ Every `Method` enum value (33 total) maps to typed convenience methods on `Chain
 ### Core (Source of Truth)
 | File | Purpose | Source of Truth For |
 |------|---------|---------------------|
-| `core/client.py` | **ChainscanClient** (~1800 lines) | All API interactions, 30+ convenience methods |
+| `core/client.py` + `core/mixins/` | **ChainscanClient** (composition of per-domain mixins) | All API interactions, one convenience method per `Method` value plus `get_all_*`/`iter_*`/`wait_for_*` |
 | `core/pool.py` | **ChainscanPool** | Multi-provider failover: `classify_failure`, sticky routing, cooldowns, pinned pagination |
-| `core/method.py` | **Method** enum (33 values) | Supported operations |
+| `domain/method.py` | **Method** enum (33 values; `core/method.py` is a compat shim) | Supported operations |
 | `domain/contract.py` | **SmartContract** | High-level contract API |
 | `domain/models.py` | **Address**, **TxHash** | Data validation, EIP-55 |
 | `config.py` | **ConfigurationManager** | Scanner configs (lazy-loaded) |
@@ -581,7 +581,7 @@ from aiochainscan.exceptions import (
 ## Testing
 
 ```bash
-# Run all tests (700+ tests)
+# Run all tests (1000+ tests)
 pytest tests/ -q
 
 # Type checking (strict)
@@ -624,8 +624,8 @@ Everything else is an extra (`data`, `mcp`, `http2`, `fallback`).
 
 **Run BEFORE `git commit` — not after:**
 ```bash
-pytest tests/ -q                    # Verify all 520+ tests pass
-mypy aiochainscan --strict          # Type safety check (55 files)
+pytest tests/ -q                    # Verify all 1000+ tests pass
+mypy aiochainscan --strict          # Type safety check (69 source files)
 pre-commit run --all-files          # All linters (ruff, format, etc.)
 ```
 Only proceed to `git commit` when ALL three checks pass. Do NOT rely on post-commit hook to catch errors.
