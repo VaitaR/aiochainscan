@@ -277,6 +277,17 @@ class TestWireBuilders:
         filter_ = scanner._build_rpc_params(Method.ACCOUNT_ERC20_TRANSFERS, params)[0]
         assert filter_['contractAddresses'] == [CONTRACT]
 
+    def test_transfer_contract_address_filter_accepts_streaming_wire_name(self) -> None:
+        scanner = _make_scanner()
+        params = {
+            'address': ADDRESS,
+            'contractaddress': CONTRACT,
+            '__nr_window': [0, 999],
+            '__nr_tip': 1000,
+        }
+        filter_ = scanner._build_rpc_params(Method.ACCOUNT_ERC20_TRANSFERS, params)[0]
+        assert filter_['contractAddresses'] == [CONTRACT]
+
     def test_transfer_requires_address(self) -> None:
         scanner = _make_scanner()
         with pytest.raises(ValueError, match='address is required'):
@@ -353,6 +364,11 @@ class TestWireBuilders:
             'address': CONTRACT,
             'topics': [topic0],
         }
+
+    def test_logs_filter_accepts_streaming_block_names(self) -> None:
+        scanner = _make_scanner()
+        filter_ = scanner._build_log_filter({'fromBlock': 100, 'toBlock': 200})
+        assert filter_ == {'fromBlock': '0x64', 'toBlock': '0xc8'}
 
     def test_proxy_call_params(self) -> None:
         scanner = _make_scanner()
