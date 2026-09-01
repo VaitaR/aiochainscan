@@ -295,6 +295,25 @@ Every `Method` enum value (30 total) maps to typed convenience methods on `Chain
 | BlockScout | v1 | ✅ Yes | - | Full Etherscan-like surface (inherits shared SPECS) |
 | BlockScout | **v2** | ✅ Yes | - | Subset: `ACCOUNT_BALANCE`, `ACCOUNT_TRANSACTIONS`, `ACCOUNT_TOKEN_PORTFOLIO`, `CONTRACT_ABI`, `BLOCK_BY_NUMBER` |
 | Etherscan | v2 | ❌ No | `ETHERSCAN_KEY` | Full Etherscan-like surface (all 30 `Method` values) |
+| NodeReal | v1 | Free tier | `NODEREAL_KEY` | BSC-only subset (22 `Method` values) incl. the only `CONTRACT_ABI`/`CONTRACT_SOURCE`/`ACCOUNT_INTERNAL_TXS` alternative for keyless-free BSC analytics |
+
+### NodeReal (MegaNode / BSCTrace backend) — BSC analytics
+
+`nodereal` v1 talks JSON-RPC 2.0 to `https://bsc-{mainnet,testnet}.nodereal.io/v1/{key}`
+(NodeReal's `nr_*` Enhanced API — the engine behind https://bsctrace.com) plus the
+BscScan-compatible verified-contract REST on `open-platform.nodereal.io`. Networks:
+`bsc` / `bnb` / `binance` (mainnet) and `bsc-testnet`.
+
+- Declares 22 of the 30 `Method` values; honest `ValueError` for contract
+  verify, gas oracle/estimate, price/supply stats, block reward/countdown.
+- `nr_getTransactionByAddress` serves ≤1000 blocks per request and **silently
+  returns empty pages for wider ranges** — `fetch_page` therefore walks the
+  requested range in 1000-block windows, so `get_all_*` / `iter_*_streaming`
+  see complete history. An unbounded end block resolves the chain tip once.
+- Holdings methods (`nr_getTokenHoldings`, `nr_getNFTHoldings`) page at 100
+  items with hex `totalCount` cursors.
+- JSON-RPC `-32005` (usage limit) is translated to `ChainscanRateLimitError`
+  so the transport retry policy applies.
 
 ---
 

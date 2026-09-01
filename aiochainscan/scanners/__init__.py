@@ -74,6 +74,7 @@ def list_scanners() -> dict[tuple[str, str], type[Scanner]]:
 from .blockscout_v1 import BlockScoutV1  # noqa: E402
 from .blockscout_v2 import BlockScoutV2Scanner  # noqa: E402
 from .etherscan_v2 import EtherscanV2  # noqa: E402
+from .nodereal import NodeRealScanner  # noqa: E402
 
 __all__ = [
     'Scanner',
@@ -83,4 +84,5 @@ __all__ = [
     'EtherscanV2',
     'BlockScoutV1',
     'BlockScoutV2Scanner',
+    'NodeRealScanner',
 ]

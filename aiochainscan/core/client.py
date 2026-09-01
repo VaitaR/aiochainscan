@@ -40,7 +40,7 @@ from .types import JSONDict
 from .url_builder import UrlBuilder
 
 # Strict type aliases for scanner and network names (defined after imports)
-ScannerName = Literal['etherscan', 'blockscout', 'blockscout_v2']
+ScannerName = Literal['etherscan', 'blockscout', 'blockscout_v2', 'nodereal']
 NetworkName = Literal[
     'ethereum',
     'mainnet',

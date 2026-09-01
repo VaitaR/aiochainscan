@@ -71,6 +71,7 @@ URL_BUILDER_CURRENCIES: dict[str, str] = {
     'blockscout_polygon': 'MATIC',
     'blockscout_base': 'ETH',
     'blockscout_bsc': 'BNB',
+    'nodereal': 'BNB',
 }
 
 
@@ -125,6 +126,24 @@ def get_url_builder_profile(api_kind: str, network: str) -> dict[str, str | None
             'currency': currency,
             'auth_mode': 'query',
             'chainid': chainid,
+        }
+
+    if kind == 'nodereal':
+        # NodeReal builds its own JSON-RPC/REST URLs in the scanner; this
+        # profile only satisfies the UrlBuilder the client constructs.
+        rpc_base = (
+            'https://bsc-testnet.nodereal.io/v1'
+            if net in {'test', 'testnet', 'bsc-testnet'}
+            else 'https://bsc-mainnet.nodereal.io/v1'
+        )
+        return {
+            'base_url': 'https://nodereal.io',
+            'api_url': rpc_base,
+            'currency': currency,
+            'auth_mode': 'header',
+            'chainid': URL_BUILDER_CHAIN_IDS.get(
+                ('bsc', 'main' if 'testnet' not in net else 'test')
+            ),
         }
 
     if kind == 'fantom':
@@ -474,12 +493,16 @@ SCANNER_NETWORK_ALIASES: dict[str, dict[str, str]] = {
     },
     'blockscout': {'ethereum': 'eth', 'main': 'eth'},
     'blockscout_v2': {'main': 'ethereum'},
+    # NodeReal's config entry is keyed by canonical chain names; the BSC
+    # aliases map onto 'bsc' for the configuration-manager lookup.
+    'nodereal': {'bnb': 'bsc', 'binance': 'bsc'},
 }
 
 # UrlBuilder api_kind per scanner name (BlockScout v1 uses its network-specific id)
 SCANNER_API_KINDS: dict[str, str] = {
     'etherscan': 'eth',
     'blockscout_v2': 'blockscout_eth',
+    'nodereal': 'nodereal',
 }
 
 

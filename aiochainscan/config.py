@@ -320,6 +320,14 @@ class ConfigurationManager:
                 requires_api_key=False,
                 special_config={'public_api': True},
             ),
+            'nodereal': ScannerConfig(
+                name='NodeReal',
+                base_domain='nodereal.io',
+                currency='BNB',
+                supported_networks={'bsc', 'bsc-testnet'},
+                requires_api_key=True,
+                special_config={'mega_node': True},
+            ),
         }
 
     def _load_env_files(self) -> None:

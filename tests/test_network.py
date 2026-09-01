@@ -347,6 +347,34 @@ def test_redact_url_query_api_key() -> None:
     assert 'chainid=1' in redacted
 
 
+def test_redact_url_path_api_key() -> None:
+    """Key-shaped path segments (NodeReal /v1/{key}) must be redacted."""
+    url = 'https://bsc-mainnet.nodereal.io/v1/64a9df0874fb4a93b9d0a3849de012d3'
+    redacted = _redact_url(url)
+
+    assert '64a9df0874fb4a93b9d0a3849de012d3' not in redacted
+    assert redacted == 'https://bsc-mainnet.nodereal.io/v1/***REDACTED***'
+
+
+def test_redact_url_path_open_platform_key() -> None:
+    """open-platform endpoints embed the key mid-path."""
+    url = (
+        'https://open-platform.nodereal.io/64a9df0874fb4a93b9d0a3849de012d3/bsc-mainnet/contract/'
+    )
+    redacted = _redact_url(url)
+
+    assert '64a9df08' not in redacted
+    assert '/***REDACTED***/bsc-mainnet/contract/' in redacted
+
+
+def test_redact_url_keeps_non_key_path_segments() -> None:
+    """Real path resources (addresses, tx hashes) must not be redacted."""
+    url = 'https://eth.blockscout.com/api/v2/transactions/0x' + 'ab' * 32
+    redacted = _redact_url(url)
+
+    assert '0x' + 'ab' * 32 in redacted
+
+
 def test_redact_url_query_case_insensitive() -> None:
     """Redaction must be case-insensitive for query parameter names."""
     url = 'https://example.com/api?API_KEY=topsecret&key=abc&foo=bar'

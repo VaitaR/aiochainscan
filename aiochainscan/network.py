@@ -15,6 +15,7 @@ connection resets and protocol errors.
 from __future__ import annotations
 
 import logging
+import re
 import urllib.parse
 from typing import TYPE_CHECKING, Any, cast
 
@@ -49,6 +50,12 @@ if TYPE_CHECKING:
 SENSITIVE_HEADERS = {'authorization', 'x-api-key', 'apikey'}
 SENSITIVE_QUERY_PARAMS = {'apikey', 'api_key', 'key'}
 
+# Key-shaped path segments (e.g. NodeReal rides the API key in the URL path:
+# /v1/{key}, open-platform.nodereal.io/{key}/bsc-mainnet/...). Exactly 32 hex
+# chars so real path resources (0x-prefixed tx hashes, 40-char addresses)
+# never match.
+SENSITIVE_PATH_SEGMENT = re.compile(r'(?<=/)[0-9a-fA-F]{32}(?=/|$)')
+
 
 def _redact_headers(headers: dict[str, str] | None) -> dict[str, str] | None:
     """Redact sensitive headers for safe logging."""
@@ -60,7 +67,7 @@ def _redact_headers(headers: dict[str, str] | None) -> dict[str, str] | None:
 
 
 def _redact_url(url: str | httpx.URL) -> str:
-    """Redact sensitive query parameters from URL for safe logging."""
+    """Redact sensitive query parameters and key-shaped path segments for logging."""
     parsed = urllib.parse.urlparse(str(url))
     query_pairs = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
 
@@ -68,7 +75,8 @@ def _redact_url(url: str | httpx.URL) -> str:
         (k, '***REDACTED***' if k.lower() in SENSITIVE_QUERY_PARAMS else v) for k, v in query_pairs
     ]
     redacted_query = urllib.parse.urlencode(redacted_pairs, doseq=True)
-    return urllib.parse.urlunparse(parsed._replace(query=redacted_query))
+    redacted_path = SENSITIVE_PATH_SEGMENT.sub('***REDACTED***', parsed.path)
+    return urllib.parse.urlunparse(parsed._replace(path=redacted_path, query=redacted_query))
 
 
 def _redact_payload(payload: dict[str, Any] | None) -> dict[str, Any] | None:
