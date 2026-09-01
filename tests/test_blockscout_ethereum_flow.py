@@ -188,7 +188,7 @@ async def _fetch_blockscout_logs_new(
             page_logs = await client.call(
                 Method.EVENT_LOGS,
                 start_block=start_block,
-                end_block=end_block or 'latest',
+                end_block=end_block if end_block is not None else 'latest',
                 address=address,
                 page=page,
                 offset=200,
