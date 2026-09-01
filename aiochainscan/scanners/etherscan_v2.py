@@ -4,14 +4,60 @@ Etherscan API v2 scanner implementation for multichain support.
 SPECS are derived programmatically from the parent EtherscanLikeScanner:
 each inherited spec gets ``'chainid': '{chain_id}'`` injected into its
 query dict so the v2 multichain routing works transparently.
+
+Token-holder specs (``tokenholderlist`` / ``topholders`` /
+``tokenholdercount``) live here instead of the shared Etherscan-like base:
+they are Etherscan PRO actions that BlockScout's Etherscan-compatible layer
+does not implement (live-checked: it answers ``"Unknown action"``), so
+inheriting them would falsely widen BlockScout v1's declared surface.
 """
 
 from dataclasses import replace
+from typing import Any
 
-from ..core.endpoint import EndpointSpec
+from ..core.endpoint import PARSERS, EndpointSpec
 from ..core.method import Method
+from ..crypto import to_checksum_address
 from . import register_scanner
 from ._etherscan_like import EtherscanLikeScanner
+
+
+def _checksummed_holder_address(value: Any) -> Any:
+    """Checksum a holder address, passing through values EIP-55 cannot digest."""
+    if isinstance(value, str):
+        try:
+            return to_checksum_address(value)
+        except ValueError:
+            return value
+    return value
+
+
+def _parse_token_holders(response: dict[str, Any]) -> list[dict[str, Any]]:
+    """Normalize Etherscan ``tokenholderlist``/``topholders`` items.
+
+    Unified item shape (Wei-like quantities stay strings):
+
+    - ``address``: holder address, EIP-55 checksummed
+    - ``value``: held quantity in the token's smallest unit (str)
+    - ``TokenHolderAddressType``: preserved when present (``topholders`` only;
+      ``'C'`` for contracts, ``'A'`` for EOAs)
+    """
+    result = response.get('result') if isinstance(response, dict) else None
+    if not isinstance(result, list):
+        return []
+    items: list[dict[str, Any]] = []
+    for raw in result:
+        if not isinstance(raw, dict):
+            continue
+        item: dict[str, Any] = {
+            'address': _checksummed_holder_address(raw.get('TokenHolderAddress')),
+            'value': str(raw.get('TokenHolderQuantity') or '0'),
+        }
+        address_type = raw.get('TokenHolderAddressType')
+        if address_type is not None:
+            item['TokenHolderAddressType'] = address_type
+        items.append(item)
+    return items
 
 
 def _inject_chain_id(
@@ -68,5 +114,48 @@ class EtherscanV2(EtherscanLikeScanner):
                 'page': 'page',
                 'offset': 'offset',
             },
+        ),
+        # Token holders (Etherscan PRO token module; not on the shared
+        # Etherscan-like base — see module docstring). ``topholders`` has no
+        # ``page`` param: ``offset`` is the result limit (max 1000).
+        Method.TOKEN_HOLDERS: EndpointSpec(
+            http_method='GET',
+            path='/api',
+            query={
+                'module': 'token',
+                'action': 'tokenholderlist',
+                'chainid': '{chain_id}',
+            },
+            param_map={
+                'contract_address': 'contractaddress',
+                'page': 'page',
+                'offset': 'offset',
+            },
+            parser=_parse_token_holders,
+        ),
+        Method.TOKEN_TOP_HOLDERS: EndpointSpec(
+            http_method='GET',
+            path='/api',
+            query={
+                'module': 'token',
+                'action': 'topholders',
+                'chainid': '{chain_id}',
+            },
+            param_map={
+                'contract_address': 'contractaddress',
+                'offset': 'offset',
+            },
+            parser=_parse_token_holders,
+        ),
+        Method.TOKEN_HOLDER_COUNT: EndpointSpec(
+            http_method='GET',
+            path='/api',
+            query={
+                'module': 'token',
+                'action': 'tokenholdercount',
+                'chainid': '{chain_id}',
+            },
+            param_map={'contract_address': 'contractaddress'},
+            parser=PARSERS['etherscan'],
         ),
     }

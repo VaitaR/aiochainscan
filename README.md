@@ -117,6 +117,10 @@ async with ChainscanClient.from_config('etherscan', 'ethereum') as client:
 
     # Tokens and network data
     token_balance = await client.get_token_balance(address, token_address)
+    holders = await client.get_token_holders(token_address)        # one page
+    all_holders = await client.get_all_token_holders(token_address)
+    top_holders = await client.get_top_token_holders(token_address, limit=100)
+    holder_count = await client.get_token_holder_count(token_address)
     gas = await client.get_gas_oracle()
     price = await client.get_eth_price()
 ```
@@ -136,6 +140,7 @@ Page-returning methods do not fetch an entire history:
 
 - `get_transactions()` returns one page.
 - `get_logs()` returns one page, subject to provider limits.
+- `get_token_holders()` returns one page.
 - `get_all_*()` collects all pages into a list.
 - `iter_*_streaming()` yields batches and avoids materializing the full result.
 
