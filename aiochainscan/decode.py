@@ -502,6 +502,7 @@ def decode_log_data(log: dict[str, Any], abi: list[dict[str, Any]]) -> dict[str,
 
     if log.get('decoded_data'):
         log['decoded_data'] = _convert_bytes_to_hex(log['decoded_data'])
+        log['decoded_data'] = _convert_large_ints_to_strings(log['decoded_data'])
 
     return log
 

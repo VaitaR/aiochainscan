@@ -356,6 +356,23 @@ class TestDecodeLogData:
         assert decoded['to'] == '0xabc123def456789012345678901234567890abcd'
         assert decoded['value'] == 1000000000000000000
 
+    @patch('aiochainscan.decode._eth_abi_decode')
+    @patch('aiochainscan.decode.keccak_hash')
+    def test_decode_log_data_stringifies_uint_above_i64(self, mock_keccak, mock_decode):
+        mock_keccak.return_value = (
+            'ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef'
+        )
+        large_value = 2**63
+        mock_decode.side_effect = [
+            ['0x742d35cc6270c0532c0749334b1c1d434f4e86c0'],
+            ['0xabc123def456789012345678901234567890abcd'],
+            [large_value],
+        ]
+
+        result = decode_log_data(self.transfer_log.copy(), self.transfer_event_abi)
+
+        assert result['decoded_data']['value'] == str(large_value)
+
     def test_decode_log_data_no_match(self):
         """Test log decoding when no event matches."""
         log = {

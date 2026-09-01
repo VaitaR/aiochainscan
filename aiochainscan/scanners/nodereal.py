@@ -259,7 +259,7 @@ def _build_transfer_filter(
     filter_['maxCount'] = _int_to_hex_quantity(max(1, min(max_count, _TRANSFER_MAX_COUNT)))
     if page_key:
         filter_['pageKey'] = page_key
-    contract_address = _param(params, 'contract_address')
+    contract_address = _param(params, 'contract_address', 'contractaddress')
     if contract_address:
         # Declared for mixin compatibility; the wire API has no contract
         # filter on nr_getTransactionByAddress — filtered client-side by the caller.
@@ -703,11 +703,11 @@ class NodeRealScanner(Scanner):
 
     @staticmethod
     def _build_log_filter(params: dict[str, Any]) -> dict[str, Any]:
-        from_block = _param(params, 'from_block', default=0)
+        from_block = _param(params, 'from_block', 'fromBlock', default=0)
         from_block_hex = (
             from_block if isinstance(from_block, str) else _int_to_hex_quantity(int(from_block))
         )
-        to_block = _param(params, 'to_block', default='latest')
+        to_block = _param(params, 'to_block', 'toBlock', default='latest')
         to_block_hex = (
             to_block if isinstance(to_block, str) else _int_to_hex_quantity(int(to_block))
         )
