@@ -32,8 +32,14 @@ def _checksummed_holder_address(value: Any) -> Any:
     return value
 
 
-def _parse_token_holders(response: dict[str, Any]) -> list[dict[str, Any]]:
+def _parse_token_holders(response: Any) -> list[dict[str, Any]]:
     """Normalize Etherscan ``tokenholderlist``/``topholders`` items.
+
+    The parser runs at the post-unwrap seam: ``Network._handle_response``
+    has already extracted the Etherscan envelope's ``result`` before
+    ``spec.parse_response`` is invoked, so the expected input is the bare
+    holder-item list. A full ``{'result': [...]}`` envelope is tolerated
+    defensively, but it is not the production shape.
 
     Unified item shape (Wei-like quantities stay strings):
 
@@ -42,11 +48,13 @@ def _parse_token_holders(response: dict[str, Any]) -> list[dict[str, Any]]:
     - ``TokenHolderAddressType``: preserved when present (``topholders`` only;
       ``'C'`` for contracts, ``'A'`` for EOAs)
     """
-    result = response.get('result') if isinstance(response, dict) else None
-    if not isinstance(result, list):
+    payload: Any = response
+    if isinstance(response, dict) and isinstance(response.get('result'), list):
+        payload = response['result']
+    if not isinstance(payload, list):
         return []
     items: list[dict[str, Any]] = []
-    for raw in result:
+    for raw in payload:
         if not isinstance(raw, dict):
             continue
         item: dict[str, Any] = {

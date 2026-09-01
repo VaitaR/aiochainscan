@@ -175,7 +175,9 @@ def format_units(value: str | int, decimals: int = 18) -> str:
 
     Pure integer math — never float, so Wei-scale precision survives. Values
     that are not valid integers are returned unchanged (explorers already
-    answer some balances as pre-formatted strings).
+    answer some balances as pre-formatted strings). Negative amounts keep
+    truncation-toward-zero semantics (``-1500`` at 3 decimals is ``-1.5``,
+    not floor-division's ``-2``).
     """
     try:
         amount = int(value)
@@ -183,9 +185,10 @@ def format_units(value: str | int, decimals: int = 18) -> str:
         return str(value)
     if decimals < 0:
         return str(value)
+    sign = '-' if amount < 0 else ''
     scale = 10**decimals
-    whole, remainder = divmod(amount, scale)
+    whole, remainder = divmod(abs(amount), scale)
     if remainder == 0:
-        return str(whole)
+        return f'{sign}{whole}'
     fraction = str(remainder).rjust(decimals, '0').rstrip('0')
-    return f'{whole}.{fraction}'
+    return f'{sign}{whole}.{fraction}'

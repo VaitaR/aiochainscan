@@ -7,12 +7,13 @@ from typing import Any, Protocol, cast
 from ...exceptions import (
     ChainscanClientApiError,
     ChainscanClientError,
+    ChainscanDataError,
     ChainscanNetworkError,
     ChainscanRateLimitError,
 )
 from ..method import Method
 from ..types import JSONDict
-from ._waiting import poll_until_final
+from ._waiting import api_error_text, poll_until_final
 
 
 class _BlockClientProtocol(Protocol):
@@ -111,6 +112,9 @@ class BlockMixin:
                 arguments are negative.
             ChainscanClientApiError: On hard countdown errors other than the
                 documented already-passed answer.
+            ChainscanDataError: On the ``BLOCK_BY_NUMBER`` path, immediately
+                when the provider reports a configuration/data-contract
+                failure (e.g. a chain mismatch) — never polled away.
             ChainscanWaitTimeoutError: If the block is not reached within
                 ``timeout`` seconds.
         """
@@ -125,7 +129,10 @@ class BlockMixin:
                         Method.BLOCK_COUNTDOWN, block_number=block_number
                     )
                 except ChainscanClientApiError as exc:
-                    if 'already pass' in str(exc.result).lower():
+                    # The sentence lives in ``message`` on live BlockScout v1
+                    # (result is null) and in ``result`` on Etherscan —
+                    # match both (shared api_error_text convention).
+                    if 'already pass' in api_error_text(exc):
                         return True, {
                             'CountdownBlock': str(block_number),
                             'RemainingBlock': '0',
@@ -148,6 +155,12 @@ class BlockMixin:
                     if exc.retryable:
                         raise
                     return False, exc
+                except ChainscanDataError:
+                    # Configuration/data-contract failures (e.g. the
+                    # expected-chain guard's chain mismatch) never heal by
+                    # polling — surface immediately instead of timing out
+                    # after the full budget.
+                    raise
                 except ChainscanClientError as exc:
                     return False, exc
                 return isinstance(result, dict) and bool(result), result

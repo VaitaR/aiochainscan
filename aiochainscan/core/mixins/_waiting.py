@@ -19,7 +19,21 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from ...exceptions import ChainscanWaitTimeoutError
+from ...exceptions import ChainscanClientApiError, ChainscanWaitTimeoutError
+
+
+def api_error_text(exc: ChainscanClientApiError) -> str:
+    """Lowercased ``message``+``result`` text of an API-error envelope.
+
+    Etherscan-like APIs split their error prose between the two fields, and
+    it moves between them across deployments: live BlockScout v1 answers
+    ``{"message": "Error! Block number already pass", "result": null}`` while
+    Etherscan puts the same sentence in ``result``. Substring checks against
+    API errors must therefore consider BOTH fields (single convention shared
+    by the ``wait_for_*`` probes).
+    """
+    return f'{exc.message} {exc.result}'.lower()
+
 
 # One polling attempt: performs the underlying call, classifies the outcome
 # and returns ``(final, state)`` — ``final`` carries the value to return in

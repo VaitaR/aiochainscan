@@ -543,22 +543,24 @@ class ChainscanPool(
         mid-pagination errors propagate to the caller (switching would
         corrupt opaque cursors), but fallback-eligible ones still put the
         provider into cooldown so later calls route around it.
+
+        Each provider gets at most ONE first-page attempt per call
+        (for-semantics, mirroring :meth:`_execute`): a provider that cannot
+        serve the operation — including METHOD_UNDECLARED, which deliberately
+        never enters cooldown — is excluded from THIS operation for good
+        instead of being re-selected in a tight loop.
         """
 
         async def _generate() -> AsyncIterator[T]:
             attempts: list[tuple[str, Exception]] = []
             pending: tuple[str, float] | None = None
-            while True:
-                state: _ProviderState | None = None
-                for candidate in self._candidates():
-                    if candidate.in_cooldown(self._clock()):
-                        if candidate.last_error is not None:
-                            _record_attempt(attempts, candidate.label, candidate.last_error)
-                        continue
-                    state = candidate
-                    break
-                if state is None:
-                    raise ProviderPoolExhaustedError(operation, attempts)
+            for state in self._candidates():
+                if state.in_cooldown(self._clock()):
+                    # Skip without any HTTP attempt; keep the error that
+                    # cooled the provider for the exhaustion report.
+                    if state.last_error is not None:
+                        _record_attempt(attempts, state.label, state.last_error)
+                    continue
                 self._maybe_warn_switch(state.label, pending)
                 pending = None
                 stream = factory(state)
@@ -594,6 +596,7 @@ class ChainscanPool(
                         )
                     raise
                 return
+            raise ProviderPoolExhaustedError(operation, attempts)
 
         return _generate()
 

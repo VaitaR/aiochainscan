@@ -24,6 +24,7 @@ from aiochainscan.domain.models import TxHash
 from aiochainscan.exceptions import (
     ChainscanClientApiError,
     ChainscanClientError,
+    ChainscanDataError,
     ChainscanNetworkError,
     ChainscanRateLimitError,
     ChainscanWaitTimeoutError,
@@ -35,7 +36,10 @@ TEST_GUID = 'c31a4fbc-dad1-4c1e-a3cf-a66b62b5e00e'
 # Explorer answers used across the polling tests.
 PENDING_TX_ERROR = ChainscanClientApiError('NOTOK', 'Error! Invalid transaction hash')
 PENDING_VERIFY_ERROR = ChainscanClientApiError('NOTOK', 'Pending in queue')
+# Etherscan-shaped: the sentence lives in ``result``.
 ALREADY_PASS_ERROR = ChainscanClientApiError('NOTOK', 'Error! Block number already pass')
+# Live BlockScout v1 shape: the sentence lives in ``message``, result is null.
+ALREADY_PASS_MESSAGE_ONLY = ChainscanClientApiError('Error! Block number already pass', None)
 NOT_FOUND_404 = ChainscanClientError('HTTP 404 for https://explorer/api/v2/blocks/200')
 
 MINED_OK = {'isError': '0', 'errDescription': ''}
@@ -349,6 +353,18 @@ class TestWaitForBlock:
         assert result == {'CountdownBlock': '200', 'RemainingBlock': '0'}
         assert mock_call.await_count == 1
 
+    async def test_already_passed_error_in_message_synthesizes_snapshot(
+        self, client: ChainscanClient, mock_call: AsyncMock
+    ) -> None:
+        """Live BlockScout v1 delivers the sentence in ``message`` with a null
+        ``result`` — the check must consider both fields."""
+        mock_call.side_effect = ALREADY_PASS_MESSAGE_ONLY
+
+        result = await client.wait_for_block(200, **FAST_POLL)
+
+        assert result == {'CountdownBlock': '200', 'RemainingBlock': '0'}
+        assert mock_call.await_count == 1
+
     async def test_other_countdown_api_errors_propagate(
         self, client: ChainscanClient, mock_call: AsyncMock
     ) -> None:
@@ -412,6 +428,20 @@ class TestWaitForBlock:
         mock_call.side_effect = ChainscanNetworkError('boom', retryable=True)
 
         with pytest.raises(ChainscanNetworkError):
+            await no_countdown_client.wait_for_block(200, **FAST_POLL)
+
+        assert mock_call.await_count == 1
+
+    async def test_config_data_error_raises_immediately(
+        self, no_countdown_client: ChainscanClient, mock_call: AsyncMock
+    ) -> None:
+        """A chain mismatch (expected-chain guard) is a configuration error —
+        polling it for the full 600s budget and reporting a timeout would
+        mask the real problem. It must surface on the first probe."""
+        mismatch = ChainscanDataError('Chain mismatch: expected 137, instance serves 1')
+        mock_call.side_effect = mismatch
+
+        with pytest.raises(ChainscanDataError, match='Chain mismatch'):
             await no_countdown_client.wait_for_block(200, **FAST_POLL)
 
         assert mock_call.await_count == 1

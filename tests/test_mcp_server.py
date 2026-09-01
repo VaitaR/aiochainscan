@@ -216,6 +216,18 @@ class TestFormatUnits:
     def test_six_decimals(self) -> None:
         assert format_units('1234567', 6) == '1.234567'
 
+    def test_negative_truncates_toward_zero(self) -> None:
+        """Regression: floor division produced '-2.5' for -1500 at 3 decimals."""
+        assert format_units(-1500, 3) == '-1.5'
+        assert format_units('-1500', 3) == '-1.5'
+
+    def test_negative_exact_whole(self) -> None:
+        assert format_units(-2000, 3) == '-2'
+        assert format_units('-1000000000000000000', 18) == '-1'
+
+    def test_negative_fraction(self) -> None:
+        assert format_units('-1234500000000000000', 18) == '-1.2345'
+
     def test_invalid_falls_back_to_raw(self) -> None:
         assert format_units('not-a-number', 18) == 'not-a-number'
 
@@ -528,13 +540,14 @@ class TestGetTransactions:
         assert next_params['limit'] == 2
         # Cursor roundtrip: decoding the next_call cursor restores scanner state
         state = decode_cursor(next_params['cursor'])
+        assert state['tool'] == 'get_transactions'
         assert state['cursor'] == {'page': 2, 'offset': 2}
 
     async def test_follow_up_page_uses_cursor(self) -> None:
         client = StubClient()
         client.support(Method.ACCOUNT_TRANSACTIONS)
         client.fetch_page.value = ([eth_tx()], None)
-        token = encode_cursor({'cursor': {'page': 3, 'offset': 1}})
+        token = encode_cursor({'tool': 'get_transactions', 'cursor': {'page': 3, 'offset': 1}})
         response = await mcp_tools.get_transactions(client, WALLET, cursor=token, limit=1)
         assert response.pagination is None
         sent = client.fetch_page.calls[0]['args'][1]
@@ -546,6 +559,40 @@ class TestGetTransactions:
         client.support(Method.ACCOUNT_TRANSACTIONS)
         with pytest.raises(ValueError, match='cursor'):
             await mcp_tools.get_transactions(client, WALLET, cursor='%%%')
+
+    async def test_forged_cursor_cannot_override_address(self) -> None:
+        """A cursor carrying a foreign address is rejected outright — the
+        merged params may only ever advance pagination, never re-target the
+        query."""
+        client = StubClient()
+        client.support(Method.ACCOUNT_TRANSACTIONS)
+        token = encode_cursor(
+            {
+                'tool': 'get_transactions',
+                'cursor': {'page': 2, 'offset': 1, 'address': '0x' + 'ee' * 20},
+            }
+        )
+        with pytest.raises(ValueError, match='not allowed'):
+            await mcp_tools.get_transactions(client, WALLET, cursor=token, limit=1)
+        assert client.fetch_page.calls == []
+
+    async def test_foreign_tool_cursor_rejected(self) -> None:
+        """A cursor issued by tool A must not drive tool B."""
+        client = StubClient()
+        client.support(Method.ACCOUNT_TOKEN_PORTFOLIO)
+        token = encode_cursor({'tool': 'get_transactions', 'cursor': {'page': 2}})
+        with pytest.raises(ValueError, match='was not issued by'):
+            await mcp_tools.get_token_portfolio(client, WALLET, cursor=token)
+        assert client.fetch_page.calls == []
+
+    async def test_cursor_without_tool_binding_rejected(self) -> None:
+        """Pre-binding cursor tokens (no ``tool`` field) are stale/foreign."""
+        client = StubClient()
+        client.support(Method.ACCOUNT_TRANSACTIONS)
+        token = encode_cursor({'cursor': {'page': 2, 'offset': 1}})
+        with pytest.raises(ValueError, match='was not issued by'):
+            await mcp_tools.get_transactions(client, WALLET, cursor=token)
+        assert client.fetch_page.calls == []
 
     async def test_empty_page(self) -> None:
         client = StubClient()
