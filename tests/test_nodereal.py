@@ -275,7 +275,7 @@ class TestWireBuilders:
             '__nr_tip': 1000,
         }
         filter_ = scanner._build_rpc_params(Method.ACCOUNT_ERC20_TRANSFERS, params)[0]
-        assert filter_['contractAddresses'] == [CONTRACT]
+        assert 'contractAddresses' not in filter_
 
     def test_transfer_contract_address_filter_accepts_streaming_wire_name(self) -> None:
         scanner = _make_scanner()
@@ -286,7 +286,7 @@ class TestWireBuilders:
             '__nr_tip': 1000,
         }
         filter_ = scanner._build_rpc_params(Method.ACCOUNT_ERC20_TRANSFERS, params)[0]
-        assert filter_['contractAddresses'] == [CONTRACT]
+        assert 'contractAddresses' not in filter_
 
     def test_transfer_requires_address(self) -> None:
         scanner = _make_scanner()
@@ -471,6 +471,38 @@ class TestCall:
 
 
 class TestFetchPageTransfers:
+    @pytest.mark.asyncio
+    async def test_contract_filter_is_applied_client_side(self) -> None:
+        scanner = _make_scanner()
+        other_contract = '0x0000000000000000000000000000000000000001'
+        network = _mock_network(
+            scanner,
+            [
+                {
+                    'pageKey': '',
+                    'transfers': [
+                        {'hash': '0x1', 'blockNum': '0x1', 'contractAddress': CONTRACT},
+                        {'hash': '0x2', 'blockNum': '0x2', 'contractAddress': other_contract},
+                    ],
+                }
+            ],
+        )
+
+        items, cursor = await scanner.fetch_page(
+            Method.ACCOUNT_ERC20_TRANSFERS,
+            {
+                'address': ADDRESS,
+                'contractaddress': CONTRACT.upper(),
+                'startblock': 0,
+                'endblock': 500,
+            },
+        )
+
+        assert [item['hash'] for item in items] == ['0x1']
+        assert cursor is None
+        wire_filter = network.request.await_args.kwargs['json_data']['params'][0]
+        assert 'contractAddresses' not in wire_filter
+
     @pytest.mark.asyncio
     async def test_page_key_continuation_within_window(self) -> None:
         scanner = _make_scanner()
