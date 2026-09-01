@@ -347,6 +347,11 @@ class Network:
             if status_code == 429:
                 raise ChainscanRateLimitError('HTTP 429', 'Too Many Requests') from e
             safe_url = _redact_url(response.url)
+            if 500 <= status_code <= 599:
+                raise ChainscanNetworkError(
+                    f'HTTP {status_code} for {safe_url}: {response.reason_phrase}',
+                    retryable=True,
+                ) from e
             raise ChainscanClientError(
                 f'HTTP {status_code} for {safe_url}: {response.reason_phrase}'
             ) from e
