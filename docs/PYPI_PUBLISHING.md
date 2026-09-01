@@ -48,7 +48,7 @@ maturin build --release
 # Verify the build
 ls dist/
 # Should show platform-specific wheel like:
-# - aiochainscan-0.4.0-cp312-cp312-macosx_11_0_arm64.whl
+# - aiochainscan-0.6.0-cp312-cp312-macosx_11_0_arm64.whl
 ```
 
 ### Building Source Distribution Only
@@ -186,9 +186,9 @@ The project uses [cibuildwheel](https://cibuildwheel.readthedocs.io/) to build p
 
 | Platform | Architecture | Python Versions |
 |----------|--------------|-----------------|
-| Linux (glibc) | x86_64, aarch64 | 3.10, 3.11, 3.12, 3.13 |
-| macOS | Apple Silicon (arm64) | 3.10, 3.11, 3.12, 3.13 |
-| Windows | x86_64 | 3.10, 3.11, 3.12, 3.13 |
+| Linux (glibc) | x86_64, aarch64 | 3.12, 3.13 |
+| macOS | Apple Silicon (arm64) | 3.12, 3.13 |
+| Windows | x86_64 | 3.12, 3.13 |
 
 **Note**: musllinux and PyPy are not supported.
 
@@ -196,7 +196,7 @@ The project uses [cibuildwheel](https://cibuildwheel.readthedocs.io/) to build p
 
 1. **Matrix Build**: The workflow runs on `ubuntu-latest`, `windows-latest`, and `macos-14` (Apple Silicon)
 2. **Rust Compilation**: Each platform compiles the Rust extension natively using maturin
-3. **Wheel Generation**: Creates wheels like `aiochainscan-0.4.0-cp312-cp312-manylinux_2_17_x86_64.whl`
+3. **Wheel Generation**: Creates wheels like `aiochainscan-0.6.0-cp312-cp312-manylinux_2_17_x86_64.whl`
 4. **Testing**: Each wheel is tested by importing the package before upload
 5. **Publication**: All wheels + source distribution are uploaded to PyPI
 
@@ -214,8 +214,8 @@ The build is configured in:
 3. **Create a GitHub release**:
    ```sh
    # Tag the release
-   git tag -a v0.4.0 -m "Release v0.4.0"
-   git push origin v0.4.0
+   git tag -a v0.6.0 -m "Release v0.6.0"
+   git push origin v0.6.0
 
    # Or use GitHub UI to create release
    ```
@@ -263,8 +263,8 @@ Follow semantic versioning (MAJOR.MINOR.PATCH):
 - **PATCH**: Bug fixes
 
 Update version in:
-- `pyproject.toml`: `version = "0.2.1"`
-- Create git tag: `git tag v0.2.1`
+- `pyproject.toml`: `version = "0.6.0"`
+- Create git tag: `git tag v0.6.0`
 
 ## Post-Publishing Checklist
 

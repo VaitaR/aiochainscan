@@ -311,6 +311,20 @@ class TestGlobalConfigManager:
         assert len(scanners) > 0
         assert 'eth' in scanners
 
+    def test_reset_instance_clears_class_and_module_singletons(self):
+        """Resetting either access path must not retain a stale manager."""
+        import aiochainscan.config as config_module
+
+        first = get_config_manager()
+        assert ConfigurationManager() is first
+
+        ConfigurationManager.reset_instance()
+
+        assert config_module._config_manager_instance is None
+        second = get_config_manager()
+        assert second is not first
+        assert ConfigurationManager() is second
+
 
 class TestAdvancedFeatures:
     """Test advanced configuration features."""

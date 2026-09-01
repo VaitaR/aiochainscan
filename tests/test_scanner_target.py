@@ -10,6 +10,7 @@ from aiochainscan.chain_registry import (
     resolve_scanner_target,
 )
 from aiochainscan.config import ConfigurationManager
+from aiochainscan.scanners.blockscout_v1 import BlockScoutV1
 
 KEY_ENV_VARS = (
     'ETHERSCAN_KEY',
@@ -22,19 +23,10 @@ KEY_ENV_VARS = (
 
 @pytest.fixture(autouse=True)
 def _reset_config_singleton():
-    """Isolate each test from the config singleton and its module-level cache.
-
-    ``ConfigurationManager.reset_instance()`` alone is not enough: the
-    ``get_config_manager()`` module global keeps returning the stale instance
-    (which may carry an api key cached by another test file).
-    """
-    import aiochainscan.config as config_module
-
+    """Isolate each test from both configuration-manager access paths."""
     ConfigurationManager.reset_instance()
-    config_module._config_manager_instance = None
     yield
     ConfigurationManager.reset_instance()
-    config_module._config_manager_instance = None
 
 
 @pytest.fixture
@@ -88,6 +80,12 @@ class TestAliasResolution:
         assert target.api_kind == 'blockscout_eth'
         assert target.api_key == ''  # BlockScout needs no key
         assert target.network == 'ethereum'
+
+    def test_blockscout_main_alias_uses_ethereum_profile(self):
+        target = resolve_scanner_target('blockscout', 'main')
+        assert target.api_kind == 'blockscout_eth'
+        assert target.api_key == ''
+        assert target.network == 'main'
 
     def test_blockscout_network_specific_api_kind(self):
         target = resolve_scanner_target('blockscout', 'polygon')
@@ -230,6 +228,29 @@ class TestFromConfigIntegration:
             assert client.network == 'ethereum'
             assert client.api_key == ''
             assert client.chain_id == 1
+        finally:
+            await client.close()
+
+    async def test_from_config_blockscout_main_alias(self):
+        from aiochainscan import ChainscanClient
+
+        client = ChainscanClient.from_config('blockscout', 'main')
+        try:
+            assert client.api_kind == 'blockscout_eth'
+            assert client._scanner.network == 'eth'
+            assert client._scanner.instance_domain == 'eth.blockscout.com'
+        finally:
+            await client.close()
+
+    @pytest.mark.parametrize('network', sorted(BlockScoutV1.supported_networks))
+    async def test_from_config_all_blockscout_v1_networks(self, network: str):
+        from aiochainscan import ChainscanClient
+
+        client = ChainscanClient.from_config('blockscout', network)
+        try:
+            assert client.api_key == ''
+            assert client.api_kind == f'blockscout_{network}'
+            assert client._scanner.instance_domain == BlockScoutV1.NETWORK_INSTANCES[network]
         finally:
             await client.close()
 
