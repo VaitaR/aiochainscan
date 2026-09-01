@@ -8,6 +8,7 @@ from aiochainscan.exceptions import (
     ChainscanClientError,
     ChainscanNetworkError,
     ChainscanRateLimitError,
+    ChainscanWaitTimeoutError,
     PaginationDataLossError,
 )
 from aiochainscan.scanners import list_scanners, register_scanner
@@ -20,6 +21,7 @@ __all__ = [
     'ChainscanClientError',
     'ChainscanNetworkError',
     'ChainscanRateLimitError',
+    'ChainscanWaitTimeoutError',
     'DecodedEvent',
     'DecodedTransaction',
     'Method',

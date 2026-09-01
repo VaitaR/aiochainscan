@@ -84,16 +84,19 @@ INVOCATIONS: dict[str, tuple[tuple[Any, ...], dict[str, Any]]] = {
     'get_transaction': ((TX_HASH,), {}),
     'get_transaction_status': ((TX_HASH,), {}),
     'check_transaction_status': ((TX_HASH,), {}),
+    'wait_for_transaction': ((TX_HASH,), {}),
     # Blocks
     'get_block': ((19_500_000,), {}),
     'get_block_reward': ((19_500_000,), {}),
     'get_block_countdown': ((30_000_000,), {}),
     'get_block_by_timestamp': ((1_609_459_200,), {}),
+    'wait_for_block': ((19_500_000,), {}),
     # Contracts
     'get_contract_abi': ((CONTRACT_ADDRESS,), {}),
     'get_contract_source': ((CONTRACT_ADDRESS,), {}),
     'get_contract_creation': (([CONTRACT_ADDRESS],), {}),
     'get_contract': ((CONTRACT_ADDRESS,), {}),
+    'wait_for_verification': (('c31a4fbc-dad1-4c1e-a3cf-a66b62b5e00e',), {}),
     # Token
     'get_token_balance': ((CHECKSUM_ADDRESS, CONTRACT_ADDRESS), {}),
     'get_token_info': ((CONTRACT_ADDRESS,), {}),
@@ -143,12 +146,33 @@ class _RecordingClient(
         self.scanner_name = scanner_name
         self.calls: list[tuple[Method, dict[str, Any]]] = []
 
+    def supports_method(self, method: Method) -> bool:
+        """Mirror the scanner family declared for this scanner name."""
+        return any(
+            method in SPEC_FAMILIES[label] for label in SPECS_BY_SCANNER_NAME[self.scanner_name]
+        )
+
     async def call(self, method: Method, **params: Any) -> Any:
         self.calls.append((method, params))
         if method == Method.CONTRACT_ABI:
             return '[]'  # JSON-encoded ABI (SmartContract.from_address contract)
         if method == Method.CONTRACT_SOURCE:
             return {}  # non-proxy source payload
+        # Terminal payloads for the wait_for_* helpers so each sweep
+        # invocation finishes on its first poll (no sleeps in the sweep).
+        if method == Method.TX_STATUS_CHECK:
+            return {'isError': '0', 'errDescription': ''}
+        if method == Method.CONTRACT_VERIFY_STATUS:
+            return 'Pass - Verified'
+        if method == Method.BLOCK_COUNTDOWN:
+            return {
+                'CurrentBlock': '19500000',
+                'CountdownBlock': '19500000',
+                'RemainingBlock': '0',
+                'EstimateTimeInSec': '0',
+            }
+        if method == Method.BLOCK_BY_NUMBER:
+            return {'height': 19_500_000}
         return []  # satisfies list/dict/str post-processing in the mixins
 
     async def _empty_stream(
