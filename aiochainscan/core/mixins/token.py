@@ -22,17 +22,17 @@ class TokenMixin:
         result: str = await self.call(
             Method.TOKEN_BALANCE,
             address=str(Address(address)),
-            contractaddress=str(Address(contract_address)),
+            contract_address=str(Address(contract_address)),
             tag=tag,
         )
         return str(result)
 
     async def get_token_info(self: _TokenClientProtocol, contract_address: str) -> JSONDict:
         result: JSONDict = await self.call(
-            Method.TOKEN_INFO, contractaddress=str(Address(contract_address))
+            Method.TOKEN_INFO, contract_address=str(Address(contract_address))
         )
         return result
 
     async def get_token_supply(self: _TokenClientProtocol, contract_address: str) -> str:
-        result: str = await self.call(Method.TOKEN_SUPPLY, contractaddress=contract_address)
+        result: str = await self.call(Method.TOKEN_SUPPLY, contract_address=contract_address)
         return str(result)

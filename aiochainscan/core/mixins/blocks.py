@@ -17,17 +17,17 @@ class BlockMixin:
 
     async def get_block(self: _BlockClientProtocol, block_number: int | str) -> JSONDict:
         """Get block information by number."""
-        result: JSONDict = await self.call(Method.BLOCK_BY_NUMBER, blockno=block_number)
+        result: JSONDict = await self.call(Method.BLOCK_BY_NUMBER, block_number=block_number)
         return result
 
     async def get_block_reward(self: _BlockClientProtocol, block_number: int) -> JSONDict:
         """Get block mining reward information."""
-        result: JSONDict = await self.call(Method.BLOCK_REWARD, blockno=block_number)
+        result: JSONDict = await self.call(Method.BLOCK_REWARD, block_number=block_number)
         return result
 
     async def get_block_countdown(self: _BlockClientProtocol, target_block: int) -> JSONDict:
         """Get estimated time to a target block number."""
-        result: JSONDict = await self.call(Method.BLOCK_COUNTDOWN, blockno=target_block)
+        result: JSONDict = await self.call(Method.BLOCK_COUNTDOWN, block_number=target_block)
         return result
 
     async def get_block_by_timestamp(

@@ -2,7 +2,7 @@
 Unified client for blockchain scanner APIs.
 """
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from typing import TYPE_CHECKING, Any, Literal
 
 import httpx
@@ -13,12 +13,17 @@ if TYPE_CHECKING:
     from ..ports.progress import ProgressCallback
     from ..services.ens_resolver import ENSResolver
 
-from ..chain_registry import get_chain_info, resolve_chain_id
-from ..config import get_config_manager
+from ..chain_registry import (
+    get_chain_info,
+    get_scanner_network_name,
+    resolve_chain_id,
+    resolve_scanner_target,
+)
 from ..constants import MAX_BLOCK_NUMBER
 from ..ports.rate_limiter import RateLimiter, RetryPolicy
 from ..scanners import get_scanner_class
 from ..scanners.base import Scanner
+from ..services.pagination import iter_items, iter_pages, normalize_items, page_fetcher
 from .method import Method
 from .mixins import (
     AccountMixin,
@@ -33,8 +38,6 @@ from .mixins import (
 )
 from .types import JSONDict
 from .url_builder import UrlBuilder
-
-global_config = get_config_manager()
 
 # Strict type aliases for scanner and network names (defined after imports)
 ScannerName = Literal['etherscan', 'blockscout', 'blockscout_v2']
@@ -68,65 +71,18 @@ def _resolve_end_block_param(to_block: int | str | None) -> int | str:
     return int(to_block)
 
 
-class AccountFacade:
-    """Account-oriented namespace facade over ``ChainscanClient``."""
+def _decode_with_abi(
+    decode_fn: Callable[[JSONDict, list[dict[str, Any]]], JSONDict],
+    abi: list[dict[str, Any]] | None,
+) -> Callable[[JSONDict], JSONDict] | None:
+    """Build a per-item decode hook over ``abi`` (``None`` passes items through)."""
+    if abi is None:
+        return None
 
-    def __init__(self, client: 'ChainscanClient') -> None:
-        self._client = client
+    def decode(item: JSONDict) -> JSONDict:
+        return decode_fn(dict(item), abi)
 
-    async def get_balance(self, address: str, tag: str = 'latest') -> str:
-        return await self._client.get_balance(address, tag=tag)
-
-    async def get_transactions(
-        self,
-        address: str,
-        start_block: int = 0,
-        end_block: int | None = None,
-        page: int = 1,
-        offset: int = 100,
-    ) -> list[JSONDict]:
-        return await self._client.get_transactions(address, start_block, end_block, page, offset)
-
-    async def get_all_transactions(
-        self,
-        address: str,
-        from_block: int = 0,
-        to_block: int | str | None = None,
-        on_progress: 'ProgressCallback | None' = None,
-    ) -> list[JSONDict]:
-        return await self._client.get_all_transactions(address, from_block, to_block, on_progress)
-
-
-class ContractFacade:
-    """Contract-oriented namespace facade over ``ChainscanClient``."""
-
-    def __init__(self, client: 'ChainscanClient') -> None:
-        self._client = client
-
-    async def get_abi(self, address: str) -> str:
-        return await self._client.get_contract_abi(address)
-
-    async def get_source(self, address: str) -> JSONDict:
-        return await self._client.get_contract_source(address)
-
-    async def get_creation(self, addresses: list[str]) -> list[JSONDict]:
-        return await self._client.get_contract_creation(addresses)
-
-
-class BlockFacade:
-    """Block-oriented namespace facade over ``ChainscanClient``."""
-
-    def __init__(self, client: 'ChainscanClient') -> None:
-        self._client = client
-
-    async def get(self, block_number: int | str) -> JSONDict:
-        return await self._client.get_block(block_number)
-
-    async def get_reward(self, block_number: int) -> JSONDict:
-        return await self._client.get_block_reward(block_number)
-
-    async def get_by_timestamp(self, timestamp: int, closest: str = 'before') -> JSONDict:
-        return await self._client.get_block_by_timestamp(timestamp, closest=closest)
+    return decode
 
 
 class ChainscanClient(
@@ -223,18 +179,13 @@ class ChainscanClient(
         # Get scanner class and create instance with shared network client
         scanner_class = get_scanner_class(scanner_name, scanner_version)
         # Use chain_id to resolve the correct network name for this scanner
-        scanner_network = self._get_scanner_network_name(scanner_name, scanner_version, network)
+        scanner_network = get_scanner_network_name(scanner_name, scanner_version, network)
         self._scanner = scanner_class(
             api_key, scanner_network, self._url_builder, chain_id, network_client=self._network
         )
 
         # Lazy-initialized ENS resolver
         self._ens_resolver: ENSResolver | None = None
-
-        # Namespace facades (composition-friendly API surface)
-        self.account = AccountFacade(self)
-        self.contracts = ContractFacade(self)
-        self.blocks = BlockFacade(self)
 
     @classmethod
     def from_config(
@@ -246,9 +197,15 @@ class ChainscanClient(
         proxy: str | None = None,
         rate_limiter: RateLimiter | None = None,
         retry_policy: RetryPolicy | None = None,
+        api_key: str | None = None,
     ) -> 'ChainscanClient':
         """
         Create client using unified chain-based configuration.
+
+        Thin factory: resolves the (scanner, network, api_kind, api_key)
+        target via ``aiochainscan.chain_registry.resolve_scanner_target``
+        and constructs the client. Configuration is loaded lazily at call
+        time; nothing is resolved at import time.
 
         Args:
             scanner_name: Scanner implementation ('etherscan', 'blockscout')
@@ -260,6 +217,8 @@ class ChainscanClient(
             proxy: Proxy URL
             rate_limiter: Rate limiter implementation
             retry_policy: Retry policy implementation
+            api_key: Explicit API key. If None (default), the key is resolved
+                from the configuration manager (env vars / .env / config files)
 
         Returns:
             Configured ChainscanClient instance
@@ -272,157 +231,28 @@ class ChainscanClient(
             # BlockScout v1 for Polygon (version defaults to 'v1')
             client = ChainscanClient.from_config('blockscout', 'polygon')
 
-            # Explicit version specification
-            client = ChainscanClient.from_config('moralis', 'ethereum', 'v1')
+            # BlockScout V2 alias for ('blockscout', 'v2') — no API key needed
+            client = ChainscanClient.from_config('blockscout_v2', 'ethereum')
 
             # Works with chain_id too
             client = ChainscanClient.from_config('etherscan', 8453)
             ```
         """
-        # Determine default scanner version if not provided
-        if scanner_version is None:
-            if scanner_name == 'etherscan' or scanner_name == 'blockscout_v2':
-                scanner_version = 'v2'
-            else:
-                scanner_version = 'v1'
-
-        # Handle blockscout_v2 special case
-        actual_scanner_name = scanner_name
-        if scanner_name == 'blockscout_v2':
-            actual_scanner_name = 'blockscout'
-            scanner_version = 'v2'
-
-        # Resolve chain_id from network name/id
-        chain_id = resolve_chain_id(network)
-
-        # If network was passed as int (chain_id), resolve it to canonical name
-        # This ensures from_config('etherscan', 8453) works correctly
-        from aiochainscan.chain_registry import get_chain_name
-
-        network_str = get_chain_name(network) if isinstance(network, int) else str(network)
-
-        # Get API key using existing config system
-        # For backward compatibility, map scanner names to their config IDs
-        # BlockScout scanner ID is determined by network (not hardcoded to eth)
-        if scanner_name == 'blockscout':
-            # Map network to appropriate BlockScout config ID
-            blockscout_config_map = {
-                'ethereum': 'blockscout_eth',
-                'eth': 'blockscout_eth',
-                'polygon': 'blockscout_polygon',
-                'gnosis': 'blockscout_gnosis',
-                'optimism': 'blockscout_optimism',
-                'base': 'blockscout_base',
-                'bsc': 'blockscout_bsc',
-                'bnb': 'blockscout_bsc',
-            }
-            scanner_id = blockscout_config_map.get(network_str, f'blockscout_{network_str}')
-        else:
-            scanner_id_map = {
-                'blockscout_v2': 'blockscout_eth',  # V2 doesn't use config
-                'etherscan': 'eth',
-                'moralis': 'moralis',
-                'routscan': 'routscan_mode',
-            }
-            scanner_id = scanner_id_map.get(scanner_name, scanner_name)
-
-        # Normalize network aliases for different scanners (for config lookup only)
-        # Different scanners use different naming conventions for the same networks
-        network_aliases: dict[str, dict[str, str]] = {
-            'etherscan': {
-                # All EtherscanV2 networks route through the single unified endpoint
-                # (api.etherscan.io/v2/api?chainid=...), so all map to 'main' for config lookup
-                'ethereum': 'main',
-                'eth': 'main',
-                'base': 'main',
-                'bsc': 'main',
-                'bnb': 'main',
-                'binance': 'main',
-                'polygon': 'main',
-                'matic': 'main',
-                'arbitrum': 'main',
-                'arb': 'main',
-                'optimism': 'main',
-                'op': 'main',
-                'sonic': 'main',
-            },
-            'blockscout': {'ethereum': 'eth', 'main': 'eth'},
-            'blockscout_v2': {'main': 'ethereum'},
-        }
-        config_network = network_str  # Preserve original for client property
-        if scanner_name in network_aliases:
-            aliases = network_aliases[scanner_name]
-            config_network = aliases.get(network_str, network_str)
-
-        # For blockscout_v2, we don't need config validation - it handles its own networks
-        if scanner_name == 'blockscout_v2':
-            api_key = ''  # BlockScout V2 doesn't require API key
-        else:
-            client_config = global_config.create_client_config(scanner_id, config_network)
-            api_key = client_config['api_key']
-
-        # Map scanner_name to appropriate api_kind for UrlBuilder
-        # For backward compatibility, map scanner names to their api_kind equivalents
-        # For blockscout, use the network-specific scanner_id (e.g., blockscout_polygon)
-        if scanner_name == 'blockscout':
-            api_kind = (
-                scanner_id  # Use network-specific ID (blockscout_polygon, blockscout_gnosis, etc.)
-            )
-        else:
-            api_kind_map = {
-                'etherscan': 'eth',
-                'blockscout_v2': 'blockscout_eth',
-                'moralis': 'moralis',
-                'routscan': 'routscan_mode',
-            }
-            api_kind = api_kind_map.get(scanner_name, scanner_name)
-
+        target = resolve_scanner_target(
+            scanner_name, network, api_key=api_key, scanner_version=scanner_version
+        )
         return cls(
-            scanner_name=actual_scanner_name,
-            scanner_version=scanner_version,
-            api_kind=api_kind,  # Use mapped api_kind for UrlBuilder compatibility
-            network=network_str,  # Preserve original network value
-            api_key=api_key,
-            chain_id=chain_id,  # Pass chain_id to scanner
+            scanner_name=target.scanner_name,
+            scanner_version=target.scanner_version,
+            api_kind=target.api_kind,
+            network=target.network,
+            api_key=target.api_key,
+            chain_id=target.chain_id,
             timeout=timeout,
             proxy=proxy,
             rate_limiter=rate_limiter,
             retry_policy=retry_policy,
         )
-
-    def _get_scanner_network_name(
-        self, scanner_name: str, scanner_version: str, network: str
-    ) -> str:
-        """
-        Get the correct network name for a specific scanner.
-
-        Different scanners use different naming conventions for the same networks.
-        This method maps the unified network name to scanner-specific names.
-
-        Args:
-            scanner_name: Name of the scanner (e.g., 'etherscan', 'blockscout')
-            scanner_version: Version of the scanner (e.g., 'v1', 'v2')
-            network: Unified network name (e.g., 'ethereum', 'polygon', 1)
-
-        Returns:
-            Scanner-specific network name
-        """
-        # Network aliases for different scanners
-        # blockscout v1 uses 'eth', v2 uses 'ethereum'
-        if scanner_name == 'blockscout' and scanner_version == 'v1':
-            # v1 uses 'eth' for Ethereum mainnet
-            if network in ('ethereum', 'main'):
-                return 'eth'
-        elif scanner_name == 'blockscout' and scanner_version == 'v2':
-            # v2 uses 'ethereum' for Ethereum mainnet
-            if network == 'main':
-                return 'ethereum'
-        elif scanner_name == 'etherscan' and network == 'ethereum':
-            # Etherscan uses 'main' for Ethereum mainnet
-            return 'main'
-
-        # For other cases, use the network name as-is
-        return network
 
     async def call(self, method: Method, **params: Any) -> Any:
         """
@@ -558,132 +388,41 @@ class ChainscanClient(
         """
         from ..decode import decode_transaction_input
 
-        def _maybe_decode(tx: dict[str, Any]) -> dict[str, Any]:
-            if abi is None:
-                return tx
-            tx_copy = dict(tx)
-            return decode_transaction_input(tx_copy, abi)
-
         # Validate batch_size to prevent infinite loops
         if batch_size < 1:
             raise ValueError(f'batch_size must be at least 1, got {batch_size}')
 
-        # For simple pagination without decoding and no block range, use existing logic
+        decode = _decode_with_abi(decode_transaction_input, abi)
+        fetch = page_fetcher(self._scanner, Method.ACCOUNT_TRANSACTIONS)
+
+        # For simple pagination without decoding and no block range, use
+        # cursor pagination through the scanner port: fetch_page() returns
+        # (items, next_cursor) where a None cursor ends iteration.
         if abi is None and from_block == 0 and (to_block is None or to_block == 'latest'):
-            # Use existing simple pagination (backward compatibility)
-            # BlockScout V2 has special pagination with next_page_params
-            if self.scanner_name == 'blockscout' and self.scanner_version == 'v2':
-                # Import here to avoid circular dependency
-                from ..scanners.blockscout_v2 import BlockScoutV2Scanner
-
-                scanner = self._scanner
-                if not isinstance(scanner, BlockScoutV2Scanner):
-                    raise TypeError(f'Expected BlockScoutV2Scanner, got {type(scanner).__name__}')
-
-                # Build initial request params
-                spec = scanner.SPECS[Method.ACCOUNT_TRANSACTIONS]
-                url = scanner._build_url(spec, address=address)
-                query_params = scanner._build_query_params(spec, address=address)
-
-                headers = {
-                    'Accept': 'application/json',
-                    'Accept-Encoding': 'gzip, deflate',
-                }
-
-                # Pagination loop using next_page_params
-                # Uses self._network.request() which has proper retry logic via RetryPolicy
-                while True:
-                    # self._network.request() wraps calls with retry policy
-                    # This ensures retries happen at page-fetch level, not generator level
-                    raw_response = await self._network.request(
-                        method='GET',
-                        url=url,
-                        params=query_params if query_params else None,
-                        headers=headers,
-                    )
-
-                    # Extract items from response (raw_response is already parsed JSON)
-                    if isinstance(raw_response, dict):
-                        items = raw_response.get('items', [])
-                        next_page_params = raw_response.get('next_page_params')
-                    else:
-                        # Fallback for list responses
-                        items = raw_response if isinstance(raw_response, list) else []
-                        next_page_params = None
-
-                    for tx in items:
-                        yield _maybe_decode(tx)
-
-                    # Check for next page
-                    if not next_page_params:
-                        break
-
-                    # Update query params with next_page_params for next iteration
-                    query_params = {**query_params, **next_page_params}
-
-                return
-
-            # For Etherscan, use page-based pagination
+            params: dict[str, Any] = {'address': address}
             if self.scanner_name == 'etherscan':
-                page = 1
-                while True:
-                    txs = await self.call(
-                        Method.ACCOUNT_TRANSACTIONS,
-                        address=address,
-                        page=page,
-                        offset=batch_size,
-                    )
+                # Etherscan paginates via page/offset
+                params = {'address': address, 'page': 1, 'offset': batch_size}
 
-                    # Handle both list and dict responses
-                    items = txs if isinstance(txs, list) else txs.get('items', [])
-                    if not items:
-                        break
-
-                    for tx in items:
-                        yield _maybe_decode(tx)
-
-                    if len(items) < batch_size:
-                        break
-
-                    page += 1
-                return
-
-            # For other scanners (e.g., blockscout_v1), fetch once (no pagination)
-            txs = await self.call(
-                Method.ACCOUNT_TRANSACTIONS,
-                address=address,
-            )
-            items = txs if isinstance(txs, list) else txs.get('items', [])
-            for tx in items:
-                yield _maybe_decode(tx)
+            async for tx in iter_items(fetch, params):
+                yield tx
             return
 
+        # Block-range (or decoding) pagination: page-numbered windows until a
+        # short page signals the end.
         end_block = _resolve_end_block_int(to_block)
-        page = 1
-        while True:
-            txs = await self.call(
-                Method.ACCOUNT_TRANSACTIONS,
-                address=address,
-                startblock=from_block,
-                endblock=end_block,
-                page=page,
-                offset=batch_size,
-                sort='asc',
-            )
-            items = (
-                txs
-                if isinstance(txs, list)
-                else txs.get('items', [])
-                if isinstance(txs, dict)
-                else []
-            )
-            if not items:
-                break
-            for tx in items:
-                yield _maybe_decode(tx)
-            if len(items) < batch_size:
-                break
-            page += 1
+        params = {
+            'address': address,
+            'startblock': from_block,
+            'endblock': end_block,
+            'page': 1,
+            'offset': batch_size,
+            'sort': 'asc',
+        }
+        async for tx in iter_items(
+            fetch, params, stop='page_size', page_size=batch_size, decode=decode
+        ):
+            yield tx
 
     # =========================================================================
     # BATCH STREAMING API - Memory-efficient batch iteration for whale addresses
@@ -739,39 +478,23 @@ class ChainscanClient(
             - iter_transactions_streaming: 1M txs = ~10MB RAM (yields batches)
         """
         end_block = _resolve_end_block_int(to_block)
-        page = 1
-        fetched = 0
-        while True:
-            txs = await self.call(
-                Method.ACCOUNT_TRANSACTIONS,
-                address=address,
-                startblock=from_block,
-                endblock=end_block,
-                page=page,
-                offset=batch_size,
-                sort='asc',
-            )
-            batch = (
-                txs
-                if isinstance(txs, list)
-                else txs.get('items', [])
-                if isinstance(txs, dict)
-                else []
-            )
-            if not batch:
-                break
-            fetched += len(batch)
-            if on_progress is not None:
-                await on_progress(
-                    fetched=fetched,
-                    total_expected=None,
-                    current_page=page,
-                    operation='transactions',
-                )
+        params: dict[str, Any] = {
+            'address': address,
+            'startblock': from_block,
+            'endblock': end_block,
+            'page': 1,
+            'offset': batch_size,
+            'sort': 'asc',
+        }
+        async for batch in iter_pages(
+            page_fetcher(self._scanner, Method.ACCOUNT_TRANSACTIONS),
+            params,
+            stop='page_size',
+            page_size=batch_size,
+            on_progress=on_progress,
+            operation='transactions',
+        ):
             yield batch
-            if len(batch) < batch_size:
-                break
-            page += 1
 
     async def iter_internal_transactions_streaming(
         self,
@@ -795,39 +518,23 @@ class ChainscanClient(
             Batches of internal transaction dictionaries
         """
         end_block = _resolve_end_block_int(to_block)
-        page = 1
-        fetched = 0
-        while True:
-            txs = await self.call(
-                Method.ACCOUNT_INTERNAL_TXS,
-                address=address,
-                startblock=from_block,
-                endblock=end_block,
-                page=page,
-                offset=batch_size,
-                sort='asc',
-            )
-            batch = (
-                txs
-                if isinstance(txs, list)
-                else txs.get('items', [])
-                if isinstance(txs, dict)
-                else []
-            )
-            if not batch:
-                break
-            fetched += len(batch)
-            if on_progress is not None:
-                await on_progress(
-                    fetched=fetched,
-                    total_expected=None,
-                    current_page=page,
-                    operation='internal_transactions',
-                )
+        params: dict[str, Any] = {
+            'address': address,
+            'startblock': from_block,
+            'endblock': end_block,
+            'page': 1,
+            'offset': batch_size,
+            'sort': 'asc',
+        }
+        async for batch in iter_pages(
+            page_fetcher(self._scanner, Method.ACCOUNT_INTERNAL_TXS),
+            params,
+            stop='page_size',
+            page_size=batch_size,
+            on_progress=on_progress,
+            operation='internal_transactions',
+        ):
             yield batch
-            if len(batch) < batch_size:
-                break
-            page += 1
 
     async def iter_token_transfers_streaming(
         self,
@@ -853,41 +560,25 @@ class ChainscanClient(
             Batches of token transfer dictionaries
         """
         end_block = _resolve_end_block_int(to_block)
-        page = 1
-        fetched = 0
-        while True:
-            params: dict[str, Any] = {
-                'address': address,
-                'startblock': from_block,
-                'endblock': end_block,
-                'page': page,
-                'offset': batch_size,
-                'sort': 'asc',
-            }
-            if contract_address is not None:
-                params['contractaddress'] = contract_address
-            txs = await self.call(Method.ACCOUNT_ERC20_TRANSFERS, **params)
-            batch = (
-                txs
-                if isinstance(txs, list)
-                else txs.get('items', [])
-                if isinstance(txs, dict)
-                else []
-            )
-            if not batch:
-                break
-            fetched += len(batch)
-            if on_progress is not None:
-                await on_progress(
-                    fetched=fetched,
-                    total_expected=None,
-                    current_page=page,
-                    operation='token_transfers',
-                )
+        params: dict[str, Any] = {
+            'address': address,
+            'startblock': from_block,
+            'endblock': end_block,
+            'page': 1,
+            'offset': batch_size,
+            'sort': 'asc',
+        }
+        if contract_address is not None:
+            params['contractaddress'] = contract_address
+        async for batch in iter_pages(
+            page_fetcher(self._scanner, Method.ACCOUNT_ERC20_TRANSFERS),
+            params,
+            stop='page_size',
+            page_size=batch_size,
+            on_progress=on_progress,
+            operation='token_transfers',
+        ):
             yield batch
-            if len(batch) < batch_size:
-                break
-            page += 1
 
     async def iter_logs_streaming(
         self,
@@ -919,47 +610,31 @@ class ChainscanClient(
             Batches of event log dictionaries
         """
         end_block = _resolve_end_block_param(to_block)
-        page = 1
-        fetched = 0
-        while True:
-            params: dict[str, Any] = {
-                'fromBlock': from_block,
-                'toBlock': end_block,
-                'page': page,
-                'offset': batch_size,
-            }
-            if address is not None:
-                params['address'] = address
-            if topic0 is not None:
-                params['topic0'] = topic0
-            if topic1 is not None:
-                params['topic1'] = topic1
-            if topic2 is not None:
-                params['topic2'] = topic2
-            if topic3 is not None:
-                params['topic3'] = topic3
-            logs = await self.call(Method.EVENT_LOGS, **params)
-            batch = (
-                logs
-                if isinstance(logs, list)
-                else logs.get('items', [])
-                if isinstance(logs, dict)
-                else []
-            )
-            if not batch:
-                break
-            fetched += len(batch)
-            if on_progress is not None:
-                await on_progress(
-                    fetched=fetched,
-                    total_expected=None,
-                    current_page=page,
-                    operation='logs',
-                )
+        params: dict[str, Any] = {
+            'fromBlock': from_block,
+            'toBlock': end_block,
+            'page': 1,
+            'offset': batch_size,
+        }
+        if address is not None:
+            params['address'] = address
+        if topic0 is not None:
+            params['topic0'] = topic0
+        if topic1 is not None:
+            params['topic1'] = topic1
+        if topic2 is not None:
+            params['topic2'] = topic2
+        if topic3 is not None:
+            params['topic3'] = topic3
+        async for batch in iter_pages(
+            page_fetcher(self._scanner, Method.EVENT_LOGS),
+            params,
+            stop='page_size',
+            page_size=batch_size,
+            on_progress=on_progress,
+            operation='logs',
+        ):
             yield batch
-            if len(batch) < batch_size:
-                break
-            page += 1
 
     @classmethod
     def get_available_scanners(cls) -> dict[tuple[str, str], type[Scanner]]:
@@ -1040,50 +715,36 @@ class ChainscanClient(
         from ..decode import decode_log_data
 
         end_block = _resolve_end_block_param(to_block)
-        page = 1
-        while True:
-            params: dict[str, Any] = {
-                'address': address,
-                'fromBlock': from_block,
-                'toBlock': end_block,
-                'page': page,
-                'offset': batch_size,
-            }
+        params: dict[str, Any] = {
+            'address': address,
+            'fromBlock': from_block,
+            'toBlock': end_block,
+            'page': 1,
+            'offset': batch_size,
+        }
 
-            if topics:
-                if len(topics) > 0:
-                    params['topic0'] = topics[0]
-                if len(topics) > 1:
-                    params['topic1'] = topics[1]
-                if len(topics) > 2:
-                    params['topic2'] = topics[2]
-                if len(topics) > 3:
-                    params['topic3'] = topics[3]
+        if topics:
+            if len(topics) > 0:
+                params['topic0'] = topics[0]
+            if len(topics) > 1:
+                params['topic1'] = topics[1]
+            if len(topics) > 2:
+                params['topic2'] = topics[2]
+            if len(topics) > 3:
+                params['topic3'] = topics[3]
 
-            if topic_operators:
-                for i, operator in enumerate(topic_operators[:3]):
-                    params[f'topic{i}_{i + 1}_opr'] = operator
+        if topic_operators:
+            for i, operator in enumerate(topic_operators[:3]):
+                params[f'topic{i}_{i + 1}_opr'] = operator
 
-            logs = await self.call(Method.EVENT_LOGS, **params)
-            items = (
-                logs
-                if isinstance(logs, list)
-                else logs.get('items', [])
-                if isinstance(logs, dict)
-                else []
-            )
-            if not items:
-                break
-
-            for log in items:
-                if abi is None:
-                    yield log
-                else:
-                    yield decode_log_data(dict(log), abi)
-
-            if len(items) < batch_size:
-                break
-            page += 1
+        async for log in iter_items(
+            page_fetcher(self._scanner, Method.EVENT_LOGS),
+            params,
+            stop='page_size',
+            page_size=batch_size,
+            decode=_decode_with_abi(decode_log_data, abi),
+        ):
+            yield log
 
     # =========================================================================
     # DATAFRAME API - Polars integration for data analysis
@@ -1116,7 +777,7 @@ class ChainscanClient(
         from aiochainscan.services.analytics import token_portfolio_to_dataframe
 
         tokens = await self.call(Method.ACCOUNT_TOKEN_PORTFOLIO, address=address)
-        items = tokens if isinstance(tokens, list) else tokens.get('items', [])
+        items = normalize_items(tokens)
         return await token_portfolio_to_dataframe(items)
 
     def __str__(self) -> str:

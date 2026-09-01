@@ -25,19 +25,10 @@ def _inject_chain_id(
 
 
 # Parent methods that V2 supports without any param_map changes.
-_V2_INHERITED_METHODS: set[Method] = {
-    Method.ACCOUNT_BALANCE,
-    Method.ACCOUNT_TRANSACTIONS,
-    Method.ACCOUNT_INTERNAL_TXS,
-    Method.TX_BY_HASH,
-    Method.BLOCK_BY_NUMBER,
-    Method.CONTRACT_ABI,
-    Method.GAS_ORACLE,
-    Method.ACCOUNT_TOKEN_PORTFOLIO,
-    Method.ACCOUNT_NFT_PORTFOLIO,
-    Method.CONTRACT_VERIFY,
-    Method.CONTRACT_VERIFY_STATUS,
-}
+# The Etherscan v2 multichain API exposes the same module/action surface as
+# the classic layout (routing via ``chainid``), so every parent spec is
+# inherited. EVENT_LOGS is excluded here because V2 extends it below.
+_V2_INHERITED_METHODS: set[Method] = set(EtherscanLikeScanner.SPECS) - {Method.EVENT_LOGS}
 
 
 @register_scanner

@@ -45,3 +45,7 @@ def decode_many_to_arrow(calldatas: list[bytes], abi_json: str) -> Any:
     polars.from_arrow() without any data copying.
     """
     ...
+
+def keccak256(input: bytes) -> bytes:
+    """Keccak-256 digest (Ethereum flavor, distinct from NIST SHA-3-256)."""
+    ...
