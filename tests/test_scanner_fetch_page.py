@@ -274,6 +274,31 @@ class TestBlockScoutV2FetchPage:
         assert net.calls[1]['params'] == {'block_number': 5, 'index': 1}
 
     @pytest.mark.asyncio
+    async def test_remote_cursor_cannot_replace_path_address(self) -> None:
+        net = FakeNetwork(
+            [
+                {
+                    'items': [{'hash': '0x1'}],
+                    'next_page_params': {
+                        'address': '0xattacker',
+                        'block_number': 5,
+                        'index': 1,
+                    },
+                },
+                {'items': [{'hash': '0x2'}], 'next_page_params': None},
+            ]
+        )
+        scanner = _blockscout_scanner(net)
+
+        params: dict[str, Any] = {'address': '0xoriginal'}
+        _, cursor = await scanner.fetch_page(Method.ACCOUNT_TRANSACTIONS, params)
+
+        assert cursor == {'block_number': 5, 'index': 1}
+        params = {**params, **cursor}
+        await scanner.fetch_page(Method.ACCOUNT_TRANSACTIONS, params)
+        assert net.calls[1]['url'].endswith('/api/v2/addresses/0xoriginal/transactions')
+
+    @pytest.mark.asyncio
     async def test_unsupported_public_params_are_filtered_by_endpoint_spec(self) -> None:
         net = FakeNetwork([{'items': [], 'next_page_params': None}])
         scanner = _blockscout_scanner(net)

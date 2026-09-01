@@ -389,10 +389,16 @@ class BlockScoutV2Scanner(Scanner):
         else:
             items, next_cursor = [], None
 
-        return (
-            list(items) if items else [],
-            dict(next_cursor) if next_cursor else None,
-        )
+        cursor = dict(next_cursor) if next_cursor else {}
+        # A remote cursor is opaque pagination state, but it must never be
+        # allowed to replace resource identity embedded in this endpoint's
+        # path (for example, switching the requested address on page two).
+        for public_name, scanner_name in spec.param_map.items():
+            if f'{{{public_name}}}' in spec.path:
+                cursor.pop(public_name, None)
+                cursor.pop(scanner_name, None)
+
+        return list(items) if items else [], cursor or None
 
     async def call(self, method: Method, **params: Any) -> Any:
         """
