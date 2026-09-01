@@ -2,13 +2,14 @@
 
 ## Overview
 
-aiochainscan v0.4.0+ includes native support for ENS (Ethereum Name Service), allowing you to:
+`ChainscanClient` supports ENS (Ethereum Name Service) resolution on Ethereum
+mainnet:
 
 - **Forward resolution**: Resolve ENS names (like `vitalik.eth`) to Ethereum addresses
 - **Reverse lookup**: Find the ENS name associated with an Ethereum address
 - **Batch operations**: Resolve multiple names or addresses in parallel
-- **Automatic caching**: Intelligent caching with TTL for improved performance
-- **Multi-scanner support**: Works with BlockScout V2, Etherscan, and other scanners
+- **Caching**: Configurable TTL for repeated lookups
+- **Provider-specific resolution**: Capabilities depend on the configured scanner
 
 ## Quick Start
 
@@ -17,23 +18,15 @@ import asyncio
 from aiochainscan import ChainscanClient
 
 async def main():
-    # Create client (ENS only works on Ethereum mainnet)
-    # Use BlockScout V2 for reverse lookup (no API key required)
-    client = ChainscanClient.from_config('blockscout_v2', 'ethereum')
+    async with ChainscanClient.from_config('blockscout_v2', 'ethereum') as client:
+        name = await client.lookup_address(
+            '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045'
+        )
+        print(name)
 
-    # Reverse lookup: address → name (works with BlockScout V2)
-    name = await client.lookup_address("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")
-    print(f"Name: {name}")
-    # Output: Name: vitalik.eth
-
-    # Note: Forward resolution (name → address) requires Etherscan
-    # because BlockScout V2 doesn't expose eth_call
-
-    # For forward resolution, use Etherscan (requires API key)
-    client_etherscan = ChainscanClient.from_config('etherscan', 'ethereum')
-    address = await client_etherscan.resolve_name("vitalik.eth")
-    print(f"Address: {address}")
-    # Output: Address: 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045
+    async with ChainscanClient.from_config('etherscan', 'ethereum') as client:
+        address = await client.resolve_name('vitalik.eth')
+        print(address)
 
 asyncio.run(main())
 ```
@@ -105,30 +98,29 @@ address = await custom_resolver.resolve_name("vitalik.eth")
 
 ENS resolution uses different strategies depending on the scanner:
 
-#### BlockScout V2 (Recommended for Reverse Lookup)
-- **Reverse lookup**: ✅ Uses the `ens_domain_name` field from address info API (fast and free)
-- **Forward resolution**: ❌ Not supported (would require `eth_call` which BlockScout V2 doesn't expose)
-- **Advantages**: Fast reverse lookups, no API key required, works out of the box
+#### BlockScout V2
+- **Reverse lookup**: supported through the address information endpoint
+- **Forward resolution**: not supported because this scanner does not expose `eth_call`
+- **Authentication**: no API key for public instances
 
 #### Etherscan (Required for Forward Resolution)
-- **Both directions**: ✅ Uses direct ENS contract calls via `eth_call`
+- **Both directions**: supported through ENS contract calls and `eth_call`
 - **Requires**: API key for `eth_call` support
-- **Advantages**: Works for both forward and reverse resolution
 - **Note**: Forward resolution requires the PROXY module to be enabled
 
 **Important**: For forward resolution (name → address), you must use Etherscan or another scanner that supports `eth_call`. BlockScout V2 only supports reverse lookup (address → name).
 
 ```python
-# ✅ Reverse lookup works with BlockScout V2 (no API key)
+# Reverse lookup with BlockScout V2
 client = ChainscanClient.from_config('blockscout_v2', 'ethereum')
 name = await client.lookup_address("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")
 # Returns: "vitalik.eth"
 
-# ❌ Forward resolution NOT supported with BlockScout V2
+# Forward resolution is not supported with BlockScout V2
 address = await client.resolve_name("vitalik.eth")
 # Returns: None (requires eth_call)
 
-# ✅ Use Etherscan for forward resolution (requires API key)
+# Use Etherscan for forward resolution
 client = ChainscanClient.from_config('etherscan', 'ethereum')
 address = await client.resolve_name("vitalik.eth")
 # Returns: "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"
@@ -465,7 +457,7 @@ If you get `ValueError: ENS is only supported on Ethereum mainnet`:
 
 ## Examples
 
-See [`examples/ens_demo.py`](../examples/ens_demo.py) for comprehensive examples including:
+See [`examples/ens_demo.py`](../examples/ens_demo.py) for examples including:
 
 - Forward resolution
 - Reverse lookup
