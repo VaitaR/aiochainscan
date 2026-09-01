@@ -1,5 +1,14 @@
 """aiochainscan public API (modern client only)."""
 
+from aiochainscan.convert import (
+    format_ether,
+    hex_to_int,
+    hex_to_str,
+    to_datetime,
+    to_decimal_amount,
+    to_iso,
+    wei_to_ether,
+)
 from aiochainscan.core.client import ChainscanClient
 from aiochainscan.core.method import Method
 from aiochainscan.core.pool import ChainscanPool, FailureKind, classify_failure
@@ -41,6 +50,13 @@ __all__ = [
     'ProviderPoolExhaustedError',
     'SmartContract',
     'classify_failure',
+    'format_ether',
+    'hex_to_int',
+    'hex_to_str',
     'list_scanners',
     'register_scanner',
+    'to_datetime',
+    'to_decimal_amount',
+    'to_iso',
+    'wei_to_ether',
 ]

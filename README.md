@@ -166,6 +166,29 @@ from aiochainscan import Method
 result = await client.call(Method.ACCOUNT_BALANCE, address=address)
 ```
 
+## Value conversions
+
+Explorer APIs return every scalar as a string — wei amounts, hex numbers, unix
+timestamps. Module-level helpers convert them exactly (no float step, no new
+dependencies):
+
+```python
+from aiochainscan import format_ether, hex_to_int, to_iso, to_decimal_amount, wei_to_ether
+
+wei_to_ether('1500000000000000000')        # Decimal('1.5') — exact, never float
+format_ether('1500000000000000000')        # '1.500000'
+to_decimal_amount('1500000', decimals=6)   # Decimal('1.5') — USDC-style tokens
+
+hex_to_int('0x1a')                         # 26 — hex string, decimal string or int
+to_iso('1609459200')                       # '2021-01-01T00:00:00+00:00' (UTC)
+```
+
+Wei math is `Decimal`-exact for any magnitude (including 10^30+ wei and
+negative allowance-style amounts); `hex_to_int` absorbs the proxy-vs-REST
+habit of returning the same field as `'0x1a'` or `'26'`. Invalid input (empty
+strings, fractional wei, bare hex like `'1a'`) raises `ValueError` instead of
+guessing.
+
 ## Pagination and streaming
 
 Page-returning methods do not fetch an entire history:
