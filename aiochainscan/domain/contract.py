@@ -10,7 +10,7 @@ import json
 from collections.abc import AsyncIterator
 from typing import Any, Protocol
 
-from ..decode import decode_log_data, decode_transaction_input
+from ..decode import canonical_abi_type, decode_log_data, decode_transaction_input
 from ..exceptions import ChainscanClientError
 from .method import Method
 
@@ -106,12 +106,13 @@ class SmartContract:
                 if name:
                     self._event_map[name] = item
 
-                    # Also create topic hash mapping for log decoding
-                    inputs = item.get('inputs', [])
-                    input_types = ','.join([param['type'] for param in inputs])
-                    signature_text = f'{name}({input_types})'
-                    topic_hash = '0x' + keccak_hex(signature_text)
-                    self._event_signature_map[topic_hash] = item
+                    # Also create topic hash mapping for non-anonymous logs.
+                    if item.get('anonymous') is not True:
+                        inputs = item.get('inputs', [])
+                        input_types = ','.join(canonical_abi_type(param) for param in inputs)
+                        signature_text = f'{name}({input_types})'
+                        topic_hash = '0x' + keccak_hex(signature_text)
+                        self._event_signature_map[topic_hash] = item
 
     @classmethod
     async def from_address(
@@ -288,7 +289,7 @@ class SmartContract:
             from aiochainscan.crypto import keccak_hex
 
             inputs = event_abi.get('inputs', [])
-            input_types = ','.join([param['type'] for param in inputs])
+            input_types = ','.join(canonical_abi_type(param) for param in inputs)
             signature_text = f'{event_name}({input_types})'
             topic0 = '0x' + keccak_hex(signature_text)
             params['topic0'] = topic0

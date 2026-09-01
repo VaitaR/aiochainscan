@@ -1,4 +1,4 @@
-use ethers::abi::{Abi, Function, Token};
+use ethers::abi::{Abi, Function, ParamType, Token};
 use ethers::utils::keccak256;
 use mini_moka::sync::Cache;
 use pyo3::prelude::*;
@@ -125,7 +125,7 @@ fn get_abi_data_direct(py_abi: &Bound<'_, PyAny>) -> PyResult<Arc<AbiData>> {
             let input_types: Vec<String> = function
                 .inputs
                 .iter()
-                .map(|input| input.kind.to_string())
+                .map(|input| format!("{}:{}", input.name, input.kind))
                 .collect();
             format!("{}({})", function.name, input_types.join(","))
         })
@@ -193,7 +193,7 @@ fn decode_one(
             } else {
                 param.name.clone()
             };
-            decoded_data.insert(param_name, convert_token_to_json(token));
+            decoded_data.insert(param_name, convert_token_to_json(token, &param.kind));
         }
 
         let result = serde_json::json!({
@@ -237,8 +237,9 @@ fn decode_many_raw(
                 Err(_) => return serde_json::json!(["", []]),
             };
 
-            let params: Vec<serde_json::Value> = tokens.iter()
-                .map(convert_token_to_json)
+            let params: Vec<serde_json::Value> = function.inputs.iter()
+                .zip(tokens.iter())
+                .map(|(param, token)| convert_token_to_json(token, &param.kind))
                 .collect();
 
             serde_json::json!([function.name, params])
@@ -290,8 +291,8 @@ fn decode_many_flat(
 
                 // Build flat array: [function_name, param1, param2, ...]
                 let mut result = vec![serde_json::Value::String(function.name.clone())];
-                for token in tokens.iter() {
-                    result.push(convert_token_to_json(token));
+                for (index, token) in tokens.iter().enumerate() {
+                    result.push(convert_token_to_json(token, &function.inputs[index].kind));
                 }
 
                 serde_json::Value::Array(result)
@@ -343,7 +344,7 @@ fn decode_one_direct(
             } else {
                 param.name.clone()
             };
-            decoded_data.insert(param_name, convert_token_to_json(token));
+            decoded_data.insert(param_name, convert_token_to_json(token, &param.kind));
         }
 
         let result = serde_json::json!({
@@ -408,7 +409,7 @@ fn decode_many(
                     } else {
                         param.name.clone()
                     };
-                    decoded_data.insert(param_name, convert_token_to_json(token));
+                    decoded_data.insert(param_name, convert_token_to_json(token, &param.kind));
                 }
 
                 Ok(serde_json::json!({
@@ -471,7 +472,7 @@ fn decode_many_direct(
                 } else {
                     param.name.clone()
                 };
-                decoded_data.insert(param_name, convert_token_to_json(token));
+                decoded_data.insert(param_name, convert_token_to_json(token, &param.kind));
             }
 
             serde_json::json!({
@@ -543,7 +544,7 @@ fn decode_many_hex(
                 } else {
                     param.name.clone()
                 };
-                decoded_data.insert(param_name, convert_token_to_json(token));
+                decoded_data.insert(param_name, convert_token_to_json(token, &param.kind));
             }
 
             serde_json::json!({
@@ -608,7 +609,7 @@ fn decode_input(input_data: &Bound<'_, PyBytes>, abi_json: &str) -> PyResult<Str
                     } else {
                         input.name.clone()
                     };
-                    decoded_data.insert(param_name, convert_token_to_json(token));
+                    decoded_data.insert(param_name, convert_token_to_json(token, &input.kind));
                 }
 
                 let result = serde_json::json!({
@@ -635,44 +636,95 @@ fn decode_input(input_data: &Bound<'_, PyBytes>, abi_json: &str) -> PyResult<Str
     }
 }
 
-// Legacy function for JSON conversion
-fn convert_token_to_json(token: &Token) -> serde_json::Value {
+fn unsigned_to_json(value: &ethers::types::U256) -> serde_json::Value {
+    if let Ok(as_u64) = u64::try_from(*value) {
+        if as_u64 <= i64::MAX as u64 {
+            return serde_json::Value::Number(serde_json::Number::from(as_u64));
+        }
+    }
+    serde_json::Value::String(value.to_string())
+}
+
+fn signed_to_json(value: &ethers::types::U256, width: usize) -> serde_json::Value {
+    let (normalized, modulus) = if width == 256 {
+        (*value, None)
+    } else {
+        let modulus = ethers::types::U256::one() << width;
+        (*value & (modulus - ethers::types::U256::one()), Some(modulus))
+    };
+    let negative = width > 0 && normalized.bit(width - 1);
+    if !negative {
+        return unsigned_to_json(&normalized);
+    }
+
+    // ethabi stores signed values as their unsigned two's-complement word.
+    let magnitude = match modulus {
+        Some(modulus) => modulus - normalized,
+        None => {
+            let (magnitude, _) = (!normalized).overflowing_add(ethers::types::U256::one());
+            magnitude
+        }
+    };
+    let max_negative_magnitude = ethers::types::U256::one() << 63;
+    if magnitude <= max_negative_magnitude {
+        let magnitude_u64 = magnitude.as_u64();
+        let signed = if magnitude_u64 == (1u64 << 63) {
+            i64::MIN
+        } else {
+            -(magnitude_u64 as i64)
+        };
+        serde_json::Value::Number(serde_json::Number::from(signed))
+    } else {
+        serde_json::Value::String(format!("-{}", magnitude))
+    }
+}
+
+// ParamType is required for signed ints because Token::Int alone does not
+// retain the ABI bit width.
+fn convert_token_to_json(token: &Token, param_type: &ParamType) -> serde_json::Value {
     match token {
         Token::Address(addr) => serde_json::Value::String(format!("0x{:x}", addr)),
-        Token::Uint(uint) => {
-            if let Ok(as_u64) = u64::try_from(*uint) {
-                if as_u64 <= i64::MAX as u64 {
-                    serde_json::Value::Number(serde_json::Number::from(as_u64))
-                } else {
-                    serde_json::Value::String(uint.to_string())
-                }
-            } else {
-                serde_json::Value::String(uint.to_string())
-            }
-        }
+        Token::Uint(uint) => unsigned_to_json(uint),
         Token::Int(int) => {
-            if let Ok(as_u64) = u64::try_from(*int) {
-                if as_u64 <= i64::MAX as u64 {
-                    serde_json::Value::Number(serde_json::Number::from(as_u64 as i64))
-                } else {
-                    serde_json::Value::String(int.to_string())
-                }
-            } else {
-                serde_json::Value::String(int.to_string())
-            }
+            let width = match param_type {
+                ParamType::Int(width) => *width,
+                _ => 256,
+            };
+            signed_to_json(int, width)
         }
         Token::Bool(b) => serde_json::Value::Bool(*b),
         Token::String(s) => serde_json::Value::String(s.clone()),
         Token::Bytes(bytes) => serde_json::Value::String(format!("0x{}", hex::encode(bytes))),
         Token::FixedBytes(bytes) => serde_json::Value::String(format!("0x{}", hex::encode(bytes))),
         Token::Array(tokens) => {
-            serde_json::Value::Array(tokens.iter().map(convert_token_to_json).collect())
+            let inner = match param_type {
+                ParamType::Array(inner) => inner.as_ref(),
+                _ => param_type,
+            };
+            serde_json::Value::Array(
+                tokens.iter().map(|token| convert_token_to_json(token, inner)).collect(),
+            )
         }
         Token::FixedArray(tokens) => {
-            serde_json::Value::Array(tokens.iter().map(convert_token_to_json).collect())
+            let inner = match param_type {
+                ParamType::FixedArray(inner, _) => inner.as_ref(),
+                _ => param_type,
+            };
+            serde_json::Value::Array(
+                tokens.iter().map(|token| convert_token_to_json(token, inner)).collect(),
+            )
         }
         Token::Tuple(tokens) => {
-            serde_json::Value::Array(tokens.iter().map(convert_token_to_json).collect())
+            let component_types: &[ParamType] = match param_type {
+                ParamType::Tuple(types) => types,
+                _ => &[],
+            };
+            serde_json::Value::Array(
+                tokens.iter().enumerate().map(|(index, token)| {
+                    let component_type = component_types.get(index).unwrap_or(param_type);
+                    convert_token_to_json(token, component_type)
+                }).collect(),
+            )
         }
     }
 }
@@ -749,9 +801,11 @@ fn decode_many_to_arrow(
                             } else {
                                 input.name.clone()
                             };
-                            let value = convert_token_to_json(token).to_string();
-                            // Strip surrounding quotes from JSON string values
-                            let clean = value.trim_matches('"').to_string();
+                            let value = convert_token_to_json(token, &input.kind);
+                            let clean = match value {
+                                serde_json::Value::String(value) => value,
+                                value => value.to_string(),
+                            };
                             decoded.insert(name, clean);
                         }
 

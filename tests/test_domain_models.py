@@ -185,6 +185,11 @@ class TestTxHash:
         with pytest.raises(ValueError, match='TxHash must be 0x-prefixed 64-hex string'):
             TxHash('a' * 64)
 
+    def test_rejects_non_hex_characters(self):
+        """Should reject correctly sized hashes containing non-hex characters."""
+        with pytest.raises(ValueError, match='TxHash must be 0x-prefixed 64-hex string'):
+            TxHash('0x' + 'g' + 'a' * 63)
+
 
 class TestBlockNumber:
     """Test BlockNumber value object."""

@@ -108,6 +108,46 @@ except ImportError:
 FUNCTION_SELECTOR_LENGTH = 10  # '0x' + 4 bytes
 
 
+def _split_array_suffix(type_name: str) -> tuple[str, str]:
+    """Return an ABI type's base name and its complete array suffix."""
+    end = len(type_name)
+    while end and type_name[:end].endswith(']'):
+        start = type_name.rfind('[', 0, end)
+        if start < 0:
+            break
+        end = start
+    return type_name[:end], type_name[end:]
+
+
+def canonical_abi_type(param: dict[str, Any]) -> str:
+    """Build an ABI canonical type, including recursively nested tuples."""
+    type_name = cast(str, param.get('type', ''))
+    base, suffix = _split_array_suffix(type_name)
+    aliases = {
+        'uint': 'uint256',
+        'int': 'int256',
+        'byte': 'bytes1',
+        'fixed': 'fixed128x18',
+        'ufixed': 'ufixed128x18',
+    }
+    base = aliases.get(base, base)
+    if base == 'tuple':
+        components = cast(list[dict[str, Any]], param.get('components', []))
+        base = f"({','.join(canonical_abi_type(component) for component in components)})"
+    return base + suffix
+
+
+def _abi_type_is_dynamic(param: dict[str, Any]) -> bool:
+    """Return whether an indexed value is represented by a topic hash."""
+    type_name = cast(str, param.get('type', ''))
+    base, suffix = _split_array_suffix(type_name)
+    if suffix:
+        return True
+    if base == 'tuple':
+        return True
+    return base in {'bytes', 'string'}
+
+
 def _preprocess_abi(
     abi: list[dict[str, Any]],
 ) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
@@ -120,7 +160,7 @@ def _preprocess_abi(
         if item_type == 'function':
             name = cast(str, item.get('name', ''))
             inputs_list = cast(list[dict[str, Any]], item.get('inputs', []))
-            inputs = ','.join([cast(str, param['type']) for param in inputs_list])
+            inputs = ','.join(canonical_abi_type(param) for param in inputs_list)
             signature_text = f'{name}({inputs})'
             # 4-byte selector
             selector = '0x' + keccak_hash(signature_text)[:8]
@@ -128,11 +168,12 @@ def _preprocess_abi(
         elif item_type == 'event':
             name = cast(str, item.get('name', ''))
             inputs_list = cast(list[dict[str, Any]], item.get('inputs', []))
-            inputs = ','.join([cast(str, param['type']) for param in inputs_list])
+            inputs = ','.join(canonical_abi_type(param) for param in inputs_list)
             signature_text = f'{name}({inputs})'
             # 32-byte topic hash
             topic_hash = '0x' + keccak_hash(signature_text)
-            event_map[topic_hash] = item
+            if item.get('anonymous') is not True:
+                event_map[topic_hash.lower()] = item
 
     return function_map, event_map
 
@@ -218,7 +259,7 @@ def _decode_transaction_input_python(
     if function:
         # Decode input transaction
         input_types = [
-            cast(str, param['type']) for param in cast(list[dict[str, Any]], function['inputs'])
+            canonical_abi_type(param) for param in cast(list[dict[str, Any]], function['inputs'])
         ]
         input_data = cast(str, transaction['input'])[FUNCTION_SELECTOR_LENGTH:]
         try:
@@ -280,32 +321,82 @@ def decode_transaction_input(
         return _decode_transaction_input_python(transaction, abi)
 
 
+def _split_top_level(text: str) -> list[str]:
+    """Split comma-separated text while retaining nested tuple expressions."""
+    parts: list[str] = []
+    start = 0
+    depth = 0
+    for index, char in enumerate(text):
+        if char == '(':
+            depth += 1
+        elif char == ')':
+            depth -= 1
+        elif char == ',' and depth == 0:
+            parts.append(text[start:index].strip())
+            start = index + 1
+    parts.append(text[start:].strip())
+    return parts
+
+
+def _matching_paren(text: str, opening: int) -> int:
+    depth = 0
+    for index in range(opening, len(text)):
+        if text[index] == '(':
+            depth += 1
+        elif text[index] == ')':
+            depth -= 1
+            if depth == 0:
+                return index
+    raise ValueError('Unbalanced parentheses in ABI signature')
+
+
+def _parameter_name(tokens: list[str], index: int) -> str:
+    ignored = {'memory', 'calldata', 'storage', 'indexed', 'payable'}
+    names = [token for token in tokens if token not in ignored]
+    return names[-1] if names else f'param_{index}'
+
+
+def _parse_signature_parameter(text: str, index: int) -> dict[str, Any]:
+    """Parse one human-readable ABI parameter, recursively expanding tuples."""
+    text = text.strip()
+    if text.startswith('(') or text.startswith('tuple('):
+        opening = text.find('(')
+        closing = _matching_paren(text, opening)
+        components = [
+            _parse_signature_parameter(component, component_index)
+            for component_index, component in enumerate(
+                _split_top_level(text[opening + 1 : closing])
+            )
+            if component
+        ]
+        position = closing + 1
+        while position < len(text) and text[position] == '[':
+            array_end = text.find(']', position)
+            if array_end < 0:
+                raise ValueError('Unbalanced array suffix in ABI signature')
+            position = array_end + 1
+        suffix = text[closing + 1 : position]
+        name = _parameter_name(text[position:].strip().split(), index)
+        return {'type': 'tuple' + suffix, 'name': name, 'components': components}
+
+    tokens = text.split()
+    if not tokens:
+        raise ValueError('Empty parameter in ABI signature')
+    return {'type': tokens[0], 'name': _parameter_name(tokens[1:], index)}
+
+
 def generate_function_abi(signature: str) -> list[dict[str, Any]]:
-    # Extract the function name and parameters from the signature
-    func_name, params = signature.split('(')
-    params = params[:-1]  # Remove the trailing ')'
-
-    # Create a list of dictionaries for each parameter
-    inputs: list[dict[str, Any]] = []
-
-    # Handle empty parameters (functions with no arguments)
-    if params.strip():
-        # Split parameters into individual items
-        param_list = params.split(',')
-
-        for param in param_list:
-            param_stripped = param.strip()
-            if not param_stripped:
-                continue
-
-            # Split only on the first space to handle types like 'string memory'
-            parts = param_stripped.split(' ', 1)
-            if len(parts) == 2:
-                param_type, param_name = parts
-                inputs.append({'type': param_type.strip(), 'name': param_name.strip()})
-            else:
-                # Handle parameters without names, e.g., "transfer(address,uint256)"
-                inputs.append({'type': parts[0].strip(), 'name': f'param_{len(inputs)}'})
+    opening = signature.find('(')
+    if opening < 0:
+        raise ValueError('ABI function signature must contain parentheses')
+    closing = _matching_paren(signature, opening)
+    func_name = signature[:opening].strip()
+    params = signature[opening + 1 : closing]
+    inputs = [
+        _parse_signature_parameter(param, index)
+        for index, param in enumerate(_split_top_level(params))
+        if param
+    ]
 
     # Construct the ABI
     function_abi: list[dict[str, Any]] = [
@@ -330,45 +421,82 @@ def decode_transaction_input_with_function_name(
     return transaction
 
 
+def _decode_event_candidate(
+    event: dict[str, Any], indexed_topics: list[str], data: str
+) -> dict[str, Any] | None:
+    """Decode one event candidate, returning None when its payload is invalid."""
+    try:
+        decoded_log: dict[str, Any] = {'event': event['name']}
+        inputs = cast(list[dict[str, Any]], event.get('inputs', []))
+        indexed_params = [param for param in inputs if param.get('indexed') is True]
+        for param, topic in zip(indexed_params, indexed_topics, strict=True):
+            if _abi_type_is_dynamic(param):
+                value: Any = topic.lower()
+            else:
+                topic_data = topic[2:] if topic[:2].lower() == '0x' else topic
+                value = _abi_decode([canonical_abi_type(param)], bytes.fromhex(topic_data))[0]
+            decoded_log[cast(str, param.get('name', ''))] = value
+
+        non_indexed_params = [param for param in inputs if param.get('indexed') is not True]
+        if non_indexed_params:
+            data_bytes = data[2:] if data[:2].lower() == '0x' else data
+            non_indexed_values = _abi_decode(
+                [canonical_abi_type(param) for param in non_indexed_params],
+                bytes.fromhex(data_bytes),
+            )
+            for param, value in zip(non_indexed_params, non_indexed_values, strict=True):
+                decoded_log[cast(str, param.get('name', ''))] = value
+        return decoded_log
+    except Exception:
+        return None
+
+
 # Function to decode transaction input and return updated log with decoded data
 def decode_log_data(log: dict[str, Any], abi: list[dict[str, Any]]) -> dict[str, Any]:
     _, event_map = _preprocess_abi(abi)
 
-    if not log.get('topics'):
-        # A log without topics cannot be decoded
-        return log
-
-    receipt_event_signature_hex = log['topics'][0]
-    event = event_map.get(receipt_event_signature_hex)
-
-    if event:
-        decoded_log: dict[str, Any] = {'event': event['name']}
-
-        # Decode indexed topics
-        indexed_params: list[dict[str, Any]] = [
-            input for input in cast(list[dict[str, Any]], event['inputs']) if input['indexed']
-        ]
-        for i, param in enumerate(indexed_params):
-            topic = log['topics'][i + 1]
-            decoded_log[cast(str, param['name'])] = _abi_decode(
-                [cast(str, param['type'])], bytes.fromhex(cast(str, topic)[2:])
-            )[0]
-
-        # Decode non-indexed data
-        non_indexed_params: list[dict[str, Any]] = [
-            input for input in cast(list[dict[str, Any]], event['inputs']) if not input['indexed']
-        ]
-        if log.get('data', '0x') != '0x':
-            non_indexed_types: list[str] = [
-                cast(str, param['type']) for param in non_indexed_params
+    topics = cast(list[str], log.get('topics', []))
+    event: dict[str, Any] | None = None
+    anonymous_candidates: list[dict[str, Any]] = []
+    indexed_topics = topics[1:]
+    if topics:
+        event = event_map.get(topics[0].lower())
+        if event is not None:
+            indexed_topics = topics[1:]
+        else:
+            anonymous_candidates = [
+                item
+                for item in abi
+                if item.get('type') == 'event' and item.get('anonymous') is True
             ]
-            non_indexed_values = _abi_decode(
-                non_indexed_types, bytes.fromhex(cast(str, log['data'])[2:])
-            )
-            for i, param in enumerate(non_indexed_params):
-                decoded_log[cast(str, param['name'])] = non_indexed_values[i]
+    else:
+        anonymous_candidates = [
+            item for item in abi if item.get('type') == 'event' and item.get('anonymous') is True
+        ]
 
-        log['decoded_data'] = decoded_log
+    if event is None:
+        matching = [
+            item
+            for item in anonymous_candidates
+            if sum(
+                1
+                for param in cast(list[dict[str, Any]], item.get('inputs', []))
+                if param.get('indexed') is True
+            )
+            == len(topics)
+        ]
+        data = cast(str, log.get('data', '0x'))
+        decoded_candidates = [
+            decoded
+            for candidate in matching
+            if (decoded := _decode_event_candidate(candidate, topics, data)) is not None
+        ]
+        if len(decoded_candidates) == 1:
+            log['decoded_data'] = decoded_candidates[0]
+    elif (
+        decoded := _decode_event_candidate(event, indexed_topics, cast(str, log.get('data', '0x')))
+    ) is not None:
+        log['decoded_data'] = decoded
     # If no matching event was found, 'decoded_data' will not be in log
     # which is the desired behavior.
 

@@ -5,6 +5,7 @@ Only pure, dependency-free data types live here. No I/O, no logging, no env acce
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from aiochainscan.crypto import is_address, to_checksum_address
@@ -63,7 +64,7 @@ class TxHash:
 
     def __post_init__(self) -> None:
         normalized: str = self.value.lower().strip()
-        if not (normalized.startswith('0x') and len(normalized) == 66):
+        if re.fullmatch(r'0x[0-9a-f]{64}', normalized) is None:
             raise ValueError('TxHash must be 0x-prefixed 64-hex string')
         object.__setattr__(self, 'value', normalized)
 

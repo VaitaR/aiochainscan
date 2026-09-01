@@ -3,6 +3,8 @@ from unittest.mock import patch
 import pytest
 
 from aiochainscan.decode import (
+    _preprocess_abi,
+    canonical_abi_type,
     decode_log_data,
     decode_transaction_input,
     decode_transaction_input_with_function_name,
@@ -112,6 +114,57 @@ class TestGenerateFunctionAbi:
         ]
 
         assert result == expected
+
+    def test_generate_nested_tuple_signature(self):
+        result = generate_function_abi(
+            'route((uint256 amount,(address recipient,bool unwrap)) route, uint[] hops)'
+        )
+
+        inputs = result[0]['inputs']
+        assert canonical_abi_type(inputs[0]) == '(uint256,(address,bool))'
+        assert inputs[0]['components'][1]['components'][1]['name'] == 'unwrap'
+        assert canonical_abi_type(inputs[1]) == 'uint256[]'
+
+
+@pytest.mark.skipif(not ETH_HASH_AVAILABLE, reason='eth-hash backend not installed')
+class TestCanonicalAbiSelectors:
+    def test_uint_alias_has_same_selector_as_uint256(self):
+        uint_abi = [
+            {'type': 'function', 'name': 'f', 'inputs': [{'type': 'uint', 'name': 'value'}]}
+        ]
+        uint256_abi = [
+            {'type': 'function', 'name': 'f', 'inputs': [{'type': 'uint256', 'name': 'value'}]}
+        ]
+
+        assert set(_preprocess_abi(uint_abi)[0]) == set(_preprocess_abi(uint256_abi)[0])
+
+    def test_tuple_selector_uses_components_and_array_suffix(self):
+        abi = [
+            {
+                'type': 'function',
+                'name': 'f',
+                'inputs': [
+                    {
+                        'type': 'tuple[]',
+                        'name': 'items',
+                        'components': [
+                            {'type': 'uint', 'name': 'amount'},
+                            {
+                                'type': 'tuple',
+                                'name': 'meta',
+                                'components': [
+                                    {'type': 'address', 'name': 'owner'},
+                                ],
+                            },
+                        ],
+                    }
+                ],
+            }
+        ]
+
+        function_map, _ = _preprocess_abi(abi)
+        expected = '0x' + keccak_hash('f((uint256,(address))[])')[:8]
+        assert expected in function_map
 
 
 @pytest.mark.skipif(not ETH_HASH_AVAILABLE, reason='eth-hash backend not installed')
@@ -392,6 +445,68 @@ class TestDecodeLogData:
         assert decoded['event'] == 'Approval'
         assert decoded['owner'] == '0x742d35cc6270c0532c0749334b1c1d434f4e86c0'
         assert decoded['spender'] == '0xabc123def456789012345678901234567890abcd'
+
+    def test_indexed_dynamic_topic_is_exposed_as_lowercase_hash(self):
+        event_abi = [
+            {
+                'type': 'event',
+                'name': 'Message',
+                'inputs': [{'type': 'string', 'name': 'message', 'indexed': True}],
+            }
+        ]
+        topic0 = '0x' + keccak_hash('Message(string)')
+        raw_topic = '0x' + 'AB' * 32
+
+        result = decode_log_data({'topics': [topic0, raw_topic], 'data': '0x'}, event_abi)
+
+        assert result['decoded_data']['message'] == raw_topic.lower()
+
+    @pytest.mark.parametrize(
+        'parameter',
+        [
+            {'type': 'uint256[2]', 'name': 'values', 'indexed': True},
+            {
+                'type': 'tuple',
+                'name': 'value',
+                'indexed': True,
+                'components': [{'type': 'uint256', 'name': 'amount'}],
+            },
+        ],
+    )
+    def test_indexed_composite_topic_is_exposed_as_hash(self, parameter):
+        event_abi = [{'type': 'event', 'name': 'Composite', 'inputs': [parameter]}]
+        topic0 = '0x' + keccak_hash(f'Composite({canonical_abi_type(parameter)})')
+        raw_topic = '0x' + 'CD' * 32
+
+        result = decode_log_data({'topics': [topic0, raw_topic], 'data': '0x'}, event_abi)
+
+        assert result['decoded_data'][parameter['name']] == raw_topic.lower()
+
+    @patch('aiochainscan.decode._eth_abi_decode', return_value=(7,))
+    def test_unique_anonymous_event_is_decoded(self, mock_decode):
+        event_abi = [
+            {
+                'type': 'event',
+                'name': 'AnonymousValue',
+                'anonymous': True,
+                'inputs': [{'type': 'uint256', 'name': 'value', 'indexed': True}],
+            }
+        ]
+        result = decode_log_data({'topics': ['0x' + '00' * 31 + '07'], 'data': '0x'}, event_abi)
+
+        assert result['decoded_data'] == {'event': 'AnonymousValue', 'value': 7}
+        mock_decode.assert_called_once()
+
+    def test_ambiguous_anonymous_events_remain_undecoded(self):
+        event_inputs = [{'type': 'uint256', 'name': 'value', 'indexed': True}]
+        event_abi = [
+            {'type': 'event', 'name': 'First', 'anonymous': True, 'inputs': event_inputs},
+            {'type': 'event', 'name': 'Second', 'anonymous': True, 'inputs': event_inputs},
+        ]
+
+        result = decode_log_data({'topics': ['0x' + '00' * 31 + '07'], 'data': '0x'}, event_abi)
+
+        assert 'decoded_data' not in result
 
 
 @pytest.mark.skipif(not ETH_HASH_AVAILABLE, reason='eth-hash backend not installed')

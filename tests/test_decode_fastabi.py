@@ -121,6 +121,92 @@ class TestFastAbiDecoding:
         with pytest.raises(ValueError):
             self.fast_decode_input(input_bytes, invalid_abi)
 
+    def test_direct_cache_identity_includes_parameter_names(self):
+        from aiochainscan.decode import keccak_hash
+
+        try:
+            from aiochainscan.aiochainscan_fastabi import decode_one_direct
+        except ImportError:
+            pytest.skip('fastabi not available')
+
+        selector = bytes.fromhex(keccak_hash('named(uint256)')[:8])
+        calldata = selector + (7).to_bytes(32, 'big')
+        abi_one = [
+            {
+                'type': 'function',
+                'name': 'named',
+                'inputs': [{'type': 'uint256', 'name': 'one'}],
+                'outputs': [],
+            }
+        ]
+        abi_two = [
+            {
+                'type': 'function',
+                'name': 'named',
+                'inputs': [{'type': 'uint256', 'name': 'two'}],
+                'outputs': [],
+            }
+        ]
+
+        first = json.loads(decode_one_direct(calldata, abi_one))
+        second = json.loads(decode_one_direct(calldata, abi_two))
+
+        assert first['decoded_data'] == {'one': 7}
+        assert second['decoded_data'] == {'two': 7}
+
+    def test_signed_int_json_matches_python_sign(self):
+        from aiochainscan.decode import keccak_hash
+
+        try:
+            from aiochainscan.aiochainscan_fastabi import decode_input
+        except ImportError:
+            pytest.skip('fastabi not available')
+
+        abi = [
+            {
+                'type': 'function',
+                'name': 'signed',
+                'inputs': [{'type': 'int8', 'name': 'value'}],
+                'outputs': [],
+            }
+        ]
+        selector = bytes.fromhex(keccak_hash('signed(int8)')[:8])
+        calldata = selector + (b'\xff' * 32)
+        decoded = json.loads(decode_input(calldata, json.dumps(abi)))
+
+        assert decoded['decoded_data']['value'] == -1
+
+    def test_arrow_string_column_contains_plain_decoded_string(self):
+        try:
+            import polars as pl
+
+            from aiochainscan.aiochainscan_fastabi import decode_many_to_arrow
+        except ImportError:
+            pytest.skip('fastabi and polars are required')
+
+        from aiochainscan.decode import keccak_hash
+
+        value = 'quoted "text"'
+        encoded_value = value.encode()
+        encoded = (
+            bytes.fromhex(keccak_hash('message(string)')[:8])
+            + (32).to_bytes(32, 'big')
+            + len(encoded_value).to_bytes(32, 'big')
+            + encoded_value.ljust((len(encoded_value) + 31) // 32 * 32, b'\0')
+        )
+        abi = [
+            {
+                'type': 'function',
+                'name': 'message',
+                'inputs': [{'type': 'string', 'name': 'value'}],
+                'outputs': [],
+            }
+        ]
+
+        frame = pl.from_arrow(decode_many_to_arrow([encoded], json.dumps(abi)))
+
+        assert frame['value'][0] == value
+
 
 class TestIntegratedDecoding:
     """Test the integrated decoding functions with fastabi backend."""
