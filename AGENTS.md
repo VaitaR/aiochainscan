@@ -89,7 +89,30 @@ async with ChainscanClient.from_config('etherscan', 'ethereum') as client:
     # ── DataFrame export ─────────────────────────────────────
     df = await client.get_transactions_df('0x...')                 # Polars (ALL txs!)
     df = await client.get_token_portfolio_df('0x...')              # Polars
+
+    # ── Self-hosted / custom instances ───────────────────────
+    # A URL-shaped `network` targets any BlockScout instance (no API key):
+    async with ChainscanClient.from_config(
+        'blockscout_v2', 'https://my-blockscout.internal', expected_chain_id=100
+    ) as selfhosted:
+        info = await selfhosted.get_chain_info()    # ChainInfo (cached 1h)
+        ok = await selfhosted.validate_chain(100)   # ChainscanDataError on mismatch
+    # Etherscan v2 proxy: api_key still required + expected_chain_id mandatory:
+    client = ChainscanClient.from_config(
+        'etherscan', 'https://eth-proxy.internal', api_key='...', expected_chain_id=137
+    )
 ```
+
+> **Custom base URL heuristic:** a `network` string containing `scheme://` is treated
+> as a base URL; anything else resolves through the chain registry as before (aliases
+> never contain `://` — fully backward compatible). URLs are validated in
+> `aiochainscan/base_url.py`: https only (`http` requires `allow_http=True`), no
+> credentials/query/`..` segments, trailing slash normalized away. `expected_chain_id`
+> is validated once before the first request (Network-layer guard → `ChainscanDataError`);
+> `get_chain_info()` probes BlockScout via `POST {base}/api/eth-rpc` `eth_chainId` and
+> resolves Etherscan chains through the keyless `GET /v2/chainlist` registry — both
+> cached 1h in a process-shared `chain:`-namespaced cache (chainlist downloaded once).
+> NodeReal rejects custom base URLs honestly (key rides in the URL path).
 
 > **Polling helpers:** `wait_for_transaction` / `wait_for_verification` / `wait_for_block`
 > are pure composition over existing `Method` calls (no new enum values). They poll with
@@ -371,6 +394,10 @@ BscScan-compatible verified-contract REST on `open-platform.nodereal.io`. Networ
 # Option 1: async context manager (preferred)
 async with ChainscanClient.from_config('blockscout_v2', 'ethereum') as client:
     await client.get_balance('0x...')
+
+# Self-hosted BlockScout: same lifecycle, URL instead of a chain alias
+async with ChainscanClient.from_config('blockscout_v2', 'https://my-blockscout.internal') as client:
+    await client.get_balance('0x...')  # no API key needed, chain_id unknown until probed
 
 # Option 2: manual close
 client = ChainscanClient.from_config('blockscout_v2', 'ethereum')

@@ -548,6 +548,7 @@ class NodeRealScanner(Scanner):
         url_builder: UrlBuilder,
         chain_id: int | None = None,
         network_client: Network | None = None,
+        base_url: str | None = None,
     ) -> None:
         """Initialize the NodeReal scanner.
 
@@ -560,7 +561,15 @@ class NodeRealScanner(Scanner):
                 the Scanner port).
             chain_id: Optional chain id (resolved from the network otherwise).
             network_client: Injected Network transport.
+            base_url: Not supported — NodeReal's endpoints embed the API key
+                in the URL path and are not self-hostable; raises
+                ``ValueError`` when provided.
         """
+        if base_url is not None:
+            raise ValueError(
+                'NodeReal does not support custom base_url: its JSON-RPC endpoints '
+                'embed the API key in the URL path and are not self-hostable'
+            )
         super().__init__(api_key, network, url_builder, chain_id, network_client)
         self.rpc_base_url = self.RPC_BASE_URLS.get(network)
         self.contract_path = self.CONTRACT_PATHS.get(network)

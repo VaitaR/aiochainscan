@@ -18,6 +18,7 @@ import asyncio
 import logging
 import re
 import urllib.parse
+from collections.abc import Awaitable, Callable
 from typing import Any, cast
 
 import httpx
@@ -189,6 +190,7 @@ class Network:
         http2: bool = False,
         max_connections: int | None = None,
         max_response_bytes: int = NETWORK_MAX_RESPONSE_BYTES,
+        first_request_guard: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
         """Initialize Network transport.
 
@@ -201,6 +203,12 @@ class Network:
             http2: Whether to use HTTP/2 (default False for API stability).
             max_connections: Maximum connections in the pool (default 10).
             max_response_bytes: Maximum buffered response size (default 64 MiB).
+            first_request_guard: Optional async hook executed once, before the
+                first admitted request (outside the retry policy). Used for
+                fail-fast configuration checks such as expected-chain-id
+                validation. The guard may itself issue requests through this
+                Network (re-entrancy is detected and allowed); a guard error
+                is remembered and re-raised for every subsequent request.
         """
         if max_response_bytes <= 0:
             raise ValueError('max_response_bytes must be greater than zero')
@@ -258,6 +266,49 @@ class Network:
         self._active_requests_zero.set()
         self._closed = False
         self._close_task: asyncio.Task[None] | None = None
+
+        # First-request guard (fail-fast config checks). Uses its own lock so
+        # the guard can issue requests through this same Network without
+        # deadlocking on _state_lock.
+        self._first_request_guard = first_request_guard
+        self._guard_lock = asyncio.Lock()
+        self._guard_done = False
+        self._guard_error: BaseException | None = None
+        self._guard_owner: asyncio.Task[None] | None = None
+
+    async def _run_first_request_guard(self) -> None:
+        """Run the first-request guard exactly once (see ``__init__`` docs).
+
+        Concurrency: waiters block until the guard completes, then either
+        proceed or re-raise the remembered guard error. Re-entrancy: requests
+        made by the guard itself (same task) skip the hook so the probe can
+        reach the transport.
+        """
+        if self._first_request_guard is None:
+            return
+        if self._guard_done:
+            if self._guard_error is not None:
+                raise self._guard_error
+            return
+        if self._guard_owner is asyncio.current_task():
+            return  # the guard itself is issuing this request
+
+        async with self._guard_lock:
+            if self._guard_done:
+                if self._guard_error is not None:
+                    raise self._guard_error
+                return
+            if self._guard_owner is asyncio.current_task():
+                return
+            self._guard_owner = asyncio.current_task()
+            try:
+                await self._first_request_guard()
+            except BaseException as e:
+                self._guard_error = e
+                raise
+            finally:
+                self._guard_owner = None
+                self._guard_done = True
 
     def _prepare_timeout(self, timeout: float | httpx.Timeout | None) -> httpx.Timeout:
         """Convert timeout parameter to httpx.Timeout."""
@@ -381,6 +432,9 @@ class Network:
         Returns:
             Parsed response data (JSON decoded).
         """
+        # Fail-fast config checks (e.g. expected chain validation) run before
+        # the retry policy so a validation error is never retried.
+        await self._run_first_request_guard()
 
         async def do_request() -> dict[str, Any] | list[Any] | str:
             # Acquire rate limit token before making request
@@ -422,6 +476,9 @@ class Network:
         headers: dict[str, str] | None = None,
     ) -> dict[str, Any] | list[Any] | str:
         """Execute HTTP request with rate limiting and retry logic."""
+        # Fail-fast config checks (e.g. expected chain validation) run before
+        # the retry policy so a validation error is never retried.
+        await self._run_first_request_guard()
 
         async def do_request() -> dict[str, Any] | list[Any] | str:
             # Acquire rate limit token before making request

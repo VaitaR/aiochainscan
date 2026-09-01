@@ -2,6 +2,7 @@
 
 from .account import AccountMixin
 from .blocks import BlockMixin
+from .chain import ChainMixin
 from .contracts import ContractMixin
 from .ens import ENSMixin
 from .logs import LogsMixin
@@ -13,6 +14,7 @@ from .transactions import TransactionMixin
 __all__ = [
     'AccountMixin',
     'BlockMixin',
+    'ChainMixin',
     'ContractMixin',
     'ENSMixin',
     'LogsMixin',

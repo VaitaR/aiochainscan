@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any
 from ..core.endpoint import EndpointSpec
 from ..core.method import Method
 from ..core.url_builder import UrlBuilder
-from ..exceptions import ChainscanClientApiError, ChainscanNetworkError
+from ..exceptions import ChainscanClientError, ChainscanNetworkError
 from . import register_scanner
 from ._etherscan_like import EtherscanLikeScanner
 
@@ -83,6 +83,7 @@ class BlockScoutV1(EtherscanLikeScanner):
         url_builder: UrlBuilder,
         chain_id: int | None = None,
         network_client: 'Network | None' = None,
+        base_url: str | None = None,
     ) -> None:
         """
         Initialize BlockScout scanner with network-specific instance.
@@ -93,8 +94,15 @@ class BlockScoutV1(EtherscanLikeScanner):
             url_builder: UrlBuilder instance
             chain_id: Chain ID (optional, will be resolved from network)
             network_client: Optional Network instance for connection pooling
+            base_url: Custom base URL for self-hosted BlockScout instances
+                (overrides the per-network instance mapping; no API key needed)
         """
-        super().__init__(api_key, network, url_builder, chain_id, network_client)
+        super().__init__(api_key, network, url_builder, chain_id, network_client, base_url)
+
+        # Custom self-hosted instance: no registry mapping to resolve.
+        if base_url is not None:
+            self.instance_domain: str | None = None
+            return
 
         # Get BlockScout instance for this network
         self.instance_domain = self.NETWORK_INSTANCES.get(network)
@@ -141,8 +149,9 @@ class BlockScoutV1(EtherscanLikeScanner):
         spec = self.SPECS[method]
         request_data = self._build_request(spec, **params)
 
-        # Build the complete BlockScout URL
-        base_url = f'https://{self.instance_domain}'
+        # Build the complete BlockScout URL: custom self-hosted root or the
+        # registry-mapped public instance.
+        base_url = self.base_url or f'https://{self.instance_domain}'
         full_url = base_url + spec.path
 
         # Use Network layer for proper connection pooling, rate limiting, and retries
@@ -170,28 +179,29 @@ class BlockScoutV1(EtherscanLikeScanner):
 
             return spec.parse_response(raw_response)
 
-        except ChainscanClientApiError:
-            # Re-raise our own exceptions
-            raise
-        except ChainscanNetworkError:
-            # Re-raise our own exceptions
+        except ChainscanClientError:
+            # Re-raise our own exceptions (transport, API and validation
+            # errors such as the expected-chain guard) unchanged — never
+            # mask them as opaque network failures.
             raise
         except Exception as e:
             # Unexpected errors
             raise ChainscanNetworkError(
-                f'BlockScout unexpected error for {self.instance_domain}: {e}',
+                f'BlockScout unexpected error for {self.base_url or self.instance_domain}: {e}',
                 retryable=False,
             ) from e
 
     def __str__(self) -> str:
         """String representation including instance info."""
-        return f'BlockScout v{self.version} ({self.instance_domain})'
+        root = self.base_url or self.instance_domain
+        return f'BlockScout v{self.version} ({root})'
 
     def __repr__(self) -> str:
         """Detailed string representation."""
         return (
-            f"BlockScoutV1(network='{self.network}', "
-            f"instance='{self.instance_domain}', "
+            f'BlockScoutV1(network={self.network!r}, '
+            f'base_url={self.base_url!r}, '
+            f'instance={self.instance_domain!r}, '
             f'methods={len(self.SPECS)})'
         )
 

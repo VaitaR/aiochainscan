@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit, urlunsplit
 
 from aiochainscan.chain_registry import (
     URL_BUILDER_CURRENCIES,
@@ -16,7 +16,22 @@ class UrlBuilder:
     BASE_URL: str
     API_URL: str
 
-    def __init__(self, api_key: str, api_kind: str, network: str) -> None:
+    def __init__(
+        self, api_key: str, api_kind: str, network: str, *, api_url: str | None = None
+    ) -> None:
+        """Initialize the URL builder.
+
+        Args:
+            api_key: API key used for request signing.
+            api_kind: Registry api kind selecting the URL profile.
+            network: Network name for the profile lookup.
+            api_url: Custom API endpoint override (e.g. an Etherscan v2 proxy
+                or self-hosted instance). When given, it replaces the
+                profile's ``api_url`` and ``base_url``; the profile still
+                supplies auth mode and currency. Expected to be pre-validated
+                by :func:`aiochainscan.base_url.validate_base_url` — trailing
+                slash is stripped defensively.
+        """
         self._API_KEY = api_key
 
         self._api_kind = api_kind.lower().strip()
@@ -25,6 +40,12 @@ class UrlBuilder:
         profile = get_url_builder_profile(self._api_kind, self._network)
         self.BASE_URL = str(profile['base_url'])
         self.API_URL = str(profile['api_url'])
+        if api_url is not None:
+            normalized = api_url.rstrip('/')
+            self.API_URL = normalized
+            # Derive the frontend root from the override (scheme + host).
+            parts = urlsplit(normalized)
+            self.BASE_URL = urlunsplit((parts.scheme, parts.netloc, '', '', ''))
         self._auth_mode = str(profile['auth_mode'])
         self._currency = str(profile['currency'])
         chainid = profile.get('chainid')

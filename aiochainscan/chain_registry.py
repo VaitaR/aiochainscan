@@ -2,9 +2,11 @@
 Chain Registry - unified chain information and provider mappings.
 """
 
+import warnings
 from dataclasses import dataclass
 from typing import Any
 
+from .base_url import is_url_like, validate_base_url
 from .config import get_config_manager
 
 # ---------------------------------------------------------------------------
@@ -515,6 +517,15 @@ SCANNER_API_KINDS: dict[str, str] = {
     'nodereal': 'nodereal',
 }
 
+# Scanners whose transport can be pointed at a custom base URL
+# (self-hosted BlockScout, Etherscan v2 proxy). Everything else rejects
+# URL-shaped networks with an honest error.
+CUSTOM_BASE_URL_SCANNERS: frozenset[str] = frozenset({'etherscan', 'blockscout', 'blockscout_v2'})
+
+# Network label used for custom base_url configurations: the chain is served
+# by a user-provided instance, not by a registry deployment.
+CUSTOM_NETWORK_LABEL = 'custom'
+
 
 @dataclass(frozen=True)
 class ScannerTarget:
@@ -523,8 +534,10 @@ class ScannerTarget:
     Carries exactly the values the scanner stack consumes: ``scanner_name`` /
     ``scanner_version`` select the ``Scanner`` class, ``api_kind`` selects the
     UrlBuilder profile, ``network`` is the canonical network name, ``api_key``
-    the resolved credential (``''`` when the scanner needs none) and
-    ``chain_id`` the numeric chain identifier.
+    the resolved credential (``''`` when the scanner needs none), ``chain_id``
+    the numeric chain identifier (``None`` for custom base URLs without an
+    ``expected_chain_id`` — unknown until the instance is probed) and
+    ``base_url`` an optional custom instance root overriding the registry.
     """
 
     scanner_name: str
@@ -532,7 +545,8 @@ class ScannerTarget:
     network: str
     api_kind: str
     api_key: str
-    chain_id: int
+    chain_id: int | None
+    base_url: str | None = None
 
 
 def resolve_scanner_target(
@@ -540,6 +554,8 @@ def resolve_scanner_target(
     network: str | int,
     api_key: str | None = None,
     scanner_version: str | None = None,
+    expected_chain_id: int | None = None,
+    allow_http: bool = False,
 ) -> ScannerTarget:
     """Resolve ``(scanner, network, api_key)`` into a :class:`ScannerTarget`.
 
@@ -548,24 +564,54 @@ def resolve_scanner_target(
     normalization, UrlBuilder ``api_kind`` mapping and the api-key default
     from the configuration manager (env vars / .env / config files).
 
+    URL-vs-alias heuristic: when ``network`` is a string carrying a
+    ``scheme://`` prefix it is treated as a custom base URL (self-hosted
+    BlockScout instance or an Etherscan v2 proxy) — validated/normalized via
+    :func:`aiochainscan.base_url.validate_base_url` — and the registry
+    network mappings are bypassed. Chain aliases never contain ``://``, so
+    alias resolution is unchanged (backward compatible).
+
     Args:
         scanner: Scanner implementation name (e.g. 'etherscan', 'blockscout',
             'blockscout_v2'). Unknown names raise ``ValueError`` once they
             reach the configuration manager or the scanner registry.
-        network: Chain name/alias or chain ID (e.g. 'ethereum', 'eth', 8453).
+        network: Chain name/alias, chain ID (e.g. 'ethereum', 'eth', 8453),
+            or a base URL (``https://my-blockscout.internal``).
         api_key: Explicit API key. When ``None`` (default), the key is looked
             up via the configuration manager; when provided, credential
             lookup is skipped (existence of the scanner is still enforced).
         scanner_version: Explicit scanner version override. When ``None``,
             defaults to 'v2' for etherscan/blockscout_v2, 'v1' otherwise.
+        expected_chain_id: Chain id the custom instance is expected to serve.
+            Required for URL-shaped networks on etherscan (V2 routes every
+            request by ``chainid``); optional for BlockScout (``None`` keeps
+            the chain unknown until ``get_chain_info()``/``validate_chain()``
+            probes it). Passed through to the client, which validates lazily
+            on the first request.
+        allow_http: Permit cleartext ``http://`` base URLs (default False).
+            Emitting an API key over cleartext additionally raises a
+            ``RuntimeWarning``.
 
     Returns:
         Frozen :class:`ScannerTarget` ready for client construction.
 
     Raises:
         ValueError: Unknown chain/network, unknown scanner, network not
-            supported by the scanner, or missing required API key.
+            supported by the scanner, missing required API key, an invalid
+            base URL, or a scanner that cannot honor a custom base URL.
     """
+    # URL-shaped networks select the custom-instance branch (see heuristic
+    # in the docstring); everything else stays on the registry path.
+    if isinstance(network, str) and is_url_like(network):
+        return _resolve_custom_base_url_target(
+            scanner,
+            network,
+            api_key=api_key,
+            scanner_version=scanner_version,
+            expected_chain_id=expected_chain_id,
+            allow_http=allow_http,
+        )
+
     # Default scanner version if not provided
     if scanner_version is None:
         scanner_version = DEFAULT_SCANNER_VERSIONS.get(scanner, 'v1')
@@ -615,6 +661,71 @@ def resolve_scanner_target(
         api_kind=api_kind,
         api_key=resolved_api_key,
         chain_id=chain_id,
+    )
+
+
+def _resolve_custom_base_url_target(
+    scanner: str,
+    url: str,
+    api_key: str | None,
+    scanner_version: str | None,
+    expected_chain_id: int | None,
+    allow_http: bool,
+) -> ScannerTarget:
+    """Resolve a URL-shaped ``network`` into a custom-instance target.
+
+    The registry is bypassed entirely: BlockScout flavors run keyless against
+    the given instance root, etherscan runs against it as a V2 proxy with the
+    usual API-key requirement plus a mandatory ``expected_chain_id`` (the V2
+    protocol routes every request by ``chainid``).
+    """
+    base_url = validate_base_url(url, allow_http=allow_http)
+
+    if scanner not in CUSTOM_BASE_URL_SCANNERS:
+        supported = ', '.join(sorted(CUSTOM_BASE_URL_SCANNERS))
+        raise ValueError(
+            f'{scanner!r} does not support a custom base_url; supported scanners: {supported}'
+        )
+
+    if scanner_version is None:
+        scanner_version = DEFAULT_SCANNER_VERSIONS.get(scanner, 'v1')
+
+    # 'blockscout_v2' is a public alias for ('blockscout', 'v2')
+    actual_scanner_name = scanner
+    if scanner == 'blockscout_v2':
+        actual_scanner_name = 'blockscout'
+        scanner_version = 'v2'
+
+    resolved_api_key = ''
+    if actual_scanner_name == 'etherscan':
+        if expected_chain_id is None:
+            raise ValueError(
+                'expected_chain_id is required for etherscan with a custom base_url: '
+                'the V2 multichain API routes every request by chainid'
+            )
+        if api_key is not None:
+            resolved_api_key = api_key
+        else:
+            resolved_api_key = get_config_manager().create_client_config('eth', 'main')['api_key']
+
+    if resolved_api_key and base_url.startswith('http://'):
+        warnings.warn(
+            'API key will be sent over cleartext http — credentials are visible on the wire. '
+            'Prefer https or remove the API key from this configuration.',
+            RuntimeWarning,
+            stacklevel=3,
+        )
+
+    return ScannerTarget(
+        scanner_name=actual_scanner_name,
+        scanner_version=scanner_version,
+        network=CUSTOM_NETWORK_LABEL,
+        # Custom instances use the neutral Ethereum profile of each family;
+        # every request URL is built from base_url, not from this mapping.
+        api_kind='eth' if actual_scanner_name == 'etherscan' else 'blockscout_eth',
+        api_key=resolved_api_key,
+        chain_id=expected_chain_id,
+        base_url=base_url,
     )
 
 

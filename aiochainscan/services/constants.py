@@ -19,3 +19,7 @@ CACHE_TTL_TOKEN_BALANCE_SECONDS: int = 10
 
 # ETH price stats
 CACHE_TTL_ETH_PRICE_SECONDS: int = 30
+
+# Chain identity probes (BlockScout eth_chainId) and the Etherscan V2
+# chainlist registry (~60 networks, downloaded at most once per window)
+CACHE_TTL_CHAIN_INFO_SECONDS: int = 3600
