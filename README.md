@@ -196,6 +196,47 @@ Balances, token values, and supplies are returned as strings in base units.
 Convert them using the asset's decimals; do not assume 18 decimals for every
 token.
 
+## Multi-provider failover pool
+
+`ChainscanPool` composes several providers for the same chain into one client.
+Providers are listed in priority order; the pool routes every call to the best
+available one:
+
+```python
+from aiochainscan import ChainscanPool
+
+async with ChainscanPool.from_config(
+    [('etherscan', 'ethereum'), ('blockscout', 'ethereum')]
+) as pool:
+    balance = await pool.get_balance(address)  # served by etherscan
+    pool.last_provider                        # 'etherscan/ethereum'
+```
+
+Routing semantics:
+
+- **Sticky provider.** The provider that last answered keeps serving while it
+  is healthy — no ping-ponging between providers.
+- **Classified failover.** Rate limits, network/5xx errors (after the
+  transport retries are exhausted), missing API keys and plan restrictions
+  ("chain not on the free plan") switch to the next provider with a
+  `ChainscanProviderSwitchWarning`. Bad arguments, not-found answers and data
+  errors are fatal and propagate immediately.
+- **Cooldown.** A failed provider is skipped without a single HTTP attempt for
+  a class-specific window; rate-limit cooldowns honour the advertised
+  `retry_after`. After the cooldown the provider is tried again (half-open).
+- **Capability routing.** A provider that does not declare a method in its
+  SPECS is routed around silently; the pool's coverage is the union of its
+  members.
+- **Pagination binding.** `get_all_*` / `iter_*_streaming` calls are pinned to
+  one provider for their whole run — switching mid-pagination would corrupt
+  opaque cursors. Failover happens only if the very first page fails.
+
+When every provider fails (or is cooling down), `ProviderPoolExhaustedError`
+carries the ordered `(provider, exception)` attempts. Pool state lives in the
+pool object only. The pool exposes the full `ChainscanClient` surface, plus
+`last_provider`, `provider_states()` and `reset_cooldowns()` for
+observability.
+
 ## Contracts and ENS
 
 `get_contract()` fetches a verified ABI and returns a `SmartContract` object for
@@ -283,6 +324,11 @@ try:
 except ChainscanWaitTimeoutError as exc:
     print(exc.what, exc.waited, exc.last_state)  # still pending after the budget
 ```
+
+Pool users get two more failure modes: `ProviderPoolExhaustedError` (every
+provider failed or is cooling — see `exc.attempts` for the per-provider
+causes) and `ChainscanProviderSwitchWarning` (a provider was routed around;
+filter it if the diagnostics are noisy).
 
 ## Documentation
 

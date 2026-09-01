@@ -9,6 +9,7 @@ from ..chain_registry import resolve_chain_id
 from ..core.endpoint import EndpointSpec
 from ..core.method import Method
 from ..core.url_builder import UrlBuilder
+from ..exceptions import MethodNotDeclaredError
 from ..network import Network
 
 
@@ -167,7 +168,7 @@ class Scanner(ABC):
         """
         if method not in self.SPECS:
             available = [str(m) for m in self.SPECS]
-            raise ValueError(
+            raise MethodNotDeclaredError(
                 f'Method {method} not supported by {self.name} v{self.version}. '
                 f'Available: {", ".join(available)}'
             )

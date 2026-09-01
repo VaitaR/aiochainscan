@@ -101,6 +101,15 @@ async with ChainscanClient.from_config('etherscan', 'ethereum') as client:
     client = ChainscanClient.from_config(
         'etherscan', 'https://eth-proxy.internal', api_key='...', expected_chain_id=137
     )
+
+    # ── Multi-provider failover pool ─────────────────────────
+    from aiochainscan import ChainscanPool
+
+    async with ChainscanPool.from_config(
+        [('etherscan', 'ethereum'), ('blockscout', 'ethereum')]  # priority order
+    ) as pool:
+        balance = await pool.get_balance('0x...')   # full ChainscanClient surface
+        pool.last_provider                          # 'etherscan/ethereum' (sticky)
 ```
 
 > **Custom base URL heuristic:** a `network` string containing `scheme://` is treated
@@ -123,9 +132,26 @@ async with ChainscanClient.from_config('etherscan', 'ethereum') as client:
 > **Scanner coverage:** the full surface above is declared by `etherscan` v2.
 > `blockscout` v1 inherits the shared Etherscan-like SPECS but not the token
 > holders; `blockscout_v2` declares a subset — see the Scanner Support Matrix.
-> Convenience methods not declared by the configured scanner raise `ValueError`
-> at call time; the Method ↔ mixin ↔ SPECS mapping is enforced by
+> Convenience methods not declared by the configured scanner raise
+> `MethodNotDeclaredError` (a `ValueError` subclass) at call time; the
+> Method ↔ mixin ↔ SPECS mapping is enforced by
 > `tests/test_method_consistency.py`.
+
+> **Failover pool (`ChainscanPool`, `core/pool.py`):** composes several
+> `(scanner, network)` clients for the SAME chain into one client with the full
+> `ChainscanClient` surface. Failure classification (`classify_failure` /
+> `FailureKind`) splits fallback-eligible errors (rate limit, network/5xx after
+> transport retries, missing key, plan restriction, method-not-declared) from
+> fatal ones (arguments, not-found, data contract) — only the former switch
+> providers. Sticky routing + per-class cooldowns (`max(retry_after, default)`
+> for rate limits) + half-open retry after cooldown; pagination calls
+> (`get_all_*` / `iter_*_streaming`) are PINNED to one provider per call
+> (failover only if the first page fails — cursors are provider-specific).
+> Transparency: `last_provider`, `provider=<label>` stamp in progress
+> callbacks, `ChainscanProviderSwitchWarning` on switches,
+> `ProviderPoolExhaustedError.attempts = [(provider, exception), ...]`.
+> The pool never duplicates retries — it reacts only to exceptions that
+> survived each member client's tenacity `Network`.
 
 ### ⚠️ Key Gotchas
 - `get_transactions()` returns **one page** (~50-100 items). Use `get_all_transactions()` for complete data.
@@ -233,7 +259,8 @@ Every `Method` enum value (33 total) maps to typed convenience methods on `Chain
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                    CLIENT / DOMAIN LAYER                     │
-│  core/client.py (ChainscanClient) | domain/contract.py       │
+│  core/client.py (ChainscanClient) | core/pool.py (Pool)      │
+│  domain/contract.py                                          │
 └─────────────────────────┬───────────────────────────────────┘
                           │
 ┌─────────────────────────▼───────────────────────────────────┐
@@ -306,7 +333,8 @@ Every `Method` enum value (33 total) maps to typed convenience methods on `Chain
 | File | Purpose | Source of Truth For |
 |------|---------|---------------------|
 | `core/client.py` | **ChainscanClient** (~1800 lines) | All API interactions, 30+ convenience methods |
-| `core/method.py` | **Method** enum (30 values) | Supported operations |
+| `core/pool.py` | **ChainscanPool** | Multi-provider failover: `classify_failure`, sticky routing, cooldowns, pinned pagination |
+| `core/method.py` | **Method** enum (33 values) | Supported operations |
 | `domain/contract.py` | **SmartContract** | High-level contract API |
 | `domain/models.py` | **Address**, **TxHash** | Data validation, EIP-55 |
 | `config.py` | **ConfigurationManager** | Scanner configs (lazy-loaded) |
@@ -353,7 +381,7 @@ Every `Method` enum value (33 total) maps to typed convenience methods on `Chain
 BscScan-compatible verified-contract REST on `open-platform.nodereal.io`. Networks:
 `bsc` / `bnb` / `binance` (mainnet) and `bsc-testnet`.
 
-- Declares 22 of the 30 `Method` values; honest `ValueError` for contract
+- Declares 22 of the 33 `Method` values; honest `ValueError` for contract
   verify, gas oracle/estimate, price/supply stats, block reward/countdown.
 - `nr_getTransactionByAddress` serves ≤1000 blocks per request and **silently
   returns empty pages for wider ranges** — `fetch_page` therefore walks the
@@ -480,6 +508,39 @@ txs = await client.get_all_transactions(
 )
 ```
 
+### Multi-Provider Failover Pool
+```python
+from aiochainscan import ChainscanPool
+
+# Priority order: etherscan preferred, blockscout rescues. Providers serve the
+# SAME chain; kwargs (timeout, proxy, rate_limiter, ...) forward to every member.
+async with ChainscanPool.from_config(
+    [('etherscan', 'ethereum'), ('blockscout', 'ethereum')]
+) as pool:
+    await pool.get_balance('0x...')          # routed with failover
+    async for batch in pool.iter_transactions_streaming('0x...'):
+        ...                                   # pinned to ONE provider per call
+
+    pool.last_provider                       # who answered last (sticky)
+    pool.provider_states()                   # {label: available/cooldown/...}
+    pool.reset_cooldowns()                   # operational escape hatch
+```
+
+Semantics:
+- **Sticky**: last successful provider keeps serving (no yo-yo when a
+  higher-priority provider leaves cooldown).
+- **Cooldown**: rate limit → `max(retry_after, 30s)`; transient → 10s;
+  auth → 600s; plan restriction → 3600s (all constructor-tunable). Cooling
+  providers are skipped without an HTTP attempt; after expiry they get one
+  half-open trial (failure re-enters cooldown).
+- **Pagination pinning**: `get_all_*` / `iter_*` / `iter_*_streaming` bind to
+  one provider per call; only a first-page failure may restart on the next
+  provider (cursor state is still empty then). Mid-pagination errors
+  propagate but still cool the provider.
+- **from_config** excludes unconstructible providers with a warning (missing
+  key etc.); raises only when NO provider could be built.
+- All state is per-pool-instance — nothing global.
+
 ### Error Handling
 ```python
 from aiochainscan.exceptions import (
@@ -487,6 +548,9 @@ from aiochainscan.exceptions import (
     ChainscanNetworkError,        # Retry (connection issues)
     PaginationDataLossError,      # Whale block - manual handling needed
     ChainscanDataError,           # Data contract violation
+    MethodNotDeclaredError,       # ValueError subclass: method not in SPECS
+    ProviderPoolExhaustedError,   # Pool: every provider failed (.attempts)
+    ChainscanProviderSwitchWarning,  # Pool: routed away from a provider
 )
 ```
 

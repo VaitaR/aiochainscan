@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any
 from ..core.endpoint import EndpointSpec
 from ..core.method import Method
 from ..core.url_builder import UrlBuilder
-from ..exceptions import ChainscanClientError, ChainscanNetworkError
+from ..exceptions import ChainscanClientError, ChainscanNetworkError, MethodNotDeclaredError
 from . import register_scanner
 from ._etherscan_like import EtherscanLikeScanner
 
@@ -158,7 +158,7 @@ class BlockScoutV1(EtherscanLikeScanner):
 
         if method not in self.SPECS:
             available = [str(m) for m in self.SPECS]
-            raise ValueError(
+            raise MethodNotDeclaredError(
                 f'Method {method} not supported by {self.name} v{self.version}. '
                 f'Available: {", ".join(available)}'
             )

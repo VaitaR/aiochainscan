@@ -22,7 +22,7 @@ from ..core.endpoint import EndpointSpec
 from ..core.method import Method
 from ..core.url_builder import UrlBuilder
 from ..crypto import to_checksum_address
-from ..exceptions import ChainscanClientError, ChainscanNetworkError
+from ..exceptions import ChainscanClientError, ChainscanNetworkError, MethodNotDeclaredError
 from . import register_scanner
 from .base import Scanner
 
@@ -463,7 +463,7 @@ class BlockScoutV2Scanner(Scanner):
         """
         if method not in self.SPECS:
             available = [str(m) for m in self.SPECS]
-            raise ValueError(
+            raise MethodNotDeclaredError(
                 f'Method {method} not supported by {self.name} v{self.version}. '
                 f'Available: {", ".join(available)}'
             )
@@ -518,7 +518,7 @@ class BlockScoutV2Scanner(Scanner):
         """
         if method not in self.SPECS:
             available = [str(m) for m in self.SPECS]
-            raise ValueError(
+            raise MethodNotDeclaredError(
                 f'Method {method} not supported by {self.name} v{self.version}. '
                 f'Available: {", ".join(available)}'
             )
