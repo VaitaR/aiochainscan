@@ -18,11 +18,13 @@ class ENSMixin:
     @property
     def ens(self) -> ENSResolver:
         if self._ens_resolver is None:
+            from ...adapters.memory_cache import InMemoryCache
             from ...services.ens_resolver import ENSResolver
 
             self._ens_resolver = ENSResolver(
                 cast(Any, self),
                 address_info_scanner=self._ens_address_info_scanner(),
+                cache=InMemoryCache(max_size=5000),
             )
         return self._ens_resolver
 

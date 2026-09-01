@@ -1,7 +1,7 @@
 """Deep pagination engine for aiochainscan.
 
-ONE module owning every paginated loop in the codebase. Built on the
-``Scanner.fetch_page`` seam (the cursor contract from ``scanners/base.py``):
+ONE module owning every paginated loop in the codebase. Built on a structural
+page-provider seam:
 
 - a page fetch returns ``(items, next_cursor)``;
 - ``next_cursor is None`` terminates pagination;
@@ -27,13 +27,12 @@ from __future__ import annotations
 
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
-from ..core.method import Method
 from ..core.types import JSONDict
+from ..domain.method import Method
 from ..exceptions import ChainscanDataError
 from ..ports.progress import ProgressCallback
-from ..scanners.base import Scanner
 
 __all__ = [
     'Cursor',
@@ -56,6 +55,15 @@ type ItemDecode = Callable[[JSONDict], JSONDict]
 """Per-item hook applied when flattening batches (e.g. ABI decoding)."""
 
 
+@runtime_checkable
+class PageProvider(Protocol):
+    """Structural port for fetching one page and its opaque next cursor."""
+
+    async def fetch_page(
+        self, method: Method, params: dict[str, Any]
+    ) -> tuple[list[JSONDict], Cursor]: ...
+
+
 def normalize_items(response: Any) -> list[JSONDict]:
     """Coerce a parsed API response into a list of item dicts.
 
@@ -76,15 +84,14 @@ def normalize_items(response: Any) -> list[JSONDict]:
     return []
 
 
-def page_fetcher(scanner: Scanner, method: Method) -> PageFetch:
-    """Bind ``scanner`` and ``method`` into a :data:`PageFetch`.
+def page_fetcher(provider: PageProvider, method: Method) -> PageFetch:
+    """Bind a page provider and method into a :data:`PageFetch`.
 
-    The only sanctioned bridge between the engine and the scanner port: every
-    page fetch flows through ``Scanner.fetch_page``, which routes through the
-    scanner's injected Network client (so retries apply per page fetch).
+    Every page fetch flows through the provider's injected Network client (so
+    retries apply per page fetch).
 
     Args:
-        scanner: Scanner instance carrying the cursor logic.
+        provider: Object satisfying the local page-provider protocol.
         method: Logical method to execute for every page.
 
     Returns:
@@ -93,7 +100,7 @@ def page_fetcher(scanner: Scanner, method: Method) -> PageFetch:
     """
 
     async def fetch(params: dict[str, Any]) -> tuple[list[JSONDict], Cursor]:
-        return await scanner.fetch_page(method, params)
+        return await provider.fetch_page(method, params)
 
     return fetch
 

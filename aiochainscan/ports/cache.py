@@ -18,3 +18,6 @@ class Cache(Protocol):
 
     async def delete(self, key: str) -> None:
         """Remove key from cache if present."""
+
+    async def clear(self) -> None:
+        """Remove all entries from the cache."""

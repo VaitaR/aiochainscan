@@ -8,14 +8,26 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncIterator
-from typing import TYPE_CHECKING, Any
+from typing import Any, Protocol
 
-if TYPE_CHECKING:
-    from ..core.client import ChainscanClient
-
-from ..core.method import Method
 from ..decode import decode_log_data, decode_transaction_input
 from ..exceptions import ChainscanClientError
+from .method import Method
+
+
+class ContractClient(Protocol):
+    """Client capabilities required by :class:`SmartContract`."""
+
+    async def call(self, method: Method, **params: Any) -> Any: ...
+
+    def iter_transactions(
+        self,
+        address: str,
+        abi: list[dict[str, Any]] | None = None,
+        from_block: int = 0,
+        to_block: int | str | None = 'latest',
+        batch_size: int = 1000,
+    ) -> AsyncIterator[dict[str, Any]]: ...
 
 
 class SmartContract:
@@ -47,7 +59,7 @@ class SmartContract:
         self,
         address: str,
         abi: list[dict[str, Any]],
-        client: ChainscanClient,
+        client: ContractClient,
         is_proxy: bool = False,
         implementation_address: str | None = None,
     ):
@@ -105,7 +117,7 @@ class SmartContract:
     async def from_address(
         cls,
         address: str,
-        client: ChainscanClient,
+        client: ContractClient,
     ) -> SmartContract:
         """
         Create a SmartContract instance by fetching ABI and resolving proxies.
