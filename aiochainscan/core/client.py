@@ -361,6 +361,32 @@ class ChainscanClient(
         """
         return await self._scanner.call(method, **params)
 
+    async def fetch_page(
+        self, method: Method, params: dict[str, Any]
+    ) -> tuple[list[JSONDict], dict[str, Any] | None]:
+        """Fetch a single page via the scanner's public cursor seam.
+
+        Thin passthrough to :meth:`aiochainscan.scanners.base.Scanner.fetch_page`
+        so cursor-driven consumers (e.g. the MCP tools) never reach into the
+        client's privates: returns ``(items, next_cursor)`` where a non-``None``
+        cursor merges into ``params`` (``{**params, **cursor}``) for the next
+        page and ``None`` terminates pagination.
+
+        Args:
+            method: Logical method to execute for every page.
+            params: Request parameters, including ``page``/``offset`` for
+                page-numbered APIs; merge the previous cursor on top for
+                subsequent pages.
+
+        Returns:
+            Tuple of ``(items, next_cursor)``.
+
+        Raises:
+            ValueError: If the method is not supported by the scanner.
+            Various network/API errors from the underlying transport.
+        """
+        return await self._scanner.fetch_page(method, params)
+
     def supports_method(self, method: Method) -> bool:
         """
         Check if the current scanner supports a logical method.
