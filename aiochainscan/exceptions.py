@@ -147,6 +147,35 @@ class ChainscanDataError(ChainscanClientError):
         return self.message
 
 
+class ChainscanWaitTimeoutError(ChainscanClientError, TimeoutError):
+    """A ``wait_for_*`` polling helper exceeded its timeout before reaching a final state.
+
+    Raised by :meth:`~aiochainscan.core.client.ChainscanClient.wait_for_transaction`,
+    ``wait_for_verification`` and ``wait_for_block`` when the awaited condition
+    (mined transaction, terminal verification verdict, reached block) did not
+    materialize within the requested budget. Subclasses the builtin
+    ``TimeoutError`` so generic wait/timeout handling catches it too.
+
+    Attributes:
+        what: Human-readable description of the awaited condition.
+        waited: Seconds actually spent waiting before giving up.
+        last_state: Last non-final observation for diagnosis — the pending
+            API payload or the transient exception returned by the probe.
+    """
+
+    def __init__(self, what: str, waited: float, last_state: Any = None) -> None:
+        self.what = what
+        self.waited = waited
+        self.last_state = last_state
+        super().__init__(str(self))
+
+    def __str__(self) -> str:
+        return (
+            f'Timed out after {self.waited:.1f}s waiting for {self.what}. '
+            f'Last state: {self.last_state!r}'
+        )
+
+
 class PaginationDataLossError(ChainscanClientError):
     """Raised when a single block contains more transactions than the API's pagination limit.
 

@@ -105,6 +105,11 @@ async with ChainscanClient.from_config('etherscan', 'ethereum') as client:
     transaction = await client.get_transaction(tx_hash)
     receipt_status = await client.get_transaction_status(tx_hash)
 
+    # Polling helpers (wait until final; timeout/poll_interval are tunable)
+    final_status = await client.wait_for_transaction(tx_hash, timeout=120, poll_interval=10)
+    verdict = await client.wait_for_verification(guid)
+    reached = await client.wait_for_block(20_000_000)
+
     # Contracts and logs
     abi = await client.get_contract_abi(contract_address)
     source = await client.get_contract_source(contract_address)
@@ -186,6 +191,7 @@ from aiochainscan import (
     ChainscanClientApiError,
     ChainscanNetworkError,
     ChainscanRateLimitError,
+    ChainscanWaitTimeoutError,
     PaginationDataLossError,
 )
 
@@ -199,6 +205,11 @@ except PaginationDataLossError:
     raise  # The provider could not return a complete range safely.
 except ChainscanClientApiError:
     raise  # The explorer rejected the request or returned an API error.
+
+try:
+    final_status = await client.wait_for_transaction(tx_hash, timeout=120)
+except ChainscanWaitTimeoutError as exc:
+    print(exc.what, exc.waited, exc.last_state)  # still pending after the budget
 ```
 
 ## Documentation

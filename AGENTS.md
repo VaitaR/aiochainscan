@@ -34,17 +34,20 @@ async with ChainscanClient.from_config('etherscan', 'ethereum') as client:
     tx     = await client.get_transaction('0xHASH...')            # by hash
     status = await client.get_transaction_status('0xHASH...')     # receipt status
     check  = await client.check_transaction_status('0xHASH...')   # execution status
+    final  = await client.wait_for_transaction('0xHASH...')       # poll until mined (120s/10s)
 
     # ── Blocks ───────────────────────────────────────────────
     block     = await client.get_block(12345678)                  # by number
     reward    = await client.get_block_reward(12345678)           # mining reward
     countdown = await client.get_block_countdown(99999999)        # ETA to block
     by_ts     = await client.get_block_by_timestamp(1609459200)   # nearest block
+    reached   = await client.wait_for_block(20_000_000)           # poll until reached (600s/10s)
 
     # ── Contracts ────────────────────────────────────────────
     abi     = await client.get_contract_abi('0x...')              # JSON ABI
     source  = await client.get_contract_source('0x...')           # verified source
     created = await client.get_contract_creation(['0x...'])       # creator + tx
+    verdict = await client.wait_for_verification(guid)            # poll Pass/Fail (300s/10s)
 
     # ── Tokens ───────────────────────────────────────────────
     bal     = await client.get_token_balance('0xWALLET', '0xTOKEN')  # raw units
@@ -81,6 +84,12 @@ async with ChainscanClient.from_config('etherscan', 'ethereum') as client:
     df = await client.get_transactions_df('0x...')                 # Polars (ALL txs!)
     df = await client.get_token_portfolio_df('0x...')              # Polars
 ```
+
+> **Polling helpers:** `wait_for_transaction` / `wait_for_verification` / `wait_for_block`
+> are pure composition over existing `Method` calls (no new enum values). They poll with
+> `asyncio.sleep`, use a loop-clock deadline (`ChainscanWaitTimeoutError(what, waited, last_state)`
+> on expiry), return pending-vs-final states (revert / `Fail` verdicts are returned, not raised)
+> and require only the methods they build on.
 
 > **Scanner coverage:** the full surface above is declared by the Etherscan-like
 > scanners (`etherscan` v2, `blockscout` v1). `blockscout_v2` declares a subset —
