@@ -49,6 +49,7 @@ from ..exceptions import (
     ChainscanClientProxyError,
     ChainscanNetworkError,
     ChainscanRateLimitError,
+    MethodNotDeclaredError,
 )
 from . import register_scanner
 from .base import Scanner
@@ -751,7 +752,7 @@ class NodeRealScanner(Scanner):
         """Execute a logical method against NodeReal (JSON-RPC or contract REST)."""
         if method not in self.SPECS:
             available = [str(m) for m in self.SPECS]
-            raise ValueError(
+            raise MethodNotDeclaredError(
                 f'Method {method} not supported by {self.name} v{self.version}. '
                 f'Available: {", ".join(available)}'
             )
@@ -825,7 +826,7 @@ class NodeRealScanner(Scanner):
         """
         if method not in self.SPECS:
             available = [str(m) for m in self.SPECS]
-            raise ValueError(
+            raise MethodNotDeclaredError(
                 f'Method {method} not supported by {self.name} v{self.version}. '
                 f'Available: {", ".join(available)}'
             )
