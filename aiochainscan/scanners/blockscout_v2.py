@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 from ..core.endpoint import EndpointSpec
 from ..core.method import Method
 from ..core.url_builder import UrlBuilder
+from ..crypto import to_checksum_address
 from ..exceptions import ChainscanClientApiError, ChainscanNetworkError
 from . import register_scanner
 from .base import Scanner
@@ -103,6 +104,69 @@ def _parse_contract_abi(response: dict[str, Any]) -> list[dict[str, Any]] | None
 def _parse_raw(response: dict[str, Any]) -> dict[str, Any]:
     """Return raw response without transformation."""
     return response
+
+
+def _checksummed_holder_address(value: Any) -> Any:
+    """Checksum a holder address, passing through values EIP-55 cannot digest."""
+    if isinstance(value, str):
+        try:
+            return to_checksum_address(value)
+        except ValueError:
+            return value
+    return value
+
+
+def _normalize_token_holder_entry(entry: dict[str, Any]) -> dict[str, Any]:
+    """Flatten one ``/tokens/{address}/holders`` entry to the unified shape.
+
+    BlockScout nests the holder address inside an ``address`` object (with
+    ``hash`` plus metadata); the unified item keeps only the checksummed
+    ``address`` and the raw-unit ``value`` string (Wei-like: never Int64).
+    """
+    holder = entry.get('address')
+    address = holder.get('hash') if isinstance(holder, dict) else holder
+    return {
+        'address': _checksummed_holder_address(address),
+        'value': str(entry.get('value') or '0'),
+    }
+
+
+def _parse_token_holders(response: dict[str, Any]) -> list[dict[str, Any]]:
+    """
+    Extract token holders from the V2 holders response.
+
+    Response format:
+    {
+        "items": [
+            {"address": {"hash": "0x...", ...}, "token_id": null, "value": "123"},
+            ...
+        ],
+        "next_page_params": {...}
+    }
+    """
+    items = response.get('items')
+    return [_normalize_token_holder_entry(entry) for entry in items] if items else []
+
+
+def _parse_token_holder_count(response: dict[str, Any]) -> int:
+    """
+    Extract the holder count from the V2 token info response.
+
+    Response format (abridged):
+    {
+        "address_hash": "0x...",
+        "holders_count": 30506,     # current field name
+        "holders": 30506,           # legacy field name on older instances
+        ...
+    }
+    """
+    count = response.get('holders_count')
+    if count is None:
+        count = response.get('holders')
+    try:
+        return int(count) if count is not None else 0
+    except (TypeError, ValueError):
+        return 0
 
 
 @register_scanner
@@ -214,6 +278,28 @@ class BlockScoutV2Scanner(Scanner):
             query={},
             param_map={'block_number': 'block_number'},
             parser=_parse_raw,
+            requires_api_key=False,
+        ),
+        Method.TOKEN_HOLDERS: EndpointSpec(
+            http_method='GET',
+            path='/api/v2/tokens/{contract_address}/holders',
+            query={},
+            param_map={
+                'contract_address': 'contract_address',
+                # BlockScout returns these fields in next_page_params.
+                'value': 'value',
+                'address_hash': 'address_hash',
+                'items_count': 'items_count',
+            },
+            parser=_parse_token_holders,
+            requires_api_key=False,
+        ),
+        Method.TOKEN_HOLDER_COUNT: EndpointSpec(
+            http_method='GET',
+            path='/api/v2/tokens/{contract_address}',
+            query={},
+            param_map={'contract_address': 'contract_address'},
+            parser=_parse_token_holder_count,
             requires_api_key=False,
         ),
     }
@@ -381,6 +467,10 @@ class BlockScoutV2Scanner(Scanner):
 
         if isinstance(raw_response, dict):
             items = raw_response.get('items', [])
+            # TOKEN_HOLDERS items are flattened to the unified holder shape so
+            # the pagination path (streaming/get_all) matches ``call()`` output.
+            if method is Method.TOKEN_HOLDERS:
+                items = [_normalize_token_holder_entry(entry) for entry in items]
             next_cursor = raw_response.get('next_page_params')
         elif isinstance(raw_response, list):
             # Fallback for list responses

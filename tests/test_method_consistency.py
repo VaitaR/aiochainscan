@@ -101,6 +101,10 @@ INVOCATIONS: dict[str, tuple[tuple[Any, ...], dict[str, Any]]] = {
     'get_token_balance': ((CHECKSUM_ADDRESS, CONTRACT_ADDRESS), {}),
     'get_token_info': ((CONTRACT_ADDRESS,), {}),
     'get_token_supply': ((CONTRACT_ADDRESS,), {}),
+    'get_token_holders': ((CONTRACT_ADDRESS,), {'page': 1, 'offset': 100}),
+    'get_all_token_holders': ((CONTRACT_ADDRESS,), {}),
+    'get_top_token_holders': ((CONTRACT_ADDRESS,), {'limit': 10}),
+    'get_token_holder_count': ((CONTRACT_ADDRESS,), {}),
     # Stats
     'get_eth_price': ((), {}),
     'get_gas_oracle': ((), {}),
@@ -184,6 +188,7 @@ class _RecordingClient(
     iter_token_transfers_streaming = _empty_stream
     iter_internal_transactions_streaming = _empty_stream
     iter_logs_streaming = _empty_stream
+    iter_token_holders_streaming = _empty_stream
 
 
 def _public_convenience_methods(mixin: type) -> list[str]:

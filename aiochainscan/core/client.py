@@ -631,6 +631,45 @@ class ChainscanClient(
         ):
             yield batch
 
+    async def iter_token_holders_streaming(
+        self,
+        contract_address: str,
+        batch_size: int = 1000,
+        on_progress: 'ProgressCallback | None' = None,
+    ) -> AsyncIterator[list[dict[str, Any]]]:
+        """
+        Stream token holders in batches for maximum memory efficiency.
+
+        Yields unified ``{'address': EIP-55 str, 'value': str}`` items (the
+        ``value`` is the raw-unit, Wei-like quantity — never Int64). Etherscan
+        walks page/offset; BlockScout V2 follows ``next_page_params`` cursors
+        (its ``page``/``offset`` request params are ignored by the scanner).
+
+        Args:
+            contract_address: ERC-20 token contract address
+            batch_size: Number of holders per batch (default: 1000; Etherscan
+                caps a page at 1000)
+            on_progress: Optional callback for progress updates
+
+        Yields:
+            Batches of token holder dictionaries
+        """
+        from ..domain.models import Address
+
+        validate_batch_size(batch_size)
+        params: dict[str, Any] = {
+            'contract_address': str(Address(contract_address)),
+            'page': 1,
+            'offset': batch_size,
+        }
+        async for batch in iter_pages(
+            page_fetcher(self._scanner, Method.TOKEN_HOLDERS),
+            params,
+            on_progress=on_progress,
+            operation='token_holders',
+        ):
+            yield batch
+
     @classmethod
     def get_available_scanners(cls) -> dict[tuple[str, str], type[Scanner]]:
         """

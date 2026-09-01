@@ -36,6 +36,9 @@ class Method(Enum):
     TOKEN_BALANCE = auto()
     TOKEN_SUPPLY = auto()
     TOKEN_INFO = auto()
+    TOKEN_HOLDERS = auto()
+    TOKEN_TOP_HOLDERS = auto()
+    TOKEN_HOLDER_COUNT = auto()
 
     # Token/NFT Portfolio
     ACCOUNT_TOKEN_PORTFOLIO = auto()

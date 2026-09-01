@@ -53,6 +53,10 @@ async with ChainscanClient.from_config('etherscan', 'ethereum') as client:
     bal     = await client.get_token_balance('0xWALLET', '0xTOKEN')  # raw units
     supply  = await client.get_token_supply('0xTOKEN')               # total supply
     info    = await client.get_token_info('0xTOKEN')                 # name/symbol/decimals
+    holders = await client.get_token_holders('0xTOKEN')              # single page
+    all_hld = await client.get_all_token_holders('0xTOKEN')          # ALL (streaming aggregation → list)
+    top_hld = await client.get_top_token_holders('0xTOKEN', limit=100)  # top-N by balance
+    count   = await client.get_token_holder_count('0xTOKEN')         # int
 
     # ── Gas & Stats ──────────────────────────────────────────
     price   = await client.get_eth_price()                        # USD/BTC
@@ -79,6 +83,8 @@ async with ChainscanClient.from_config('etherscan', 'ethereum') as client:
     # ── Streaming (large datasets, constant ~10MB RAM) ───────
     async for batch in client.iter_transactions_streaming('0x...', batch_size=1000):
         process(batch)
+    async for batch in client.iter_token_holders_streaming('0xTOKEN', batch_size=1000):
+        process(batch)
 
     # ── DataFrame export ─────────────────────────────────────
     df = await client.get_transactions_df('0x...')                 # Polars (ALL txs!)
@@ -91,14 +97,16 @@ async with ChainscanClient.from_config('etherscan', 'ethereum') as client:
 > on expiry), return pending-vs-final states (revert / `Fail` verdicts are returned, not raised)
 > and require only the methods they build on.
 
-> **Scanner coverage:** the full surface above is declared by the Etherscan-like
-> scanners (`etherscan` v2, `blockscout` v1). `blockscout_v2` declares a subset —
-> see the Scanner Support Matrix. Convenience methods not declared by the
-> configured scanner raise `ValueError` at call time; the Method ↔ mixin ↔
-> SPECS mapping is enforced by `tests/test_method_consistency.py`.
+> **Scanner coverage:** the full surface above is declared by `etherscan` v2.
+> `blockscout` v1 inherits the shared Etherscan-like SPECS but not the token
+> holders; `blockscout_v2` declares a subset — see the Scanner Support Matrix.
+> Convenience methods not declared by the configured scanner raise `ValueError`
+> at call time; the Method ↔ mixin ↔ SPECS mapping is enforced by
+> `tests/test_method_consistency.py`.
 
 ### ⚠️ Key Gotchas
 - `get_transactions()` returns **one page** (~50-100 items). Use `get_all_transactions()` for complete data.
+- `get_token_holders()` returns **one page**. Use `get_all_token_holders()` / `iter_token_holders_streaming()` for complete data.
 - `get_logs()` returns **≤1000 logs**. Use `get_all_logs()` for complete data.
 - `get_all_*()` now uses **streaming aggregation** under the hood; for very large datasets prefer `iter_*_streaming()`.
 - `get_transactions_df()` auto-paginates (uses `iter_transactions` internally).
@@ -148,7 +156,7 @@ Re-enable when the budget allows: `gh workflow enable ci.yml test-install.yml wh
 
 ## Complete Method Reference
 
-Every `Method` enum value (30 total) maps to typed convenience methods on `ChainscanClient`:
+Every `Method` enum value (33 total) maps to typed convenience methods on `ChainscanClient`:
 
 | Method Enum | Convenience Method(s) | Returns |
 |---|---|---|
@@ -175,6 +183,9 @@ Every `Method` enum value (30 total) maps to typed convenience methods on `Chain
 | `TOKEN_BALANCE` | `get_token_balance(address, contract_address)` | `str` |
 | `TOKEN_SUPPLY` | `get_token_supply(contract_address)` | `str` |
 | `TOKEN_INFO` | `get_token_info(contract_address)` | `dict` |
+| `TOKEN_HOLDERS` | `get_token_holders(contract_address, page, offset)` / `get_all_token_holders(contract_address)` | `list[dict]` (`{'address', 'value'}`) |
+| `TOKEN_TOP_HOLDERS` | `get_top_token_holders(contract_address, limit)` | `list[dict]` (Etherscan PRO only) |
+| `TOKEN_HOLDER_COUNT` | `get_token_holder_count(contract_address)` | `int` |
 | `GAS_ESTIMATE` | `get_gas_estimate(gas_price)` | `str` |
 | `GAS_ORACLE` | `get_gas_oracle()` | `dict` |
 | `EVENT_LOGS` | `get_logs(address, ...)` / `get_all_logs(address, ...)` | `list[dict]` |
@@ -301,10 +312,15 @@ Every `Method` enum value (30 total) maps to typed convenience methods on `Chain
 
 | Scanner | Version | Free? | Key Env Var | Method coverage |
 |---------|---------|-------|-------------|-----------------|
-| BlockScout | v1 | ✅ Yes | - | Full Etherscan-like surface (inherits shared SPECS) |
-| BlockScout | **v2** | ✅ Yes | - | Subset: `ACCOUNT_BALANCE`, `ACCOUNT_TRANSACTIONS`, `ACCOUNT_TOKEN_PORTFOLIO`, `CONTRACT_ABI`, `BLOCK_BY_NUMBER` |
-| Etherscan | v2 | ❌ No | `ETHERSCAN_KEY` | Full Etherscan-like surface (all 30 `Method` values) |
+| BlockScout | v1 | ✅ Yes | - | Etherscan-like surface minus token holders (its Etherscan-compat layer answers "Unknown action" for the token module holder actions) |
+| BlockScout | **v2** | ✅ Yes | - | Subset: `ACCOUNT_BALANCE`, `ACCOUNT_TRANSACTIONS`, `ACCOUNT_TOKEN_PORTFOLIO`, `CONTRACT_ABI`, `BLOCK_BY_NUMBER`, `TOKEN_HOLDERS` (native `/api/v2/tokens/{addr}/holders`), `TOKEN_HOLDER_COUNT` (token info `holders_count`) |
+| Etherscan | v2 | ❌ No | `ETHERSCAN_KEY` | Full Etherscan-like surface + token holders (`tokenholderlist`/`topholders`/`tokenholdercount` are PRO endpoints) — all 33 `Method` values |
 | NodeReal | v1 | Free tier | `NODEREAL_KEY` | BSC-only subset (22 `Method` values) incl. the only `CONTRACT_ABI`/`CONTRACT_SOURCE`/`ACCOUNT_INTERNAL_TXS` alternative for keyless-free BSC analytics |
+
+> **Token holders notes:** the unified item shape is `{'address': EIP-55 str, 'value': str}`
+> (raw-unit quantity — never Int64). `TOKEN_TOP_HOLDERS` is Etherscan-only: BlockScout V2's
+> holders endpoint does not guarantee top-ordering, and NodeReal has no token-holders API
+> (`nr_getTokenHoldings` is *address* holdings) — both raise honest `ValueError`.
 
 ### NodeReal (MegaNode / BSCTrace backend) — BSC analytics
 
@@ -379,6 +395,7 @@ all_txs = await client.get_all_transactions(address)
 all_logs = await client.get_all_logs(address, from_block=0, topic0='0xddf252...')
 all_transfers = await client.get_all_token_transfers(address)
 all_internal = await client.get_all_internal_transactions(address)
+all_holders = await client.get_all_token_holders(token_contract)
 ```
 
 ### Progress Callbacks
@@ -406,7 +423,7 @@ from aiochainscan.exceptions import (
 ## Testing
 
 ```bash
-# Run all tests (520+ tests)
+# Run all tests (700+ tests)
 pytest tests/ -q
 
 # Type checking (strict)
