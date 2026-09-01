@@ -15,10 +15,51 @@ from ..exceptions import ChainscanClientError
 from .method import Method
 
 
+def _string_field(value: Any) -> str:
+    """Read a string field without changing the source payload."""
+    return value if isinstance(value, str) else ''
+
+
+def _address_field(value: Any) -> str:
+    """Read an explorer address represented as a scalar or nested object."""
+    if isinstance(value, dict):
+        for key in ('hash', 'address_hash', 'address'):
+            nested = value.get(key)
+            if isinstance(nested, str):
+                return nested
+        return ''
+    return _string_field(value)
+
+
+def _int_field(value: Any) -> int:
+    """Read decimal/hex explorer scalars used by decoded domain objects."""
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value:
+        return int(value, 16) if value.startswith(('0x', '0X')) else int(value)
+    return 0
+
+
+def _dict_field(value: Any) -> dict[str, Any]:
+    """Return decoded arguments when the client supplied a mapping."""
+    return value if isinstance(value, dict) else {}
+
+
 class ContractClient(Protocol):
     """Client capabilities required by :class:`SmartContract`."""
 
     async def call(self, method: Method, **params: Any) -> Any: ...
+
+    def iter_logs(
+        self,
+        address: str,
+        abi: list[dict[str, Any]] | None = None,
+        from_block: int = 0,
+        to_block: int | str | None = 'latest',
+        batch_size: int = 1000,
+        topics: list[str] | None = None,
+        topic_operators: list[str] | None = None,
+    ) -> AsyncIterator[dict[str, Any]]: ...
 
     def iter_transactions(
         self,
@@ -272,14 +313,7 @@ class SmartContract:
                 print(f"Event: {event.name}")
             ```
         """
-        # Build params for EVENT_LOGS method
-        params: dict[str, Any] = {
-            'address': self.address,
-            'fromBlock': from_block,
-            'toBlock': to_block,
-        }
-
-        # Add event topic filter if specified
+        topics: list[str] | None = None
         if event_name:
             event_abi = self.get_event_abi(event_name)
             if not event_abi:
@@ -291,44 +325,45 @@ class SmartContract:
             inputs = event_abi.get('inputs', [])
             input_types = ','.join(canonical_abi_type(param) for param in inputs)
             signature_text = f'{event_name}({input_types})'
-            topic0 = '0x' + keccak_hex(signature_text)
-            params['topic0'] = topic0
+            topics = ['0x' + keccak_hex(signature_text)]
 
-        # Fetch logs
-        try:
-            logs = await self.client.call(Method.EVENT_LOGS, **params)
-        except Exception as e:
-            raise ValueError(f'Failed to fetch event logs: {e}') from e
-
-        if not isinstance(logs, list):
-            logs = []
-
-        decoded_logs = await asyncio.to_thread(
-            lambda: [decode_log_data(log, self.abi) for log in logs]
-        )
-
-        # Decode and yield events
+        # Traverse the client's paginated iterator. Passing the ABI lets the
+        # client decode each page while retaining each original log mapping.
         count = 0
-        for log, decoded_log in zip(logs, decoded_logs, strict=False):
+        async for log in self.client.iter_logs(
+            self.address,
+            abi=self.abi,
+            from_block=from_block,
+            to_block=to_block,
+            batch_size=1000,
+            topics=topics,
+        ):
             if limit is not None and count >= limit:
                 break
 
-            # Only yield if successfully decoded
-            if 'decoded_data' in decoded_log:
-                decoded_data = decoded_log['decoded_data']
+            decoded_data = log.get('decoded_data')
+            if not isinstance(decoded_data, dict):
+                # Structural clients may return raw logs even when they
+                # expose the iterator. Do not fall back to a single page.
+                decoded_data = (await asyncio.to_thread(decode_log_data, dict(log), self.abi)).get(
+                    'decoded_data'
+                )
+
+            if isinstance(decoded_data, dict):
+                decoded_event_name = decoded_data.get('event') or log.get('decoded_event', '')
+                if event_name is not None and decoded_event_name != event_name:
+                    continue
                 event = DecodedEvent(
-                    name=decoded_data.get('event', ''),
+                    name=str(decoded_event_name),
                     args={k: v for k, v in decoded_data.items() if k != 'event'},
-                    address=log.get('address', ''),
-                    block_number=int(log.get('blockNumber', 0), 16)
-                    if isinstance(log.get('blockNumber'), str)
-                    and log.get('blockNumber', '').startswith('0x')
-                    else int(log.get('blockNumber', 0)),
-                    tx_hash=log.get('transactionHash', ''),
-                    log_index=int(log.get('logIndex', 0), 16)
-                    if isinstance(log.get('logIndex'), str)
-                    and log.get('logIndex', '').startswith('0x')
-                    else int(log.get('logIndex', 0)),
+                    address=_address_field(log.get('address', '')),
+                    block_number=_int_field(log.get('blockNumber', log.get('block_number', 0))),
+                    tx_hash=_string_field(
+                        log.get('transactionHash', log.get('transaction_hash', ''))
+                    ),
+                    log_index=_int_field(
+                        log.get('logIndex', log.get('log_index', log.get('index', 0)))
+                    ),
                     raw_log=log,
                 )
                 yield event
@@ -367,96 +402,48 @@ class SmartContract:
         # Note: This gets all transactions for the address, we'll filter to contract interactions
         count = 0
 
-        # Try to use client's streaming API if it's a real method (not just a Mock attribute)
-        has_iter = hasattr(self.client, 'iter_transactions')
-        is_callable = callable(getattr(self.client, 'iter_transactions', None))
+        async for tx in self.client.iter_transactions(
+            self.address,
+            abi=self.abi,
+            from_block=from_block,
+            to_block=to_block,
+            batch_size=1000,
+        ):
+            if limit is not None and count >= limit:
+                break
 
-        if has_iter and is_callable:
-            async for tx in self.client.iter_transactions(self.address):
-                if limit is not None and count >= limit:
-                    break
+            to_address = _address_field(tx.get('to', tx.get('to_address', '')))
+            if to_address.lower() != self.address:
+                continue
 
-                # Filter: only include transactions TO this contract
-                to_address = tx.get('to', '').lower()
-                if to_address != self.address:
-                    continue
+            block_num = _int_field(tx.get('blockNumber', tx.get('block_number', 0)))
+            if block_num < from_block:
+                continue
+            if to_block is not None and block_num > _int_field(to_block):
+                continue
 
-                # Check block range
-                block_num = tx.get('blockNumber')
-                if block_num:
-                    if isinstance(block_num, str):
-                        block_num = int(block_num)
-                    if block_num < from_block:
-                        continue
-                    if to_block is not None and block_num > to_block:
-                        break
+            decoded_tx = tx
+            if not tx.get('decoded_func'):
+                decode_payload = dict(tx)
+                if 'input' not in decode_payload and 'raw_input' in decode_payload:
+                    decode_payload['input'] = decode_payload['raw_input']
+                decoded_tx = decode_transaction_input(decode_payload, self.abi)
 
-                # Decode transaction input
-                decoded_tx = decode_transaction_input(tx, self.abi)
-
-                # Only yield if successfully decoded
-                if decoded_tx.get('decoded_func'):
-                    yield DecodedTransaction(
-                        function_name=decoded_tx['decoded_func'],
-                        args=decoded_tx.get('decoded_data', {}),
-                        tx_hash=tx.get('hash', ''),
-                        from_address=tx.get('from', ''),
-                        to_address=tx.get('to', ''),
-                        value_wei=int(tx.get('value', 0)) if tx.get('value') else 0,
-                        block_number=block_num
-                        if isinstance(block_num, int)
-                        else int(block_num)
-                        if block_num
-                        else 0,
-                        gas=int(tx.get('gas', 0)) if tx.get('gas') else 0,
-                        gas_price_wei=int(tx.get('gasPrice', 0)) if tx.get('gasPrice') else 0,
-                        raw_transaction=tx,
-                    )
-                    count += 1
-        else:
-            # Fallback: use get_transactions method
-            params: dict[str, Any] = {'address': self.address}
-            if from_block > 0:
-                params['start_block'] = from_block
-            if to_block is not None:
-                params['end_block'] = to_block
-
-            txs = await self.client.call(Method.ACCOUNT_TRANSACTIONS, **params)
-
-            if not isinstance(txs, list):
-                txs = []
-
-            for tx in txs:
-                if limit is not None and count >= limit:
-                    break
-
-                # Filter: only include transactions TO this contract
-                to_address = tx.get('to', '').lower()
-                if to_address != self.address:
-                    continue
-
-                # Decode transaction input
-                decoded_tx = decode_transaction_input(tx, self.abi)
-
-                # Only yield if successfully decoded
-                if decoded_tx.get('decoded_func'):
-                    block_num = tx.get('blockNumber', 0)
-                    if isinstance(block_num, str):
-                        block_num = int(block_num)
-
-                    yield DecodedTransaction(
-                        function_name=decoded_tx['decoded_func'],
-                        args=decoded_tx.get('decoded_data', {}),
-                        tx_hash=tx.get('hash', ''),
-                        from_address=tx.get('from', ''),
-                        to_address=tx.get('to', ''),
-                        value_wei=int(tx.get('value', 0)) if tx.get('value') else 0,
-                        block_number=block_num,
-                        gas=int(tx.get('gas', 0)) if tx.get('gas') else 0,
-                        gas_price_wei=int(tx.get('gasPrice', 0)) if tx.get('gasPrice') else 0,
-                        raw_transaction=tx,
-                    )
-                    count += 1
+            function_name = decoded_tx.get('decoded_func')
+            if isinstance(function_name, str) and function_name:
+                yield DecodedTransaction(
+                    function_name=function_name,
+                    args=_dict_field(decoded_tx.get('decoded_data', {})),
+                    tx_hash=_string_field(tx.get('hash', tx.get('transaction_hash', ''))),
+                    from_address=_address_field(tx.get('from', tx.get('from_address', ''))),
+                    to_address=_address_field(tx.get('to', tx.get('to_address', ''))),
+                    value_wei=_int_field(tx.get('value', 0)),
+                    block_number=block_num,
+                    gas=_int_field(tx.get('gas', tx.get('gas_limit', 0))),
+                    gas_price_wei=_int_field(tx.get('gasPrice', tx.get('gas_price', 0))),
+                    raw_transaction=tx,
+                )
+                count += 1
 
     def __repr__(self) -> str:
         """String representation of the contract."""
