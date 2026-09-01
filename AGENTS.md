@@ -110,6 +110,15 @@ async with ChainscanClient.from_config('etherscan', 'ethereum') as client:
     ) as pool:
         balance = await pool.get_balance('0x...')   # full ChainscanClient surface
         pool.last_provider                          # 'etherscan/ethereum' (sticky)
+
+    # ── Value conversion helpers (module-level, float-free) ──
+    from aiochainscan import format_ether, hex_to_int, to_iso, to_decimal_amount, wei_to_ether
+
+    ether = wei_to_ether('1500000000000000000')      # Decimal('1.5') — exact, never float
+    nice  = format_ether('1500000000000000000')      # '1.500000' (half-up, any magnitude)
+    usdc  = to_decimal_amount('1500000', decimals=6) # Decimal('1.5') — any token precision
+    n     = hex_to_int('0x1a')                       # 26 — hex str | decimal str | int
+    iso   = to_iso('1609459200')                     # '2021-01-01T00:00:00+00:00'
 ```
 
 > **Custom base URL heuristic:** a `network` string containing `scheme://` is treated
@@ -128,6 +137,18 @@ async with ChainscanClient.from_config('etherscan', 'ethereum') as client:
 > `asyncio.sleep`, use a loop-clock deadline (`ChainscanWaitTimeoutError(what, waited, last_state)`
 > on expiry), return pending-vs-final states (revert / `Fail` verdicts are returned, not raised)
 > and require only the methods they build on.
+
+> **Value conversion helpers** (`convert.py`): module-level, stateless, stdlib-only
+> utilities for the string scalars every explorer API returns. Wei/token math is
+> `Decimal`-exact (`to_decimal_amount` / `wei_to_ether` — integer str/int only,
+> fractional base-unit strings are rejected as corrupted data; negatives valid;
+> 10^30+ wei exact), `format_ether` renders fixed-precision strings (half-up,
+> context precision sized to the value so 10^40 wei does not overflow),
+> `hex_to_int` accepts hex `'0x1a'` / decimal `'26'` / int (the proxy-vs-REST
+> dual mode; signed hex `-0x10` works; bare `'1a'` is ambiguous → `ValueError`),
+> `hex_to_str` decodes data fields (utf-8; `'0x'` → `''`), `to_datetime` /
+> `to_iso` convert unix seconds (hex tolerated) to tz-aware UTC datetime /
+> ISO-8601. All exported from the package root; enforced by `tests/test_convert.py`.
 
 > **Scanner coverage:** the full surface above is declared by `etherscan` v2.
 > `blockscout` v1 inherits the shared Etherscan-like SPECS but not the token
@@ -159,7 +180,7 @@ async with ChainscanClient.from_config('etherscan', 'ethereum') as client:
 - `get_logs()` returns **≤1000 logs**. Use `get_all_logs()` for complete data.
 - `get_all_*()` now uses **streaming aggregation** under the hood; for very large datasets prefer `iter_*_streaming()`.
 - `get_transactions_df()` auto-paginates (uses `iter_transactions` internally).
-- Balance/value/supply values are **Wei strings** — divide by `10**18` for ETH.
+- Balance/value/supply values are **Wei strings** — convert with `wei_to_ether()` / `to_decimal_amount()` (exact `Decimal`), never `int(wei) / 10**18` float division.
 
 > **Note:** Legacy `Client` class and `modules/` were removed in v0.3.0.
 > Legacy facade/context/url-builder public entrypoints and old pagination-engine usage were purged in modern API docs.
@@ -353,6 +374,7 @@ Every `Method` enum value (33 total) maps to typed convenience methods on `Chain
 | `network.py` | HTTP transport | ALL HTTP must go through here |
 | `adapters/memory_cache.py` | In-memory LRU | O(1) ops, asyncio.Lock |
 | `adapters/aiolimiter_adapter.py` | Rate limiting | Token bucket, burst=1 |
+| `convert.py` | Wei/hex/datetime conversion helpers | Exact `Decimal` math, hex-aware int parsing, tz-aware UTC |
 | `crypto.py` | Keccak-256, EIP-55 checksum | fastabi → eth-utils fallback chain |
 | `decode.py` | ABI decoding (Python) | Wraps Rust FFI, orjson parsing |
 | `fastabi/src/lib.rs` | ABI decoding (Rust) | Returns JSON, LRU cache |
