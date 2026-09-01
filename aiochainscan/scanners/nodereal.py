@@ -131,6 +131,21 @@ def _parse_transfer_items(result: Any) -> list[dict[str, Any]]:
     return items
 
 
+def _filter_transfer_items(
+    items: list[dict[str, Any]], params: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Apply token-contract filtering unsupported by the NodeReal wire API."""
+    requested_contract = _param(params, 'contract_address', 'contractaddress')
+    if not requested_contract:
+        return items
+    normalized_contract = str(requested_contract).lower()
+    return [
+        item
+        for item in items
+        if str(item.get('contractAddress') or '').lower() == normalized_contract
+    ]
+
+
 def _parse_holdings(result: Any) -> list[dict[str, Any]]:
     """``nr_getTokenHoldings`` / ``nr_getNFTHoldings`` → list of ``details``."""
     if not isinstance(result, dict):
@@ -356,7 +371,6 @@ class NodeRealScanner(Scanner):
                 'sort': 'order',
                 'offset': 'maxCount',
                 'page': 'page',  # accepted for mixin parity; pageKey cursors supersede it
-                'contract_address': 'contractAddresses',
             },
             parser=_parse_transfer_items,
         ),
@@ -380,7 +394,8 @@ class NodeRealScanner(Scanner):
                 'address': 'address',
                 'start_block': 'fromBlock',
                 'end_block': 'toBlock',
-                'contract_address': 'contractAddresses',
+                # Accepted by the public API and enforced client-side.
+                'contract_address': 'contract_address',
                 'page': 'page',
                 'offset': 'maxCount',
                 'sort': 'order',
@@ -394,7 +409,8 @@ class NodeRealScanner(Scanner):
                 'address': 'address',
                 'start_block': 'fromBlock',
                 'end_block': 'toBlock',
-                'contract_address': 'contractAddresses',
+                # Accepted by the public API and enforced client-side.
+                'contract_address': 'contract_address',
                 'page': 'page',
                 'offset': 'maxCount',
                 'sort': 'order',
@@ -408,7 +424,8 @@ class NodeRealScanner(Scanner):
                 'address': 'address',
                 'start_block': 'fromBlock',
                 'end_block': 'toBlock',
-                'contract_address': 'contractAddresses',
+                # Accepted by the public API and enforced client-side.
+                'contract_address': 'contract_address',
                 'page': 'page',
                 'offset': 'maxCount',
                 'sort': 'order',
@@ -763,7 +780,10 @@ class NodeRealScanner(Scanner):
                         ]
                 rpc_params = self._build_rpc_params(method, params)
                 raw_response = await self._rpc(self._WIRE_METHODS[method], rpc_params)
-            return spec.parse_response(raw_response)
+            parsed_response = spec.parse_response(raw_response)
+            if method in self._TRANSFER_METHODS and isinstance(parsed_response, list):
+                return _filter_transfer_items(parsed_response, params)
+            return parsed_response
         except ChainscanClientApiError:
             raise
         except ChainscanNetworkError:
@@ -860,15 +880,7 @@ class NodeRealScanner(Scanner):
             return [], None
 
         next_page_key = str(raw.get('pageKey') or '')
-        items = _parse_transfer_items(raw)
-        requested_contract = _param(params, 'contract_address', 'contractaddress')
-        if requested_contract:
-            normalized_contract = str(requested_contract).lower()
-            items = [
-                item
-                for item in items
-                if str(item.get('contractAddress') or '').lower() == normalized_contract
-            ]
+        items = _filter_transfer_items(_parse_transfer_items(raw), params)
 
         if next_page_key:
             cursor: dict[str, Any] = {

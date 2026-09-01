@@ -384,6 +384,34 @@ class TestWireBuilders:
 
 class TestCall:
     @pytest.mark.asyncio
+    async def test_transfer_call_applies_contract_filter_client_side(self) -> None:
+        scanner = _make_scanner()
+        other_contract = '0x0000000000000000000000000000000000000001'
+        network = _mock_network(
+            scanner,
+            [
+                {
+                    'transfers': [
+                        {'hash': '0x1', 'blockNum': '0x1', 'contractAddress': CONTRACT},
+                        {'hash': '0x2', 'blockNum': '0x2', 'contractAddress': other_contract},
+                    ]
+                }
+            ],
+        )
+
+        items = await scanner.call(
+            Method.ACCOUNT_ERC20_TRANSFERS,
+            address=ADDRESS,
+            contract_address=CONTRACT.upper(),
+            start_block=0,
+            end_block=500,
+        )
+
+        assert [item['hash'] for item in items] == ['0x1']
+        wire_filter = network.request.await_args.kwargs['json_data']['params'][0]
+        assert 'contractAddresses' not in wire_filter
+
+    @pytest.mark.asyncio
     async def test_call_unsupported_method_raises(self) -> None:
         scanner = _make_scanner()
         with pytest.raises(ValueError, match='not supported'):
