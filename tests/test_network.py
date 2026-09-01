@@ -14,7 +14,9 @@ from aiochainscan.core.url_builder import UrlBuilder
 from aiochainscan.exceptions import (
     ChainscanClientApiError,
     ChainscanClientContentTypeError,
+    ChainscanClientError,
     ChainscanClientProxyError,
+    ChainscanNetworkError,
     ChainscanRateLimitError,
 )
 from aiochainscan.network import Network, _redact_url
@@ -239,6 +241,84 @@ async def test_handle_response(nw):
             ),
         )
         nw._handle_response(mock_429)
+
+
+@pytest.mark.asyncio
+async def test_http_503_is_retryable_network_error(ub):
+    """HTTP 5xx responses must enter the configured network retry policy."""
+    response = httpx.Response(
+        503,
+        request=httpx.Request('GET', 'https://example.com/api?apikey=secret123'),
+        text='service unavailable',
+    )
+
+    network = Network(ub)
+    try:
+        with pytest.raises(ChainscanNetworkError) as exc_info:
+            network._handle_response(response)
+    finally:
+        await network.close()
+
+    assert exc_info.value.retryable is True
+    assert 'secret123' not in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_http_503_retries_then_succeeds(ub):
+    """A transient HTTP 503 is retried through Network's RetryPolicy seam."""
+    rate_limiter = MagicMock()
+    rate_limiter.acquire = AsyncMock()
+    retry_policy = TenacityRetryAdapter(
+        max_attempts=2,
+        min_wait=0.0,
+        max_wait=0.0,
+        jitter=0.0,
+        retry_exceptions=(ChainscanNetworkError,),
+    )
+    network = Network(ub, rate_limiter=rate_limiter, retry_policy=retry_policy)
+    responses = [
+        httpx.Response(
+            503,
+            request=httpx.Request('GET', 'https://example.com/api'),
+            text='service unavailable',
+        ),
+        httpx.Response(
+            200,
+            request=httpx.Request('GET', 'https://example.com/api'),
+            json={'result': 'ok'},
+        ),
+    ]
+
+    try:
+        with patch.object(
+            httpx.AsyncClient, 'get', new=AsyncMock(side_effect=responses)
+        ) as mock_get:
+            assert await network.get() == 'ok'
+    finally:
+        await network.close()
+
+    assert mock_get.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_http_400_is_non_retryable_and_redacts_url(ub):
+    """Other HTTP 4xx responses remain plain client errors with safe URLs."""
+    response = httpx.Response(
+        400,
+        request=httpx.Request('GET', 'https://example.com/api?apikey=secret123&foo=bar'),
+        text='bad request',
+    )
+
+    network = Network(ub)
+    try:
+        with pytest.raises(ChainscanClientError) as exc_info:
+            network._handle_response(response)
+    finally:
+        await network.close()
+
+    assert type(exc_info.value) is ChainscanClientError
+    assert 'secret123' not in str(exc_info.value)
+    assert 'foo=bar' in str(exc_info.value)
 
 
 @pytest.mark.asyncio
