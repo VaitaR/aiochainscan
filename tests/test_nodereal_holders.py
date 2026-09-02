@@ -1,9 +1,12 @@
 """Tests for NodeReal's ``nr_getTokenHolders`` / ``nr_getTokenHolderCount``.
 
-Everything here is derived from documentation only — there is no NodeReal API
-key available in this environment, so none of this was exercised against the
-live API (see the module docstring in ``aiochainscan/scanners/nodereal.py``
-and the handoff note). Response shapes are built from:
+The shapes here were derived from documentation and then checked against the
+live API on 2026-09-02 (``bsc-mainnet``, BSC-USD and CAKE). The holder list,
+its ``pageKey`` round-trip and the ``topN`` ordering matched; the holder
+*count* did not — see
+``test_parse_token_holder_count_reads_the_live_nested_envelope``. Documented
+shapes are still pinned alongside the live one, because the docs are what the
+provider promises. Sources:
 
 - https://docs.nodereal.io/reference/nr_gettokenholders
   (params: ``Contract Address``, hex ``PageSize`` <= 100, ``PageKey``
@@ -25,6 +28,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from aiochainscan.domain.method import Method
+from aiochainscan.exceptions import ChainscanDataError
 from aiochainscan.scanners.nodereal import (
     NodeRealScanner,
     _parse_token_holder_count,
@@ -156,6 +160,22 @@ class TestParsers:
     def test_parse_token_holder_count_coerces_to_int_cleanly(self) -> None:
         # Mirrors the mixin's `int(result or 0)` contract.
         assert int(_parse_token_holder_count('0x7b')) == 123
+
+    def test_parse_token_holder_count_reads_the_live_nested_envelope(self) -> None:
+        """The live API nests the count the docs describe as a bare scalar.
+
+        Measured 2026-09-02 on ``bsc-mainnet``: BSC-USD answered
+        ``{"result": {"result": "0x46b3f99"}}``. Read as the documented scalar
+        this yielded 0 holders — a wrong answer indistinguishable from a token
+        nobody holds.
+        """
+        assert _parse_token_holder_count({'result': '0x46b3f99'}) == '74137497'
+
+    def test_parse_token_holder_count_refuses_an_unreadable_shape(self) -> None:
+        with pytest.raises(ChainscanDataError):
+            _parse_token_holder_count({'holders': 5})
+        with pytest.raises(ChainscanDataError):
+            _parse_token_holder_count(None)
 
 
 # ============================================================================

@@ -56,6 +56,7 @@ from ..domain.method import Method
 from ..exceptions import (
     ChainscanClientError,
     ChainscanClientProxyError,
+    ChainscanDataError,
     ChainscanRateLimitError,
 )
 from . import register_scanner
@@ -198,11 +199,29 @@ def _parse_token_holders(result: Any) -> list[dict[str, Any]]:
 def _parse_token_holder_count(result: Any) -> str:
     """``nr_getTokenHolderCount`` hex-encoded ``count`` → decimal string.
 
-    Doc: "count - the hex-encoded number of token holders"
-    (https://docs.nodereal.io/reference/nr_gettokenholdercount). The JSON-RPC
-    ``result`` field itself IS the hex count (bare scalar, no envelope).
+    The docs show a bare scalar — ``{"result": "0x123"}``, i.e. the JSON-RPC
+    ``result`` IS the hex count
+    (https://docs.nodereal.io/reference/nr_gettokenholdercount). The live API
+    nests it one level deeper instead: ``{"result": {"result": "0x46b3f99"}}``
+    (verified 2026-09-02 on ``bsc-mainnet``, BSC-USD and CAKE). Both shapes are
+    accepted, since the doc-shaped one is what the provider promises.
+
+    An unrecognized shape raises rather than counting zero: a token has holders,
+    so "0" is never the honest reading of a response this parser cannot read —
+    that answer looks exactly like a token nobody holds.
     """
-    return str(_parse_hex_int(result))
+    value = result.get('result', result.get('count')) if isinstance(result, dict) else result
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, str):
+        try:
+            return str(int(value, 16) if value.startswith(('0x', '0X')) else int(value))
+        except ValueError:
+            pass
+    raise ChainscanDataError(
+        'nr_getTokenHolderCount returned no readable count',
+        details={'result': result},
+    )
 
 
 def _parse_token_meta(result: Any) -> dict[str, Any]:

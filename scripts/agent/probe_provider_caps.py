@@ -31,10 +31,32 @@ from typing import Any
 from aiochainscan import ChainscanClient
 from aiochainscan.domain.method import Method
 
-# A contract busy enough that any page size under test can be filled: USDT on
-# Ethereum (millions of transactions, and a Transfer log in nearly every block).
-BUSY_ADDRESS = '0xdAC17F958D2ee523a2206206994597C13D831ec7'
-BUSY_LOG_RANGE = (20_000_000, 20_002_000)
+
+@dataclass(frozen=True)
+class Target:
+    """A query busy enough that any page size under test can be filled.
+
+    Per chain, not per method: a page that comes back short must mean the
+    provider clamped it, never that the query ran out of records.
+    """
+
+    address: str
+    log_range: tuple[int, int]
+    contract_address: str
+
+
+# USDT on Ethereum: millions of transactions, a Transfer log in nearly every block.
+ETHEREUM = Target(
+    address='0xdAC17F958D2ee523a2206206994597C13D831ec7',
+    log_range=(20_000_000, 20_002_000),
+    contract_address='0xdAC17F958D2ee523a2206206994597C13D831ec7',
+)
+# BSC-USD on BNB Chain: ~74M holders, and its own contract is a busy address.
+BSC = Target(
+    address='0x55d398326f99059fF775485246999027B3197955',
+    log_range=(40_000_000, 40_002_000),
+    contract_address='0x55d398326f99059fF775485246999027B3197955',
+)
 
 #: Page sizes to ask for. Each is requested with ``page=1``, so ``page * offset``
 #: stays inside a 10_000 window for every value up to 10_000.
@@ -116,17 +138,14 @@ class MethodResult:
         return 'OK' if self.window_enforced_at > self.declared_result_window else 'DRIFT'
 
 
-def _params_for(method: Method, page: int, offset: int) -> dict[str, Any]:
+def _params_for(method: Method, page: int, offset: int, target: Target) -> dict[str, Any]:
+    paging = {'page': page, 'offset': offset}
     if method is Method.EVENT_LOGS:
-        start, end = BUSY_LOG_RANGE
-        return {
-            'address': BUSY_ADDRESS,
-            'from_block': start,
-            'to_block': end,
-            'page': page,
-            'offset': offset,
-        }
-    return {'address': BUSY_ADDRESS, 'page': page, 'offset': offset, 'sort': 'asc'}
+        start, end = target.log_range
+        return {'address': target.address, 'from_block': start, 'to_block': end, **paging}
+    if method in (Method.TOKEN_HOLDERS, Method.TOKEN_TOP_HOLDERS):
+        return {'contract_address': target.contract_address, **paging}
+    return {'address': target.address, 'sort': 'asc', **paging}
 
 
 async def _one_call(client: ChainscanClient, method: Method, params: dict[str, Any]) -> Probe:
@@ -159,7 +178,7 @@ def _fingerprint(item: Any) -> str | None:
     return None
 
 
-async def probe_method(client: ChainscanClient, method: Method) -> MethodResult:
+async def probe_method(client: ChainscanClient, method: Method, target: Target) -> MethodResult:
     """Measure the served page size and the enforced result window for one method."""
     scanner = client._scanner  # noqa: SLF001 - declarations live on the scanner
     result = MethodResult(
@@ -169,12 +188,23 @@ async def probe_method(client: ChainscanClient, method: Method) -> MethodResult:
         declared_max_page_size=scanner.max_page_size,
     )
 
+    if result.declared_result_window is None and result.declared_max_page_size is None:
+        # A cursor-paginated provider (BlockScout V2's next_page_params,
+        # NodeReal's pageKey) declares no cap, so there is no number to
+        # re-measure — the guarantee machinery treats the flag as inert. Say so
+        # instead of firing requests whose answer could not change a
+        # declaration either way.
+        result.notes.append(
+            'cursor-paginated: no page-size or result-window declaration to verify'
+        )
+        return result
+
     # 1. Served page size: the largest requested offset the provider actually
     #    filled. A page that comes back short of what was asked for is the
-    #    provider's silent clamp, not the end of the data — BUSY_ADDRESS has
+    #    provider's silent clamp, not the end of the data — the Target holds
     #    far more records than the largest ladder step.
     for offset in PAGE_SIZE_LADDER:
-        probe = await _one_call(client, method, _params_for(method, 1, offset))
+        probe = await _one_call(client, method, _params_for(method, 1, offset, target))
         result.probes.append(probe)
         if probe.error is not None:
             result.notes.append(f'offset={offset} refused: {probe.error}')
@@ -205,7 +235,7 @@ async def probe_method(client: ChainscanClient, method: Method) -> MethodResult:
         first_page = result.probes[0]
         at_window = max(window // page_size, 1)
         for page in (at_window, at_window + 1):
-            probe = await _one_call(client, method, _params_for(method, page, page_size))
+            probe = await _one_call(client, method, _params_for(method, page, page_size, target))
             result.probes.append(probe)
             if probe.error is not None:
                 result.window_enforced_at = page * page_size
@@ -231,7 +261,9 @@ async def probe_method(client: ChainscanClient, method: Method) -> MethodResult:
     return result
 
 
-async def probe_provider(scanner: str, network: str, methods: tuple[Method, ...]) -> list[Any]:
+async def probe_provider(
+    scanner: str, network: str, methods: tuple[Method, ...], target: Target
+) -> list[Any]:
     """Probe one provider, or report it BLOCKED when it cannot be constructed."""
     try:
         client = ChainscanClient.from_config(scanner, network)
@@ -246,20 +278,22 @@ async def probe_provider(scanner: str, network: str, methods: tuple[Method, ...]
                     {'provider': f'{scanner}/{network}', 'skipped': f'{method.name} not declared'}
                 )
                 continue
-            results.append(await probe_method(client, method))
+            results.append(await probe_method(client, method, target))
     return results
 
 
-PROVIDERS: dict[str, tuple[str, tuple[Method, ...]]] = {
-    'etherscan': ('ethereum', (Method.ACCOUNT_TRANSACTIONS, Method.EVENT_LOGS)),
-    'blockscout': ('ethereum', (Method.ACCOUNT_TRANSACTIONS, Method.EVENT_LOGS)),
-    'nodereal': ('bsc', (Method.ACCOUNT_TRANSACTIONS, Method.TOKEN_HOLDERS)),
+PROVIDERS: dict[str, tuple[str, tuple[Method, ...], Target]] = {
+    'etherscan': ('ethereum', (Method.ACCOUNT_TRANSACTIONS, Method.EVENT_LOGS), ETHEREUM),
+    'blockscout': ('ethereum', (Method.ACCOUNT_TRANSACTIONS, Method.EVENT_LOGS), ETHEREUM),
+    'blockscout_v2': ('ethereum', (Method.ACCOUNT_TRANSACTIONS, Method.TOKEN_HOLDERS), ETHEREUM),
+    'nodereal': ('bsc', (Method.ACCOUNT_TRANSACTIONS, Method.TOKEN_HOLDERS), BSC),
 }
 
 
 def _render(results: list[Any]) -> int:
     drift = 0
     blocked = 0
+    inconclusive = 0
     for entry in results:
         if isinstance(entry, dict):
             reason = entry.get('blocked') or entry.get('skipped')
@@ -282,19 +316,24 @@ def _render(results: list[Any]) -> int:
         )
         for note in entry.notes:
             print(f'  note: {note}')
-        if 'DRIFT' in (entry.page_size_verdict, entry.window_verdict):
+        verdicts = (entry.page_size_verdict, entry.window_verdict)
+        if 'DRIFT' in verdicts:
             drift += 1
+        elif 'INCONCLUSIVE' in verdicts and entry.declared_result_window is not None:
+            # A declared cap the probe could not exercise is unverified, not
+            # verified — never fold it into a pass.
+            inconclusive += 1
+    parts = []
     if drift:
-        verdict = f'DRIFT — {drift} declaration(s) no longer match what the provider serves'
-    elif blocked:
-        verdict = (
-            f'MEASURED declarations all match; {blocked} provider(s) UNCONFIRMED '
-            '(no key — their declarations rest on documentation only)'
-        )
-    else:
-        verdict = 'all declarations match'
-    print('\nVERDICT:', verdict)
-    return 1 if (drift or blocked) else 0
+        parts.append(f'DRIFT — {drift} declaration(s) no longer match what the provider serves')
+    if inconclusive:
+        parts.append(f'{inconclusive} declared cap(s) the probe could not exercise')
+    if blocked:
+        parts.append(f'{blocked} provider(s) unconfirmed (no key — documentation only)')
+    if not parts:
+        parts.append('every declared cap was re-measured and matches')
+    print('\nVERDICT:', '; '.join(parts))
+    return 1 if (drift or inconclusive or blocked) else 0
 
 
 async def main() -> int:
@@ -316,8 +355,8 @@ async def main() -> int:
     selected = args.provider or sorted(PROVIDERS)
     results: list[Any] = []
     for scanner in selected:
-        network, methods = PROVIDERS[scanner]
-        results.extend(await probe_provider(scanner, network, methods))
+        network, methods, target = PROVIDERS[scanner]
+        results.extend(await probe_provider(scanner, network, methods, target))
 
     if args.json:
         print(

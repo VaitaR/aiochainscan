@@ -228,7 +228,11 @@ async with ChainscanClient.from_config('etherscan', 'ethereum') as client:
 >   (Etherscan serves 1000 per page and refuses `page*offset` at 11_000;
 >   BlockScout V1 serves 10_000 per page, refuses at 20_000, and answers
 >   `getLogs` page 2 with page 1's first record — the paging-ignored cap
->   `RESULT_WINDOW_OVERRIDES` declares). NodeReal was reported BLOCKED, no key.
+>   `RESULT_WINDOW_OVERRIDES` declares). BlockScout V2 and NodeReal are
+>   cursor-paginated and declare no cap, so the probe reports "nothing to
+>   verify" for them rather than firing requests whose answer could not move a
+>   declaration; a declared cap the probe cannot exercise counts as unverified,
+>   never as a pass.
 > - **Reaching the cap has two flavours** and the error says which. The
 >   provider offered a continuation at the cap → records are definitely being
 >   cut off (`confirmed=True`). The window came back exactly full with *no*
@@ -515,20 +519,27 @@ Every `Method` enum value (33 total) maps to typed convenience methods on `Chain
 > BlockScout V1 and V2 are live-verified end to end (V1: 33/33 unique holders for a token
 > whose count V2 independently reports as 33; no result window at 11k/50k depth where the
 > *account* endpoints reject `page=11&offset=1000` outright). **NodeReal's three holder
-> methods are documentation-only and were never exercised against the live API** — no
-> `NODEREAL_KEY` was available. Unverified there: the real response shape, whether `pageKey`
-> round-trips as documented, and whether `topN` truly orders descending (the docs say
-> "returned by balance order" without naming a direction — the declaration rests on the
-> parameter's name). What *is* verified is doc-conformance, re-checked against the rendered
-> reference pages on 2026-09-02: the ordered params (`Contract Address`, hex `PageSize`
-> "less equal than 100", `PageKey` "empty for the first page", optional hex `topN`), the
-> response `{pageKey, details: [{accountAddress, tokenBalance}]}`, and
-> `nr_getTokenHolderCount`'s bare hex scalar `"result": "0x123"` all match what this scanner
-> builds and parses. End-of-pagination is the one thing the docs state only by its
-> complement ("If more results are available, a pageKey will be returned"), so treating an
-> empty *or absent* `pageKey` as exhaustion is an inference — the code accepts both.
-> `make probe-caps` reports NodeReal BLOCKED and exits non-zero while no key exists, so the
-> gap cannot be mistaken for a pass. NodeReal also documents these two methods as "BSC and ETH mainnet
+> methods are now live-verified too** (2026-09-02, `bsc-mainnet`, BSC-USD and CAKE):
+> the holder list returns the documented `{pageKey, details: [{accountAddress,
+> tokenBalance}]}`, `pageKey` round-trips (3×100 holders, 300 distinct addresses, a fresh
+> opaque cursor per page), and `topN` **does** order descending by balance — measured, so
+> the docs' undirected "returned by balance order" is settled for that call. The plain
+> holder list is NOT balance-ordered, which is why `TOKEN_TOP_HOLDERS` stays a separate
+> declaration.
+>
+> **The one place the docs and the live API disagree: `nr_getTokenHolderCount`.** The docs
+> show `{"result": "0x123"}` — the JSON-RPC `result` IS the hex count — while the live API
+> answers `{"result": {"result": "0x46b3f99"}}`. Read as documented, that yielded **0
+> holders for a token with 74 million of them**, a wrong answer indistinguishable from a
+> token nobody holds. `_parse_token_holder_count` now accepts both shapes and raises
+> `ChainscanDataError` on any third one instead of counting zero. End-of-pagination remains
+> documented only by its complement ("If more results are available, a pageKey will be
+> returned"), so treating an empty *or absent* `pageKey` as exhaustion is still an
+> inference — the code accepts both.
+>
+> Keys for this live surface live in `~/.aiochainscan/.env` (machine-level, read by
+> `ConfigurationManager` for every cwd, so worktrees need no plumbing); a repo-local
+> `./.env` still overrides it. NodeReal also documents these two methods as "BSC and ETH mainnet
 > only" while `supported_networks` is BSC-only — deliberately not widened, since nothing
 > establishes ETH support for the other 22 methods.
 
