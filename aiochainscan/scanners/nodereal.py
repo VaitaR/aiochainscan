@@ -505,6 +505,21 @@ class NodeRealScanner(Scanner):
         Method.ACCOUNT_ERC1155_TRANSFERS: ['1155'],
     }
 
+    # Cursor vocabulary per paginated method, reusing the module-level key
+    # constants (``_WINDOW_CURSOR``/``_TIP_CURSOR``) so the private names are
+    # spelled exactly once. Declared here — where the cursors are produced —
+    # so the MCP cursor whitelist derives them instead of hand-copying
+    # (``Scanner.cursor_keys`` stays empty: the dialect differs per endpoint).
+    CURSOR_KEYS: ClassVar[dict[Method, frozenset[str]]] = {
+        **{
+            method: frozenset({_WINDOW_CURSOR, _TIP_CURSOR, 'pageKey'})
+            for method in TRANSFER_CATEGORIES
+        },
+        Method.ACCOUNT_TOKEN_PORTFOLIO: frozenset({'page', 'page_size'}),
+        Method.ACCOUNT_NFT_PORTFOLIO: frozenset({'page', 'page_size'}),
+        Method.TOKEN_HOLDERS: frozenset({'pageKey'}),
+    }
+
     _TRANSFER_METHODS: ClassVar[frozenset[Method]] = frozenset(TRANSFER_CATEGORIES)
     _HOLDINGS_METHODS: ClassVar[frozenset[Method]] = frozenset(
         {Method.ACCOUNT_TOKEN_PORTFOLIO, Method.ACCOUNT_NFT_PORTFOLIO}
