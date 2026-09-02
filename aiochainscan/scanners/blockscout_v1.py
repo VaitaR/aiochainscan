@@ -13,6 +13,7 @@ Supports multiple blockchain networks through different BlockScout instances:
 
 from typing import TYPE_CHECKING, Any
 
+from ..constants import API_MAX_OFFSET_LOGS
 from ..core.endpoint import EndpointSpec
 from ..core.url_builder import UrlBuilder
 from ..domain.method import Method
@@ -72,6 +73,15 @@ class BlockScoutV1(EtherscanLikeScanner):
         'linea',  # Linea mainnet
         'bsc',  # BNB Smart Chain
     }
+
+    # ``getLogs`` here is NOT a page/offset endpoint: it ignores both params and
+    # answers at most API_MAX_OFFSET_LOGS logs with ``status=1`` "OK", so its
+    # real window is 1000, not the account endpoints' 10_000. Verified live
+    # 2026-09-02 against eth.blockscout.com (a 60-block USDT Transfer range
+    # holding 1085 logs came back as 1000, identical on every page). Without
+    # this the guarantee layer walked to 10_000 by re-fetching the same first
+    # page ten times before splitting.
+    RESULT_WINDOW_OVERRIDES = {Method.EVENT_LOGS: API_MAX_OFFSET_LOGS}
 
     # BlockScout typically doesn't require API keys
     auth_mode = 'query'

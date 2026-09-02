@@ -18,10 +18,11 @@ class EtherscanLikeScanner(Scanner):
 
     # page/offset REST: ``page * offset`` is bounded, so a block range holding
     # more than this many matching records is truncated without any error.
-    # Verified in-repo for Etherscan only (``constants.py`` documents the
-    # ``page * offset <= 10_000`` rule); BlockScout V1 inherits it because
-    # assuming a cap that may not exist only costs extra requests, while
-    # missing a real one loses data.
+    # Confirmed live on BlockScout V1 (2026-09-02): ``page=11&offset=1000`` and
+    # ``page=2&offset=10000`` both answer status 0 "Result window is too large,
+    # PageNo x Offset size must be less than or equal to 10000", while an
+    # over-cap ``offset=10001`` is silently clamped to 10000 items — the cap is
+    # real and it truncates without an error at exactly this window.
     result_window = API_MAX_OFFSET_ETHERSCAN
 
     async def fetch_page(
@@ -35,8 +36,10 @@ class EtherscanLikeScanner(Scanner):
         The cursor encodes the next ``page``/``offset`` pair and is merged
         back into ``params`` by the caller (base cursor contract). It is
         ``None`` once no full page can remain: an empty page, a partial page
-        (``len(items) < offset``), or when ``offset`` is missing from
-        ``params``. This mirrors the classic stop condition exactly.
+        (``len(items) < offset``), when ``offset`` is missing from ``params``,
+        or when this method's spec cannot carry the cursor on the wire (see
+        :meth:`_spec_pages_by_offset`). This mirrors the classic stop
+        condition exactly.
 
         Args:
             method: Logical method to execute
@@ -52,9 +55,26 @@ class EtherscanLikeScanner(Scanner):
         offset = params.get('offset')
         if not items or not isinstance(offset, int) or len(items) < offset:
             return items, None
+        if not self._spec_pages_by_offset(method):
+            return items, None
 
         page = params.get('page', 1)
         return items, {'page': page + 1, 'offset': offset}
+
+    def _spec_pages_by_offset(self, method: Method) -> bool:
+        """Whether this method's spec maps ``page``/``offset`` onto the wire.
+
+        A spec that maps neither has exactly ONE page: the params would be
+        dropped before the request, so every "next page" is byte-for-byte the
+        first one. Advancing the cursor there does not paginate, it repeats —
+        BlockScout V1's ``getLogs`` ignores page/offset and answers at most
+        1000 logs with ``status=1``, which made an unguaranteed ``get_all_logs``
+        re-fetch the same page forever (verified live 2026-09-02).
+        """
+        spec = self.SPECS.get(method)
+        if spec is None:
+            return False
+        return 'page' in spec.param_map or 'offset' in spec.param_map
 
     SPECS = {
         Method.ACCOUNT_BALANCE: EndpointSpec(

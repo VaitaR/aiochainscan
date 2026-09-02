@@ -189,12 +189,25 @@ async with ChainscanClient.from_config('etherscan', 'ethereum') as client:
 >   `next_page_params`, `nodereal` `pageKey`) — nothing to overflow, and the
 >   flag is inert. A third-party scanner that has a cap but leaves
 >   `result_window = None` cannot be protected.
+>   `Scanner.RESULT_WINDOW_OVERRIDES` declares a **per-method** window where one
+>   endpoint is bounded tighter than the rest, and `result_window_for(method)` is
+>   what the pagination binding reads.
 > - **The signal** is `collected >= result_window`, not an error string and not
 >   "the last page was full". A capped explorer answers a partial page that is
 >   indistinguishable from the end of the data, and the cap need not land on a
->   page boundary. BlockScout V1's cap is *assumed* equal to Etherscan's: it
->   could not be confirmed from this repo, and over-assuming only costs
->   requests while under-assuming loses data.
+>   page boundary.
+> - **BlockScout V1's caps are live-verified** (2026-09-02, `eth.blockscout.com`),
+>   no longer assumed. Account endpoints: `page * offset <= 10_000` exactly —
+>   `page=11&offset=1000` and `page=2&offset=10000` both answer `status=0`
+>   "Result window is too large, PageNo x Offset size must be less than or equal
+>   to 10000", while an over-cap `offset=10001` is silently clamped to 10_000
+>   items. `logs/getLogs` is different and **ignores page/offset entirely**,
+>   answering at most 1000 logs with `status=1` "OK" — so its window is
+>   `API_MAX_OFFSET_LOGS` = 1000 (declared in `RESULT_WINDOW_OVERRIDES`), and
+>   `EtherscanLikeScanner.fetch_page` issues no cursor for a spec that maps
+>   neither `page` nor `offset`, because "the next page" there is the first page
+>   again. Etherscan's own caps are still unverified live (no API key in the dev
+>   environment) and rest on the documented `page * offset <= 10_000` rule.
 > - **Reaching the cap has two flavours** and the error says which. The
 >   provider offered a continuation at the cap → records are definitely being
 >   cut off (`confirmed=True`). The window came back exactly full with *no*
