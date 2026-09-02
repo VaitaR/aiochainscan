@@ -18,7 +18,6 @@ from ..chain_registry import (
     get_scanner_network_name,
     resolve_scanner_target,
 )
-from ..constants import MAX_BLOCK_NUMBER
 from ..domain.method import Method
 from ..domain.normalize import (
     normalize_internal_transaction,
@@ -34,11 +33,8 @@ from ..scanners.base import Scanner
 from ..services.pagination import (
     BoundPageFetch,
     PaginationContext,
-    iter_items,
-    iter_pages,
     normalize_items,
     page_fetcher,
-    validate_batch_size,
 )
 from .mixins import (
     AccountMixin,
@@ -52,20 +48,13 @@ from .mixins import (
     TokenMixin,
     TransactionMixin,
 )
+from .streaming import (
+    STREAMING_SPECS_BY_NAME,
+    stream_batches,
+    stream_items,
+)
 from .types import JSONDict
 from .url_builder import UrlBuilder
-
-
-def _resolve_end_block_int(to_block: int | str | None) -> int:
-    if to_block is None or to_block == 'latest':
-        return MAX_BLOCK_NUMBER
-    return int(to_block)
-
-
-def _resolve_end_block_param(to_block: int | str | None) -> int | str:
-    if to_block is None or to_block == 'latest':
-        return 'latest'
-    return int(to_block)
 
 
 def _decode_with_abi(
@@ -544,6 +533,12 @@ class ChainscanClient(
     # =========================================================================
     # STREAMING API - Memory-efficient iteration with optional decoding
     # =========================================================================
+    #
+    # Every ``iter_*`` method below is a thin declaration over the ONE shared
+    # implementation in ``core/streaming.py`` (``stream_batches`` /
+    # ``stream_items``): its row in ``STREAMING_SPECS`` supplies the params
+    # builder, operation noun and behavioural flags; the shared body does
+    # validate → block-range guard → bind fetch → the single cursor loop.
 
     async def iter_transactions(
         self,
@@ -587,42 +582,15 @@ class ChainscanClient(
         """
         from ..decode import decode_transaction_input
 
-        validate_batch_size(batch_size)
-
-        decode = _decode_with_abi(decode_transaction_input, abi)
-        fetch = self._stream_fetch(Method.ACCOUNT_TRANSACTIONS)
-        self._guard_block_range(Method.ACCOUNT_TRANSACTIONS, from_block, to_block)
-
-        # Every scanner speaks the same public param dialect here; its SPECS
-        # translate to wire names (or drop params the endpoint never took —
-        # only possible for an unbounded range, which the guard above ensures).
-        # For simple pagination without decoding and no block range, use
-        # cursor pagination through the scanner port: fetch_page() returns
-        # (items, next_cursor) where a None cursor ends iteration.
-        if (
-            abi is None
-            and from_block == 0
-            and (to_block is None or to_block == 'latest')
-            and not guarantee_complete
-        ):
-            # Rangeless shortcut: fewer params, but nothing to split if the
-            # provider's result window is hit.
-            params: dict[str, Any] = {'address': address, 'page': 1, 'offset': batch_size}
-        else:
-            end_block = _resolve_end_block_int(to_block)
-            params = {
-                'address': address,
-                'start_block': from_block,
-                'end_block': end_block,
-                'page': 1,
-                'offset': batch_size,
-                'sort': 'asc',
-            }
-
-        async for tx in iter_items(
-            fetch,
-            params,
-            decode=decode,
+        async for tx in stream_items(
+            self,
+            STREAMING_SPECS_BY_NAME['iter_transactions'],
+            decode=_decode_with_abi(decode_transaction_input, abi),
+            address=address,
+            abi=abi,
+            from_block=from_block,
+            to_block=to_block,
+            batch_size=batch_size,
             guarantee_complete=guarantee_complete,
         ):
             yield tx
@@ -690,22 +658,14 @@ class ChainscanClient(
             - iter_transactions: 1M txs = ~100MB RAM (yields one at a time)
             - iter_transactions_streaming: 1M txs = ~10MB RAM (yields batches)
         """
-        validate_batch_size(batch_size)
-        self._guard_block_range(Method.ACCOUNT_TRANSACTIONS, from_block, to_block)
-        end_block = _resolve_end_block_int(to_block)
-        params: dict[str, Any] = {
-            'address': address,
-            'start_block': from_block,
-            'end_block': end_block,
-            'page': 1,
-            'offset': batch_size,
-            'sort': 'asc',
-        }
-        async for batch in iter_pages(
-            self._stream_fetch(Method.ACCOUNT_TRANSACTIONS),
-            params,
+        async for batch in stream_batches(
+            self,
+            STREAMING_SPECS_BY_NAME['iter_transactions_streaming'],
+            address=address,
+            from_block=from_block,
+            to_block=to_block,
+            batch_size=batch_size,
             on_progress=on_progress,
-            operation='transactions',
             guarantee_complete=guarantee_complete,
         ):
             yield batch
@@ -768,22 +728,14 @@ class ChainscanClient(
         Yields:
             Batches of internal transaction dictionaries
         """
-        validate_batch_size(batch_size)
-        self._guard_block_range(Method.ACCOUNT_INTERNAL_TXS, from_block, to_block)
-        end_block = _resolve_end_block_int(to_block)
-        params: dict[str, Any] = {
-            'address': address,
-            'start_block': from_block,
-            'end_block': end_block,
-            'page': 1,
-            'offset': batch_size,
-            'sort': 'asc',
-        }
-        async for batch in iter_pages(
-            self._stream_fetch(Method.ACCOUNT_INTERNAL_TXS),
-            params,
+        async for batch in stream_batches(
+            self,
+            STREAMING_SPECS_BY_NAME['iter_internal_transactions_streaming'],
+            address=address,
+            from_block=from_block,
+            to_block=to_block,
+            batch_size=batch_size,
             on_progress=on_progress,
-            operation='internal_transactions',
             guarantee_complete=guarantee_complete,
         ):
             yield batch
@@ -845,24 +797,15 @@ class ChainscanClient(
         Yields:
             Batches of token transfer dictionaries
         """
-        validate_batch_size(batch_size)
-        self._guard_block_range(Method.ACCOUNT_ERC20_TRANSFERS, from_block, to_block)
-        end_block = _resolve_end_block_int(to_block)
-        params: dict[str, Any] = {
-            'address': address,
-            'start_block': from_block,
-            'end_block': end_block,
-            'page': 1,
-            'offset': batch_size,
-            'sort': 'asc',
-        }
-        if contract_address is not None:
-            params['contract_address'] = contract_address
-        async for batch in iter_pages(
-            self._stream_fetch(Method.ACCOUNT_ERC20_TRANSFERS),
-            params,
+        async for batch in stream_batches(
+            self,
+            STREAMING_SPECS_BY_NAME['iter_token_transfers_streaming'],
+            address=address,
+            from_block=from_block,
+            to_block=to_block,
+            contract_address=contract_address,
+            batch_size=batch_size,
             on_progress=on_progress,
-            operation='token_transfers',
             guarantee_complete=guarantee_complete,
         ):
             yield batch
@@ -932,30 +875,18 @@ class ChainscanClient(
         Yields:
             Batches of event log dictionaries
         """
-        validate_batch_size(batch_size)
-        self._guard_block_range(Method.EVENT_LOGS, from_block, to_block)
-        end_block = _resolve_end_block_param(to_block)
-        params: dict[str, Any] = {
-            'from_block': from_block,
-            'to_block': end_block,
-            'page': 1,
-            'offset': batch_size,
-        }
-        if address is not None:
-            params['address'] = address
-        if topic0 is not None:
-            params['topic0'] = topic0
-        if topic1 is not None:
-            params['topic1'] = topic1
-        if topic2 is not None:
-            params['topic2'] = topic2
-        if topic3 is not None:
-            params['topic3'] = topic3
-        async for batch in iter_pages(
-            self._stream_fetch(Method.EVENT_LOGS),
-            params,
+        async for batch in stream_batches(
+            self,
+            STREAMING_SPECS_BY_NAME['iter_logs_streaming'],
+            address=address,
+            from_block=from_block,
+            to_block=to_block,
+            topic0=topic0,
+            topic1=topic1,
+            topic2=topic2,
+            topic3=topic3,
+            batch_size=batch_size,
             on_progress=on_progress,
-            operation='logs',
             guarantee_complete=guarantee_complete,
         ):
             yield batch
@@ -1025,19 +956,12 @@ class ChainscanClient(
         Yields:
             Batches of token holder dictionaries
         """
-        from ..domain.models import Address
-
-        validate_batch_size(batch_size)
-        params: dict[str, Any] = {
-            'contract_address': str(Address(contract_address)),
-            'page': 1,
-            'offset': batch_size,
-        }
-        async for batch in iter_pages(
-            self._stream_fetch(Method.TOKEN_HOLDERS),
-            params,
+        async for batch in stream_batches(
+            self,
+            STREAMING_SPECS_BY_NAME['iter_token_holders_streaming'],
+            contract_address=contract_address,
+            batch_size=batch_size,
             on_progress=on_progress,
-            operation='token_holders',
             guarantee_complete=guarantee_complete,
         ):
             yield batch
@@ -1121,35 +1045,17 @@ class ChainscanClient(
         """
         from ..decode import decode_log_data
 
-        validate_batch_size(batch_size)
-        self._guard_block_range(Method.EVENT_LOGS, from_block, to_block)
-        end_block = _resolve_end_block_param(to_block)
-        params: dict[str, Any] = {
-            'address': address,
-            'from_block': from_block,
-            'to_block': end_block,
-            'page': 1,
-            'offset': batch_size,
-        }
-
-        if topics:
-            if len(topics) > 0:
-                params['topic0'] = topics[0]
-            if len(topics) > 1:
-                params['topic1'] = topics[1]
-            if len(topics) > 2:
-                params['topic2'] = topics[2]
-            if len(topics) > 3:
-                params['topic3'] = topics[3]
-
-        if topic_operators:
-            for i, operator in enumerate(topic_operators[:3]):
-                params[f'topic{i}_{i + 1}_opr'] = operator
-
-        async for log in iter_items(
-            self._stream_fetch(Method.EVENT_LOGS),
-            params,
+        async for log in stream_items(
+            self,
+            STREAMING_SPECS_BY_NAME['iter_logs'],
             decode=_decode_with_abi(decode_log_data, abi),
+            address=address,
+            abi=abi,
+            from_block=from_block,
+            to_block=to_block,
+            batch_size=batch_size,
+            topics=topics,
+            topic_operators=topic_operators,
             guarantee_complete=guarantee_complete,
         ):
             yield log

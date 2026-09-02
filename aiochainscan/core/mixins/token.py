@@ -7,26 +7,17 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from ...domain.method import Method
 from ...domain.models import Address
-from ...services.pagination import collect_all
+from ..streaming import SupportsStreaming, collect_stream
 from ..types import JSONDict, JSONList
 
 if TYPE_CHECKING:
     from ...ports.progress import ProgressCallback
 
 logger = logging.getLogger(__name__)
-AGGREGATION_WARNING_THRESHOLD = 100_000
 
 
-class _TokenClientProtocol(Protocol):
+class _TokenClientProtocol(SupportsStreaming, Protocol):
     async def call(self, method: Method, **params: Any) -> Any: ...
-
-    def iter_token_holders_streaming(
-        self,
-        contract_address: str,
-        batch_size: int = 1000,
-        on_progress: ProgressCallback | None = None,
-        guarantee_complete: bool = True,
-    ) -> Any: ...
 
 
 class TokenMixin:
@@ -90,16 +81,15 @@ class TokenMixin:
         ``PaginationDataLossError`` is raised if it cannot be. Pass ``False``
         for the cheaper pre-1.0 behaviour.
         """
-        return await collect_all(
+        return await collect_stream(
             self.iter_token_holders_streaming(
                 contract_address=contract_address,
                 batch_size=1000,
                 on_progress=on_progress,
                 guarantee_complete=guarantee_complete,
             ),
-            threshold=AGGREGATION_WARNING_THRESHOLD,
-            warning='Aggregating >100k token holders in memory. '
-            'Consider using iter_token_holders_streaming() to avoid OOM.',
+            stream_name='iter_token_holders_streaming',
+            noun='token holders',
             logger=logger,
         )
 
