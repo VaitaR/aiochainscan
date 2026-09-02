@@ -134,9 +134,19 @@ class EndpointSpec:
         return raw_response
 
 
-def etherscan_parser(response: dict[str, Any]) -> Any:
-    """Standard Etherscan API response parser."""
-    if 'result' in response:
+def etherscan_parser(response: Any) -> Any:
+    """Standard Etherscan API response parser.
+
+    A non-dict response passes through untouched. That is not defensive
+    padding: the transport hands this parser whatever the envelope unwrapped
+    to, and a JSON-RPC ``result: null`` — Etherscan's answer for an unknown
+    transaction hash — arrives as ``None``. Membership-testing it raised a
+    ``TypeError``, which the scanner ladder masked as a TRANSIENT
+    ``ChainscanNetworkError``, so a pool failed over and cooled a healthy
+    provider over a tx that simply does not exist. ``None`` is also what the
+    BlockScout V1 and NodeReal legs return for that case.
+    """
+    if isinstance(response, dict) and 'result' in response:
         return response['result']
     return response
 

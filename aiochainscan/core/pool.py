@@ -55,6 +55,8 @@ from ..domain.method import Method
 # FailureKind moved to ``..exceptions`` (exceptions carry it from the raise
 # site); the aliased import below re-exports it under this module's
 # historical path for typed importers (``aiochainscan.core.pool.FailureKind``).
+# ``api_error_failure_kind`` lives there too — the classifier it feeds is a
+# core concern, but core must not import the transport (network.py) for it.
 from ..exceptions import (
     ChainscanClientApiError,
     ChainscanNetworkError,
@@ -63,11 +65,11 @@ from ..exceptions import (
     CompletenessUnavailableError,
     MethodNotDeclaredError,
     ProviderPoolExhaustedError,
+    api_error_failure_kind,
 )
 from ..exceptions import (
     FailureKind as FailureKind,
 )
-from ..network import api_error_failure_kind
 from .client import ChainscanClient
 from .mixins import (
     AccountMixin,
@@ -107,7 +109,7 @@ def classify_failure(exc: BaseException) -> FailureKind:
     (every exception in ``aiochainscan.exceptions`` has one, and
     third-party exceptions may add one) classifies as the kind decided
     where the failure was detected — the Network transport
-    (``network.api_error_failure_kind`` at the API-error raise site) or a
+    (``exceptions.api_error_failure_kind`` at the API-error raise site) or a
     scanner translating its provider's rejection. A new scanner's failure
     mode is therefore wireable by raising a kind-carrying exception,
     without editing this module.
