@@ -15,6 +15,23 @@ from ..crypto import to_checksum_address
 from ..exceptions import ChainscanClientError, ChainscanNetworkError, MethodNotDeclaredError
 from ..network import Network
 
+#: Public (dialect) param names that carry a block-range bound. A spec whose
+#: ``param_map`` declares any of them can narrow that method's query by
+#: block; see :meth:`Scanner.supports_block_range`.
+BLOCK_RANGE_PARAM_KEYS: frozenset[str] = frozenset(
+    {'start_block', 'end_block', 'from_block', 'to_block'}
+)
+
+
+def spec_declares_block_range(spec: EndpointSpec) -> bool:
+    """Whether a spec's ``param_map`` declares any public block-range param.
+
+    The single source of the capability: shared by
+    :meth:`Scanner.supports_block_range` (instance path) and the scanner
+    registry (class path) so both answer identically.
+    """
+    return any(key in spec.param_map for key in BLOCK_RANGE_PARAM_KEYS)
+
 
 def hex_block_tag(value: Any) -> Any:
     """Coerce a block identifier to a JSON-RPC hex-quantity tag.
@@ -338,6 +355,35 @@ class Scanner(ABC):
             True if supported, False otherwise
         """
         return method in self.SPECS
+
+    # ------------------------------------------------------------------
+    # Block-range capability (declared by SPECS, never by scanner name).
+    # ------------------------------------------------------------------
+
+    def supports_block_range(self, method: Method) -> bool:
+        """
+        Check whether the method's spec declares a block-range parameter.
+
+        Derived entirely from ``SPECS``: a method supports a block range
+        here iff its :class:`~aiochainscan.core.endpoint.EndpointSpec`
+        ``param_map`` maps at least one public block-range name
+        (``start_block``/``end_block``/``from_block``/``to_block``). This is
+        how the streaming/paginated client paths tell "the provider can
+        narrow this query by block" from "the range would be silently
+        dropped on the wire" (e.g. BlockScout V2 address endpoints take no
+        Etherscan-style block bounds) — no scanner-name matching anywhere.
+
+        Args:
+            method: Method to check
+
+        Returns:
+            True if the declaring spec carries a block-range parameter;
+            ``False`` for undeclared methods and rangeless specs alike
+            (test doubles without ``SPECS`` count as rangeless).
+        """
+        specs: Any = getattr(self, 'SPECS', None)
+        spec = specs.get(method) if isinstance(specs, dict) else None
+        return spec is not None and spec_declares_block_range(spec)
 
     def get_supported_methods(self) -> list[Method]:
         """

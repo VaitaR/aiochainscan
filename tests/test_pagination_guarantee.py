@@ -39,7 +39,7 @@ class TruncatingExplorer:
     """Page/offset explorer that silently stops at ``result_window`` records.
 
     ``blocks`` maps a block number to how many records it holds. A request for
-    ``[startblock, endblock]`` sees only the first ``result_window`` matching
+    ``[start_block, end_block]`` sees only the first ``result_window`` matching
     records — exactly the silent truncation an Etherscan-family
     ``page * offset`` cap produces.
     """
@@ -60,8 +60,8 @@ class TruncatingExplorer:
     async def fetch(
         self, params: dict[str, Any]
     ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
-        start = int(params['startblock'])
-        end = int(params['endblock'])
+        start = int(params['start_block'])
+        end = int(params['end_block'])
         page = int(params.get('page', 1))
         offset = int(params['offset'])
         self.requests.append((start, end, page))
@@ -84,8 +84,8 @@ async def drain(agen: Any) -> list[dict[str, Any]]:
 
 BASE_PARAMS: dict[str, Any] = {
     'address': '0xABC',
-    'startblock': 0,
-    'endblock': 999,
+    'start_block': 0,
+    'end_block': 999,
     'page': 1,
     'offset': 10,
     'sort': 'asc',
@@ -249,7 +249,7 @@ def rangeless_fetch(explorer: TruncatingExplorer) -> Any:
     """A holder-list endpoint: capped, and with no block range to narrow."""
 
     async def fetch(params: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
-        return await explorer.fetch({**params, 'startblock': 0, 'endblock': 999})
+        return await explorer.fetch({**params, 'start_block': 0, 'end_block': 999})
 
     return fetch
 
@@ -445,9 +445,8 @@ def test_declared_result_windows_per_scanner() -> None:
 @pytest.mark.parametrize(
     ('params', 'expected'),
     [
-        ({'startblock': 5, 'endblock': 9}, (5, 9)),
+        ({'start_block': 5, 'end_block': 9}, (5, 9)),
         ({'start_block': '5', 'end_block': '9'}, (5, 9)),
-        ({'fromBlock': 5, 'toBlock': 9}, (5, 9)),
         ({'from_block': 5, 'to_block': 9}, (5, 9)),
     ],
 )
@@ -457,8 +456,20 @@ def test_detect_block_range_spellings(params: dict[str, Any], expected: tuple[in
     assert detected[1] == expected
 
 
+@pytest.mark.parametrize(
+    'params',
+    [
+        {'startblock': 5, 'endblock': 9},  # wire spelling: scanner param_map business
+        {'fromBlock': 5, 'toBlock': 9},  # wire spelling: scanner param_map business
+    ],
+)
+def test_detect_block_range_rejects_wire_spellings(params: dict[str, Any]) -> None:
+    """Engine params speak the PUBLIC dialect only (one-param-dialect rule)."""
+    assert detect_block_range(params) is None
+
+
 def test_detect_block_range_treats_latest_as_the_tip() -> None:
-    detected = detect_block_range({'fromBlock': 100, 'toBlock': 'latest'})
+    detected = detect_block_range({'from_block': 100, 'to_block': 'latest'})
     assert detected is not None
     start, end = detected[1]
     assert start == 100
@@ -469,8 +480,8 @@ def test_detect_block_range_treats_latest_as_the_tip() -> None:
     'params',
     [
         {'contract_address': '0xTOKEN'},
-        {'startblock': 9, 'endblock': 5},
-        {'startblock': 'not-a-number', 'endblock': 5},
+        {'start_block': 9, 'end_block': 5},
+        {'start_block': 'not-a-number', 'end_block': 5},
     ],
 )
 def test_detect_block_range_rejects_unsplittable(params: dict[str, Any]) -> None:
@@ -516,6 +527,9 @@ class _StubScanner:
     def __init__(self, explorer: TruncatingExplorer) -> None:
         self.explorer = explorer
         self.result_window = explorer.result_window
+
+    def supports_block_range(self, method: Any) -> bool:
+        return True  # emulates an Etherscan-like provider (ranged specs)
 
     async def fetch_page(
         self, method: Any, params: dict[str, Any]
@@ -567,7 +581,7 @@ class _HoldersStubScanner:
     async def fetch_page(
         self, method: Any, params: dict[str, Any]
     ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
-        return await self.explorer.fetch({**params, 'startblock': 0, 'endblock': 999})
+        return await self.explorer.fetch({**params, 'start_block': 0, 'end_block': 999})
 
 
 @pytest.mark.asyncio
