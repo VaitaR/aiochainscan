@@ -34,7 +34,6 @@ in this file, guarded bidirectionally against the registry.
 from __future__ import annotations
 
 import inspect
-import json
 from collections.abc import AsyncIterator
 from typing import Any
 from unittest.mock import MagicMock
@@ -815,8 +814,14 @@ _DIRECT_FAMILIES: dict[str, Any] = {
         ),
         # eth_blockNumber tip probe, then nr_getTransactionByAddress.
         'responses': lambda: ['0x1000', {'pageKey': '', 'transfers': []}],
-        'bounds_transmitted': lambda net: json.dumps(net.calls[-1], default=str).count('0x64')
-        >= 1,  # fromBlock/toBlock hex of 100
+        # The JSON-RPC filter must carry BOTH bounds (hex of 100/200); a
+        # predicate matching only fromBlock would pass with toBlock dropped.
+        'bounds_transmitted': lambda net: any(
+            filter_.get('fromBlock') == '0x64' and filter_.get('toBlock') == '0xc8'
+            for call in net.calls
+            for filter_ in call.get('json_data', {}).get('params', [])
+            if isinstance(filter_, dict)
+        ),
     },
 }
 
