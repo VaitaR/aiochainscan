@@ -30,6 +30,7 @@ class _AccountClientProtocol(Protocol):
         to_block: int | str | None = 'latest',
         batch_size: int = 1000,
         on_progress: ProgressCallback | None = None,
+        guarantee_complete: bool = True,
     ) -> Any: ...
 
     def iter_token_transfers_streaming(
@@ -40,6 +41,7 @@ class _AccountClientProtocol(Protocol):
         contract_address: str | None = None,
         batch_size: int = 1000,
         on_progress: ProgressCallback | None = None,
+        guarantee_complete: bool = True,
     ) -> Any: ...
 
     def iter_internal_transactions_streaming(
@@ -49,6 +51,7 @@ class _AccountClientProtocol(Protocol):
         to_block: int | str | None = 'latest',
         batch_size: int = 1000,
         on_progress: ProgressCallback | None = None,
+        guarantee_complete: bool = True,
     ) -> Any: ...
 
 
@@ -188,8 +191,15 @@ class AccountMixin:
         from_block: int = 0,
         to_block: int | str | None = None,
         on_progress: ProgressCallback | None = None,
+        guarantee_complete: bool = True,
     ) -> JSONList:
-        """Get all transactions by aggregating streaming batches."""
+        """Get all transactions by aggregating streaming batches.
+
+        ``guarantee_complete`` (default ``True``) forbids silent truncation:
+        an overflowing block range is split until complete, and
+        ``PaginationDataLossError`` is raised if it cannot be. Pass ``False``
+        for the cheaper pre-1.0 behaviour.
+        """
         return await collect_all(
             self.iter_transactions_streaming(
                 address=address,
@@ -197,6 +207,7 @@ class AccountMixin:
                 to_block=to_block,
                 batch_size=1000,
                 on_progress=on_progress,
+                guarantee_complete=guarantee_complete,
             ),
             threshold=AGGREGATION_WARNING_THRESHOLD,
             warning='Aggregating >100k transactions in memory. '
@@ -211,8 +222,15 @@ class AccountMixin:
         from_block: int = 0,
         to_block: int | str | None = None,
         on_progress: ProgressCallback | None = None,
+        guarantee_complete: bool = True,
     ) -> JSONList:
-        """Get all ERC20 token transfers by aggregating streaming batches."""
+        """Get all ERC20 token transfers by aggregating streaming batches.
+
+        ``guarantee_complete`` (default ``True``) forbids silent truncation:
+        an overflowing block range is split until complete, and
+        ``PaginationDataLossError`` is raised if it cannot be. Pass ``False``
+        for the cheaper pre-1.0 behaviour.
+        """
         return await collect_all(
             self.iter_token_transfers_streaming(
                 address=address,
@@ -221,6 +239,7 @@ class AccountMixin:
                 contract_address=contract_address,
                 batch_size=1000,
                 on_progress=on_progress,
+                guarantee_complete=guarantee_complete,
             ),
             threshold=AGGREGATION_WARNING_THRESHOLD,
             warning='Aggregating >100k token transfers in memory. '
@@ -234,8 +253,15 @@ class AccountMixin:
         from_block: int = 0,
         to_block: int | str | None = None,
         on_progress: ProgressCallback | None = None,
+        guarantee_complete: bool = True,
     ) -> JSONList:
-        """Get all internal transactions by aggregating streaming batches."""
+        """Get all internal transactions by aggregating streaming batches.
+
+        ``guarantee_complete`` (default ``True``) forbids silent truncation:
+        an overflowing block range is split until complete, and
+        ``PaginationDataLossError`` is raised if it cannot be. Pass ``False``
+        for the cheaper pre-1.0 behaviour.
+        """
         return await collect_all(
             self.iter_internal_transactions_streaming(
                 address=address,
@@ -243,6 +269,7 @@ class AccountMixin:
                 to_block=to_block,
                 batch_size=1000,
                 on_progress=on_progress,
+                guarantee_complete=guarantee_complete,
             ),
             threshold=AGGREGATION_WARNING_THRESHOLD,
             warning='Aggregating >100k internal transactions in memory. '

@@ -27,25 +27,31 @@ from __future__ import annotations
 
 import json
 import logging
+from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, NamedTuple, Protocol, runtime_checkable
 
+from ..constants import MAX_BLOCK_NUMBER
 from ..core.types import JSONDict
 from ..domain.method import Method
-from ..exceptions import ChainscanDataError
+from ..exceptions import ChainscanDataError, PaginationDataLossError
 from ..ports.progress import ProgressCallback
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    'BlockRange',
     'Cursor',
     'ItemDecode',
     'PageFetch',
     'collect_all',
+    'detect_block_range',
     'iter_items',
     'iter_pages',
+    'iter_pages_complete',
     'normalize_items',
     'page_fetcher',
+    'split_window',
     'validate_batch_size',
 ]
 
@@ -131,6 +137,8 @@ async def iter_pages(
     *,
     on_progress: ProgressCallback | None = None,
     operation: str = 'fetch',
+    guarantee_complete: bool = False,
+    result_window: int | None = None,
 ) -> AsyncIterator[list[JSONDict]]:
     """Iterate over all pages, yielding one batch per non-empty page.
 
@@ -151,13 +159,33 @@ async def iter_pages(
         on_progress: Optional callback invoked once per non-empty page with
             ``(fetched, total_expected=None, current_page, operation)``.
         operation: Operation label forwarded to ``on_progress``.
+        guarantee_complete: Enforce "every matching record, or an exception"
+            by delegating to :func:`iter_pages_complete`. Requires
+            ``result_window``; without one there is nothing to detect, and the
+            plain loop runs (see ``Scanner.result_window``).
+        result_window: The provider's ``page * offset`` cap, if it declares one.
 
     Yields:
         Batches (lists) of item dictionaries.
 
     Raises:
         Any exception raised by ``fetch`` propagates unchanged.
+        PaginationDataLossError: Only in guaranteed mode, when a window over
+            the cap cannot be narrowed further.
     """
+    # ``isinstance`` rather than ``is not None``: a scanner double may expose a
+    # non-numeric attribute, and the guaranteed path must never engage on one.
+    if guarantee_complete and isinstance(result_window, int) and result_window > 0:
+        async for guaranteed_batch in iter_pages_complete(
+            fetch,
+            params,
+            result_window=result_window,
+            on_progress=on_progress,
+            operation=operation,
+        ):
+            yield guaranteed_batch
+        return
+
     page = 1
     fetched = 0
     seen_states: set[str] = set()
@@ -198,6 +226,8 @@ async def iter_items(
     params: dict[str, Any],
     *,
     decode: ItemDecode | None = None,
+    guarantee_complete: bool = False,
+    result_window: int | None = None,
 ) -> AsyncIterator[JSONDict]:
     """Iterate over all items one by one (flattened batches).
 
@@ -210,11 +240,18 @@ async def iter_items(
         params: Initial request params (cursor-merged per page).
         decode: Optional per-item hook (e.g. ABI decoding). Receives the raw
             item and must return the item to yield.
+        guarantee_complete: Forwarded to :func:`iter_pages`.
+        result_window: Forwarded to :func:`iter_pages`.
 
     Yields:
         Item dictionaries (decoded when ``decode`` is given).
     """
-    async for batch in iter_pages(fetch, params):
+    async for batch in iter_pages(
+        fetch,
+        params,
+        guarantee_complete=guarantee_complete,
+        result_window=result_window,
+    ):
         for item in batch:
             yield decode(item) if decode is not None else item
 
@@ -248,3 +285,248 @@ async def collect_all(
         if len(items) == threshold:
             logger.warning(warning)
     return items
+
+
+# ---------------------------------------------------------------------------
+# Guaranteed-complete pagination (adaptive block-range splitting)
+# ---------------------------------------------------------------------------
+
+type BlockRange = tuple[int, int]
+"""Inclusive ``(start_block, end_block)`` window."""
+
+
+class _RangeKeys(NamedTuple):
+    """The two param names carrying a block range for one request shape."""
+
+    start: str
+    end: str
+
+
+#: Block-range param spellings used across scanner SPECS and the client's
+#: streaming methods (wire names first, public names second).
+_BLOCK_RANGE_KEYS: tuple[_RangeKeys, ...] = (
+    _RangeKeys('startblock', 'endblock'),
+    _RangeKeys('start_block', 'end_block'),
+    _RangeKeys('fromBlock', 'toBlock'),
+    _RangeKeys('from_block', 'to_block'),
+)
+
+#: Item fields holding a block number, in the order they are tried.
+_ITEM_BLOCK_KEYS: tuple[str, ...] = ('blockNumber', 'block_number', 'block')
+
+
+def _as_block_number(value: Any) -> int | None:
+    """Coerce a block-range param or item field to an ``int``.
+
+    ``'latest'``/``None`` mean "the chain tip", represented by
+    :data:`MAX_BLOCK_NUMBER` so an unbounded end can still be split.
+    Anything unrecognised returns ``None`` (treated as "cannot split").
+    """
+    if value is None or value == 'latest':
+        return MAX_BLOCK_NUMBER
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        text = value.strip()
+        try:
+            return int(text, 16) if text.lower().startswith('0x') else int(text)
+        except ValueError:
+            return None
+    return None
+
+
+def detect_block_range(params: dict[str, Any]) -> tuple[_RangeKeys, BlockRange] | None:
+    """Find the block-range params of a request, if it has any.
+
+    Returns the param names plus the resolved inclusive range, or ``None``
+    when the request carries no splittable block range (token holders, or a
+    range whose bounds cannot be parsed).
+    """
+    for keys in _BLOCK_RANGE_KEYS:
+        if keys.start not in params or keys.end not in params:
+            continue
+        start = _as_block_number(params[keys.start])
+        end = _as_block_number(params[keys.end])
+        if start is None or end is None or end < start:
+            return None
+        return keys, (start, end)
+    return None
+
+
+def _item_block_number(item: JSONDict) -> int | None:
+    """Block number of an item, or ``None`` if it carries none we recognise."""
+    for key in _ITEM_BLOCK_KEYS:
+        if key in item:
+            return _as_block_number(item[key])
+    return None
+
+
+def split_window(
+    window: BlockRange, items: list[JSONDict]
+) -> tuple[BlockRange, BlockRange] | None:
+    """Split an overflowing window into two, adaptively.
+
+    The split point is *observed*, not fixed: the block of the last item the
+    truncated page set returned bounds the part the provider was able to
+    serve, so it is where the range is cut. Both halves are strictly narrower
+    than ``window``, which is what makes the recursion terminate.
+
+    Falls back to an arithmetic bisect when items carry no usable block
+    number. Returns ``None`` when the window is a single block — the caller
+    must then raise :class:`PaginationDataLossError` rather than truncate.
+    """
+    start, end = window
+    if start >= end:
+        return None
+
+    boundary = _item_block_number(items[-1]) if items else None
+    if boundary is not None and start < boundary <= end:
+        return (start, boundary - 1), (boundary, end)
+
+    mid = start + (end - start) // 2
+    if start <= mid < end:
+        return (start, mid), (mid + 1, end)
+    return None
+
+
+def _chunked(items: list[JSONDict], size: int) -> list[list[JSONDict]]:
+    """Split a materialized window into caller-sized batches."""
+    if size < 1:
+        return [items]
+    return [items[i : i + size] for i in range(0, len(items), size)]
+
+
+async def _fetch_window(
+    fetch: PageFetch,
+    params: dict[str, Any],
+    *,
+    result_window: int,
+) -> tuple[list[JSONDict], bool]:
+    """Walk every page of one window; report whether it reached the result cap.
+
+    Overflow signal, deliberately the weakest one that cannot be fooled:
+    ``result_window`` records have been walked. Nothing stronger is available.
+    A page/offset explorer that has hit its cap answers a *partial or empty*
+    page — byte-identical to genuinely reaching the end of the data — and the
+    cap need not fall on a page boundary, so "the last page was full" and "a
+    next cursor was offered" both miss real truncations.
+
+    The cost of that choice is a false positive: a window holding exactly
+    ``result_window`` records is reported as overflowing, because completeness
+    there is unprovable without a request the provider would refuse. In a
+    splittable range that costs extra requests; in a rangeless one it surfaces
+    as :class:`PaginationDataLossError`. Both are loud, which is the point.
+    """
+    collected: list[JSONDict] = []
+    current = dict(params)
+    seen_states: set[str] = set()
+    while True:
+        fingerprint = _request_fingerprint(current)
+        if fingerprint in seen_states:
+            raise ChainscanDataError('Pagination cursor repeats a prior request state.')
+        seen_states.add(fingerprint)
+
+        items, cursor = await fetch(current)
+        collected.extend(items)
+        if len(collected) >= result_window:
+            return collected, True
+        if cursor is None:
+            return collected, False
+        next_params = {**current, **cursor}
+        if next_params == current:
+            raise ChainscanDataError('Pagination cursor does not advance request parameters.')
+        current = next_params
+
+
+async def iter_pages_complete(
+    fetch: PageFetch,
+    params: dict[str, Any],
+    *,
+    result_window: int,
+    on_progress: ProgressCallback | None = None,
+    operation: str = 'fetch',
+) -> AsyncIterator[list[JSONDict]]:
+    """Iterate pages with **no silent truncation**, splitting ranges as needed.
+
+    Contract: every matching record is yielded, or an exception is raised.
+
+    A window is materialized before anything is yielded, because a window
+    that turns out to have overflowed must be discarded and re-fetched as two
+    narrower windows — yielding first would duplicate items. The buffer is
+    therefore bounded by ``result_window`` items, and the observed cost of
+    the guarantee is up to one extra pass over each overflowing window.
+
+    Args:
+        fetch: Async page fetch (see :func:`page_fetcher`).
+        params: Initial request params. A block range in any of the spellings
+            in :data:`_BLOCK_RANGE_KEYS` makes the request splittable.
+        result_window: The provider's ``page * offset`` cap (``Scanner.result_window``).
+        on_progress: Optional callback, invoked per yielded batch.
+        operation: Operation label forwarded to ``on_progress``.
+
+    Yields:
+        Batches of item dictionaries, sized like the requested ``offset``.
+
+    Raises:
+        PaginationDataLossError: A window hit the cap and cannot be narrowed
+            further — a single block over the cap, or a request with no block
+            range to narrow. Carries the range and the observed cap.
+        ChainscanDataError: Cursor state does not advance (as in :func:`iter_pages`).
+    """
+    detected = detect_block_range(params)
+    keys = detected[0] if detected is not None else None
+    windows: deque[BlockRange | None] = deque([detected[1] if detected is not None else None])
+
+    page_size = params.get('offset')
+    batch_size = page_size if isinstance(page_size, int) and page_size > 0 else result_window
+    fetched = 0
+    page = 1
+
+    while windows:
+        window = windows.popleft()
+        attempt = dict(params)
+        if window is not None and keys is not None:
+            attempt[keys.start] = window[0]
+            attempt[keys.end] = window[1]
+        if 'page' in attempt:
+            attempt['page'] = 1
+
+        items, overflowed = await _fetch_window(fetch, attempt, result_window=result_window)
+
+        if overflowed:
+            halves = split_window(window, items) if window is not None else None
+            if halves is None:
+                block = (
+                    window[0] if window is not None else PaginationDataLossError.UNBOUNDED_QUERY
+                )
+                raise PaginationDataLossError(
+                    block_number=block,
+                    items_fetched=len(items),
+                    api_limit=result_window,
+                    start_block=window[0] if window is not None else None,
+                    end_block=window[1] if window is not None else None,
+                )
+            windows.extendleft(reversed(halves))
+            continue
+
+        for batch in _chunked(items, batch_size):
+            if not batch:
+                continue
+            fetched += len(batch)
+            if on_progress is not None:
+                try:
+                    await on_progress(
+                        fetched=fetched,
+                        total_expected=None,
+                        current_page=page,
+                        operation=operation,
+                    )
+                except Exception:
+                    logger.warning(
+                        'Progress callback failed during pagination; continuing.',
+                        exc_info=True,
+                    )
+            yield batch
+            page += 1

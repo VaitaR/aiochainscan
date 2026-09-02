@@ -174,11 +174,48 @@ async with ChainscanClient.from_config('etherscan', 'ethereum') as client:
 > The pool never duplicates retries — it reacts only to exceptions that
 > survived each member client's tenacity `Network`.
 
+> **Guaranteed-complete pagination (`guarantee_complete`, default `True`):**
+> `get_all_*` / `iter_*_streaming` / `iter_transactions` / `iter_logs` accept
+> `guarantee_complete`. `True` means *every matching record was returned, or an
+> exception was raised*.
+>
+> - **Overflow detection** is scanner-declared, never guessed:
+>   `Scanner.result_window` is the provider's `page * offset` cap
+>   (`etherscan` v2 and `blockscout` v1 via `EtherscanLikeScanner`:
+>   `API_MAX_OFFSET_ETHERSCAN` = 10_000). `None` means the provider paginates
+>   by an opaque server cursor that runs to exhaustion (`blockscout_v2`
+>   `next_page_params`, `nodereal` `pageKey`) — nothing to overflow, and the
+>   flag is inert. A third-party scanner that has a cap but leaves
+>   `result_window = None` cannot be protected.
+> - **The signal** is `collected >= result_window`, not an error string and not
+>   "the last page was full". A capped explorer answers a partial page that is
+>   indistinguishable from the end of the data, and the cap need not land on a
+>   page boundary. BlockScout V1's cap is *assumed* equal to Etherscan's: it
+>   could not be confirmed from this repo, and over-assuming only costs
+>   requests while under-assuming loses data.
+> - **The split is adaptive**: on overflow the block range is cut at the block
+>   of the last record the provider managed to serve (arithmetic bisect only
+>   when items carry no block number), and each half is strictly narrower, so
+>   the recursion terminates.
+> - **Costs.** Up to one extra pass over each overflowing window (the
+>   truncated attempt is discarded rather than yielded, so nothing duplicates),
+>   a buffer bounded by `result_window` items, and one unnecessary split for a
+>   range holding *exactly* the cap.
+> - **`PaginationDataLossError`** carries `start_block` / `end_block` /
+>   `api_limit` / `items_fetched`. It fires when a single block still exceeds
+>   the cap, and for requests with no block range to narrow —
+>   `get_all_token_holders` on Etherscan is the practical case: a token with
+>   >=10_000 holders now raises instead of quietly returning 10_000.
+> - `guarantee_complete=False` restores the pre-1.0 behaviour (fewer requests
+>   on wide ranges, silent truncation possible). `ChainscanPool` forwards the
+>   flag to its member clients.
+
 ### ⚠️ Key Gotchas
 - `get_transactions()` returns **one page** (~50-100 items). Use `get_all_transactions()` for complete data.
 - `get_token_holders()` returns **one page**. Use `get_all_token_holders()` / `iter_token_holders_streaming()` for complete data.
 - `get_logs()` returns **≤1000 logs**. Use `get_all_logs()` for complete data.
 - `get_all_*()` now uses **streaming aggregation** under the hood; for very large datasets prefer `iter_*_streaming()`.
+- `get_all_*()` / `iter_*_streaming()` default to `guarantee_complete=True` — complete data or an exception, never silent truncation (see below).
 - `get_transactions_df()` auto-paginates (uses `iter_transactions` internally).
 - Balance/value/supply values are **Wei strings** — convert with `wei_to_ether()` / `to_decimal_amount()` (exact `Decimal`), never `int(wei) / 10**18` float division.
 
@@ -339,6 +376,8 @@ Every `Method` enum value (33 total) maps to typed convenience methods on `Chain
 | Wrap async generator with `@retry` | Apply retry inside generator at page-fetch level | Tenacity completes when generator is created, not exhausted |
 | Reset adaptive offset per page | Persist offset state across all pages | "Yo-yo effect" doubles API requests |
 | Skip whale blocks silently | Raise `PaginationDataLossError` | Silent data loss is unacceptable |
+| Trust a partial page to mean "end of data" | Treat `>= Scanner.result_window` records as overflow | A capped page/offset API truncates with a partial page and no error |
+| Split a range in fixed-width windows | Bisect on the *observed* overflow boundary | Fixed windows cost requests where data is sparse and still truncate where it is dense |
 
 ### Network
 | ❌ DON'T | ✅ DO | Why |
@@ -363,7 +402,7 @@ Every `Method` enum value (33 total) maps to typed convenience methods on `Chain
 ### Services (Business Logic)
 | File | Purpose | Key Pattern |
 |------|---------|-------------|
-| `services/pagination.py` | Pagination | `iter_pages`/`iter_items`/`collect_all` over `Scanner.fetch_page` cursors |
+| `services/pagination.py` | Pagination | `iter_pages`/`iter_items`/`collect_all` over `Scanner.fetch_page` cursors; `iter_pages_complete` adds adaptive range splitting (`guarantee_complete`) |
 | `services/ens_resolver.py` | ENS name resolution | Cache + BlockScout V2 |
 | `services/analytics.py` | Polars DataFrames | Column-oriented, Utf8 for Wei |
 | `services/constants.py` | Shared service constants | - |

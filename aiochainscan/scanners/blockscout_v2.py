@@ -197,6 +197,10 @@ class BlockScoutV2Scanner(Scanner):
     name = 'blockscout'
     version = 'v2'
 
+    # ``fetch_page`` follows the server's ``next_page_params`` to exhaustion,
+    # so there is no page/offset result window to overflow (see base class).
+    result_window = None
+
     # BlockScout V2 supports many networks through different instances
     supported_networks = {
         'ethereum',

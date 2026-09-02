@@ -41,6 +41,26 @@ class Scanner(ABC):
     SPECS: dict[Method, EndpointSpec]
     """Mapping of logical methods to endpoint specifications"""
 
+    result_window: int | None = None
+    """Total results one page/offset query can reach before the provider stops.
+
+    Etherscan-family REST APIs bound ``page * offset`` (see
+    ``constants.API_MAX_OFFSET_ETHERSCAN``): once that many items have been
+    walked, further pages return nothing more, which is *silent truncation*.
+    A scanner that declares this window lets
+    :func:`services.pagination.iter_pages` split the requested block range and
+    keep the result complete (``guarantee_complete``).
+
+    ``None`` means "no such window": the provider paginates by an opaque
+    server-issued cursor that runs to exhaustion (BlockScout V2
+    ``next_page_params``, NodeReal ``pageKey``), so a single query is already
+    complete and nothing needs splitting.
+
+    Declaring the window is opt-in. A third-party scanner that *has* a result
+    window but leaves this ``None`` cannot be protected by
+    ``guarantee_complete`` — the engine has no way to detect its cap.
+    """
+
     chain_id: int | None
     """Numeric chain id; ``None`` for custom base URLs until probed/recorded."""
 

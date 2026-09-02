@@ -234,7 +234,16 @@ class PaginationDataLossError(ChainscanClientError):
         items_fetched: Number of items successfully fetched (limited by API).
         api_limit: The API's maximum items per request.
         suggested_action: Human-readable guidance on how to resolve the issue.
+        start_block: Lower bound of the block range that overflowed. Equals
+            ``block_number`` for the single-block case; ``None`` when the query
+            carries no block range at all (e.g. token holders).
+        end_block: Upper bound of the overflowing block range (see above).
+
+    ``block_number == UNBOUNDED_QUERY`` marks the rangeless case: the request
+    has no block-range parameter, so there is nothing left to narrow.
     """
+
+    UNBOUNDED_QUERY = -1
 
     def __init__(
         self,
@@ -242,20 +251,33 @@ class PaginationDataLossError(ChainscanClientError):
         items_fetched: int,
         api_limit: int,
         suggested_action: str = 'Use GraphQL API, transaction index pagination, or topic filters.',
+        *,
+        start_block: int | None = None,
+        end_block: int | None = None,
     ) -> None:
         self.block_number = block_number
         self.items_fetched = items_fetched
         self.api_limit = api_limit
         self.suggested_action = suggested_action
+        self.start_block = block_number if start_block is None else start_block
+        self.end_block = block_number if end_block is None else end_block
         message = (
-            f'PAGINATION DATA LOSS DETECTED: Block {block_number} contains >={items_fetched} '
+            f'PAGINATION DATA LOSS DETECTED: {self._subject()} contains >={items_fetched} '
             f'transactions, exceeding API limit of {api_limit}. Cannot fetch all data with REST API. '
             f'Suggested action: {suggested_action}'
         )
         super().__init__(message)
 
+    def _subject(self) -> str:
+        """Describe what overflowed: one block, a block range, or a rangeless query."""
+        if self.block_number == self.UNBOUNDED_QUERY:
+            return 'The query (no block range to narrow)'
+        if self.start_block != self.end_block:
+            return f'Block range [{self.start_block}, {self.end_block}]'
+        return f'Block {self.block_number}'
+
     def __str__(self) -> str:
         return (
-            f'Block {self.block_number} has >={self.items_fetched} transactions '
+            f'{self._subject()} has >={self.items_fetched} items '
             f'(limit: {self.api_limit}). {self.suggested_action}'
         )
