@@ -433,6 +433,16 @@ def _decode_node(node: TypeNode, buf: bytes, offset: int) -> Any:
         assert node.elem is not None
         if node.length is None:
             count = _read_uint(buf, offset)
+            # Bound the count against the buffer BEFORE materialising the node
+            # list: a corrupted length word is a 32-byte input that would
+            # otherwise ask for gigabytes. Every element occupies at least
+            # ``head_size`` bytes of the head area, so this cannot reject a
+            # well-formed payload.
+            if offset + 32 + count * node.elem.head_size > len(buf):
+                raise ValueError(
+                    f'{node.canonical} declares {count} items, more than the '
+                    f'remaining {len(buf) - offset - 32} bytes can hold'
+                )
             return _decode_sequence([node.elem] * count, buf, offset + 32)
         return _decode_sequence([node.elem] * node.length, buf, offset)
     if kind == 'tuple':

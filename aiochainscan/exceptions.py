@@ -147,6 +147,15 @@ class ChainscanProviderSwitchWarning(UserWarning):
     """
 
 
+class PureAbiDecodeWarning(UserWarning):
+    """Emitted once per process when a bulk decode runs on the pure-Python floor.
+
+    The pure floor is correct but roughly an order of magnitude slower than the
+    Rust backend, and bulk callers are the only ones where that difference is
+    large enough to be worth a message.
+    """
+
+
 class ChainscanDependencyError(ChainscanClientError):
     """An optional dependency required for the requested operation is missing.
 

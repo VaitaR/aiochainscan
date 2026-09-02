@@ -644,6 +644,8 @@ from aiochainscan.exceptions import (
     BlockRangeNotSupportedError,  # MethodNotDeclaredError subclass: bounded block range the provider's spec cannot carry (raised at every seam: call/fetch_page/stream)
     ProviderPoolExhaustedError,   # Pool: every provider failed (.attempts)
     ChainscanProviderSwitchWarning,  # Pool: routed away from a provider
+    AbiTypeNotSupportedError,     # ValueError subclass: Solidity type no decode tier handles
+    PureAbiDecodeWarning,         # Bulk decode running without the [fastabi] Rust backend
 )
 ```
 
@@ -685,7 +687,10 @@ transaction inputs, event logs, `SmartContract.iter_events` and the MCP
 - **The pure floor is ~2× faster than the `eth-abi` tier** on single decodes
   (`-m benchmark` in `tests/test_abi_pure.py`), so `[fallback]` buys wider
   type coverage, not speed. Bulk work (`decode_many`, streaming, DataFrames)
-  still belongs on `[fastabi]`.
+  still belongs on `[fastabi]`, and
+  `decode_transaction_inputs_batch` says so once per process
+  (`PureAbiDecodeWarning`) for batches of 50+. Log decoding never had a Rust
+  path at all (fastabi decodes *inputs* only), so it warns about nothing.
 - **The ABI index is cached** (`_abi_index`): identity fast path, then a
   content digest, holding the function/event maps plus each selector's
   compiled decode plan — hashing an ABI costs more than decoding against it.

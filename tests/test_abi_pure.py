@@ -7,6 +7,7 @@ base install and an ``aiochainscan[fallback]`` install must not disagree about
 what a transaction says.
 """
 
+import warnings
 from typing import Any
 
 import pytest
@@ -25,9 +26,10 @@ from aiochainscan.decode import (
     canonical_abi_type,
     decode_log_data,
     decode_transaction_input,
+    decode_transaction_inputs_batch,
     keccak_hash,
 )
-from aiochainscan.exceptions import AbiTypeNotSupportedError
+from aiochainscan.exceptions import AbiTypeNotSupportedError, PureAbiDecodeWarning
 
 requires_eth_abi = pytest.mark.skipif(not ETH_ABI_AVAILABLE, reason='eth-abi not installed')
 
@@ -321,6 +323,26 @@ class TestBaseInstall:
         with pytest.raises(AbiTypeNotSupportedError):
             decode_log_data(log, abi)
 
+    def test_corrupted_array_length_does_not_allocate(self):
+        """A garbage length word must be rejected, not turned into a huge list."""
+        abi = [
+            {
+                'type': 'function',
+                'name': 'batch',
+                'inputs': [{'type': 'uint256[]', 'name': 'items'}],
+            }
+        ]
+        calldata = (
+            '0x'
+            + keccak_hash('batch(uint256[])')[:8]
+            + (32).to_bytes(32, 'big').hex()  # offset to the array
+            + (2**64).to_bytes(32, 'big').hex()  # claimed item count
+        )
+
+        result = decode_transaction_input({'input': calldata}, abi)
+
+        assert result['decoded_data'] == {}
+
     def test_malformed_calldata_still_decodes_to_empty(self):
         """Truncated data is bad input, not a codec gap — stays non-fatal."""
         abi = [
@@ -338,6 +360,43 @@ class TestBaseInstall:
 
         assert result['decoded_func'] == ''
         assert result['decoded_data'] == {}
+
+    def test_bulk_decode_warns_once_about_the_missing_rust_backend(self, monkeypatch):
+        monkeypatch.setattr(decode_module, '_bulk_warning_emitted', False)
+        abi = [
+            {
+                'type': 'function',
+                'name': 'transfer',
+                'inputs': [
+                    {'type': 'address', 'name': 'to'},
+                    {'type': 'uint256', 'name': 'value'},
+                ],
+            }
+        ]
+        calldata = (
+            '0xa9059cbb'
+            '000000000000000000000000d8da6bf26964af9d7eed9e03e53415d37aa96045'
+            '00000000000000000000000000000000000000000000000000000002540be400'
+        )
+        batch = [{'input': calldata} for _ in range(decode_module._BULK_WARNING_THRESHOLD)]
+
+        with pytest.warns(PureAbiDecodeWarning, match=r'aiochainscan\[fastabi\]'):
+            first = decode_transaction_inputs_batch(batch, abi)
+
+        assert all(tx['decoded_func'] == 'transfer' for tx in first)
+
+        with warnings.catch_warnings():
+            warnings.simplefilter('error', PureAbiDecodeWarning)
+            decode_transaction_inputs_batch(batch, abi)
+
+    def test_small_bulk_decode_stays_silent(self, monkeypatch):
+        """A batch below the threshold is not slow enough to be worth a message."""
+        monkeypatch.setattr(decode_module, '_bulk_warning_emitted', False)
+        abi = [{'type': 'function', 'name': 'ping', 'inputs': []}]
+
+        with warnings.catch_warnings():
+            warnings.simplefilter('error', PureAbiDecodeWarning)
+            decode_transaction_inputs_batch([{'input': '0x' + keccak_hash('ping()')[2:10]}], abi)
 
 
 class TestAbiIndexCache:

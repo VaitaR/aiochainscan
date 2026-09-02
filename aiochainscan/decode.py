@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from hashlib import blake2b
@@ -9,7 +10,11 @@ import orjson
 
 from aiochainscan.abi_pure import TypeNode, compile_params, decode_values
 from aiochainscan.crypto import keccak_hex
-from aiochainscan.exceptions import AbiTypeNotSupportedError, ChainscanDependencyError
+from aiochainscan.exceptions import (
+    AbiTypeNotSupportedError,
+    ChainscanDependencyError,
+    PureAbiDecodeWarning,
+)
 
 _eth_abi_decode: Any
 try:
@@ -627,6 +632,29 @@ def decode_log_data(log: dict[str, Any], abi: list[dict[str, Any]]) -> dict[str,
     return log
 
 
+# Below this many items a bulk decode on the pure floor is not slow enough to be
+# worth a message; above it the Rust backend is the difference between
+# milliseconds and a visible pause.
+_BULK_WARNING_THRESHOLD = 50
+_bulk_warning_emitted = False
+
+
+def _warn_bulk_on_pure_floor(count: int) -> None:
+    """Warn once per process that a bulk decode is running without fastabi."""
+    global _bulk_warning_emitted
+    if _bulk_warning_emitted or FASTABI_AVAILABLE or count < _BULK_WARNING_THRESHOLD:
+        return
+    _bulk_warning_emitted = True
+    backend = 'eth-abi' if ETH_ABI_AVAILABLE else 'pure-Python'
+    warnings.warn(
+        f'Decoding {count} inputs on the {backend} backend. '
+        "Install 'aiochainscan[fastabi]' for the Rust decoder "
+        '(roughly an order of magnitude faster on bulk workloads).',
+        PureAbiDecodeWarning,
+        stacklevel=3,
+    )
+
+
 def decode_transaction_inputs_batch(
     transactions: list[dict[str, Any]], abi: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
@@ -643,6 +671,7 @@ def decode_transaction_inputs_batch(
     """
     if not FASTABI_AVAILABLE or not transactions:
         # Fallback to individual Python decoding
+        _warn_bulk_on_pure_floor(len(transactions))
         return [decode_transaction_input(tx, abi) for tx in transactions]
 
     try:
