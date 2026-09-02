@@ -11,7 +11,7 @@ No API key required when using BlockScout V2!
 import asyncio
 
 from aiochainscan.core.client import ChainscanClient
-from aiochainscan.core.method import Method
+from aiochainscan.domain.method import Method
 
 
 async def main():

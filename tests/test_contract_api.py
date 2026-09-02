@@ -11,8 +11,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from aiochainscan.core.client import ChainscanClient
-from aiochainscan.core.method import Method
 from aiochainscan.domain.contract import DecodedEvent, DecodedTransaction, SmartContract
+from aiochainscan.domain.method import Method
 from aiochainscan.exceptions import ChainscanClientError
 
 # Sample ERC20 ABI (minimal for testing)

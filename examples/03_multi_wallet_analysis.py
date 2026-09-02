@@ -12,7 +12,7 @@ import asyncio
 from dataclasses import dataclass
 
 from aiochainscan.core.client import ChainscanClient
-from aiochainscan.core.method import Method
+from aiochainscan.domain.method import Method
 
 
 @dataclass

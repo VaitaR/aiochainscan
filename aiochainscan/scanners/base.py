@@ -9,9 +9,9 @@ from typing import Any, Literal
 
 from ..chain_registry import resolve_chain_id
 from ..core.endpoint import EndpointSpec, coerce_response_items
-from ..core.method import Method
 from ..core.url_builder import UrlBuilder
 from ..crypto import to_checksum_address
+from ..domain.method import Method
 from ..exceptions import ChainscanClientError, ChainscanNetworkError, MethodNotDeclaredError
 from ..network import Network
 

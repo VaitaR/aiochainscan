@@ -20,6 +20,7 @@ from ..chain_registry import (
     resolve_scanner_target,
 )
 from ..constants import MAX_BLOCK_NUMBER
+from ..domain.method import Method
 from ..domain.normalize import (
     normalize_internal_transaction,
     normalize_log,
@@ -40,7 +41,6 @@ from ..services.pagination import (
     page_fetcher,
     validate_batch_size,
 )
-from .method import Method
 from .mixins import (
     AccountMixin,
     BlockMixin,

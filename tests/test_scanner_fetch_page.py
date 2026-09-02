@@ -19,7 +19,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from aiochainscan.core.client import ChainscanClient
-from aiochainscan.core.method import Method
+from aiochainscan.domain.method import Method
 from aiochainscan.exceptions import ChainscanNetworkError
 from aiochainscan.scanners.base import Scanner
 from aiochainscan.scanners.blockscout_v2 import BlockScoutV2Scanner

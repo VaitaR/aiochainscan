@@ -41,8 +41,8 @@ import orjson
 
 from ..constants import MAX_BLOCK_NUMBER
 from ..core.endpoint import EndpointSpec
-from ..core.method import Method
 from ..core.url_builder import UrlBuilder
+from ..domain.method import Method
 from ..exceptions import (
     ChainscanClientError,
     ChainscanClientProxyError,

@@ -19,8 +19,8 @@ import urllib.parse
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from ..core.endpoint import EndpointSpec
-from ..core.method import Method
 from ..core.url_builder import UrlBuilder
+from ..domain.method import Method
 from . import register_scanner
 from .base import Scanner, checksummed_holder_address, translate_unexpected_errors
 

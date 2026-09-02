@@ -50,6 +50,8 @@ from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 import httpx
 
+from ..domain.method import Method
+
 # FailureKind moved to ``..exceptions`` (exceptions carry it from the raise
 # site); the aliased import below re-exports it under this module's
 # historical path for typed importers (``aiochainscan.core.pool.FailureKind``).
@@ -67,7 +69,6 @@ from ..exceptions import (
 )
 from ..network import api_error_failure_kind
 from .client import ChainscanClient
-from .method import Method
 from .mixins import (
     AccountMixin,
     BlockMixin,

@@ -31,8 +31,8 @@ from typing import TYPE_CHECKING, Any
 import orjson
 
 from ..chain_registry import list_supported_chains
-from ..core.method import Method
 from ..decode import decode_transaction_input
+from ..domain.method import Method
 from ..domain.models import Address
 from ..exceptions import ChainscanClientError
 from .abi_codec import canonical_signature, decode_arguments, encode_arguments, selector

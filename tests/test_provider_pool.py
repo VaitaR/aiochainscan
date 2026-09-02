@@ -36,12 +36,12 @@ import httpx
 import pytest
 
 from aiochainscan.core.client import ChainscanClient
-from aiochainscan.core.method import Method
 from aiochainscan.core.pool import (
     ChainscanPool,
     FailureKind,
     classify_failure,
 )
+from aiochainscan.domain.method import Method
 from aiochainscan.exceptions import (
     ChainscanClientApiError,
     ChainscanClientError,

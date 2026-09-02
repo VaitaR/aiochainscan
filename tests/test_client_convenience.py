@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from aiochainscan.core.client import ChainscanClient
-from aiochainscan.core.method import Method
+from aiochainscan.domain.method import Method
 from aiochainscan.domain.models import Address, TxHash
 
 TEST_ADDRESS = '0x1111111111111111111111111111111111111111'

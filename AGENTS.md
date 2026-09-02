@@ -419,7 +419,7 @@ Every `Method` enum value (33 total) maps to typed convenience methods on `Chain
 |------|---------|---------------------|
 | `core/client.py` + `core/mixins/` | **ChainscanClient** (composition of per-domain mixins) | All API interactions, one convenience method per `Method` value plus `get_all_*`/`iter_*`/`wait_for_*` |
 | `core/pool.py` | **ChainscanPool** | Multi-provider failover: `classify_failure`, sticky routing, cooldowns, pinned pagination |
-| `domain/method.py` | **Method** enum (33 values; `core/method.py` is a compat shim) | Supported operations |
+| `domain/method.py` | **Method** enum (33 values) | Supported operations |
 | `domain/contract.py` | **SmartContract** | High-level contract API |
 | `domain/models.py` | **Address**, **TxHash** | Data validation, EIP-55 |
 | `config.py` | **ConfigurationManager** | Scanner configs (lazy-loaded) |

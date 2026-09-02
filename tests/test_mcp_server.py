@@ -13,7 +13,7 @@ from typing import Any
 
 import pytest
 
-from aiochainscan.core.method import Method
+from aiochainscan.domain.method import Method
 from aiochainscan.exceptions import ChainscanClientApiError
 from aiochainscan.mcp import tools as mcp_tools
 from aiochainscan.mcp.abi_codec import (

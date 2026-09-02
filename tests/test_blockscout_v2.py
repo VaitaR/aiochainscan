@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from aiochainscan.core.method import Method
+from aiochainscan.domain.method import Method
 from aiochainscan.scanners import SCANNER_REGISTRY, get_scanner_class, list_scanners
 from aiochainscan.scanners.blockscout_v2 import (
     BlockScoutV2Scanner,
