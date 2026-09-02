@@ -6,11 +6,7 @@
 
 ## Multi-agent worktrees
 
-**One session == one worktree == one branch.** Never switch branches or stash to share a directory with another session.
-
-- Bootstrap: `make wt-new SLUG=<task-slug> [TYPE=feat|fix|chore|docs|arch|refactor] [BASE=origin/main]` → creates `.claude/worktrees/<slug>/` on branch `<type>/<slug>`, copies `.env`, runs `uv sync --extra dev --frozen`.
-- List: `make wt-ls` · Teardown (only clean + merged): `make wt-rm SLUG=<slug> ARGS="--yes"`.
-- `AIO_SKIP_SYNC=1` skips the sync (throwaway sessions only); `AIO_BUILD_FASTABI=1` also builds the Rust FFI.
+Bootstrap/list/teardown commands: see AGENTS.md "Multi-Agent Workflow". `AIO_SKIP_SYNC=1` skips the sync (throwaway sessions only); `AIO_BUILD_FASTABI=1` also builds the Rust FFI.
 
 ## Edit/Write hook (auto-applied)
 
@@ -22,7 +18,7 @@
 
 ## Waiting on long-running things
 
-Do not stream `gh run watch` — it burns tokens. Use the self-terminating poller `./scripts/agent/ci_watch.sh` (exit status is the verdict). Note: all workflows are currently disabled (Actions-minutes budget), so CI watch reports NO VERDICT until re-enabled; use `make ci-local` as the CI gate meanwhile.
+Do not stream `gh run watch` — it burns tokens; use `./scripts/agent/ci_watch.sh` instead (see AGENTS.md CI section — workflows currently disabled).
 
 ## Permissions
 
