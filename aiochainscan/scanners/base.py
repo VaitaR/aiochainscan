@@ -542,16 +542,20 @@ class Scanner(ABC):
         spec = specs.get(method) if isinstance(specs, dict) else None
         return spec is not None and spec_declares_block_range(spec)
 
-    def result_window_for(self, method: Method) -> int | None:
+    @classmethod
+    def result_window_for(cls, method: Method) -> int | None:
         """The window that bounds THIS method, falling back to the scanner's.
 
-        Read by :func:`services.pagination.page_fetcher`, so every guaranteed
-        path sees the per-endpoint cap when one is declared.
+        Read by :func:`services.pagination.page_fetcher` so every guaranteed
+        path sees the per-endpoint cap, and by
+        :func:`scanners.scanners_serving_completely`, which asks the same
+        question of a scanner CLASS — hence a classmethod: a per-endpoint
+        window must decide capability the same way it decides pagination.
         """
-        overrides = self.RESULT_WINDOW_OVERRIDES
+        overrides = cls.RESULT_WINDOW_OVERRIDES
         if method in overrides:
             return overrides[method]
-        return self.result_window
+        return cls.result_window
 
     def get_supported_methods(self) -> list[Method]:
         """

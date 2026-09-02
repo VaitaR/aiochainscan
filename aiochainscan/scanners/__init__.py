@@ -73,10 +73,13 @@ def list_scanners() -> dict[tuple[str, str], type[Scanner]]:
 def scanners_serving_completely(method: Method) -> tuple[str, ...]:
     """Labels of registered scanners that can serve ``method`` in full.
 
-    "In full" means the scanner declares ``method`` and has no result window
-    (``Scanner.result_window is None``): it paginates by a server-issued cursor
-    that runs to exhaustion, so no cap can truncate it. Used to name a working
-    alternative when the configured provider cannot guarantee completeness.
+    "In full" means the scanner declares ``method`` and no result window
+    bounds it (``Scanner.result_window_for(method) is None``): it paginates by
+    a server-issued cursor that runs to exhaustion, so no cap can truncate it.
+    The question is per-method, not per-scanner: a scanner may cap most
+    endpoints and still serve one to exhaustion (BlockScout V1's holder list),
+    and reading the scanner-wide window alone would hide that provider from
+    the remedy this function computes.
 
     Args:
         method: Logical method to look for.
@@ -88,7 +91,7 @@ def scanners_serving_completely(method: Method) -> tuple[str, ...]:
         sorted(
             f'{name}/{version}'
             for (name, version), scanner in SCANNER_REGISTRY.items()
-            if scanner.result_window is None and method in scanner.SPECS
+            if scanner.result_window_for(method) is None and method in scanner.SPECS
         )
     )
 
