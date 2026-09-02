@@ -9,6 +9,8 @@ are guarded with ``importorskip`` and only run under ``uv run --extra mcp``.
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
 
 import pytest
@@ -19,6 +21,7 @@ from aiochainscan.abi_pure import (
     encode_arguments,
     selector,
 )
+from aiochainscan.core.endpoint import EndpointSpec
 from aiochainscan.domain.method import Method
 from aiochainscan.exceptions import ChainscanClientApiError
 from aiochainscan.mcp import tools as mcp_tools
@@ -34,6 +37,7 @@ from aiochainscan.mcp.envelope import (
     format_units,
     truncate_long_strings,
 )
+from aiochainscan.scanners import SCANNER_REGISTRY, Scanner, register_scanner
 
 WALLET = '0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed'
 WALLET_OTHER = '0xfB6916095ca1df60bB79Ce92cE3Ea74c37c5d359'
@@ -966,6 +970,114 @@ class TestDefaultScanner:
         assert mcp_tools.resolve_default_scanner() == 'blockscout'
         monkeypatch.setenv('AIOCHAINSCAN_MCP_SCANNER', 'etherscan')
         assert mcp_tools.resolve_default_scanner() == 'etherscan'
+
+
+class TestCursorKeyDerivation:
+    """MCP cursor allow-lists DERIVE from scanner-declared vocabularies.
+
+    Each Scanner declares the cursor keys it may emit per method
+    (``Scanner.cursor_keys`` / ``Scanner.CURSOR_KEYS``);
+    ``mcp_tools.scanner_cursor_keys`` unions those declarations over the
+    registered scanners that serve the method — so a new scanner's keys are
+    accepted without touching ``mcp/tools.py``.
+    """
+
+    @contextmanager
+    def _registered(self, scanner_cls: type[Scanner]) -> Iterator[None]:
+        saved = dict(SCANNER_REGISTRY)
+        register_scanner(scanner_cls)
+        try:
+            yield
+        finally:
+            SCANNER_REGISTRY.clear()
+            SCANNER_REGISTRY.update(saved)
+
+    def test_derived_keys_cover_the_builtin_dialects(self) -> None:
+        """Etherscan page/offset, BlockScout V2 next_page_params and NodeReal
+        private window keys all arrive via declarations, not literals here."""
+        assert {'page', 'offset', 'items_count', '__nr_window', '__nr_tip', 'pageKey'} <= (
+            mcp_tools.scanner_cursor_keys(Method.ACCOUNT_TRANSACTIONS)
+        )
+        assert {'page_size', 'fiat_value', 'value'} <= mcp_tools.scanner_cursor_keys(
+            Method.ACCOUNT_TOKEN_PORTFOLIO
+        )
+        assert {'address_hash', 'pageKey'} <= mcp_tools.scanner_cursor_keys(Method.TOKEN_HOLDERS)
+
+    def test_resource_identity_keys_stay_foreign(self) -> None:
+        """Derivation widens nothing: identity params remain rejected."""
+        for method in (
+            Method.ACCOUNT_TRANSACTIONS,
+            Method.ACCOUNT_TOKEN_PORTFOLIO,
+            Method.TOKEN_HOLDERS,
+        ):
+            keys = mcp_tools.scanner_cursor_keys(method)
+            assert not keys & {'address', 'contract_address', 'module', 'action'}
+
+    def test_scanner_without_vocabulary_contributes_nothing(self) -> None:
+        """A scanner declaring no cursor keys widens no allow-list."""
+
+        class SilentScanner(Scanner):
+            name = 'silentscan'
+            version = 'v1'
+            supported_networks = {'silentnet'}
+            SPECS = {
+                Method.ACCOUNT_TRANSACTIONS: EndpointSpec(
+                    http_method='GET', path='/api', param_map={'address': 'address'}
+                )
+            }
+            # No cursor_keys / CURSOR_KEYS: base defaults (empty) apply.
+
+        before = mcp_tools.scanner_cursor_keys(Method.ACCOUNT_TRANSACTIONS)
+        with self._registered(SilentScanner):
+            assert mcp_tools.scanner_cursor_keys(Method.ACCOUNT_TRANSACTIONS) == before
+
+    async def test_new_scanner_key_accepted_end_to_end(self) -> None:
+        """A freshly registered scanner's declared key passes validation and
+        reaches fetch_page — no edit to mcp/tools.py involved."""
+
+        class FreshScanner(Scanner):
+            name = 'freshscan'
+            version = 'v1'
+            supported_networks = {'freshnet'}
+            SPECS = {
+                Method.ACCOUNT_TRANSACTIONS: EndpointSpec(
+                    http_method='GET', path='/api', param_map={'address': 'address'}
+                )
+            }
+            CURSOR_KEYS = {Method.ACCOUNT_TRANSACTIONS: frozenset({'__fresh_key'})}
+
+        with self._registered(FreshScanner):
+            assert '__fresh_key' in mcp_tools.scanner_cursor_keys(Method.ACCOUNT_TRANSACTIONS)
+            client = StubClient()
+            client.support(Method.ACCOUNT_TRANSACTIONS)
+            client.fetch_page.value = ([eth_tx()], {'__fresh_key': 'next'})
+            token = encode_cursor({'tool': 'get_transactions', 'cursor': {'__fresh_key': 'next'}})
+            response = await mcp_tools.get_transactions(client, WALLET, cursor=token, limit=1)
+            assert response.data is not None
+            sent = client.fetch_page.calls[0]['args'][1]
+            assert sent['__fresh_key'] == 'next'
+
+    async def test_undeclared_key_from_new_scanner_still_rejected(self) -> None:
+        """Registration alone buys nothing: keys the new scanner does not
+        declare for the method stay foreign (advice unchanged)."""
+
+        class QuietScanner(Scanner):
+            name = 'quietscan'
+            version = 'v1'
+            supported_networks = {'quietnet'}
+            SPECS = {
+                Method.ACCOUNT_TRANSACTIONS: EndpointSpec(
+                    http_method='GET', path='/api', param_map={'address': 'address'}
+                )
+            }
+
+        with self._registered(QuietScanner):
+            client = StubClient()
+            client.support(Method.ACCOUNT_TRANSACTIONS)
+            token = encode_cursor({'tool': 'get_transactions', 'cursor': {'__quiet_key': 1}})
+            with pytest.raises(InvalidCursorError, match='start over'):
+                await mcp_tools.get_transactions(client, WALLET, cursor=token, limit=1)
+            assert client.fetch_page.calls == []
 
 
 # ============================================================================

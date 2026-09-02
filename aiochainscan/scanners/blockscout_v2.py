@@ -141,6 +141,113 @@ def _parse_token_holders(response: dict[str, Any]) -> list[dict[str, Any]]:
     return [_normalize_token_holder_entry(entry) for entry in items] if items else []
 
 
+def _parse_token_transfers(response: dict[str, Any]) -> list[dict[str, Any]]:
+    """
+    Extract ERC-20 transfers from the V2 token-transfers response.
+
+    Response format (``?type=ERC-20`` static filter applied — the endpoint is
+    shared with ERC-721/ERC-1155 transfers, so without it the list is mixed):
+    {
+        "items": [
+            {
+                "token": {"address_hash": "0x...", "decimals": "6", ...},
+                "total": {"decimals": "6", "value": "1500000"},
+                "from": {"hash": "0x...", ...},
+                "to": {"hash": "0x...", ...},
+                "transaction_hash": "0x...",
+                "block_number": 25888691,
+                "log_index": 51,
+                "timestamp": "2026-09-02T09:23:59.000000Z",
+                ...
+            },
+            ...
+        ],
+        "next_page_params": {"index": 92, "block_number": 25818613}
+    }
+
+    Item shape is BlockScout-native (nested ``token``/``from``/``to``
+    objects, decimal ``value`` under ``total``), not flattened to
+    Etherscan's flat ``tokenName``/``value``/``timeStamp`` keys — no
+    convenience method or test asserts a cross-scanner field contract for
+    this Method beyond ``list[dict]``.
+    """
+    items = response.get('items')
+    return list(items) if items else []
+
+
+def _parse_internal_transactions(response: dict[str, Any]) -> list[dict[str, Any]]:
+    """
+    Extract internal transactions from the V2 internal-transactions response.
+
+    Response format:
+    {
+        "items": [
+            {
+                "block_number": 25891449,
+                "created_contract": null,
+                "error": null,
+                "from": {"hash": "0x...", ...},
+                "to": {"hash": "0x...", ...},
+                "gas_limit": "2300",
+                "index": 26,
+                "success": true,
+                "timestamp": "...",
+                "transaction_hash": "0x...",
+                "transaction_index": 126,
+                "type": "call",
+                "value": "0",
+            },
+            ...
+        ],
+        "next_page_params": {
+            "index": 26, "block_number": 25891449,
+            "transaction_index": 126, "items_count": 50
+        }
+    }
+
+    Item shape is BlockScout-native, not Etherscan's flat
+    ``blockNumber``/``traceId``/``isError`` keys — see
+    ``_parse_token_transfers`` for the same reconciliation note.
+    """
+    items = response.get('items')
+    return list(items) if items else []
+
+
+def _parse_nft_portfolio(response: dict[str, Any]) -> list[dict[str, Any]]:
+    """
+    Extract owned NFT instances from the V2 address NFT response.
+
+    Response format:
+    {
+        "items": [
+            {
+                "id": "567",
+                "token": {"address_hash": "0x...", "type": "ERC-721", ...},
+                "token_type": "ERC-721",
+                "value": "1",
+                "owner": null,
+                "metadata": {...},
+                "image_url": "...",
+                ...
+            },
+            ...
+        ],
+        "next_page_params": {
+            "token_type": "ERC-721", "token_contract_address_hash": "0x...",
+            "token_id": "567", "items_count": 50
+        }
+    }
+
+    One item per owned NFT instance (``/nft``), matching Etherscan's
+    ``addresstokennftinventory`` per-token-id granularity. The alternative
+    endpoint ``/nft/collections`` groups by collection with a nested
+    ``token_instances`` list instead — a different shape that does not match
+    this Method's declared per-item contract, so it was not used here.
+    """
+    items = response.get('items')
+    return list(items) if items else []
+
+
 def _parse_token_holder_count(response: dict[str, Any]) -> int:
     """
     Extract the holder count from the V2 token info response.
@@ -193,6 +300,25 @@ class BlockScoutV2Scanner(Scanner):
     # ``fetch_page`` follows the server's ``next_page_params`` to exhaustion,
     # so there is no page/offset result window to overflow (see base class).
     result_window = None
+
+    # Cursor vocabulary per paginated endpoint: the keys BlockScout returns in
+    # ``next_page_params`` for that endpoint (the same fields the SPECS'
+    # ``param_map`` entries declare for cursor threading below). Declared once
+    # here — where the cursor is produced — so the MCP cursor whitelist derives
+    # these server-controlled key names instead of hand-copying them
+    # (``Scanner.cursor_keys`` stays empty: the dialect differs per endpoint).
+    CURSOR_KEYS: ClassVar[dict[Method, frozenset[str]]] = {
+        Method.ACCOUNT_TRANSACTIONS: frozenset({'block_number', 'index', 'items_count'}),
+        Method.ACCOUNT_INTERNAL_TXS: frozenset(
+            {'block_number', 'index', 'items_count', 'transaction_index'}
+        ),
+        Method.ACCOUNT_ERC20_TRANSFERS: frozenset({'block_number', 'index'}),
+        Method.ACCOUNT_TOKEN_PORTFOLIO: frozenset({'fiat_value', 'items_count', 'token', 'value'}),
+        Method.ACCOUNT_NFT_PORTFOLIO: frozenset(
+            {'items_count', 'token_contract_address_hash', 'token_id', 'token_type'}
+        ),
+        Method.TOKEN_HOLDERS: frozenset({'address_hash', 'items_count', 'value'}),
+    }
 
     # BlockScout V2 supports many networks through different instances
     supported_networks = {
@@ -294,6 +420,79 @@ class BlockScoutV2Scanner(Scanner):
             query={},
             param_map={'contract_address': 'contract_address'},
             parser=_parse_token_holder_count,
+            requires_api_key=False,
+            unknown_params='drop',
+        ),
+        Method.ACCOUNT_ERC20_TRANSFERS: EndpointSpec(
+            http_method='GET',
+            path='/api/v2/addresses/{address}/token-transfers',
+            # The endpoint mixes ERC-20/721/1155 transfers by default (see
+            # docstring on _parse_token_transfers); this static filter is
+            # what makes it ACCOUNT_ERC20_TRANSFERS rather than "all transfers".
+            query={'type': 'ERC-20'},
+            param_map={
+                'address': 'address',
+                'contract_address': 'token',
+                # BlockScout returns these fields in next_page_params.
+                'index': 'index',
+                'block_number': 'block_number',
+            },
+            parser=_parse_token_transfers,
+            requires_api_key=False,
+            unknown_params='drop',
+        ),
+        Method.ACCOUNT_INTERNAL_TXS: EndpointSpec(
+            http_method='GET',
+            path='/api/v2/addresses/{address}/internal-transactions',
+            query={},
+            param_map={
+                'address': 'address',
+                # BlockScout returns these fields in next_page_params.
+                'index': 'index',
+                'block_number': 'block_number',
+                'transaction_index': 'transaction_index',
+                'items_count': 'items_count',
+            },
+            parser=_parse_internal_transactions,
+            requires_api_key=False,
+            unknown_params='drop',
+        ),
+        # Method.TX_BY_HASH deliberately NOT declared: BlockScout V2's native
+        # transaction envelope carries its own top-level ``result`` field
+        # (the tx execution status string, e.g. "success"/"error"), which
+        # collides with Network._handle_response's generic Etherscan-style
+        # envelope unwrapping (`if 'result' in response_json: payload =
+        # response_json['result']`, aiochainscan/network.py — shared by
+        # every scanner and off-limits here). Live-verified: a GET to
+        # /api/v2/transactions/{hash} returns the full tx dict, but the
+        # scanner-agnostic Network layer silently reduces it to the bare
+        # string "success" before this spec's parser ever runs. A wrong
+        # spec that returns a string where callers expect a dict is worse
+        # than no spec, so this Method is not declared for BlockScout V2.
+        Method.CONTRACT_SOURCE: EndpointSpec(
+            http_method='GET',
+            # Same resource CONTRACT_ABI reads (only its 'abi' field); this
+            # spec returns the full verified-source envelope unfiltered.
+            path='/api/v2/smart-contracts/{address}',
+            query={},
+            param_map={'address': 'address'},
+            parser=_parse_raw,
+            requires_api_key=False,
+            unknown_params='drop',
+        ),
+        Method.ACCOUNT_NFT_PORTFOLIO: EndpointSpec(
+            http_method='GET',
+            path='/api/v2/addresses/{address}/nft',
+            query={},
+            param_map={
+                'address': 'address',
+                # BlockScout returns these fields in next_page_params.
+                'token_type': 'token_type',
+                'token_contract_address_hash': 'token_contract_address_hash',
+                'token_id': 'token_id',
+                'items_count': 'items_count',
+            },
+            parser=_parse_nft_portfolio,
             requires_api_key=False,
             unknown_params='drop',
         ),

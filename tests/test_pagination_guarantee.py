@@ -336,9 +336,14 @@ def test_alternatives_are_computed_from_the_scanner_registry() -> None:
     from aiochainscan.domain.method import Method as DomainMethod
     from aiochainscan.scanners import scanners_serving_completely
 
-    assert scanners_serving_completely(DomainMethod.TOKEN_HOLDERS) == ('blockscout/v2',)
+    holders = scanners_serving_completely(DomainMethod.TOKEN_HOLDERS)
+    assert holders == ('blockscout/v1', 'blockscout/v2', 'nodereal/v1')
     # etherscan declares TOKEN_HOLDERS but has a result window, so it is excluded.
-    assert 'etherscan/v2' not in scanners_serving_completely(DomainMethod.TOKEN_HOLDERS)
+    assert 'etherscan/v2' not in holders
+    # The window is asked per METHOD, not per scanner: BlockScout V1 caps its
+    # account endpoints at 10_000 yet serves the holder list to exhaustion, so
+    # it qualifies here and must NOT qualify for a capped method.
+    assert 'blockscout/v1' not in scanners_serving_completely(DomainMethod.ACCOUNT_TRANSACTIONS)
 
 
 # ---------------------------------------------------------------------------
@@ -599,7 +604,9 @@ async def test_client_get_all_token_holders_names_a_working_provider() -> None:
     error = excinfo.value
     assert error.method == 'TOKEN_HOLDERS'
     assert error.provider == 'etherscan/v2'
-    assert error.alternatives == ('blockscout/v2',)  # computed from the registry
+    # Computed from the registry, so every provider that can serve the list to
+    # exhaustion is named — including the keyless one.
+    assert error.alternatives == ('blockscout/v1', 'blockscout/v2', 'nodereal/v1')
     assert 'blockscout/v2' in str(error)
 
 

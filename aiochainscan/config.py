@@ -35,6 +35,11 @@ def credential_env_names(scanner_id: str, display_name: str | None = None) -> tu
            with spaces replaced by underscores for the primary pattern.
            ``None`` means the name is unknown — the name-based candidate is
            omitted (e.g. lookups for ids that are not registered).
+
+    Deduplicated, first spelling kept: a scanner whose display name equals its
+    id (``nodereal``) would otherwise repeat ``NODEREAL_KEY``, which is
+    harmless for a lookup but reads as a mistake in suggestion text and in
+    ``list_all_configurations()``.
     """
     scanner_id_upper = scanner_id.upper()
     candidates: list[str] = []
@@ -48,7 +53,7 @@ def credential_env_names(scanner_id: str, display_name: str | None = None) -> tu
             f'API_KEY_{scanner_id_upper}',
         )
     )
-    return tuple(candidates)
+    return tuple(dict.fromkeys(candidates))
 
 
 @dataclass

@@ -23,7 +23,7 @@ from tenacity import (
     wait_exponential_jitter,
 )
 
-from aiochainscan.exceptions import ChainscanRateLimitError
+from aiochainscan.exceptions import TRANSIENT_EXCEPTIONS
 from aiochainscan.ports.rate_limiter import RetryPolicy
 
 T = TypeVar('T')
@@ -31,8 +31,13 @@ T = TypeVar('T')
 logger = logging.getLogger(__name__)
 
 
-# Default exceptions to retry on - transport errors and rate limits
-DEFAULT_RETRY_EXCEPTIONS: tuple[type[Exception], ...] = (ChainscanRateLimitError,)
+# Default exceptions to retry on: the shared transient vocabulary (rate
+# limit, network errors, httpx timeouts/resets) — the same list the Network
+# transport passes explicitly, so transport behavior is unchanged. The
+# adapter's own standalone default was previously only
+# ``(ChainscanRateLimitError,)``; widening it here is intentional: a bare
+# ``TenacityRetryAdapter()`` now retries the same classes the transport does.
+DEFAULT_RETRY_EXCEPTIONS: tuple[type[Exception], ...] = TRANSIENT_EXCEPTIONS
 
 
 def _default_before_sleep_callback(retry_state: RetryCallState) -> None:
@@ -110,7 +115,7 @@ class TenacityRetryAdapter(RetryPolicy):
             max_wait: Maximum wait time in seconds between retries (default: 30.0)
             jitter: Maximum jitter to add to wait time in seconds (default: 1.0)
             retry_exceptions: Tuple of exception types to retry on
-                (default: (ChainscanRateLimitError,))
+                (default: :data:`aiochainscan.exceptions.TRANSIENT_EXCEPTIONS`)
             before_sleep_callback: Optional callback invoked before each retry sleep.
                 Receives RetryCallState with attempt info. Useful for logging/telemetry.
             reraise: Whether to reraise the last exception after all attempts fail

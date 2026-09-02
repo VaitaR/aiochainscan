@@ -64,14 +64,20 @@ git -C "$MAIN_ROOT" worktree add -b "$BRANCH" "$WT_DIR" "$BASE"
 
 cd "$WT_DIR"
 
-# Untracked root config (.env) lives only in the primary checkout — copy it so
-# ETHERSCAN_KEY and any other runtime config work in this session too. It is
-# gitignored, so it stays untracked in the worktree as well.
+# Untracked root config (.env) lives only in the primary checkout. Symlink
+# rather than copy: a copy is a snapshot, so a key added to the root .env after
+# this worktree was created never reaches it (silently, as a missing-key error
+# in a session that "has" a .env). ConfigurationManager reads the file by path,
+# so a symlink is indistinguishable to it. It stays gitignored either way.
+# Machine-level credentials belong in ~/.aiochainscan/.env instead — the config
+# manager reads that for every cwd, so no worktree plumbing is involved at all.
 if [[ -f "$MAIN_ROOT/.env" ]]; then
-	echo "==> Copying .env from primary checkout..."
-	cp "$MAIN_ROOT/.env" .env
+	echo "==> Linking .env from primary checkout..."
+	ln -sfn "$MAIN_ROOT/.env" .env
+elif [[ -f "$HOME/.aiochainscan/.env" ]]; then
+	echo "==> No root .env; machine-level ~/.aiochainscan/.env will be used."
 else
-	echo "WARN: $MAIN_ROOT/.env not found — live-API examples may fail without ETHERSCAN_KEY." >&2
+	echo "WARN: no $MAIN_ROOT/.env and no ~/.aiochainscan/.env — live-API calls will fail without keys." >&2
 fi
 
 # Project skills are a MIX of tracked dirs and untracked symlinks into

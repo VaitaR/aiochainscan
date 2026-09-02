@@ -20,6 +20,10 @@ KEY_ENV_VARS = (
     'ETH_API_KEY',
     'SCANNER_ETH_KEY',
     'API_KEY_ETH',
+    # NodeReal resolves its key through the generic SUGGESTED-NAME ladder
+    # (NODEREAL_KEY / NODEREAL_API_KEY), so a shell export must be cleared too.
+    'NODEREAL_KEY',
+    'NODEREAL_API_KEY',
 )
 
 
@@ -33,8 +37,17 @@ def _reset_config_singleton():
 
 @pytest.fixture
 def clean_key_env(monkeypatch: pytest.MonkeyPatch, tmp_path: object):
-    """Fresh config dir and no API key environment variables."""
+    """Fresh config dir, no API key environment variables, no home credentials.
+
+    ``ConfigurationManager`` reads ``~/.aiochainscan/.env`` for every cwd, so
+    isolating cwd and ``os.environ`` is not enough: a developer with a real key
+    there turns every "missing key raises" assertion green-by-accident into a
+    failure. ``Path.home()`` resolves ``$HOME``, so repointing it removes that
+    third source.
+    """
     monkeypatch.chdir(tmp_path)  # type: ignore[arg-type]
+    monkeypatch.setenv('HOME', str(tmp_path))
+    monkeypatch.setenv('USERPROFILE', str(tmp_path))
     for var in KEY_ENV_VARS:
         monkeypatch.delenv(var, raising=False)
 

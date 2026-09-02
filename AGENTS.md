@@ -151,8 +151,9 @@ async with ChainscanClient.from_config('etherscan', 'ethereum') as client:
 > ISO-8601. All exported from the package root; enforced by `tests/test_convert.py`.
 
 > **Scanner coverage:** the full surface above is declared by `etherscan` v2.
-> `blockscout` v1 inherits the shared Etherscan-like SPECS but not the token
-> holders; `blockscout_v2` declares a subset — see the Scanner Support Matrix.
+> `blockscout` v1 inherits the shared Etherscan-like SPECS and adds the holder
+> list; `blockscout_v2` and `nodereal` declare subsets — see the Scanner
+> Support Matrix.
 > Convenience methods not declared by the configured scanner raise
 > `MethodNotDeclaredError` (a `ValueError` subclass) at call time; the
 > Method ↔ mixin ↔ SPECS mapping is enforced by
@@ -216,6 +217,22 @@ async with ChainscanClient.from_config('etherscan', 'ethereum') as client:
 >   clamps `offset` to it, so the page-full test compares against a number the
 >   provider agreed to. Cross-check: Etherscan and BlockScout V1 now return
 >   byte-identical counts for the same range (1085 logs, 2009 txs).
+>   Etherscan's docs are **silent** on both caps, so measurement is the only
+>   source — and the 1000-per-page figure is a *dated* change (Etherscan cut it
+>   from 10_000 to 1000 in July 2026). Treat `max_page_size` as a measured
+>   constant with a shelf life: re-measure it with `make probe-caps`
+>   (`scripts/agent/probe_provider_caps.py` — asks each provider for pages
+>   straddling its declared caps and exits non-zero on drift), do not reason
+>   about it. Last run 2026-09-02: Etherscan v2 and BlockScout V1 both
+>   reproduced their declarations for `ACCOUNT_TRANSACTIONS` and `EVENT_LOGS`
+>   (Etherscan serves 1000 per page and refuses `page*offset` at 11_000;
+>   BlockScout V1 serves 10_000 per page, refuses at 20_000, and answers
+>   `getLogs` page 2 with page 1's first record — the paging-ignored cap
+>   `RESULT_WINDOW_OVERRIDES` declares). BlockScout V2 and NodeReal are
+>   cursor-paginated and declare no cap, so the probe reports "nothing to
+>   verify" for them rather than firing requests whose answer could not move a
+>   declaration; a declared cap the probe cannot exercise counts as unverified,
+>   never as a pass.
 > - **Reaching the cap has two flavours** and the error says which. The
 >   provider offered a continuation at the cap → records are definitely being
 >   cut off (`confirmed=True`). The window came back exactly full with *no*
@@ -242,14 +259,18 @@ async with ChainscanClient.from_config('etherscan', 'ethereum') as client:
 >   its message names the providers that *can* serve the method completely,
 >   computed from the scanner registry via
 >   `scanners.scanners_serving_completely(method)` (a scanner qualifies by
->   declaring the method with `result_window is None`) — nothing is hardcoded.
+>   declaring the method with `result_window_for(method) is None`) — nothing is
+>   hardcoded. The question is asked **per method, not per scanner**: BlockScout
+>   V1 caps its account endpoints at 10_000 and still serves the holder list to
+>   exhaustion, so reading the scanner-wide window alone would hide it from the
+>   remedy this function computes.
 > - **Visible break: `get_all_token_holders` / `iter_token_holders_streaming`
 >   on Etherscan.** A holder list has no block range, so for a token with
 >   >=10_000 holders the call now raises `CompletenessUnavailableError`
 >   instead of silently returning the first 10_000. The remedy is a provider
->   switch — `blockscout_v2` serves holders natively via
->   `/api/v2/tokens/{addr}/holders` and follows `next_page_params` to
->   exhaustion — or `guarantee_complete=False` to accept truncation
+>   switch — `blockscout/v1`, `blockscout/v2` and `nodereal/v1` all serve the
+>   holder list to exhaustion, and the error names whichever of them the
+>   registry finds — or `guarantee_complete=False` to accept truncation
 >   deliberately. The error message states both.
 > - `guarantee_complete=False` restores the pre-1.0 behaviour (fewer requests
 >   on wide ranges, silent truncation possible). `ChainscanPool` forwards the
@@ -290,6 +311,7 @@ Branch types: `feat | fix | chore | docs | arch | refactor` (2nd arg, default `f
 | `validate_fast.sh` | The DONE gate — ruff, format, import-lint, mypy --strict, full pytest |
 | `safe_commit.sh` | `git add` + commit with index.lock retry (worktree-aware; use `make commit`) |
 | `ci_watch.sh` | Bounded GH Actions poller; exit status is the verdict |
+| `probe_provider_caps.py` | Re-measures declared pagination caps live (`make probe-caps`); exit 1 on drift or on a provider left unconfirmed for want of a key |
 | `ruff_format_hook.py` | PostToolUse hook — auto-formats edited `*.py` |
 
 ### ⚠️ GitHub Actions temporarily DISABLED (Actions-minutes budget)
@@ -334,7 +356,7 @@ Every `Method` enum value (33 total) maps to typed convenience methods on `Chain
 | `TOKEN_SUPPLY` | `get_token_supply(contract_address)` | `str` |
 | `TOKEN_INFO` | `get_token_info(contract_address)` | `dict` |
 | `TOKEN_HOLDERS` | `get_token_holders(contract_address, page, offset)` / `get_all_token_holders(contract_address)` | `list[dict]` (`{'address', 'value'}`) |
-| `TOKEN_TOP_HOLDERS` | `get_top_token_holders(contract_address, limit)` | `list[dict]` (Etherscan PRO only) |
+| `TOKEN_TOP_HOLDERS` | `get_top_token_holders(contract_address, limit)` | `list[dict]` (Etherscan PRO + NodeReal `topN`; `limit` ≤ 1000 on Etherscan, clamped to 100 on NodeReal) |
 | `TOKEN_HOLDER_COUNT` | `get_token_holder_count(contract_address)` | `int` |
 | `GAS_ESTIMATE` | `get_gas_estimate(gas_price)` | `str` |
 | `GAS_ORACLE` | `get_gas_oracle()` | `dict` |
@@ -474,15 +496,57 @@ Every `Method` enum value (33 total) maps to typed convenience methods on `Chain
 
 | Scanner | Version | Free? | Key Env Var | Method coverage |
 |---------|---------|-------|-------------|-----------------|
-| BlockScout | v1 | ✅ Yes | - | Etherscan-like surface minus token holders (its Etherscan-compat layer answers "Unknown action" for the token module holder actions); `TX_BY_HASH`/`PROXY_*` served via the instance's `/api/eth-rpc` JSON-RPC (see below) |
-| BlockScout | **v2** | ✅ Yes | - | Cursor-paginated (no result window → the only provider that can guarantee a complete `TOKEN_HOLDERS` list). Subset: `ACCOUNT_BALANCE`, `ACCOUNT_TRANSACTIONS`, `ACCOUNT_TOKEN_PORTFOLIO`, `CONTRACT_ABI`, `BLOCK_BY_NUMBER`, `TOKEN_HOLDERS` (native `/api/v2/tokens/{addr}/holders`), `TOKEN_HOLDER_COUNT` (token info `holders_count`) |
+| BlockScout | v1 | ✅ Yes | - | Etherscan-like surface **plus** `TOKEN_HOLDERS` (its own action name `token/getTokenHolders`, not Etherscan's `tokenholderlist`); `TX_BY_HASH`/`PROXY_*` served via the instance's `/api/eth-rpc` JSON-RPC (see below) |
+| BlockScout | **v2** | ✅ Yes | - | Cursor-paginated (no result window). Subset of 11: `ACCOUNT_BALANCE`, `ACCOUNT_TRANSACTIONS`, `ACCOUNT_INTERNAL_TXS`, `ACCOUNT_ERC20_TRANSFERS`, `ACCOUNT_TOKEN_PORTFOLIO`, `ACCOUNT_NFT_PORTFOLIO`, `CONTRACT_ABI`, `CONTRACT_SOURCE`, `BLOCK_BY_NUMBER`, `TOKEN_HOLDERS` (native `/api/v2/tokens/{addr}/holders`), `TOKEN_HOLDER_COUNT` (token info `holders_count`) |
 | Etherscan | v2 | ❌ No | `ETHERSCAN_KEY` | Full Etherscan-like surface + token holders (`tokenholderlist`/`topholders`/`tokenholdercount` are PRO endpoints) — all 33 `Method` values |
-| NodeReal | v1 | Free tier | `NODEREAL_KEY` | BSC-only subset (22 `Method` values) incl. the only `CONTRACT_ABI`/`CONTRACT_SOURCE`/`ACCOUNT_INTERNAL_TXS` alternative for keyless-free BSC analytics |
+| NodeReal | v1 | Free tier | `NODEREAL_KEY` | BSC-only subset (25 `Method` values) incl. the only `CONTRACT_ABI`/`CONTRACT_SOURCE`/`ACCOUNT_INTERNAL_TXS` alternative for keyless-free BSC analytics |
 
 > **Token holders notes:** the unified item shape is `{'address': EIP-55 str, 'value': str}`
-> (raw-unit quantity — never Int64). `TOKEN_TOP_HOLDERS` is Etherscan-only: BlockScout V2's
-> holders endpoint does not guarantee top-ordering, and NodeReal has no token-holders API
-> (`nr_getTokenHoldings` is *address* holdings) — both raise honest `ValueError`.
+> (raw-unit quantity — never Int64) — the ONE Method with a normalized cross-scanner item
+> shape; everything else stays provider-native, so a caller switching providers for any
+> other Method must expect the provider's own field names and nesting.
+> Three providers serve the list to exhaustion (`result_window_for(TOKEN_HOLDERS) is None`):
+> BlockScout V1, BlockScout V2 and NodeReal. Etherscan declares it but bounds it at 10_000.
+> `TOKEN_HOLDER_COUNT` does NOT exist on BlockScout V1 (`getTokenHolderCount`,
+> `tokenholdercount` and `getTokenHoldersCount` were all probed live and all answer
+> `status=0` "Unknown action").
+> `TOKEN_TOP_HOLDERS` is declared by Etherscan and NodeReal (`nr_getTokenHolders` with
+> `topN`), not by either BlockScout leg: V2's holders endpoint documents no ordering, and
+> V1's is *empirically* balance-ordered but documents no guarantee, so declaring it there
+> would sell an observation as a contract.
+
+> **Live verification status of the holder surface** (all probes 2026-09-02):
+> BlockScout V1 and V2 are live-verified end to end (V1: 33/33 unique holders for a token
+> whose count V2 independently reports as 33; no result window at 11k/50k depth where the
+> *account* endpoints reject `page=11&offset=1000` outright). **NodeReal's three holder
+> methods are now live-verified too** (2026-09-02, `bsc-mainnet`, BSC-USD and CAKE):
+> the holder list returns the documented `{pageKey, details: [{accountAddress,
+> tokenBalance}]}`, `pageKey` round-trips (3×100 holders, 300 distinct addresses, a fresh
+> opaque cursor per page), and `topN` **does** order descending by balance — measured, so
+> the docs' undirected "returned by balance order" is settled for that call. The plain
+> holder list is NOT balance-ordered, which is why `TOKEN_TOP_HOLDERS` stays a separate
+> declaration.
+>
+> **The one place the docs and the live API disagree: `nr_getTokenHolderCount`.** The docs
+> show `{"result": "0x123"}` — the JSON-RPC `result` IS the hex count — while the live API
+> answers `{"result": {"result": "0x46b3f99"}}`. Read as documented, that yielded **0
+> holders for a token with 74 million of them**, a wrong answer indistinguishable from a
+> token nobody holds. `_parse_token_holder_count` now accepts both shapes and raises
+> `ChainscanDataError` on any third one instead of counting zero. End-of-pagination remains
+> documented only by its complement ("If more results are available, a pageKey will be
+> returned"), so treating an empty *or absent* `pageKey` as exhaustion is still an
+> inference — the code accepts both.
+>
+> Keys for this live surface live in `~/.aiochainscan/.env` (machine-level, read by
+> `ConfigurationManager` for every cwd, so worktrees need no plumbing); a repo-local
+> `./.env` still overrides it. NodeReal also documents these two methods as "BSC and ETH mainnet
+> only" while `supported_networks` is BSC-only — deliberately not widened, since nothing
+> establishes ETH support for the other 22 methods.
+
+> **BlockScout's per-instance REST carries a deprecation notice** for the Etherscan-compat
+> `/api` layer, yet every V1 endpoint this library uses answered correctly and keylessly in
+> the 2026-09-02 probes. Treat V1 as working-but-on-notice: a V1 breakage is expected to
+> show up as a working V2 path, not as a bug here.
 
 ### NodeReal (MegaNode / BSCTrace backend) — BSC analytics
 
@@ -491,12 +555,34 @@ Every `Method` enum value (33 total) maps to typed convenience methods on `Chain
 BscScan-compatible verified-contract REST on `open-platform.nodereal.io`. Networks:
 `bsc` / `bnb` / `binance` (mainnet) and `bsc-testnet`.
 
-- Declares 22 of the 33 `Method` values; honest `ValueError` for contract
+- Declares 25 of the 33 `Method` values; honest `ValueError` for contract
   verify, gas oracle/estimate, price/supply stats, block reward/countdown.
+- The public→wire mapping is DECLARED in `SPECS` and executed:
+  `param_style` (`'rpc-positional'` / `'rpc-object'` / `'query'` for the
+  contract REST) picks the wire shape, `param_map` carries every accepted
+  public name (Etherscan-style input aliases included — first declared
+  wins) and, for positional methods, the wire order. `_build_rpc_params` /
+  `_build_transfer_filter` / `_resolve_window` / `_filter_transfer_items`
+  all read their param sources from that map, so `supports_block_range` and
+  the consistency sweep read the same declarations that run. Specs declare
+  no `path` — `_rpc_url()` / `_rest_contract()` own the URLs.
+- Token holders (`nr_getTokenHolders` / `nr_getTokenHolderCount`) page by an
+  opaque `PageKey` — empty on the first request, non-empty while more pages
+  exist — with a hex-encoded `PageSize` capped at 100 by the docs. Because
+  `get_top_token_holders()` is a single non-paginated call, a `limit` above
+  100 is silently clamped to 100 there — and the clamped size rides the wire
+  twice, as `PageSize` and again as `topN`, so a `limit` BELOW 100 must reach
+  both or the call answers a full 100-holder page to a caller who asked for
+  five. See the verification-status note under the support matrix for what
+  the live probes settled.
 - `nr_getTransactionByAddress` serves ≤1000 blocks per request and **silently
   returns empty pages for wider ranges** — `fetch_page` therefore walks the
   requested range in 1000-block windows, so `get_all_*` / `iter_*_streaming`
   see complete history. An unbounded end block resolves the chain tip once.
+  The walk is deliberately NodeReal-local (the dialect's silent-empty-wide-
+  range behaviour has no engine equivalent; folding it below the pagination
+  seam would trade guarantee clarity for abstraction), but its block-range
+  inputs are the spec's declared `fromBlock`/`toBlock` sources.
 - Holdings methods (`nr_getTokenHoldings`, `nr_getNFTHoldings`) page at 100
   items with hex `totalCount` cursors.
 - JSON-RPC `-32005` (usage limit) is translated to `ChainscanRateLimitError`
@@ -511,6 +597,49 @@ BlockScout's Etherscan-compat REST answers `"Unknown module"` for
 probe uses. The Network layer unwraps the JSON-RPC envelope and raises
 `ChainscanClientProxyError` for reverts; a `null` result (unknown tx) comes
 back as `None`. Verified live against `eth.blockscout.com`.
+
+### BlockScout V2 and `TX_BY_HASH` — a transport blocker, not an omission
+
+`GET /api/v2/transactions/{hash}` returns the full transaction dict, but its
+payload carries a top-level `result` field of its own (the execution-status
+string `"success"`/`"error"`), and `Network._handle_response` unwraps any
+top-level `result` (then `data`) as an Etherscan envelope. So a declared
+`TX_BY_HASH` on this scanner would hand callers the string `"success"` where
+they expect a dict — verified live. `TOKEN_HOLDERS` and the account endpoints
+are unaffected (`{items, next_page_params}`); the collision is a property of
+the *payload*, so any future BlockScout V2 endpoint with a top-level
+`result`/`data` key hits it too. Declaring the method is blocked on scoping
+that unwrapping to the Etherscan dialect (or letting a spec opt out) — a
+transport-contract change, not a scanner one. `EVENT_LOGS` is likewise
+undeclared for a different reason: `/addresses/{hash}/logs` is address-scoped
+with no topic or block filter on the wire, so a caller's `topic0=` or bounded
+range would be silently dropped.
+
+### Doc-declared input limits are enforced before the request
+
+Two Etherscan endpoints document a hard input cap, and both are now refused
+locally rather than sent and misinterpreted:
+`getcontractcreation` takes at most `API_MAX_CONTRACT_CREATION_ADDRESSES` = 5
+addresses, `topholders` at most `API_MAX_TOP_HOLDERS` = 1000. Both raise
+`InputLimitExceededError` from
+`EtherscanLikeScanner._perform_raw_request`, keyed on the `Method` enum (never
+on a wire action string), which is the seam every Etherscan-dialect leg passes
+through — including BlockScout V1, whose own `_perform_request` override
+delegates upward for non-JSON-RPC methods.
+
+`InputLimitExceededError` is a `ChainscanClientError` with
+`failure_kind = FailureKind.FATAL`: an oversized input is refused identically
+by every provider, so the pool must propagate it, not fail over and cool a
+healthy provider. **This placement is load-bearing, not stylistic.**
+`translate_unexpected_errors` in `scanners/base.py` re-raises only
+`ChainscanClientError` and `MethodNotDeclaredError`; everything else — a bare
+`ValueError` or `KeyError` from any scanner seam — becomes
+`ChainscanNetworkError(retryable=False)`, whose `failure_kind` is `TRANSIENT`.
+A caller's own bug therefore reads to the pool as a transient network fault:
+it fails over, cools a working provider, and surfaces
+`ProviderPoolExhaustedError` instead of the real error. Any new
+"this call cannot be served as asked" exception must join the
+`ChainscanClientError` family to survive that ladder.
 
 ---
 
@@ -538,6 +667,14 @@ Agent adapter over `ChainscanClient` — **run**: `python -m aiochainscan.mcp_se
 - Curation caps: ≤50 items/page (`clamp_page_size`), curated field sets per tool.
 - Pagination = one `client.fetch_page` call per response; `next_call.params`
   carries the new cursor — agents never parse cursors.
+- Cursor allow-lists are derived, never hand-listed: each Scanner declares the
+  cursor-key vocabulary it may emit per method (`Scanner.cursor_keys` for a
+  uniform dialect, `Scanner.CURSOR_KEYS` per `Method`, read via
+  `cursor_keys_for`), and `mcp/tools.py`'s `scanner_cursor_keys` unions those
+  declarations over the registered scanners serving the method. No
+  scanner-private cursor key names (`__nr_window`, `pageKey`, `address_hash`,
+  ...) appear as literals in `mcp/tools.py` — a new scanner's keys are
+  accepted by registering the scanner alone.
 - Unsupported scanner methods → envelope `notes` (with scanner hints), never a
   crash; primary-call failures still raise (clean MCP error).
 - Default scanner `blockscout` (keyless, v1); override per call (`scanner=`)
@@ -554,7 +691,11 @@ Agent adapter over `ChainscanClient` — **run**: `python -m aiochainscan.mcp_se
 2. Inherit from `Scanner` (or `EtherscanLikeScanner`) base class
 3. Define `SPECS` dict mapping `Method` → `EndpointSpec` (set
    `unknown_params='drop'` for strict query APIs; path placeholders in
-   `path` are excluded from the query automatically)
+   `path` are excluded from the query automatically; `path` itself is
+   optional — JSON-RPC dialect scanners whose `_perform_request` owns the
+   URL leave it empty and declare `param_style` (`'rpc-positional'` /
+   `'rpc-object'`) plus the full `param_map` so the builders, the
+   block-range capability and the consistency sweep read one declaration)
 4. The base owns the seams — do NOT override `call()` for transport:
    `Scanner.call()` applies the error ladder (`translate_unexpected_errors`)
    exactly once and dispatches through ONE mechanism (UrlBuilder endpoint
@@ -579,8 +720,10 @@ Agent adapter over `ChainscanClient` — **run**: `python -m aiochainscan.mcp_se
 
 ### Modifying HTTP Behavior
 - Rate limiting: `adapters/aiolimiter_adapter.py` (burst=1 for APIs)
-- Retry logic: `network.py` - includes NetworkError, RemoteProtocolError
+- Retry logic: `network.py` — one admission path (`Network._send`: guard → rate-limit → dispatch → handle → finish → retry, written once) retrying `exceptions.TRANSIENT_EXCEPTIONS`, the single transient vocabulary shared with the first-request guard and `TenacityRetryAdapter.DEFAULT_RETRY_EXCEPTIONS`
+- Response envelopes: dialect seam in `network.py` (`ResponseDialect` protocol; `EtherscanEnvelope` + `JsonRpcEnvelope`, composed as the default since every path serves both dialects)
 - JSON parsing: Always use `orjson.loads(response.content)` not `response.json()`
+- Credential redaction helpers live in `aiochainscan/_redaction.py` (re-exported from `network.py`)
 
 ---
 
@@ -673,6 +816,7 @@ from aiochainscan.exceptions import (
     PaginationDataLossError,      # Whale block: a single block over the API's cap
     CompletenessUnavailableError, # Endpoint has no splittable dimension here (.alternatives)
     ChainscanDataError,           # Data contract violation
+    InputLimitExceededError,      # ChainscanClientError, FailureKind.FATAL: caller passed more than the endpoint documents (see below)
     AbiTypeNotSupportedError,     # ValueError subclass: pure ABI codec has no rule for this Solidity type
     MethodNotDeclaredError,       # ValueError subclass: method not in SPECS
     BlockRangeNotSupportedError,  # MethodNotDeclaredError subclass: bounded block range the provider's spec cannot carry (raised at every seam: call/fetch_page/stream)

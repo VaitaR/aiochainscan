@@ -353,6 +353,17 @@ class TestAdvancedFeatures:
 
         assert all(suggestion in suggestions for suggestion in expected_suggestions)
 
+    def test_api_key_suggestions_are_not_repeated(self):
+        """A scanner whose display name equals its id must not be told twice.
+
+        ``nodereal`` collapses the primary and fallback spellings onto
+        ``NODEREAL_KEY``; the duplicate showed up in the missing-key error.
+        """
+        suggestions = ConfigurationManager()._get_api_key_suggestions('nodereal')
+
+        assert suggestions == list(dict.fromkeys(suggestions))
+        assert suggestions[0] == 'NODEREAL_KEY'
+
     def test_list_all_configurations(self):
         """Test listing all configurations with status."""
         manager = ConfigurationManager()

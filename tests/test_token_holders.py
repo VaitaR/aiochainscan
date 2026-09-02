@@ -641,33 +641,47 @@ class TestBlockScoutV2FetchPage:
 # ============================================================================
 
 
-class TestNoderealDoesNotDeclareHolderMethods:
-    """nr_getTokenHoldings is *address* holdings, not token holders."""
+class TestNoderealHolderMethodsUseTheHoldersEndpoint:
+    """The trap this guards: ``nr_getTokenHoldings`` is *address* holdings.
 
-    def test_specs_absent(self) -> None:
+    It answers "what does this address hold", not "who holds this token", so
+    wiring a holder method onto it would return a plausible-looking list of
+    the wrong thing. The holder methods must ride ``nr_getTokenHolders``.
+    """
+
+    def test_specs_declared(self) -> None:
         for method in HOLDER_METHODS:
-            assert method not in NodeRealScanner.SPECS
+            assert method in NodeRealScanner.SPECS
 
-    async def test_call_raises_for_each(self) -> None:
-        scanner = _nodereal(FakeNetwork([]))
-        with pytest.raises(ValueError, match='not supported'):
-            await scanner.call(Method.TOKEN_HOLDERS, contract_address=TOKEN_CONTRACT)
-        with pytest.raises(ValueError, match='not supported'):
-            await scanner.call(Method.TOKEN_TOP_HOLDERS, contract_address=TOKEN_CONTRACT)
-        with pytest.raises(ValueError, match='not supported'):
-            await scanner.call(Method.TOKEN_HOLDER_COUNT, contract_address=TOKEN_CONTRACT)
+    def test_holder_methods_do_not_ride_the_holdings_endpoint(self) -> None:
+        wire = NodeRealScanner._WIRE_METHODS
+        assert wire[Method.TOKEN_HOLDERS] == 'nr_getTokenHolders'
+        assert wire[Method.TOKEN_TOP_HOLDERS] == 'nr_getTokenHolders'
+        assert wire[Method.TOKEN_HOLDER_COUNT] == 'nr_getTokenHolderCount'
+        # The endpoint they must NOT be confused with, still serving portfolios.
+        assert wire[Method.ACCOUNT_TOKEN_PORTFOLIO] == 'nr_getTokenHoldings'
 
 
-class TestBlockScoutV1DoesNotDeclareHolderMethods:
-    """Live-checked: the Etherscan-compat layer answers "Unknown action"."""
+class TestBlockScoutV1HolderMethodCoverage:
+    """Live-verified 2026-09-02 against ``eth.blockscout.com``.
+
+    BlockScout implements a holder list under its OWN action name
+    (``token/getTokenHolders``); only *Etherscan's* action names
+    (``tokenholderlist``/``tokenholdercount``) answer "Unknown action" there,
+    which is why the shared Etherscan-like base must not declare them.
+    """
 
     def test_specs_absent_from_etherscan_like_base(self) -> None:
         for method in HOLDER_METHODS:
             assert method not in EtherscanLikeScanner.SPECS
 
-    def test_blockscout_v1_does_not_inherit_holder_methods(self) -> None:
-        for method in HOLDER_METHODS:
-            assert method not in BlockScoutV1.SPECS
+    def test_blockscout_v1_declares_only_the_holder_list(self) -> None:
+        assert Method.TOKEN_HOLDERS in BlockScoutV1.SPECS
+        # Probed under three action-name spellings, all "Unknown action":
+        # getTokenHolderCount, tokenholdercount, getTokenHoldersCount.
+        assert Method.TOKEN_HOLDER_COUNT not in BlockScoutV1.SPECS
+        # No ordering guarantee is documented for getTokenHolders.
+        assert Method.TOKEN_TOP_HOLDERS not in BlockScoutV1.SPECS
 
 
 # ============================================================================

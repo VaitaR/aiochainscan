@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import re
 from enum import Enum
 from typing import Any
+
+import httpx
 
 
 class FailureKind(Enum):
@@ -116,6 +119,56 @@ class AbiTypeNotSupportedError(ValueError):
         )
 
 
+class InputLimitExceededError(ChainscanClientError):
+    """A call would exceed a documented API input ceiling.
+
+    Raised before any request when the caller supplies more items than the
+    provider's documented maximum for a single call — e.g. Etherscan's
+    ``getcontractcreation`` documents "Up to 5 contract addresses" and
+    ``topholders`` documents "up to 1000" top holders. Refused locally
+    instead of letting an oversized request reach the API, where it would
+    answer with silent clamping/truncation or an opaque error envelope
+    rather than a clear local exception.
+
+    Positioned as a :class:`ChainscanClientError`, NOT the
+    :class:`MethodNotDeclaredError` (``ValueError``) capability family —
+    this is not a capability gap the provider pool should route around
+    (every provider would refuse the same oversized input, so failing over
+    cannot help). The placement also matters mechanically:
+    ``scanners.base.translate_unexpected_errors`` — the ladder every
+    ``Scanner.call`` applies exactly once — re-raises ``ChainscanClientError``
+    unchanged on its first branch, before its catch-all masks anything else
+    into a ``ChainscanNetworkError``. Landing outside that branch (e.g. as a
+    bare ``ValueError``) would have this exception's identity and
+    ``FailureKind`` erased into a masked, misclassified transient error.
+    ``failure_kind`` is restated explicitly (it already equals
+    :class:`ChainscanClientError`'s own default) so
+    :func:`core.pool.classify_failure`'s "carried kind wins" rule always
+    reads this as the caller's problem: propagate immediately, no cooldown,
+    no failover. Same shape as :class:`PaginationDataLossError` /
+    :class:`CompletenessUnavailableError` — both also
+    :class:`ChainscanClientError` subclasses for "this call cannot be served
+    as asked", not capability gaps.
+
+    Attributes:
+        what: Human-readable name of the limited input (e.g.
+            ``'contract addresses'``).
+        limit: The documented maximum.
+        provided: The count actually supplied.
+    """
+
+    failure_kind: FailureKind | None = FailureKind.FATAL
+
+    def __init__(self, what: str, limit: int, provided: int) -> None:
+        self.what = what
+        self.limit = limit
+        self.provided = provided
+        super().__init__(str(self))
+
+    def __str__(self) -> str:
+        return f'{self.what}: up to {self.limit} allowed per call, got {self.provided}'
+
+
 class ProviderPoolExhaustedError(ChainscanClientError):
     """Every provider in the pool failed (or is in cooldown) for a request.
 
@@ -190,9 +243,9 @@ class ChainscanClientApiError(ChainscanClientError):
     failure_kind: FailureKind | None = None
     """``None`` (the class default) means *not decided at the raise site*:
     classification falls back to the Etherscan-style text patterns in
-    :func:`aiochainscan.network.api_error_failure_kind`. The Network
-    transport passes the computed kind when raising, so exceptions that
-    travelled through it classify without any text matching."""
+    :func:`api_error_failure_kind` (this module). The Network transport
+    passes the computed kind when raising, so exceptions that travelled
+    through it classify without any text matching."""
 
     def __init__(
         self,
@@ -208,6 +261,55 @@ class ChainscanClientApiError(ChainscanClientError):
 
     def __str__(self) -> str:  # pragma: no cover - trivial
         return f'[{self.message}] {self.result}'
+
+
+# Etherscan-style API error texts (message+result) that mean "bad credential".
+# Relocated from ``core/pool.py`` (via ``network.py``): the failure kind is
+# decided where the failure is detected — at the raise site in the Network
+# transport's Etherscan envelope adapter — and the pool's fallback ladder for
+# kind-less ``ChainscanClientApiError`` instances calls the same helper, so
+# raise-site and fallback classification can never drift.
+_AUTH_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r'invalid api[- ]key', re.IGNORECASE),
+    re.compile(r'missing[ /]+api[- ]key', re.IGNORECASE),
+    re.compile(r'api[- ]key.{0,24}(invalid|missing|required)', re.IGNORECASE),
+    re.compile(r'no api[- ]key', re.IGNORECASE),
+)
+
+# Error texts meaning "the plan does not cover this chain/endpoint".
+_PLAN_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r'free api', re.IGNORECASE),
+    re.compile(r'upgrade (?:your )?api plan', re.IGNORECASE),
+    re.compile(r'api pro endpoint', re.IGNORECASE),
+    re.compile(r'not supported for this chain', re.IGNORECASE),
+)
+
+
+def api_error_failure_kind(message: str | None, result: Any) -> FailureKind:
+    """Classify an Etherscan-style API error envelope by its text.
+
+    Used at the raise site in the Network transport's Etherscan envelope
+    adapter so the exception carries its :class:`FailureKind` from the
+    moment it is raised; the pool's classification fallback calls the same
+    helper for ``ChainscanClientApiError`` instances constructed without an
+    explicit kind.
+
+    Args:
+        message: The envelope's ``message`` field (``None`` tolerated).
+        result: The envelope's ``result`` field (any type; non-strings
+            simply contribute nothing matchable beyond their repr).
+
+    Returns:
+        :attr:`FailureKind.AUTH` for bad-credential texts,
+        :attr:`FailureKind.PLAN_RESTRICTED` for plan-coverage texts,
+        :attr:`FailureKind.FATAL` otherwise.
+    """
+    text = f'{message or ""} {result or ""}'
+    if any(pattern.search(text) for pattern in _AUTH_PATTERNS):
+        return FailureKind.AUTH
+    if any(pattern.search(text) for pattern in _PLAN_PATTERNS):
+        return FailureKind.PLAN_RESTRICTED
+    return FailureKind.FATAL
 
 
 class ChainscanClientProxyError(ChainscanClientError):
@@ -279,6 +381,24 @@ class ChainscanNetworkError(ChainscanClientError):
 
     def __str__(self) -> str:
         return self.message
+
+
+# The ONE transient-failure vocabulary: the Network transport's retry policy
+# retries exactly these, and its first-request guard treats exactly these as
+# "the probe blipped — stay armed and re-probe on the next request". Defined
+# here so the guard list and the retry list cannot drift (they were equal by
+# discipline and a "mirrors" comment before; they are equal by construction
+# now). ``TenacityRetryAdapter.DEFAULT_RETRY_EXCEPTIONS`` is this constant as
+# well — previously only ``(ChainscanRateLimitError,)``, an intentional
+# strengthening of the adapter's *standalone* default that changes no Network
+# wire behavior (Network always passed the full list explicitly).
+TRANSIENT_EXCEPTIONS: tuple[type[Exception], ...] = (
+    ChainscanRateLimitError,
+    ChainscanNetworkError,
+    httpx.TimeoutException,
+    httpx.NetworkError,
+    httpx.RemoteProtocolError,
+)
 
 
 class ChainscanDataError(ChainscanClientError):

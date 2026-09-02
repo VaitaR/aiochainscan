@@ -5,7 +5,7 @@ Base scanner class for implementing different blockchain explorer APIs.
 from abc import ABC
 from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 
 from ..chain_registry import resolve_chain_id
 from ..core.endpoint import EndpointSpec, coerce_response_items
@@ -155,6 +155,28 @@ class Scanner(ABC):
     walking to a cap the endpoint will never reach.
     """
 
+    cursor_keys: ClassVar[frozenset[str]] = frozenset()
+    """Cursor-key vocabulary shared by every method this scanner paginates.
+
+    The keys a cursor of this scanner's dialect may carry when the dialect is
+    uniform across endpoints (Etherscan-like page/offset). Scanners whose
+    cursors differ per endpoint declare the per-method vocabulary in
+    :attr:`CURSOR_KEYS` instead and leave this empty. Declared here — where the
+    cursor is produced — so consumers that must validate cursors (the MCP
+    key whitelist) never hand-copy another scanner's private key names.
+    """
+
+    CURSOR_KEYS: ClassVar[dict[Method, frozenset[str]]] = {}
+    """Per-method cursor vocabularies for dialects that differ per endpoint.
+
+    A server-issued cursor's shape is a property of ONE endpoint (BlockScout V2
+    ``next_page_params`` carries ``block_number``/``index`` for transactions
+    but ``address_hash``/``value`` for holders), so scanners with such dialects
+    declare the vocabulary per :class:`Method`. Methods absent from the mapping
+    fall back to :attr:`cursor_keys`; an explicit empty frozenset declares "this
+    method emits no cursor".
+    """
+
     chain_id: int | None
     """Numeric chain id; ``None`` for custom base URLs until probed/recorded."""
 
@@ -236,6 +258,10 @@ class Scanner(ABC):
         - ``next_cursor`` is opaque to callers. To fetch the next page, merge
           it into ``params`` (``params = {**params, **next_cursor}``) and call
           ``fetch_page`` again. Callers must not inspect or modify its contents.
+          The ONE exception is a security validator: the scanner declares the
+          key names a cursor may carry (:meth:`cursor_keys_for`) precisely so
+          such validation can check declarations instead of hand-copied
+          dialect knowledge.
         - Exceptions surface through the shared error ladder: every
           ``Chainscan*`` and capability error propagates unchanged, anything
           unexpected is masked as a non-retryable
@@ -542,16 +568,34 @@ class Scanner(ABC):
         spec = specs.get(method) if isinstance(specs, dict) else None
         return spec is not None and spec_declares_block_range(spec)
 
-    def result_window_for(self, method: Method) -> int | None:
+    @classmethod
+    def result_window_for(cls, method: Method) -> int | None:
         """The window that bounds THIS method, falling back to the scanner's.
 
-        Read by :func:`services.pagination.page_fetcher`, so every guaranteed
-        path sees the per-endpoint cap when one is declared.
+        Read by :func:`services.pagination.page_fetcher` so every guaranteed
+        path sees the per-endpoint cap, and by
+        :func:`scanners.scanners_serving_completely`, which asks the same
+        question of a scanner CLASS — hence a classmethod: a per-endpoint
+        window must decide capability the same way it decides pagination.
         """
-        overrides = self.RESULT_WINDOW_OVERRIDES
+        overrides = cls.RESULT_WINDOW_OVERRIDES
         if method in overrides:
             return overrides[method]
-        return self.result_window
+        return cls.result_window
+
+    @classmethod
+    def cursor_keys_for(cls, method: Method) -> frozenset[str]:
+        """The cursor-key vocabulary for THIS method.
+
+        Per-method declaration first (:attr:`CURSOR_KEYS`), falling back to the
+        scanner-wide :attr:`cursor_keys`. Read by the MCP cursor allow-list
+        derivation (:func:`aiochainscan.mcp.tools.scanner_cursor_keys`), which
+        unions it over every registered scanner that serves the method — the
+        one legitimate reader of cursor contents, since a forged token is
+        bounded by what it may merge. A classmethod for the same reason as
+        :meth:`result_window_for`: the registry asks questions of classes.
+        """
+        return frozenset(cls.CURSOR_KEYS.get(method, cls.cursor_keys))
 
     def get_supported_methods(self) -> list[Method]:
         """
