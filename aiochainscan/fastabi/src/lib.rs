@@ -273,7 +273,16 @@ fn validate_node(param: &ParamType, data: &[u8], offset: usize) -> Result<(), St
             validate_sequence(repeat(inner.as_ref()).take(*len), data, offset)
         }
         ParamType::Tuple(types) => validate_sequence(types.iter(), data, offset),
-        ParamType::Bytes | ParamType::String => Ok(()),
+        ParamType::Bytes => validate_dynamic_bytes(data, offset).map(|_| ()),
+        ParamType::String => {
+            let bytes = validate_dynamic_bytes(data, offset)?;
+            // ethabi converts lossily, so without this a byte sequence that is
+            // not UTF-8 decodes to U+FFFD here and is rejected on the pure
+            // floor -- the same calldata reading differently per tier.
+            std::str::from_utf8(bytes)
+                .map(|_| ())
+                .map_err(|error| format!("string: not valid UTF-8 ({})", error))
+        }
         _ => validate_leaf(param, data, offset),
     }
 }
@@ -281,6 +290,28 @@ fn validate_node(param: &ParamType, data: &[u8], offset: usize) -> Result<(), St
 // Generic over the iterator so no call site has to materialize a Vec of cloned
 // ParamTypes: this pass runs on every decode, and one malloc per call is
 // measurable against a ~0.5 us decode.
+/// Bounds-check a dynamic byte sequence and reject non-zero bytes between its
+/// end and the 32-byte boundary. Only the padding actually present is checked:
+/// a missing final pad is a truncation the length check already owns.
+fn validate_dynamic_bytes(data: &[u8], offset: usize) -> Result<&[u8], String> {
+    let length = read_offset(data, offset)?;
+    let start = offset + 32;
+    let end = start
+        .checked_add(length)
+        .ok_or_else(|| format!("bytes length {} overflows the offset", length))?;
+    let bytes = data
+        .get(start..end)
+        .ok_or_else(|| format!("bytes declares {} bytes, more than the data holds", length))?;
+    let padding = (32 - end % 32) % 32;
+    if padding > 0 {
+        let stop = std::cmp::min(end + padding, data.len());
+        if data[end..stop].iter().any(|b| *b != 0) {
+            return Err("trailing padding of a dynamic value is not zero".to_string());
+        }
+    }
+    Ok(bytes)
+}
+
 fn validate_sequence<'a, I>(params: I, data: &[u8], base: usize) -> Result<(), String>
 where
     I: Iterator<Item = &'a ParamType> + Clone,

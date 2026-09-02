@@ -691,11 +691,19 @@ transaction inputs, event logs, `SmartContract.iter_events` and the MCP
   the unused bits of a word are zero (or the sign extension, for `int<N>`), so
   rejecting is more defensible than guessing. Dirty `address`/`bytesN`
   padding, an out-of-range `uint<N>`/`int<N>`, a non-canonical `bool` and a
-  dynamic offset pointing into the head area all raise. `ethabi` is lenient
+  dynamic offset pointing into the head area all raise. So does non-zero
+  padding between a dynamic value and its 32-byte boundary — but only the
+  padding bytes actually present are checked: a payload whose final pad is
+  absent is a truncation the length checks already own, and rejecting it here
+  would reject data eth-abi accepts. `ethabi` is lenient
   and has no strict mode, so the Rust tier gets a hand-written validation pass
   (`validate_sequence` in `lib.rs`) before `Function::decode_input`; it works
-  on byte slices only, no bignum. Do not implement this by re-encoding and
-  comparing — that is *over*-strict (it rejects non-minimal but legal offsets).
+  on byte slices only, no bignum. That pass must also validate `string` as
+  UTF-8 itself: `ethabi` converts lossily, so without the check a non-UTF-8
+  byte sequence decodes to U+FFFD on Rust and raises on the floor — the same
+  calldata reading differently per tier. Do not implement any of this by
+  re-encoding and comparing — that is *over*-strict (it rejects non-minimal
+  but legal offsets).
 - **Cost of strictness: +14% end-to-end on the pure floor**
   (`decode_transaction_input`, ERC-20 `transfer`; +48% on the raw two-word
   `decode_values`, where nothing else is left to amortize it; `-m benchmark`
@@ -712,11 +720,21 @@ transaction inputs, event logs, `SmartContract.iter_events` and the MCP
   `scaleb`). They exist so `AbiTypeNotSupportedError` cannot fire where the
   old eth-abi tier coped. Widths are validated at parse time: `int`/`uint`
   a multiple of 8 in 8..256, `bytesN` 0<N≤32, fixed scale 0<N≤80.
+  Every `scaleb` must be passed `_FIXED_CONTEXT` explicitly: `scaleb` is a
+  *context* operation and the default context's `prec=28` silently rounds a
+  full-width value (int256 needs 78 significant digits) into a confident wrong
+  number. The `Decimal(str)` constructor itself is exact and context-free.
 - **The Rust tier falls through, not out**, when it recognises nothing:
   `fastabi` answers an unimplemented type with an empty `function_name`
   rather than an error, which would silently give `[fastabi]` users *less*
   than a base install. `_decode_transaction_input_fast` therefore retries on
-  the pure floor whenever the Rust result is empty.
+  the pure floor whenever the Rust result is empty — and so does
+  `decode_transaction_inputs_batch`, which shares the same rule: a type that
+  falls back in a single decode must not come back empty in a batch of the
+  same call. Both retries are gated on `_declares_selector`: without it every
+  transaction whose selector this ABI does not declare would be re-decoded on
+  the floor to reach the same empty answer, which on the bulk path is the
+  whole cost of the bulk path.
 - **The floor's hot path is the glue, not the ABI walk.** Decoding an ERC-20
   `transfer` spends ~40% in `abi_pure` and the rest in `decode.py`, so the
   conventions are applied in ONE traversal (`_to_rust_convention`) and the hot

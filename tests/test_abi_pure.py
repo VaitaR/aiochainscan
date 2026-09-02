@@ -8,7 +8,7 @@ install must not disagree about what a transaction says.
 """
 
 import warnings
-from decimal import Decimal
+from decimal import Context, Decimal
 from typing import Any
 
 import pytest
@@ -53,6 +53,15 @@ VECTORS: list[tuple[str, list[dict[str, Any]], list[Any]]] = [
         'fixed_point',
         [{'type': 'ufixed128x18'}, {'type': 'fixed128x18'}, {'type': 'fixed8x1'}],
         [Decimal('1.5'), Decimal('-2.25'), Decimal('-0.1')],
+    ),
+    (
+        # 78 significant digits: more than Decimal's default context keeps.
+        'fixed_point_full_width',
+        [{'type': 'ufixed256x18'}, {'type': 'fixed256x80'}],
+        [
+            Decimal(2**256 - 1).scaleb(-18, Context(prec=256)),
+            Decimal(-(2**255)).scaleb(-80, Context(prec=256)),
+        ],
     ),
     ('unicode_string', [{'type': 'string'}], ['ключ ' * 20]),
     ('empty_string', [{'type': 'string'}], ['']),
@@ -154,31 +163,82 @@ class TestCrossOracle:
         assert encode_arguments(params, list(values)) == eth_encode(types, values)
 
 
+# (abi_type, payload) pairs no compliant encoder can produce. eth-abi rejects
+# every one, so both remaining tiers must too -- a tier that accepts one reads
+# the same transaction differently from the other.
+NON_CANONICAL: list[tuple[str, str]] = [
+    ('uint8', '100'.rjust(64, '0')),
+    ('int8', 'ff'.rjust(64, '0')),
+    ('bool', '2'.rjust(64, '0')),
+    ('address', 'ff' * 12 + '11' * 20),
+    ('bytes4', 'aabbccdd' + 'ff' * 28),
+    ('string', '0' * 64),
+    ('uint256', '00' * 16),
+    ('string', 'ffff'.rjust(64, '0')),
+    ('uint8[]', '20'.rjust(64, '0') + 'ffffff'.rjust(64, '0')),
+    # Dirty padding between a dynamic value and its 32-byte boundary.
+    ('bytes', '20'.rjust(64, '0') + '1'.rjust(64, '0') + 'aa' + '00' * 30 + 'ff'),
+    ('string', '20'.rjust(64, '0') + '1'.rjust(64, '0') + '61' + '00' * 30 + 'ff'),
+    # Not UTF-8: ethabi converts lossily, so this needs an explicit check.
+    ('string', '20'.rjust(64, '0') + '1'.rjust(64, '0') + 'ff' + '00' * 31),
+]
+
+
 @requires_eth_abi
-@pytest.mark.parametrize(
-    ('abi_type', 'payload'),
-    [
-        ('uint8', '100'.rjust(64, '0')),
-        ('int8', 'ff'.rjust(64, '0')),
-        ('bool', '2'.rjust(64, '0')),
-        ('address', 'ff' * 12 + '11' * 20),
-        ('bytes4', 'aabbccdd' + 'ff' * 28),
-        ('string', '0' * 64),
-        ('uint256', '00' * 16),
-        ('string', 'ffff'.rjust(64, '0')),
-        ('uint8[]', '20'.rjust(64, '0') + 'ffffff'.rjust(64, '0')),
-    ],
-)
+@pytest.mark.parametrize(('abi_type', 'payload'), NON_CANONICAL)
 def test_pure_floor_refuses_exactly_what_eth_abi_refuses(abi_type, payload):
     """Strictness parity: the floor rejects everything eth-abi rejected."""
     from eth_abi.abi import decode as eth_decode
     from eth_abi.exceptions import DecodingError
 
     data = bytes.fromhex(payload)
-    with pytest.raises(DecodingError):
+    # eth-abi signals invalid UTF-8 with UnicodeDecodeError, not DecodingError.
+    with pytest.raises((DecodingError, UnicodeDecodeError)):
         eth_decode([abi_type], data)
     with pytest.raises(ValueError):
         decode_values(compile_params([{'type': abi_type}]), data)
+
+
+@pytest.mark.skipif(not FASTABI_AVAILABLE, reason='fastabi extension not built')
+def test_bulk_decoding_falls_back_wherever_a_single_decode_does():
+    """A type the Rust backend cannot build a signature for must not decode in
+    one call and come back empty in a batch of the same call."""
+    inputs = [{'type': 'fixed128x18', 'name': 'x'}]
+    abi = [{'type': 'function', 'name': 'f', 'inputs': inputs, 'outputs': []}]
+    calldata = (
+        '0x' + keccak_hash('f(fixed128x18)')[:8] + encode_arguments(inputs, [Decimal('1.5')]).hex()
+    )
+
+    single = decode_transaction_input({'input': calldata}, abi)
+    batch = decode_transaction_inputs_batch([{'input': calldata}], abi)[0]
+
+    assert single['decoded_data'] == {'x': Decimal('1.5')}
+    assert batch['decoded_data'] == single['decoded_data']
+    assert batch['decoded_func'] == single['decoded_func'] == 'f'
+
+
+@pytest.mark.skipif(not FASTABI_AVAILABLE, reason='fastabi extension not built')
+@pytest.mark.parametrize(('abi_type', 'payload'), NON_CANONICAL)
+def test_the_rust_tier_refuses_what_the_floor_refuses(abi_type, payload):
+    """ethabi is lenient and has no strict mode, so lib.rs validates by hand.
+
+    Undecodable calldata is non-fatal by contract, so a rejection shows up as
+    an empty result rather than an exception.
+    """
+    abi = [
+        {
+            'type': 'function',
+            'name': 'f',
+            'inputs': [{'type': abi_type, 'name': 'x'}],
+            'outputs': [],
+        }
+    ]
+    calldata = '0x' + keccak_hash(f'f({abi_type})')[:8] + payload
+
+    assert (
+        decode_module._decode_transaction_input_fast({'input': calldata}, abi)['decoded_data']
+        == {}
+    )
 
 
 class TestTierParity:
@@ -659,7 +719,11 @@ class TestPureFloorBenchmarks:
         )
         self.transaction = {'input': '0x' + keccak_hash(signature)[:8] + args.hex()}
 
-    def test_pure_floor_single(self, benchmark):
+    def test_pure_floor_single(self, benchmark, monkeypatch):
+        # Without this the benchmark dispatches to Rust wherever fastabi is
+        # built, and stops measuring the floor it is named after.
+        monkeypatch.setattr(decode_module, 'FASTABI_AVAILABLE', False)
+
         result = benchmark(lambda: decode_transaction_input(dict(self.transaction), self.ABI))
 
         assert result['decoded_func'] == 'swapExactTokensForTokens'

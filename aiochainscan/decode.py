@@ -304,6 +304,11 @@ def keccak_hash(text: str) -> str:
     return keccak_hex(text)
 
 
+def _declares_selector(abi: list[dict[str, Any]], raw_input: str) -> bool:
+    """Whether ``abi`` declares the function the calldata selects."""
+    return raw_input[:FUNCTION_SELECTOR_LENGTH] in _abi_index(abi).function_map
+
+
 def _decode_transaction_input_fast(
     transaction: dict[str, Any], abi: list[dict[str, Any]]
 ) -> dict[str, Any]:
@@ -329,8 +334,9 @@ def _decode_transaction_input_fast(
         # An empty function name means the Rust backend did not recognise the
         # call -- including when it cannot build a signature for a type it does
         # not implement (fixed-point). The Python tier covers the whole spec,
-        # so let it try before reporting nothing.
-        if not result['function_name']:
+        # so let it try, but only for a selector this ABI actually declares:
+        # an unknown selector decodes to nothing on either tier.
+        if not result['function_name'] and _declares_selector(abi, transaction['input']):
             return _decode_transaction_input_python(transaction, abi)
 
         transaction['decoded_func'] = result['function_name']
@@ -698,9 +704,12 @@ def decode_transaction_inputs_batch(
             if valid_indices[i] != -1:
                 # Valid transaction with result
                 result = decoded_results[result_idx]
+                result_idx += 1
+                if not result['function_name'] and _declares_selector(abi, tx['input']):
+                    _decode_transaction_input_python(tx, abi)
+                    continue
                 tx['decoded_func'] = result['function_name']
                 tx['decoded_data'] = result['decoded_data']
-                result_idx += 1
             else:
                 # Invalid transaction
                 tx['decoded_func'] = ''

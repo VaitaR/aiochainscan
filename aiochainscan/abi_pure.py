@@ -31,11 +31,17 @@ number that no compliant encoder could have produced.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import Context, Decimal
 from typing import Any
 
 from aiochainscan.crypto import keccak_hex
 from aiochainscan.exceptions import AbiTypeNotSupportedError
+
+# Decimal's default context rounds to 28 significant digits, and ``scaleb`` is a
+# context operation -- so the default silently truncates a wide fixed-point
+# value (int256 needs 78 digits) into a confident wrong number. Every scaleb
+# below passes this context instead of inheriting the caller's.
+_FIXED_CONTEXT = Context(prec=256)
 
 __all__ = [
     'TypeNode',
@@ -243,7 +249,7 @@ def _encode_static(node: TypeNode, value: Any) -> bytes:
             raise ValueError(f'{node.canonical} out of range: {value!r}')
         return (number % 2**256).to_bytes(32, 'big')
     if node.kind in ('ufixed', 'fixed'):
-        scaled = Decimal(str(value)).scaleb(node.decimals)
+        scaled = Decimal(str(value)).scaleb(node.decimals, _FIXED_CONTEXT)
         if scaled != scaled.to_integral_value():
             raise ValueError(f'{node.canonical} cannot represent {value!r} exactly')
         number = int(scaled)
@@ -544,15 +550,19 @@ def _decode_node(node: TypeNode, buf: bytes, offset: int) -> Any:
             raise ValueError(f'{node.canonical}: trailing padding is not zero')
         return _slice(buf, offset, offset + width)
     if kind == 'ufixed':
-        return Decimal(_unsigned_word(node, buf, offset)).scaleb(-node.decimals)
+        return Decimal(_unsigned_word(node, buf, offset)).scaleb(-node.decimals, _FIXED_CONTEXT)
     if kind == 'fixed':
-        return Decimal(_signed_word(node, buf, offset)).scaleb(-node.decimals)
+        return Decimal(_signed_word(node, buf, offset)).scaleb(-node.decimals, _FIXED_CONTEXT)
     if kind == 'bytes':
         length = _read_uint(buf, offset)
-        return _slice(buf, offset + 32, offset + 32 + length)
+        data = _slice(buf, offset + 32, offset + 32 + length)
+        _reject_dirty_tail(node, buf, offset + 32 + length)
+        return data
     if kind == 'string':
         length = _read_uint(buf, offset)
-        return _slice(buf, offset + 32, offset + 32 + length).decode('utf-8')
+        data = _slice(buf, offset + 32, offset + 32 + length)
+        _reject_dirty_tail(node, buf, offset + 32 + length)
+        return data.decode('utf-8')
     if kind == 'array':
         assert node.elem is not None
         if node.length is None:
@@ -572,6 +582,18 @@ def _decode_node(node: TypeNode, buf: bytes, offset: int) -> Any:
     if kind == 'tuple':
         return _decode_sequence(node.components, buf, offset)
     raise AbiTypeNotSupportedError(node.canonical)
+
+
+def _reject_dirty_tail(node: TypeNode, buf: bytes, end: int) -> None:
+    """Reject non-zero bytes between a dynamic value and its 32-byte boundary.
+
+    Only the bytes actually present are checked: a payload whose final padding
+    is absent is a truncation, which the length checks already own -- rejecting
+    it here would reject data ``eth-abi`` accepts.
+    """
+    padding = -end % 32
+    if padding and any(buf[end : min(end + padding, len(buf))]):
+        raise ValueError(f'{node.canonical}: trailing padding is not zero')
 
 
 def _read_uint(buf: bytes, offset: int) -> int:
