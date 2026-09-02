@@ -10,6 +10,7 @@ from aiochainscan.config import (
     ConfigurationManager,
     ScannerConfig,
     config_manager,
+    credential_env_names,
     get_config_manager,
 )
 
@@ -74,6 +75,30 @@ class TestConfigurationManager:
         # Test invalid scanner
         with pytest.raises(ValueError, match='Unknown scanner "invalid"'):
             manager.get_scanner_config('invalid')
+
+    def test_get_scanner_config_returns_an_isolated_copy(self):
+        """Returned configs are mutation-isolated from the manager's state.
+
+        ``get_scanner_config`` deep-copies on read so callers can mutate the
+        returned mapping (mutable ``supported_networks`` / ``special_config``)
+        without corrupting the shared manager — the multi-tenant isolation
+        guarantee. This pins the guarantee.
+        """
+        manager = ConfigurationManager()
+        config = manager.get_scanner_config('eth')
+
+        config.supported_networks.add('mutated_network')
+        config.special_config['mutated'] = True
+        config.name = 'Mutated Name'
+
+        fresh = manager.get_scanner_config('eth')
+        assert 'mutated_network' not in fresh.supported_networks
+        assert 'mutated' not in fresh.special_config
+        assert fresh.name == 'Etherscan'
+        # The manager's own state is untouched too
+        assert 'mutated_network' not in manager._scanners['eth'].supported_networks
+        assert 'mutated' not in manager._scanners['eth'].special_config
+        assert manager._scanners['eth'].name == 'Etherscan'
 
     def test_load_env_file(self):
         """Test loading environment variables from .env file."""
@@ -513,3 +538,80 @@ class TestErrorHandling:
             except KeyError:
                 # This is also acceptable - the scanner doesn't exist
                 pass
+
+
+class TestCredentialEnvNamePattern:
+    """``credential_env_names`` is the ONE statement of the credential
+    env-var priority order; lookup, suggestions and the ``.env`` template
+    all derive from it, so they cannot drift apart."""
+
+    def test_credential_env_names_priority_order(self):
+        """The candidate list, in priority order."""
+        assert credential_env_names('eth', 'Etherscan') == (
+            'ETHERSCAN_KEY',
+            'ETH_KEY',
+            'ETH_API_KEY',
+            'SCANNER_ETH_KEY',
+            'API_KEY_ETH',
+        )
+
+    def test_credential_env_names_without_display_name(self):
+        """An unknown display name omits the name-based candidate only."""
+        assert credential_env_names('eth') == (
+            'ETH_KEY',
+            'ETH_API_KEY',
+            'SCANNER_ETH_KEY',
+            'API_KEY_ETH',
+        )
+
+    def test_suggestions_match_lookup_candidates(self):
+        """Suggestion text is exactly the lookup candidate list."""
+        manager = ConfigurationManager()
+        manager.get_scanner_config('eth')  # ensure the scanner is known
+
+        assert manager._get_api_key_suggestions('eth') == list(
+            credential_env_names('eth', 'Etherscan')
+        )
+
+    def test_every_pattern_candidate_is_honored_by_lookup(self):
+        """Each generated candidate really is a lookup candidate."""
+        manager = ConfigurationManager()
+        manager.get_scanner_config('eth')  # ensure the scanner is known
+
+        for pattern in credential_env_names('eth', 'Etherscan'):
+            with patch.dict(os.environ, {pattern: f'key_via_{pattern}'}, clear=True):
+                manager._scanners['eth'].api_key = None
+                assert manager._get_api_key_for_scanner('eth') == f'key_via_{pattern}', pattern
+
+    def test_lookup_follows_the_generated_priority_order(self):
+        """Earlier candidates win: peel the list from the top."""
+        manager = ConfigurationManager()
+        manager.get_scanner_config('eth')  # ensure the scanner is known
+
+        candidates = credential_env_names('eth', 'Etherscan')
+        env = {pattern: f'key_{index}' for index, pattern in enumerate(candidates)}
+        with patch.dict(os.environ, env, clear=True):
+            for expected_index in range(len(candidates)):
+                assert manager._get_api_key_for_scanner('eth') == f'key_{expected_index}'
+                del os.environ[candidates[expected_index]]
+
+    def test_v2_fallback_and_suggestions_come_from_the_pattern(self, tmp_path, monkeypatch):
+        """The V2 family fallback is the eth scanner's primary candidate."""
+        ConfigurationManager.reset_instance()
+        # Hermetic: no host .env file may inject the fallback into _env_state
+        monkeypatch.setattr(Path, 'home', lambda: tmp_path)
+        manager = ConfigurationManager(tmp_path)
+        manager.get_scanner_config('bsc')  # ensure the lazy definition is loaded
+
+        with patch.dict(os.environ, {'ETHERSCAN_KEY': 'family_key'}, clear=True):
+            manager._scanners['bsc'].api_key = None
+            assert manager.get_api_key('bsc') == 'family_key'
+
+        # Without the fallback key, the error suggests it first, ahead of the
+        # bsc scanner's own candidates.
+        with patch.dict(os.environ, {}, clear=True):
+            manager._scanners['bsc'].api_key = None
+            with pytest.raises(ValueError, match='ETHERSCAN_KEY, BSCSCAN_KEY'):
+                manager.get_api_key('bsc')
+
+        ConfigurationManager.reset_instance()
