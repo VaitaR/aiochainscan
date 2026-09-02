@@ -239,6 +239,7 @@ async with ChainscanClient.from_config('etherscan', 'ethereum') as client:
 - `get_logs()` returns **≤1000 logs**. Use `get_all_logs()` for complete data.
 - `get_all_*()` now uses **streaming aggregation** under the hood; for very large datasets prefer `iter_*_streaming()`.
 - `get_all_*()` / `iter_*_streaming()` default to `guarantee_complete=True` — complete data or an exception, never silent truncation (see below).
+- A **bounded** block range (`from_block > 0` / concrete `to_block`) on a provider whose spec declares no block-range params (e.g. BlockScout V2 transactions) raises `BlockRangeNotSupportedError` at every seam — single-page `get_*`, `call()`, `fetch_page()`, streams — instead of silently dropping the bounds; unbounded calls behave exactly as before.
 - `get_transactions_df()` auto-paginates (uses `iter_transactions` internally).
 - Balance/value/supply values are **Wei strings** — convert with `wei_to_ether()` / `to_decimal_amount()` (exact `Decimal`), never `int(wei) / 10**18` float division.
 
@@ -417,17 +418,18 @@ Every `Method` enum value (33 total) maps to typed convenience methods on `Chain
 ### Core (Source of Truth)
 | File | Purpose | Source of Truth For |
 |------|---------|---------------------|
-| `core/client.py` + `core/mixins/` | **ChainscanClient** (composition of per-domain mixins) | All API interactions, one convenience method per `Method` value plus `get_all_*`/`iter_*`/`wait_for_*` |
-| `core/pool.py` | **ChainscanPool** | Multi-provider failover: `classify_failure`, sticky routing, cooldowns, pinned pagination |
+| `core/client.py` + `core/mixins/` | **ChainscanClient** (composition of per-domain mixins) | All API interactions, one convenience method per `Method` value plus `get_all_*`/`iter_*`/`wait_for_*`; constructed via `ScannerTarget` (`from_config` / `chain=`-`provider=` kwargs; the positional field form is gone) |
+| `core/streaming.py` | **Streaming surface declaration** | `STREAMING_SPECS` registry (Method, params builder, operation noun, flags) + the ONE shared stream implementation; pool forwards and the test sweeps derive from it |
+| `core/pool.py` | **ChainscanPool** | Multi-provider failover: `classify_failure` (lookup of the exception's `failure_kind`, regex fallback), sticky routing, cooldowns, pinned pagination |
 | `domain/method.py` | **Method** enum (33 values) | Supported operations |
 | `domain/contract.py` | **SmartContract** | High-level contract API |
-| `domain/models.py` | **Address**, **TxHash** | Data validation, EIP-55 |
-| `config.py` | **ConfigurationManager** | Scanner configs (lazy-loaded) |
+| `domain/models.py` | **Address`, **TxHash** | Data validation, EIP-55 |
+| `config.py` | **ConfigurationManager** | Credential/env resolution only (topology lives in `chain_registry.py`) |
 
 ### Services (Business Logic)
 | File | Purpose | Key Pattern |
 |------|---------|-------------|
-| `services/pagination.py` | Pagination | `iter_pages`/`iter_items`/`collect_all` over `Scanner.fetch_page` cursors; `iter_pages_complete` adds adaptive range splitting (`guarantee_complete`) |
+| `services/pagination.py` | Pagination | `iter_pages`/`iter_items`/`collect_all` over `Scanner.fetch_page` cursors; the guarantee machinery lives in `services/pagination_guarantee.py` (adaptive range splitting, re-exported here) |
 | `services/ens_resolver.py` | ENS name resolution | Cache + BlockScout V2 |
 | `services/analytics.py` | Polars DataFrames | Column-oriented, Utf8 for Wei |
 | `services/constants.py` | Shared service constants | - |
@@ -636,6 +638,7 @@ from aiochainscan.exceptions import (
     CompletenessUnavailableError, # Endpoint has no splittable dimension here (.alternatives)
     ChainscanDataError,           # Data contract violation
     MethodNotDeclaredError,       # ValueError subclass: method not in SPECS
+    BlockRangeNotSupportedError,  # MethodNotDeclaredError subclass: bounded block range the provider's spec cannot carry (raised at every seam: call/fetch_page/stream)
     ProviderPoolExhaustedError,   # Pool: every provider failed (.attempts)
     ChainscanProviderSwitchWarning,  # Pool: routed away from a provider
 )
