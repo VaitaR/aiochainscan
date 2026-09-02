@@ -103,7 +103,7 @@ fi
 
 if [[ "${AIO_BUILD_FASTABI:-0}" == "1" ]]; then
 	echo "==> Building Rust FFI (maturin develop --release; needs the Rust toolchain)..."
-	if ! (cd aiochainscan/fastabi && uv run --extra fast maturin develop --release); then
+	if ! (cd aiochainscan/fastabi && uv run --with maturin maturin develop --release); then
 		echo "WARN: fastabi build failed — decode() will fall back to the pure-Python path." >&2
 	fi
 else

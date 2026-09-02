@@ -25,7 +25,7 @@ install-dev: ## Install dev dependencies (uv sync --extra dev --frozen)
 	@echo "$(GREEN)✅ Development environment ready$(RESET)"
 
 fastabi: ## Build the Rust FFI (maturin develop --release; needs Rust toolchain)
-	cd aiochainscan/fastabi && $(if $(UV),uv run --extra fast,) maturin develop --release
+	cd aiochainscan/fastabi && $(if $(UV),uv run --with maturin,) maturin develop --release
 	@echo "$(GREEN)✅ fastabi built$(RESET)"
 
 ##@ Quality (mirrors disabled GitHub CI)

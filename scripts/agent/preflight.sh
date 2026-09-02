@@ -98,11 +98,26 @@ else
 fi
 
 # 8. Rust FFI (advisory — decode() falls back to pure Python without it)
-if python3 -c "import aiochainscan.fastabi" 2>/dev/null || \
-   uv run python -c "import aiochainscan.fastabi" 2>/dev/null; then
-  ok "fastabi (Rust FFI) built"
+# `aiochainscan.fastabi` is the crate SOURCE directory and imports as an empty
+# namespace package whether or not the extension was built, so probe the compiled
+# module by name (new top-level first, then the pre-split in-package name) and
+# require a real symbol from it.
+FASTABI_PROBE='
+import importlib
+for name in ("aiochainscan_fastabi", "aiochainscan.aiochainscan_fastabi"):
+    try:
+        mod = importlib.import_module(name)
+    except ImportError:
+        continue
+    if hasattr(mod, "keccak256"):
+        print(name)
+        raise SystemExit(0)
+raise SystemExit(1)
+'
+if FASTABI_MODULE=$(uv run python -c "$FASTABI_PROBE" 2>/dev/null); then
+  ok "fastabi (Rust FFI) built: $FASTABI_MODULE"
 else
-  info "fastabi not built — decode() uses the Python fallback; build with 'make fastabi' if needed"
+  info "fastabi not built — decode() uses the Python fallback and 12 tests in tests/test_crypto.py will SKIP; build with 'AIO_BUILD_FASTABI=1' at worktree creation or 'make fastabi'"
 fi
 
 echo ""
