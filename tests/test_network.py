@@ -21,8 +21,15 @@ from aiochainscan.exceptions import (
     ChainscanNetworkError,
     ChainscanRateLimitError,
     ChainscanResponseTooLargeError,
+    FailureKind,
 )
-from aiochainscan.network import Network, _redact_headers, _redact_payload, _redact_url
+from aiochainscan.network import (
+    Network,
+    _redact_headers,
+    _redact_payload,
+    _redact_url,
+    api_error_failure_kind,
+)
 
 
 def _ok_handler(request: httpx.Request) -> httpx.Response:
@@ -448,6 +455,109 @@ def test_redact_url_query_api_key() -> None:
     assert 'apikey=%2A%2A%2AREDACTED%2A%2A%2A' in redacted
     assert 'module=account' in redacted
     assert 'chainid=1' in redacted
+
+
+# ---------------------------------------------------------------------------
+# Raise-site failure kinds: the exception carries its classification from the
+# moment it is raised — the pool classifies by lookup, not by re-parsing text.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ('message', 'result', 'expected'),
+    [
+        ('NOTOK', 'Invalid API Key', FailureKind.AUTH),
+        ('NOTOK', 'Missing/Invalid API Key', FailureKind.AUTH),
+        ('Invalid API key provided', None, FailureKind.AUTH),
+        ('NOTOK', 'Free API Access is not supported for this chain', FailureKind.PLAN_RESTRICTED),
+        ('NOTOK', 'you are trying to access an API Pro endpoint', FailureKind.PLAN_RESTRICTED),
+        ('NOTOK', 'No transactions found', FailureKind.FATAL),
+        (None, None, FailureKind.FATAL),
+    ],
+)
+def test_api_error_failure_kind_classifies_etherescan_texts(
+    message: str | None, result: Any, expected: FailureKind
+) -> None:
+    assert api_error_failure_kind(message, result) is expected
+
+
+@pytest.mark.parametrize(
+    ('message', 'result', 'expected'),
+    [
+        ('NOTOK', 'Invalid API Key', FailureKind.AUTH),
+        (
+            'NOTOK',
+            'Free API Access is not supported for this chain',
+            FailureKind.PLAN_RESTRICTED,
+        ),
+        ('NOTOK', 'No transactions found', FailureKind.FATAL),
+    ],
+)
+@pytest.mark.asyncio
+async def test_api_error_raise_site_carries_failure_kind(
+    ub, message: str, result: str, expected: FailureKind
+) -> None:
+    """The API-error flatten in _raise_if_error attaches the kind computed
+    from the envelope — no regex left to run at classification time."""
+    network = Network(ub)
+    response = httpx.Response(
+        200,
+        headers={'content-type': 'application/json'},
+        json={'status': '0', 'message': message, 'result': result},
+    )
+    try:
+        with pytest.raises(ChainscanClientApiError) as exc_info:
+            network._handle_response(response)
+    finally:
+        await network.close()
+
+    assert exc_info.value.failure_kind is expected
+
+
+@pytest.mark.asyncio
+async def test_rate_limit_in_http_200_carries_rate_limit_kind(ub) -> None:
+    """The hidden rate-limit detection (HTTP 200 + rate-limit text) raises a
+    ChainscanRateLimitError whose class default carries RATE_LIMIT."""
+    network = Network(ub)
+    response = httpx.Response(
+        200,
+        headers={'content-type': 'application/json'},
+        json={'status': '0', 'message': 'NOTOK', 'result': 'Max rate limit reached'},
+    )
+    try:
+        with pytest.raises(ChainscanRateLimitError) as exc_info:
+            network._handle_response(response)
+    finally:
+        await network.close()
+
+    assert exc_info.value.failure_kind is FailureKind.RATE_LIMIT
+
+
+@pytest.mark.parametrize(
+    ('status_code', 'expected_exc', 'expected_kind'),
+    [
+        (429, ChainscanRateLimitError, FailureKind.RATE_LIMIT),
+        (503, ChainscanNetworkError, FailureKind.TRANSIENT),
+        (400, ChainscanClientError, FailureKind.FATAL),
+    ],
+)
+@pytest.mark.asyncio
+async def test_http_status_raise_sites_carry_failure_kinds(
+    ub, status_code: int, expected_exc: type[Exception], expected_kind: FailureKind
+) -> None:
+    network = Network(ub)
+    response = httpx.Response(
+        status_code,
+        request=httpx.Request('GET', 'https://example.com/api'),
+        text='boom',
+    )
+    try:
+        with pytest.raises(expected_exc) as exc_info:
+            network._handle_response(response)
+    finally:
+        await network.close()
+
+    assert exc_info.value.failure_kind is expected_kind
 
 
 def test_redact_url_path_api_key() -> None:

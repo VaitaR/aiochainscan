@@ -47,7 +47,6 @@ from aiochainscan.exceptions import (
     ChainscanClientError,
     ChainscanClientProxyError,
     ChainscanDataError,
-    ChainscanInvalidAddressError,
     ChainscanNetworkError,
     ChainscanProviderSwitchWarning,
     ChainscanRateLimitError,
@@ -212,8 +211,50 @@ class TestClassifyFailure:
     def test_fatal_value_error(self) -> None:
         assert classify_failure(ValueError('bad argument')) is FailureKind.FATAL
 
-    def test_fatal_invalid_address(self) -> None:
-        assert classify_failure(ChainscanInvalidAddressError('0x123')) is FailureKind.FATAL
+    def test_carried_kind_wins_without_text_match(self) -> None:
+        """A raise-site kind classifies even when the message matches NO
+        Etherscan pattern — impossible before failures carried their kind."""
+        exc = ChainscanClientApiError(
+            'WeirdScanner quota exhausted', 'see provider docs', failure_kind=FailureKind.AUTH
+        )
+        assert classify_failure(exc) is FailureKind.AUTH
+
+    def test_carried_kind_on_third_party_exception(self) -> None:
+        """Any exception (not just ours) that carries a failure_kind
+        classifies by lookup — the seam for scanner-specific failures."""
+
+        class ThirdPartyAuthError(Exception):
+            failure_kind = FailureKind.AUTH
+
+        assert classify_failure(ThirdPartyAuthError('provider said no')) is FailureKind.AUTH
+
+        class WeirdScannerError(ChainscanClientError):
+            failure_kind = FailureKind.PLAN_RESTRICTED
+
+        assert classify_failure(WeirdScannerError('plan too small')) is (
+            FailureKind.PLAN_RESTRICTED
+        )
+
+    def test_carried_kind_can_widen_a_typed_default(self) -> None:
+        """An explicit kind overrides what the type alone would say: a
+        rate-limit-shaped exception raised as TRANSIENT routes transient."""
+        exc = ChainscanRateLimitError(
+            'NOTOK', 'Max rate limit reached', failure_kind=FailureKind.TRANSIENT
+        )
+        assert classify_failure(exc) is FailureKind.TRANSIENT
+
+    def test_kindless_api_error_still_classified_from_text(self) -> None:
+        """Fallback: an API error constructed WITHOUT a kind (third-party
+        scanner) classifies from the Etherscan-style texts as before."""
+        assert classify_failure(ChainscanClientApiError('NOTOK', 'Invalid API Key')) is (
+            FailureKind.AUTH
+        )
+        assert (
+            classify_failure(
+                ChainscanClientApiError('NOTOK', 'Free API is not supported for this chain')
+            )
+            is FailureKind.PLAN_RESTRICTED
+        )
 
     def test_fatal_not_found_api_error(self) -> None:
         exc = ChainscanClientApiError('NOTOK', 'No transactions found')

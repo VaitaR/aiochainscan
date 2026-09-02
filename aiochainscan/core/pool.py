@@ -10,7 +10,10 @@ limiter), and the pool only decides *who* serves a call.
 Design highlights (deliberately better than the blockparty reference):
 
 - **Failure classification, not blanket catches.** Every provider error is
-  classified by :func:`classify_failure` into a :class:`FailureKind`; only
+  classified by :func:`classify_failure` into a :class:`FailureKind` —
+  primarily by looking up the ``failure_kind`` the exception carries from
+  its raise site, with the historical isinstance+text ladder as fallback
+  for kind-less exceptions; only
   fallback-eligible kinds move to the next provider, fatal ones (bad
   arguments, "not found", data-contract violations) propagate immediately.
 - **Retry boundary respected.** Transport-level retries stay inside each
@@ -40,15 +43,16 @@ scheduling.
 from __future__ import annotations
 
 import inspect
-import re
 import time
 import warnings
 from collections.abc import AsyncIterator, Callable, Sequence
-from enum import Enum
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 import httpx
 
+# FailureKind moved to ``..exceptions`` (exceptions carry it from the raise
+# site); the aliased import below re-exports it under this module's
+# historical path for typed importers (``aiochainscan.core.pool.FailureKind``).
 from ..exceptions import (
     ChainscanClientApiError,
     ChainscanNetworkError,
@@ -58,6 +62,10 @@ from ..exceptions import (
     MethodNotDeclaredError,
     ProviderPoolExhaustedError,
 )
+from ..exceptions import (
+    FailureKind as FailureKind,
+)
+from ..network import api_error_failure_kind
 from .client import ChainscanClient
 from .method import Method
 from .mixins import (
@@ -90,54 +98,28 @@ ProviderEntry = tuple[str, str] | tuple[str, str, str]
 # ---------------------------------------------------------------------------
 
 
-class FailureKind(Enum):
-    """What a provider failure means for pool routing."""
-
-    RATE_LIMIT = 'rate_limit'
-    """Provider is throttling us — cooldown honours ``retry_after``."""
-
-    TRANSIENT = 'transient'
-    """Network/5xx trouble that survived the client's transport retries."""
-
-    AUTH = 'auth'
-    """Missing or invalid API key — will not heal itself, long cooldown."""
-
-    PLAN_RESTRICTED = 'plan_restricted'
-    """The current API plan does not serve the chain/endpoint (e.g. Etherscan
-    V2 free tier answering ``Free API Access is not supported for this chain``)."""
-
-    METHOD_UNDECLARED = 'method_undeclared'
-    """The provider never declared this method in its SPECS — capability
-    routing, not a failure: no cooldown, no warning, just next provider."""
-
-    FATAL = 'fatal'
-    """Caller's problem (bad arguments, not-found, data contract) — switching
-    providers cannot help; propagate immediately."""
-
-
-# Etherscan-style API error texts (message+result) that mean "bad credential".
-_AUTH_PATTERNS: tuple[re.Pattern[str], ...] = (
-    re.compile(r'invalid api[- ]key', re.IGNORECASE),
-    re.compile(r'missing[ /]+api[- ]key', re.IGNORECASE),
-    re.compile(r'api[- ]key.{0,24}(invalid|missing|required)', re.IGNORECASE),
-    re.compile(r'no api[- ]key', re.IGNORECASE),
-)
-
-# Error texts meaning "the plan does not cover this chain/endpoint".
-_PLAN_PATTERNS: tuple[re.Pattern[str], ...] = (
-    re.compile(r'free api', re.IGNORECASE),
-    re.compile(r'upgrade (?:your )?api plan', re.IGNORECASE),
-    re.compile(r'api pro endpoint', re.IGNORECASE),
-    re.compile(r'not supported for this chain', re.IGNORECASE),
-)
-
-
 def classify_failure(exc: BaseException) -> FailureKind:
     """Classify an exception that escaped a provider client.
 
+    Carried kind wins: an exception with a ``failure_kind`` attribute
+    (every exception in ``aiochainscan.exceptions`` has one, and
+    third-party exceptions may add one) classifies as the kind decided
+    where the failure was detected — the Network transport
+    (``network.api_error_failure_kind`` at the API-error raise site) or a
+    scanner translating its provider's rejection. A new scanner's failure
+    mode is therefore wireable by raising a kind-carrying exception,
+    without editing this module.
+
+    The isinstance+text ladder below remains ONLY as a fallback for
+    exceptions without a kind: raw ``httpx`` transport errors that escaped
+    a client's retry policy, and ``ChainscanClientApiError`` instances
+    constructed without an explicit kind (third-party scanners may raise
+    those directly). It is byte-for-byte the pre-``failure_kind``
+    classification. Order matters: the most specific exception families
+    are checked first.
+
     The classifier sees only exceptions that survived the client's transport
-    retries (tenacity gives up and re-raises). Order matters: the most
-    specific exception families are checked first.
+    retries (tenacity gives up and re-raises).
 
     Args:
         exc: Exception raised by a provider client.
@@ -145,6 +127,9 @@ def classify_failure(exc: BaseException) -> FailureKind:
     Returns:
         The :class:`FailureKind` steering pool routing (see the enum docs).
     """
+    carried = getattr(exc, 'failure_kind', None)
+    if isinstance(carried, FailureKind):
+        return carried
     if isinstance(exc, ChainscanRateLimitError):
         return FailureKind.RATE_LIMIT
     if isinstance(exc, MethodNotDeclaredError):
@@ -157,12 +142,9 @@ def classify_failure(exc: BaseException) -> FailureKind:
         # the retry policy inside the client's Network.
         return FailureKind.TRANSIENT
     if isinstance(exc, ChainscanClientApiError):
-        text = f'{exc.message or ""} {exc.result or ""}'
-        if any(pattern.search(text) for pattern in _AUTH_PATTERNS):
-            return FailureKind.AUTH
-        if any(pattern.search(text) for pattern in _PLAN_PATTERNS):
-            return FailureKind.PLAN_RESTRICTED
-        return FailureKind.FATAL
+        # No kind carried: classify from the Etherscan-style texts — the
+        # same helper the raise site uses, so the two can never drift.
+        return api_error_failure_kind(exc.message, exc.result)
     # Everything else — argument errors (ValueError/TypeError), not-found
     # API answers, data-contract violations, proxy errors — is the caller's
     # problem: another provider would answer the same way.
