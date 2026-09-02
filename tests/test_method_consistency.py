@@ -34,8 +34,10 @@ in this file, guarded bidirectionally against the registry.
 from __future__ import annotations
 
 import inspect
+import json
 from collections.abc import AsyncIterator
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -55,9 +57,9 @@ from aiochainscan.core.pool import ChainscanPool
 from aiochainscan.core.streaming import STREAMING_SPECS
 from aiochainscan.core.url_builder import UrlBuilder
 from aiochainscan.domain.method import Method
-from aiochainscan.exceptions import BlockRangeNotSupportedError
+from aiochainscan.exceptions import BlockRangeNotSupportedError, MethodNotDeclaredError
 from aiochainscan.scanners._etherscan_like import EtherscanLikeScanner
-from aiochainscan.scanners.base import BLOCK_RANGE_PARAM_KEYS
+from aiochainscan.scanners.base import BLOCK_RANGE_PARAM_KEYS, spec_declares_block_range
 from aiochainscan.scanners.blockscout_v1 import BlockScoutV1
 from aiochainscan.scanners.blockscout_v2 import BlockScoutV2Scanner
 from aiochainscan.scanners.etherscan_v2 import EtherscanV2
@@ -720,3 +722,164 @@ async def test_unbounded_stream_on_rangeless_scanner_still_works() -> None:
     # is path-only, byte-identical to the pre-dialect-unification behaviour.
     assert net.calls[0]['params'] is None
     assert net.calls[0]['url'].endswith('/api/v2/addresses/0xabc/transactions')
+
+
+# ============================================================================
+# Direct (single-page) convenience methods × REAL scanner specs: a bounded
+# block range is either transmitted or refused — never silently dropped.
+#
+# The streaming sweeps above cover ``iter_*`` / ``get_all_*``; the mixins'
+# single-page methods reach the scanner through ``ChainscanClient.call`` /
+# ``fetch_page``, so this sweep drives the REAL adapters over a fake Network
+# and derives its expectation from each spec's own ``param_map``
+# (``spec_declares_block_range``), never from a hand-maintained table.
+# ============================================================================
+
+
+class _DirectNet:
+    """Minimal Network stand-in: records requests, replays canned responses."""
+
+    def __init__(self, responses: list[Any]) -> None:
+        self.responses = list(responses)
+        self.calls: list[dict[str, Any]] = []
+
+    async def request(self, **kwargs: Any) -> Any:
+        self.calls.append(kwargs)
+        response = self.responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+    async def get(self, **kwargs: Any) -> Any:
+        return await self.request(method='GET', **kwargs)
+
+    async def post(self, **kwargs: Any) -> Any:
+        return await self.request(method='POST', **kwargs)
+
+
+def _direct_client_shell(scanner: Any) -> ChainscanClient:
+    """A ChainscanClient shell around a real scanner + fake Network."""
+    client = ChainscanClient.__new__(ChainscanClient)
+    client.scanner_name = scanner.name
+    client.scanner_version = scanner.version
+    client.api_kind = 'test'
+    client.network = 'main'
+    client.api_key = ''
+    client._scanner = scanner
+    return client
+
+
+_ETHERSCAN_ENVELOPE: dict[str, Any] = {'status': '1', 'message': 'OK', 'result': []}
+
+# family label -> (scanner factory over a _DirectNet, one bounded-call response
+# script, wire-level "the bounds were transmitted" predicate)
+_DIRECT_FAMILIES: dict[str, Any] = {
+    'etherscan/v2': {
+        'make': lambda net: EtherscanV2(
+            api_key='test_key',
+            network='main',
+            url_builder=MagicMock(),
+            network_client=net,  # type: ignore[arg-type]
+        ),
+        'responses': lambda: [_ETHERSCAN_ENVELOPE],
+        'bounds_transmitted': lambda net: net.calls[0]['params'].get('startblock') == 100
+        and net.calls[0]['params'].get('endblock') == 200,
+    },
+    'blockscout/v1': {
+        'make': lambda net: BlockScoutV1(
+            api_key='',
+            network='eth',
+            url_builder=MagicMock(),
+            network_client=net,  # type: ignore[arg-type]
+        ),
+        'responses': lambda: [_ETHERSCAN_ENVELOPE],
+        'bounds_transmitted': lambda net: net.calls[0]['params'].get('startblock') == 100
+        and net.calls[0]['params'].get('endblock') == 200,
+    },
+    'blockscout/v2': {
+        'make': lambda net: BlockScoutV2Scanner(
+            api_key='',
+            network='ethereum',
+            url_builder=UrlBuilder('', 'eth', 'ethereum'),
+            network_client=net,  # type: ignore[arg-type]
+        ),
+        'responses': lambda: [{'items': [], 'next_page_params': None}],
+        'bounds_transmitted': lambda net: False,  # rangeless: must refuse, never serve
+    },
+    'nodereal/v1': {
+        'make': lambda net: NodeRealScanner(
+            api_key='test_key',
+            network='bsc',
+            url_builder=MagicMock(),
+            network_client=net,  # type: ignore[arg-type]
+        ),
+        # eth_blockNumber tip probe, then nr_getTransactionByAddress.
+        'responses': lambda: ['0x1000', {'pageKey': '', 'transfers': []}],
+        'bounds_transmitted': lambda net: json.dumps(net.calls[-1], default=str).count('0x64')
+        >= 1,  # fromBlock/toBlock hex of 100
+    },
+}
+
+_DIRECT_RANGED_METHODS: tuple[tuple[str, Method], ...] = (
+    ('get_transactions', Method.ACCOUNT_TRANSACTIONS),
+    ('get_internal_transactions', Method.ACCOUNT_INTERNAL_TXS),
+    ('get_token_transfers', Method.ACCOUNT_ERC20_TRANSFERS),
+)
+
+
+@pytest.mark.parametrize('family_label', sorted(_DIRECT_FAMILIES))
+@pytest.mark.parametrize(
+    ['method_name', 'method'], [list(pair) for pair in _DIRECT_RANGED_METHODS]
+)
+async def test_direct_paginated_bounded_range_served_or_refused(
+    family_label: str, method_name: str, method: Method
+) -> None:
+    """Bounded single-page call: transmitted, not-declared, or honest refusal.
+
+    A spec that declares block-range params must serve the call with the
+    bounds on the wire; a spec that declares the method but no range params
+    must raise ``BlockRangeNotSupportedError`` naming the provider; a spec
+    that does not declare the method keeps the scanner's own
+    ``MethodNotDeclaredError``. The silent drop (params filtered to ``None``
+    while the caller asked for a narrower range) is the regression this pins.
+    """
+    family = _DIRECT_FAMILIES[family_label]
+    net = _DirectNet(family['responses']())
+    scanner = family['make'](net)
+    client = _direct_client_shell(scanner)
+
+    spec = scanner.SPECS.get(method)
+    call = getattr(client, method_name)(CHECKSUM_ADDRESS, start_block=100, end_block=200)
+
+    if spec is None:
+        with pytest.raises(MethodNotDeclaredError):
+            await call
+        assert not net.calls, 'an undeclared method must not reach the wire'
+    elif spec_declares_block_range(spec):
+        await call
+        assert net.calls, 'a range-capable spec must serve the bounded call'
+        assert family['bounds_transmitted'](net), (
+            f'{family_label} {method_name}() served the call but the bounded '
+            f'range never reached the wire: {net.calls[0]}'
+        )
+    else:
+        with pytest.raises(BlockRangeNotSupportedError) as excinfo:
+            await call
+        assert family_label in str(excinfo.value) or scanner.name in str(
+            excinfo.value
+        ), 'the refusal must name the provider'
+        assert not net.calls, 'a refused call must not reach the wire'
+
+
+@pytest.mark.parametrize('family_label', sorted(_DIRECT_FAMILIES))
+async def test_direct_paginated_unbounded_range_never_guarded(family_label: str) -> None:
+    """Unbounded defaults keep flowing exactly as before the guard."""
+    family = _DIRECT_FAMILIES[family_label]
+    net = _DirectNet(family['responses']())
+    scanner = family['make'](net)
+    client = _direct_client_shell(scanner)
+
+    if Method.ACCOUNT_TRANSACTIONS not in scanner.SPECS:  # pragma: no cover - all declare it
+        pytest.skip('family does not declare ACCOUNT_TRANSACTIONS')
+    await client.get_transactions(CHECKSUM_ADDRESS)
+    assert net.calls, 'unbounded default call must reach the wire unguarded'

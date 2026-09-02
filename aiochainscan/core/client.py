@@ -387,6 +387,7 @@ class ChainscanClient(
             )
             ```
         """
+        self._guard_direct_block_range(method, params)
         return await self._scanner.call(method, **params)
 
     async def fetch_page(
@@ -413,6 +414,7 @@ class ChainscanClient(
             ValueError: If the method is not supported by the scanner.
             Various network/API errors from the underlying transport.
         """
+        self._guard_direct_block_range(method, params)
         return await self._scanner.fetch_page(method, params)
 
     def supports_method(self, method: Method) -> bool:
@@ -514,6 +516,35 @@ class ChainscanClient(
         bounded = from_block > 0 or (to_block is not None and to_block != 'latest')
         if not bounded or self._scanner.supports_block_range(method):
             return
+        self._raise_block_range_unsupported(method, from_block, to_block)
+
+    def _guard_direct_block_range(self, method: Method, params: dict[str, Any]) -> None:
+        """Refuse bounded block-range params a direct call would silently drop.
+
+        The streaming guard above covers ``iter_*`` / ``get_all_*``; the
+        single-page convenience methods (``get_transactions`` & co.) and
+        cursor-driven ``fetch_page`` consumers reach the scanner through
+        ``call()`` / ``fetch_page()`` instead — the same capability check
+        applies at those seams, so no bounded range is ever dropped without
+        an error. Undeclared methods fall through: the scanner raises its own
+        honest not-declared error.
+        """
+        from ..scanners.base import BLOCK_RANGE_PARAM_KEYS
+
+        present = {key: params[key] for key in BLOCK_RANGE_PARAM_KEYS if key in params}
+        if not present or not self._scanner.supports_method(method):
+            return
+        if self._scanner.supports_block_range(method):
+            return
+        start = present.get('start_block', present.get('from_block', 0))
+        end = present.get('end_block', present.get('to_block'))
+        bounded = (isinstance(start, int) and start > 0) or (end is not None and end != 'latest')
+        if bounded:
+            self._raise_block_range_unsupported(method, start, end)
+
+    def _raise_block_range_unsupported(
+        self, method: Method, from_block: Any, to_block: Any
+    ) -> None:
         from ..scanners import scanners_serving_block_range
 
         provider = f'{self.scanner_name}/{self.scanner_version}'

@@ -27,7 +27,7 @@ balance = await get_balance(
 #### ✅ New (Recommended)
 ```python
 from aiochainscan import ChainscanClient
-from aiochainscan.core.method import Method
+from aiochainscan.domain.method import Method
 
 client = ChainscanClient.from_config('etherscan', 'ethereum')
 try:
@@ -57,7 +57,7 @@ balances = await asyncio.gather(*[
 #### ✅ New (Shares 1 connection pool - FAST!)
 ```python
 from aiochainscan import ChainscanClient
-from aiochainscan.core.method import Method
+from aiochainscan.domain.method import Method
 import asyncio
 
 addresses = ['0x...' for _ in range(100)]
@@ -80,7 +80,7 @@ finally:
 #### ✅ Recommended Pattern
 ```python
 from aiochainscan import ChainscanClient
-from aiochainscan.core.method import Method
+from aiochainscan.domain.method import Method
 
 async with ChainscanClient.from_config('etherscan', 'ethereum') as client:
     # Multiple operations, all share the same connection pool
@@ -110,7 +110,7 @@ async with ChainscanClient.from_config('etherscan', 'ethereum') as client:
 ## Available Methods
 
 ```python
-from aiochainscan.core.method import Method
+from aiochainscan.domain.method import Method
 
 # Account methods
 Method.ACCOUNT_BALANCE           # Get ETH/native balance
