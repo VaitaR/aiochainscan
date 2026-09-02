@@ -189,9 +189,10 @@ class TestPreviouslyOrphanEtherscanEndpoints:
 
 def _client_with_fake_network(fake: FakeNetwork) -> Any:
     """Real ChainscanClient whose scanner talks to the fake network."""
+    from aiochainscan.chain_registry import resolve_scanner_target
     from aiochainscan.core.client import ChainscanClient
 
-    client = ChainscanClient('etherscan', 'v2', 'eth', 'main', 'test_key')
+    client = ChainscanClient(resolve_scanner_target('etherscan', 'main', api_key='test_key'))
     client._scanner._network_client = fake
     return client
 

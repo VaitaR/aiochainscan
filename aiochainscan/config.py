@@ -192,177 +192,100 @@ class ConfigurationManager:
         self._scanners.update(builtin_scanners)
 
     def _get_builtin_scanner_definitions(self) -> dict[str, ScannerConfig]:
-        """Return all builtin scanner definitions (factory method, no side effects)."""
-        return {
-            'eth': ScannerConfig(
-                name='Etherscan',
-                base_domain='etherscan.io',
-                currency='ETH',
-                supported_networks={'main', 'test', 'goerli', 'sepolia'},
-                requires_api_key=True,
-            ),
-            'bsc': ScannerConfig(
-                name='BscScan',
-                base_domain='bscscan.com',
-                currency='BNB',
-                supported_networks={'main', 'test'},
-                requires_api_key=True,
-            ),
-            'polygon': ScannerConfig(
-                name='PolygonScan',
-                base_domain='polygonscan.com',
-                currency='MATIC',
-                supported_networks={'main', 'mumbai', 'test'},
-                requires_api_key=True,
-            ),
-            'optimism': ScannerConfig(
-                name='Optimism Etherscan',
-                base_domain='etherscan.io',
-                currency='ETH',
-                supported_networks={'main', 'goerli', 'test'},
-                requires_api_key=True,
+        """Return all builtin scanner definitions (factory method, no side effects).
+
+        This module owns credentials and env resolution only. All topology —
+        currencies, supported networks, BlockScout instance hosts — is derived
+        from :mod:`aiochainscan.chain_registry`, the single source, so no
+        hand-maintained mirror of it lives here. Names and non-BlockScout
+        domains stay local: they drive the primary env-var pattern (e.g.
+        'Etherscan' → ``ETHERSCAN_KEY``) and CLI display, which is credential
+        and presentation data, not registry topology. The registry import is
+        lazy because chain_registry imports this module for key lookups; at
+        call time both modules are fully initialized.
+        """
+        from .chain_registry import (
+            BLOCKSCOUT_HOSTS,
+            SCANNER_CONFIG_NETWORKS,
+            URL_BUILDER_CURRENCIES,
+        )
+
+        def definition(
+            scanner_id: str,
+            name: str,
+            base_domain: str,
+            requires_api_key: bool = True,
+            special_config: dict[str, Any] | None = None,
+        ) -> ScannerConfig:
+            return ScannerConfig(
+                name=name,
+                base_domain=base_domain,
+                currency=URL_BUILDER_CURRENCIES[scanner_id],
+                supported_networks=set(SCANNER_CONFIG_NETWORKS[scanner_id]),
+                requires_api_key=requires_api_key,
+                special_config=special_config or {},
+            )
+
+        definitions: dict[str, ScannerConfig] = {
+            'eth': definition('eth', 'Etherscan', 'etherscan.io'),
+            'bsc': definition('bsc', 'BscScan', 'bscscan.com'),
+            'polygon': definition('polygon', 'PolygonScan', 'polygonscan.com'),
+            'optimism': definition(
+                'optimism',
+                'Optimism Etherscan',
+                'etherscan.io',
                 special_config={'subdomain_pattern': 'optimistic'},
             ),
-            'arbitrum': ScannerConfig(
-                name='Arbiscan',
-                base_domain='arbiscan.io',
-                currency='ETH',
-                supported_networks={'main', 'nova', 'goerli', 'test'},
-                requires_api_key=True,
-            ),
-            'fantom': ScannerConfig(
-                name='FtmScan',
-                base_domain='ftmscan.com',
-                currency='FTM',
-                supported_networks={'main', 'test'},
-                requires_api_key=True,
-            ),
-            'gnosis': ScannerConfig(
-                name='GnosisScan',
-                base_domain='gnosisscan.io',
-                currency='GNO',
-                supported_networks={'main', 'chiado'},
-                requires_api_key=True,
-            ),
-            'flare': ScannerConfig(
-                name='Flare Explorer',
-                base_domain='flare.network',
-                currency='FLR',
-                supported_networks={'main', 'test'},
+            'arbitrum': definition('arbitrum', 'Arbiscan', 'arbiscan.io'),
+            'fantom': definition('fantom', 'FtmScan', 'ftmscan.com'),
+            'gnosis': definition('gnosis', 'GnosisScan', 'gnosisscan.io'),
+            'flare': definition(
+                'flare',
+                'Flare Explorer',
+                'flare.network',
                 requires_api_key=False,
                 special_config={'subdomain_pattern': 'flare-explorer'},
             ),
-            'linea': ScannerConfig(
-                name='LineaScan',
-                base_domain='lineascan.build',
-                currency='LINEA',
-                supported_networks={'main', 'test'},
-                requires_api_key=True,
-            ),
-            'blast': ScannerConfig(
-                name='BlastScan',
-                base_domain='blastscan.io',
-                currency='BLAST',
-                supported_networks={'main', 'sepolia'},
-                requires_api_key=True,
-            ),
-            'base': ScannerConfig(
-                name='Etherscan (Base)',
-                base_domain='etherscan.io',
-                currency='BASE',
-                supported_networks={'main', 'goerli', 'sepolia'},
-                requires_api_key=True,
+            'linea': definition('linea', 'LineaScan', 'lineascan.build'),
+            'blast': definition('blast', 'BlastScan', 'blastscan.io'),
+            'base': definition(
+                'base',
+                'Etherscan (Base)',
+                'etherscan.io',
                 special_config={'etherscan_v2': True},  # Use Etherscan V2 for Base
             ),
-            'blockscout_eth': ScannerConfig(
-                name='BlockScout Ethereum',
-                base_domain='eth.blockscout.com',
-                currency='ETH',
-                supported_networks={'eth'},
-                requires_api_key=False,
-                special_config={'public_api': True},
-            ),
-            'blockscout_sepolia': ScannerConfig(
-                name='BlockScout Sepolia',
-                base_domain='eth-sepolia.blockscout.com',
-                currency='ETH',
-                supported_networks={'sepolia'},
-                requires_api_key=False,
-                special_config={'public_api': True},
-            ),
-            'blockscout_gnosis': ScannerConfig(
-                name='BlockScout Gnosis',
-                base_domain='gnosis.blockscout.com',
-                currency='xDAI',
-                supported_networks={'gnosis'},
-                requires_api_key=False,
-                special_config={'public_api': True},
-            ),
-            'blockscout_polygon': ScannerConfig(
-                name='BlockScout Polygon',
-                base_domain='polygon.blockscout.com',
-                currency='MATIC',
-                supported_networks={'polygon'},
-                requires_api_key=False,
-                special_config={'public_api': True},
-            ),
-            'blockscout_base': ScannerConfig(
-                name='BlockScout Base',
-                base_domain='base.blockscout.com',
-                currency='ETH',
-                supported_networks={'base'},
-                requires_api_key=False,
-                special_config={'public_api': True},
-            ),
-            'blockscout_bsc': ScannerConfig(
-                name='BlockScout BSC',
-                base_domain='bsc.blockscout.com',
-                currency='BNB',
-                supported_networks={'bsc'},
-                requires_api_key=False,
-                special_config={'public_api': True},
-            ),
-            'nodereal': ScannerConfig(
-                name='NodeReal',
-                base_domain='nodereal.io',
-                currency='BNB',
-                supported_networks={'bsc', 'bsc-testnet'},
-                requires_api_key=True,
+            'nodereal': definition(
+                'nodereal',
+                'NodeReal',
+                'nodereal.io',
                 special_config={'mega_node': True},
             ),
-            'blockscout_optimism': ScannerConfig(
-                name='BlockScout Optimism',
-                base_domain='optimism.blockscout.com',
-                currency='ETH',
-                supported_networks={'optimism'},
-                requires_api_key=False,
-                special_config={'public_api': True},
-            ),
-            'blockscout_arbitrum': ScannerConfig(
-                name='BlockScout Arbitrum',
-                base_domain='arbitrum.blockscout.com',
-                currency='ETH',
-                supported_networks={'arbitrum'},
-                requires_api_key=False,
-                special_config={'public_api': True},
-            ),
-            'blockscout_scroll': ScannerConfig(
-                name='BlockScout Scroll',
-                base_domain='scroll.blockscout.com',
-                currency='ETH',
-                supported_networks={'scroll'},
-                requires_api_key=False,
-                special_config={'public_api': True},
-            ),
-            'blockscout_linea': ScannerConfig(
-                name='BlockScout Linea',
-                base_domain='linea.blockscout.com',
-                currency='ETH',
-                supported_networks={'linea'},
-                requires_api_key=False,
-                special_config={'public_api': True},
-            ),
         }
+
+        # BlockScout instances: host, currency and served network all derive
+        # from the registry tables; only the display name stays local.
+        blockscout_names = {
+            'blockscout_eth': 'BlockScout Ethereum',
+            'blockscout_sepolia': 'BlockScout Sepolia',
+            'blockscout_gnosis': 'BlockScout Gnosis',
+            'blockscout_polygon': 'BlockScout Polygon',
+            'blockscout_base': 'BlockScout Base',
+            'blockscout_bsc': 'BlockScout BSC',
+            'blockscout_optimism': 'BlockScout Optimism',
+            'blockscout_arbitrum': 'BlockScout Arbitrum',
+            'blockscout_scroll': 'BlockScout Scroll',
+            'blockscout_linea': 'BlockScout Linea',
+        }
+        for scanner_id, host in BLOCKSCOUT_HOSTS.items():
+            definitions[scanner_id] = definition(
+                scanner_id,
+                blockscout_names[scanner_id],
+                host,
+                requires_api_key=False,
+                special_config={'public_api': True},
+            )
+
+        return definitions
 
     def _load_env_files(self) -> None:
         """Load environment variables from .env files."""
@@ -554,7 +477,9 @@ class ConfigurationManager:
         """Get API key for a scanner with validation.
 
         After Etherscan V2 API migration, BSC/Polygon/Arbitrum/Base/Optimism
-        all use ETHERSCAN_KEY as fallback.
+        all use ETHERSCAN_KEY as fallback — the family membership is declared
+        by ``chain_registry.V2_QUERY_AUTH_API_KINDS`` (single source; 'eth'
+        itself resolves ETHERSCAN_KEY as its primary strategy already).
         """
         config = self.get_scanner_config(scanner_id)
 
@@ -562,8 +487,11 @@ class ConfigurationManager:
         if config.api_key:
             return config.api_key
 
-        # V2 API scanners can use ETHERSCAN_KEY as fallback
-        v2_scanners = {'bsc', 'polygon', 'arbitrum', 'base', 'optimism'}
+        # V2 API family, derived from the registry (lazy import: chain_registry
+        # imports this module for key lookups — see the builtin factory).
+        from .chain_registry import V2_QUERY_AUTH_API_KINDS
+
+        v2_scanners = V2_QUERY_AUTH_API_KINDS - {'eth'}
         if scanner_id in v2_scanners:
             # Try ETHERSCAN_KEY as fallback for V2 API scanners
             etherscan_key = os.getenv('ETHERSCAN_KEY') or self._env_state.get('ETHERSCAN_KEY')
@@ -592,27 +520,6 @@ class ConfigurationManager:
             f'SCANNER_{scanner_id.upper()}_KEY',  # Generic: SCANNER_ETH_KEY
         ]
 
-    def validate_network(self, scanner_id: str, network: str) -> str:
-        """Validate and normalize network name for a scanner."""
-        config = self.get_scanner_config(scanner_id)
-
-        # Network aliases
-        network_aliases = {
-            'mainnet': 'main',
-            'testnet': 'test',
-        }
-
-        normalized_network = network_aliases.get(network, network)
-
-        if normalized_network not in config.supported_networks:
-            available = ', '.join(sorted(config.supported_networks))
-            raise ValueError(
-                f'Network "{network}" not supported by {config.name}. '
-                f'Available networks: {available}'
-            )
-
-        return normalized_network
-
     def get_supported_scanners(self) -> list[str]:
         """Get list of all supported scanner names."""
         self._ensure_initialized()
@@ -621,17 +528,6 @@ class ConfigurationManager:
     def get_scanner_networks(self, scanner_id: str) -> set[str]:
         """Get supported networks for a specific scanner."""
         return self.get_scanner_config(scanner_id).supported_networks.copy()
-
-    def create_client_config(self, scanner_id: str, network: str = 'main') -> dict[str, str]:
-        """Create configuration dict for Client initialization."""
-        validated_network = self.validate_network(scanner_id, network)
-        api_key = self.get_api_key(scanner_id)
-
-        return {
-            'api_key': api_key,
-            'api_kind': scanner_id,
-            'network': validated_network,
-        }
 
     def list_all_configurations(self) -> dict[str, dict[str, Any]]:
         """Get overview of all scanner configurations."""

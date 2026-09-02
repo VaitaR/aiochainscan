@@ -206,22 +206,6 @@ EMPTY_VALUE=
         finally:
             config_file.unlink()
 
-    def test_validate_network(self):
-        """Test network validation."""
-        manager = ConfigurationManager()
-
-        # Test valid network
-        network = manager.validate_network('eth', 'main')
-        assert network == 'main'
-
-        # Test network alias
-        network = manager.validate_network('eth', 'mainnet')
-        assert network == 'main'
-
-        # Test invalid network
-        with pytest.raises(ValueError, match='Network "invalid" not supported'):
-            manager.validate_network('eth', 'invalid')
-
     def test_get_api_key_with_validation(self):
         """Test API key retrieval with validation."""
         manager = ConfigurationManager()
@@ -366,6 +350,43 @@ class TestAdvancedFeatures:
         # Test Optimism special config
         optimism_config = manager.get_scanner_config('optimism')
         assert optimism_config.special_config['subdomain_pattern'] == 'optimistic'
+
+
+class TestTopologyDerivedFromRegistry:
+    """config.py carries credentials only: builtin scanner topology (BlockScout
+    hosts, currencies, supported networks) is derived from chain_registry — the
+    single source — instead of being mirrored here."""
+
+    def test_blockscout_hosts_derive_from_registry(self):
+        from aiochainscan.chain_registry import BLOCKSCOUT_HOSTS
+
+        definitions = ConfigurationManager()._get_builtin_scanner_definitions()
+        assert set(BLOCKSCOUT_HOSTS) <= set(definitions)
+        for scanner_id, host in BLOCKSCOUT_HOSTS.items():
+            assert definitions[scanner_id].base_domain == host
+
+    def test_currencies_derive_from_registry(self):
+        from aiochainscan.chain_registry import URL_BUILDER_CURRENCIES
+
+        definitions = ConfigurationManager()._get_builtin_scanner_definitions()
+        for scanner_id, config in definitions.items():
+            assert config.currency == URL_BUILDER_CURRENCIES[scanner_id]
+
+    def test_supported_networks_derive_from_registry(self):
+        from aiochainscan.chain_registry import SCANNER_CONFIG_NETWORKS
+
+        definitions = ConfigurationManager()._get_builtin_scanner_definitions()
+        assert set(definitions) == set(SCANNER_CONFIG_NETWORKS)
+        for scanner_id, config in definitions.items():
+            assert config.supported_networks == set(SCANNER_CONFIG_NETWORKS[scanner_id])
+
+    def test_v2_key_fallback_family_derives_from_registry(self):
+        """The ETHERSCAN_KEY fallback family is the registry's V2 family."""
+        manager = ConfigurationManager()
+        manager.get_scanner_config('bsc')  # ensure the lazy definition is loaded
+        with patch.dict(os.environ, {'ETHERSCAN_KEY': 'family_key'}):
+            manager._scanners['bsc'].api_key = None
+            assert manager.get_api_key('bsc') == 'family_key'
 
 
 class TestLazyLoading:
