@@ -385,6 +385,19 @@ def _page_size_hex_param(params: dict[str, Any], public: str) -> Any:
     return hex(max(size, 1))
 
 
+def _top_n_param(params: dict[str, Any], public: str) -> Any:
+    """``topN``, sourced from ``offset`` when no explicit ``top_n`` is given.
+
+    ``get_top_token_holders(limit=N)`` reaches the scanner as ``offset=N`` (the
+    Etherscan-dialect spelling the mixin uses for every provider), and the wire
+    takes the size twice: once as ``PageSize``, once as ``topN``. Without the
+    fallback ``topN`` silently defaults to the 100 cap, so a caller asking for
+    the top 5 receives 100 holders — the response is a valid page, so nothing
+    downstream can notice.
+    """
+    return _page_size_hex_param(params, public if public in params else 'offset')
+
+
 def _empty_page_key_param(params: dict[str, Any], public: str) -> Any:
     """The wire's PageKey placeholder for a single-shot call: always ``''``."""
     return ''
@@ -413,7 +426,7 @@ _POSITIONAL_ENCODERS: dict[str, _PositionalEncoder] = {
     'page': _page_hex_param,
     'page_size': _page_size_hex_param,
     'offset': _page_size_hex_param,  # holder list: offset IS the PageSize
-    'top_n': _page_size_hex_param,  # top-N: same 100-capped size as PageSize
+    'top_n': _top_n_param,  # top-N: same 100-capped size as PageSize
     'page_key': _empty_page_key_param,
     'pageKey': _page_key_param,
     'token_type': _token_type_param,

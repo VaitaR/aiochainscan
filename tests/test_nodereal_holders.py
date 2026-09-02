@@ -107,6 +107,18 @@ class TestRequestEnvelope:
         )
         assert rpc_params == [CONTRACT, '0x64', '', '0x64']
 
+    def test_top_holders_topn_follows_the_requested_limit(self) -> None:
+        # A value BELOW the cap: the clamp test above cannot tell "clamped to
+        # 100" from "ignored and defaulted to 100", because the clamp's answer
+        # equals the default. topN riding the default while PageSize followed
+        # the limit is exactly the bug this pins — the wire answered 100
+        # holders for limit=5, and a full page reads as a valid answer.
+        scanner = _make_scanner()
+        rpc_params = scanner._build_rpc_params(
+            Method.TOKEN_TOP_HOLDERS, {'contract_address': CONTRACT, 'offset': 5}
+        )
+        assert rpc_params == [CONTRACT, '0x5', '', '0x5']
+
     def test_holder_count_request_is_bare_contract_address(self) -> None:
         scanner = _make_scanner()
         rpc_params = scanner._build_rpc_params(

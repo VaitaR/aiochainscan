@@ -570,8 +570,11 @@ BscScan-compatible verified-contract REST on `open-platform.nodereal.io`. Networ
   opaque `PageKey` — empty on the first request, non-empty while more pages
   exist — with a hex-encoded `PageSize` capped at 100 by the docs. Because
   `get_top_token_holders()` is a single non-paginated call, a `limit` above
-  100 is silently clamped to 100 there. Doc-only, never live-verified: see
-  the verification-status note under the support matrix.
+  100 is silently clamped to 100 there — and the clamped size rides the wire
+  twice, as `PageSize` and again as `topN`, so a `limit` BELOW 100 must reach
+  both or the call answers a full 100-holder page to a caller who asked for
+  five. See the verification-status note under the support matrix for what
+  the live probes settled.
 - `nr_getTransactionByAddress` serves ≤1000 blocks per request and **silently
   returns empty pages for wider ranges** — `fetch_page` therefore walks the
   requested range in 1000-block windows, so `get_all_*` / `iter_*_streaming`
