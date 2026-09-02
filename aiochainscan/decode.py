@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass, field
+from hashlib import blake2b
 from typing import Any, cast
 
 import orjson
 
+from aiochainscan.abi_pure import TypeNode, compile_params, decode_values
 from aiochainscan.crypto import keccak_hex
-from aiochainscan.exceptions import ChainscanDependencyError
+from aiochainscan.exceptions import AbiTypeNotSupportedError, ChainscanDependencyError
 
 _eth_abi_decode: Any
 try:
@@ -18,15 +21,37 @@ except ImportError:
     ETH_ABI_AVAILABLE = False
 
 
-def _abi_decode(types: list[str], data: bytes) -> tuple[Any, ...]:
-    """Pure-Python ABI decode fallback for environments without fastabi."""
-    if _eth_abi_decode is None:
-        raise ChainscanDependencyError(
-            'Pure-Python ABI decoding requires eth-abi. The fastabi Rust extension '
-            'covers decoding in all wheel installs; otherwise run: '
-            'pip install "aiochainscan[fallback]"'
-        )
-    return cast('tuple[Any, ...]', _eth_abi_decode(types, data))
+def _abi_decode_params(
+    params: list[dict[str, Any]],
+    data: bytes,
+    index: _AbiIndex | None = None,
+    plan_key: str | None = None,
+) -> Sequence[Any]:
+    """Decode an ABI parameter sequence with the best available backend.
+
+    Tiers 2 and 3 of the decode chain — fastabi decodes whole calldata
+    upstream and never reaches here. Both tiers return native Python values
+    (``int``, ``bytes``, …), normalised to the fastabi JSON convention by
+    :func:`_convert_bytes_to_hex` / :func:`_convert_large_ints_to_strings`.
+
+    ``index`` + ``plan_key`` memoise the per-parameter-list preparation (the
+    canonical type strings for eth-abi, the compiled nodes for the pure floor)
+    across every item decoded against the same ABI.
+    """
+    if _eth_abi_decode is not None:
+        types = None if index is None or plan_key is None else index.types.get(plan_key)
+        if types is None:
+            types = [canonical_abi_type(param) for param in params]
+            if index is not None and plan_key is not None:
+                index.types[plan_key] = types
+        return cast('Sequence[Any]', _eth_abi_decode(types, data))
+
+    nodes = None if index is None or plan_key is None else index.nodes.get(plan_key)
+    if nodes is None:
+        nodes = compile_params(params)
+        if index is not None and plan_key is not None:
+            index.nodes[plan_key] = nodes
+    return decode_values(nodes, data)
 
 
 # orjson is a required dependency — always available
@@ -164,10 +189,63 @@ def _abi_type_is_dynamic(param: dict[str, Any]) -> bool:
     return base in {'bytes', 'string'}
 
 
+@dataclass(slots=True)
+class _AbiIndex:
+    """Everything derived from one ABI list, derived once.
+
+    Building the maps keccak-hashes every function and event signature (~120 µs
+    for a 20-function ABI), which the batch and streaming paths would otherwise
+    repeat per item. ``types`` and ``nodes`` then memoise the per-parameter-list
+    work of the two decode tiers, keyed by selector / topic hash.
+    """
+
+    function_map: dict[str, dict[str, Any]]
+    event_map: dict[str, dict[str, Any]]
+    types: dict[str, list[str]] = field(default_factory=dict)
+    nodes: dict[str, tuple[TypeNode, ...]] = field(default_factory=dict)
+
+
+_ABI_INDEX_BY_DIGEST: dict[bytes, _AbiIndex] = {}
+_ABI_INDEX_BY_IDENTITY: dict[int, tuple[list[dict[str, Any]], _AbiIndex]] = {}
+_ABI_MAPS_CACHE_MAX = 64
+
+
+def _abi_index(abi: list[dict[str, Any]]) -> _AbiIndex:
+    """Return the cached index for ``abi``, building it on first sight.
+
+    Two levels, because hashing the ABI costs more than everything else on the
+    decode path for a large ABI: an identity lookup first (callers hand the
+    same list object to every item of a batch), then a content digest. The
+    identity level retains the list, so ``is`` can never match a recycled
+    address; it does go stale if a caller mutates an ABI list *in place*
+    between decodes, which no caller in this library does.
+    """
+    by_identity = _ABI_INDEX_BY_IDENTITY.get(id(abi))
+    if by_identity is not None and by_identity[0] is abi:
+        return by_identity[1]
+
+    digest = blake2b(orjson.dumps(abi), digest_size=16).digest()
+    index = _ABI_INDEX_BY_DIGEST.get(digest)
+    if index is None:
+        index = _build_abi_index(abi)
+        if len(_ABI_INDEX_BY_DIGEST) >= _ABI_MAPS_CACHE_MAX:
+            _ABI_INDEX_BY_DIGEST.clear()
+        _ABI_INDEX_BY_DIGEST[digest] = index
+    if len(_ABI_INDEX_BY_IDENTITY) >= _ABI_MAPS_CACHE_MAX:
+        _ABI_INDEX_BY_IDENTITY.clear()
+    _ABI_INDEX_BY_IDENTITY[id(abi)] = (abi, index)
+    return index
+
+
 def _preprocess_abi(
     abi: list[dict[str, Any]],
 ) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
-    """Pre-processes an ABI list into lookup maps for functions and events."""
+    """Pre-process an ABI list into lookup maps for functions and events."""
+    index = _abi_index(abi)
+    return index.function_map, index.event_map
+
+
+def _build_abi_index(abi: list[dict[str, Any]]) -> _AbiIndex:
     function_map: dict[str, dict[str, Any]] = {}
     event_map: dict[str, dict[str, Any]] = {}
 
@@ -191,17 +269,22 @@ def _preprocess_abi(
             if item.get('anonymous') is not True:
                 event_map[topic_hash.lower()] = item
 
-    return function_map, event_map
+    return _AbiIndex(function_map=function_map, event_map=event_map)
 
 
 def _convert_bytes_to_hex(data: Any) -> Any:
-    """Recursively traverses data structures and converts bytes to hex strings."""
+    """Recursively traverses data structures and converts bytes to hex strings.
+
+    Arrays and tuples come out as ``list`` whatever the backend produced them
+    as (eth-abi returns Python tuples), so every decode tier agrees with the
+    Rust one, which serializes both as JSON arrays.
+    """
     if isinstance(data, bytes):
         return '0x' + data.hex()
     if isinstance(data, dict):
         return {key: _convert_bytes_to_hex(value) for key, value in data.items()}
     if isinstance(data, list | tuple):
-        return type(data)([_convert_bytes_to_hex(item) for item in cast(Sequence[Any], data)])
+        return [_convert_bytes_to_hex(item) for item in cast(Sequence[Any], data)]
     return data
 
 
@@ -215,9 +298,7 @@ def _convert_large_ints_to_strings(data: Any) -> Any:
     if isinstance(data, dict):
         return {key: _convert_large_ints_to_strings(value) for key, value in data.items()}
     if isinstance(data, list | tuple):
-        return type(data)(
-            [_convert_large_ints_to_strings(item) for item in cast(Sequence[Any], data)]
-        )
+        return [_convert_large_ints_to_strings(item) for item in cast(Sequence[Any], data)]
     return data
 
 
@@ -262,7 +343,8 @@ def _decode_transaction_input_python(
     transaction: dict[str, Any], abi: list[dict[str, Any]]
 ) -> dict[str, Any]:
     """Python-based transaction input decoding (fallback)."""
-    function_map, _ = _preprocess_abi(abi)
+    index = _abi_index(abi)
+    function_map = index.function_map
 
     if not transaction.get('input') or len(transaction['input']) < FUNCTION_SELECTOR_LENGTH:
         transaction['decoded_func'] = ''
@@ -274,12 +356,12 @@ def _decode_transaction_input_python(
 
     if function:
         # Decode input transaction
-        input_types = [
-            canonical_abi_type(param) for param in cast(list[dict[str, Any]], function['inputs'])
-        ]
+        input_params = cast(list[dict[str, Any]], function['inputs'])
         input_data = cast(str, transaction['input'])[FUNCTION_SELECTOR_LENGTH:]
         try:
-            decoded_input = _abi_decode(input_types, bytes.fromhex(input_data))
+            decoded_input = _abi_decode_params(
+                input_params, bytes.fromhex(input_data), index, func_selector
+            )
 
             # Assign the function name directly to transaction
             transaction['decoded_func'] = function['name']
@@ -287,15 +369,15 @@ def _decode_transaction_input_python(
             # Create a new dictionary for decoded transaction
             decoded_transaction: dict[str, Any] = dict(
                 zip(
-                    [
-                        cast(str, param['name'])
-                        for param in cast(list[dict[str, Any]], function['inputs'])
-                    ],
+                    [cast(str, param['name']) for param in input_params],
                     decoded_input,
                     strict=False,
                 )
             )
             transaction['decoded_data'] = decoded_transaction
+        except AbiTypeNotSupportedError:
+            # A gap in this library, not malformed calldata — never silenced.
+            raise
         except (ValueError, TypeError, KeyError, IndexError, AttributeError) as e:
             # ValueError: invalid hex input data
             # TypeError: ABI decoding type errors
@@ -438,38 +520,53 @@ def decode_transaction_input_with_function_name(
 
 
 def _decode_event_candidate(
-    event: dict[str, Any], indexed_topics: list[str], data: str
+    event: dict[str, Any],
+    indexed_topics: list[str],
+    data: str,
+    index: _AbiIndex | None = None,
+    plan_key: str | None = None,
 ) -> dict[str, Any] | None:
     """Decode one event candidate, returning None when its payload is invalid."""
     try:
         decoded_log: dict[str, Any] = {'event': event['name']}
         inputs = cast(list[dict[str, Any]], event.get('inputs', []))
         indexed_params = [param for param in inputs if param.get('indexed') is True]
-        for param, topic in zip(indexed_params, indexed_topics, strict=True):
+        for position, (param, topic) in enumerate(
+            zip(indexed_params, indexed_topics, strict=True)
+        ):
             if _abi_type_is_dynamic(param):
                 value: Any = topic.lower()
             else:
                 topic_data = topic[2:] if topic[:2].lower() == '0x' else topic
-                value = _abi_decode([canonical_abi_type(param)], bytes.fromhex(topic_data))[0]
+                value = _abi_decode_params(
+                    [param],
+                    bytes.fromhex(topic_data),
+                    index,
+                    None if plan_key is None else f'{plan_key}#{position}',
+                )[0]
             decoded_log[cast(str, param.get('name', ''))] = value
 
         non_indexed_params = [param for param in inputs if param.get('indexed') is not True]
         if non_indexed_params:
             data_bytes = data[2:] if data[:2].lower() == '0x' else data
-            non_indexed_values = _abi_decode(
-                [canonical_abi_type(param) for param in non_indexed_params],
-                bytes.fromhex(data_bytes),
+            non_indexed_values = _abi_decode_params(
+                non_indexed_params, bytes.fromhex(data_bytes), index, plan_key
             )
             for param, value in zip(non_indexed_params, non_indexed_values, strict=True):
                 decoded_log[cast(str, param.get('name', ''))] = value
         return decoded_log
+    except AbiTypeNotSupportedError:
+        # Not "this candidate does not match" — the codec cannot express the
+        # type at all, and every candidate would fail the same way.
+        raise
     except Exception:
         return None
 
 
 # Function to decode transaction input and return updated log with decoded data
 def decode_log_data(log: dict[str, Any], abi: list[dict[str, Any]]) -> dict[str, Any]:
-    _, event_map = _preprocess_abi(abi)
+    index = _abi_index(abi)
+    event_map = index.event_map
 
     topics = cast(list[str], log.get('topics', []))
     event: dict[str, Any] | None = None
@@ -504,13 +601,20 @@ def decode_log_data(log: dict[str, Any], abi: list[dict[str, Any]]) -> dict[str,
         data = cast(str, log.get('data', '0x'))
         decoded_candidates = [
             decoded
-            for candidate in matching
-            if (decoded := _decode_event_candidate(candidate, topics, data)) is not None
+            for position, candidate in enumerate(matching)
+            if (
+                decoded := _decode_event_candidate(
+                    candidate, topics, data, index, f'anon:{len(topics)}:{position}'
+                )
+            )
+            is not None
         ]
         if len(decoded_candidates) == 1:
             log['decoded_data'] = decoded_candidates[0]
     elif (
-        decoded := _decode_event_candidate(event, indexed_topics, cast(str, log.get('data', '0x')))
+        decoded := _decode_event_candidate(
+            event, indexed_topics, cast(str, log.get('data', '0x')), index, topics[0].lower()
+        )
     ) is not None:
         log['decoded_data'] = decoded
     # If no matching event was found, 'decoded_data' will not be in log

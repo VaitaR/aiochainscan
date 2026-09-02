@@ -5,8 +5,6 @@ Package layout:
 - :mod:`aiochainscan.mcp.envelope` — the standardized ``ToolResponse``
   contract (data / notes / instructions / pagination / content_text).
 - :mod:`aiochainscan.mcp.cursors` — opaque Base64URL pagination cursors.
-- :mod:`aiochainscan.mcp.abi_codec` — pure-Python ABI encode/decode for
-  ``read_contract`` (calldata encoding + eth_call output decoding).
 - :mod:`aiochainscan.mcp.tools` — the agent-facing tools as plain
   ``client -> ToolResponse`` functions plus the client pool.
 - :mod:`aiochainscan.mcp.server` — FastMCP wiring (requires the ``mcp``

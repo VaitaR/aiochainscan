@@ -67,34 +67,6 @@ pooling.
 - Integration tests: VCR-style request recording, mock server, benchmarks
 - Runtime type-checking option; protocol validation tests
 
-### 8. Always-Available ABI Decoding — pure-Python floor (P1, next cycle)
-Extend the decode backend chain in `aiochainscan/decode.py` from
-`fastabi → eth-abi ([fallback]) → ChainscanDependencyError` to
-`fastabi → eth-abi → own pure-Python decoder`, so client-side decoding
-(`decode_transaction_input` / `decode_log_data`, `SmartContract.iter_events`,
-MCP `read_contract` / `get_transaction_info`) works on a bare
-`pip install aiochainscan`.
-
-- Build on `aiochainscan/mcp/abi_codec.py` — the existing stdlib-only codec,
-  already cross-checked against `eth_abi` in tests. Promote it out of `mcp/`
-  to a top-level module so the core can import it (import-linter forbids
-  core → mcp).
-- **Speed is a first-class requirement** — the pure path is the DEFAULT for
-  every base install. Optimise: memoryview/struct walks instead of
-  byte-slicing, per-selector precompiled decoder cache, minimal intermediate
-  allocations. Benchmark against fastabi and eth-abi; correctness must stay
-  provable via the existing eth_abi cross-check tests (fastabi as a second
-  oracle).
-- `[fastabi]` remains the bulk tier (`decode_many`, streaming, DataFrames);
-  consider a one-time warning when bulk-decoding runs on the pure floor.
-- Philosophy precedent: `_keccak.py` ("correctness floor, not the fast
-  path") — same pattern extended from keccak to ABI decode.
-- Rejected alternatives (weighed 2026-09-02): rebundling the Rust extension
-  into the base wheel (platform build matrix holds every release hostage;
-  reverses the Track A split, `bdbb6ad`); moving `eth-abi` back into runtime
-  deps (+3–4 transitive packages incl. compiled `pycryptodome`). Base stays
-  4 pure deps.
-
 ## Priority Matrix (open items)
 
 | Feature | Impact | Effort | Priority |
@@ -106,7 +78,6 @@ MCP `read_contract` / `get_transaction_info`) works on a bare
 | Alchemy Scanner | High | High | P2 |
 | Redis Cache | Low | Low | P2 |
 | API Reference Docs | High | Medium | P1 |
-| Always-Available ABI Decode (pure floor) | High | Medium | P1 |
 | CLI Enhancements | Low | Medium | P3 |
 
 Priority labels: **P0** critical path · **P1** important · **P2** nice to have ·

@@ -13,15 +13,15 @@ from typing import Any
 
 import pytest
 
-from aiochainscan.domain.method import Method
-from aiochainscan.exceptions import ChainscanClientApiError
-from aiochainscan.mcp import tools as mcp_tools
-from aiochainscan.mcp.abi_codec import (
+from aiochainscan.abi_pure import (
     canonical_signature,
     decode_arguments,
     encode_arguments,
     selector,
 )
+from aiochainscan.domain.method import Method
+from aiochainscan.exceptions import ChainscanClientApiError
+from aiochainscan.mcp import tools as mcp_tools
 from aiochainscan.mcp.cursors import (
     InvalidCursorError,
     decode_cursor,

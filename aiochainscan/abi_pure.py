@@ -1,37 +1,47 @@
-"""Minimal pure-Python Solidity ABI codec for ``read_contract``.
+"""Pure-Python Solidity ABI codec — the always-available decode floor.
 
-The fastabi Rust extension decodes transaction *inputs* (selector-addressed
-calldata), but ``read_contract`` needs the mirror direction: encode a
-function call from auto-fetched ABI + JSON arguments, and decode the raw
-``eth_call`` output bytes. This module provides exactly that without new
-dependencies (keccak comes from :mod:`aiochainscan.crypto`):
+Third and last tier of the decode backend chain in :mod:`aiochainscan.decode`
+(``fastabi`` → ``eth-abi`` → this module), mirroring the keccak chain in
+:mod:`aiochainscan.crypto`. Unlike :mod:`aiochainscan._keccak` this is not
+only a correctness floor: it is the decode path of every base install, so the
+parse step is separated from the decode step and every per-value property is
+precomputed at parse time.
 
-- :func:`canonical_signature` / :func:`selector` — 4-byte function selectors.
-- :func:`encode_arguments` — head/tail ABI encoding with JSON-friendly
-  argument coercion (numeric strings → ints, ``0x`` hex → bytes).
-- :func:`decode_arguments` — decode raw output bytes into a name-keyed dict
-  (uint/int values become strings, mirroring the fastabi i64 JSON convention).
+Two output conventions, deliberately:
+
+- :func:`decode_values` returns *native* Python values (``int``, ``bytes``,
+  ``bool``, ``str``, ``list``). :mod:`aiochainscan.decode` normalises those to
+  the fastabi JSON convention with its own converters, so the pure floor and
+  the Rust accelerator agree value for value.
+- :func:`decode_arguments` returns the fastabi JSON convention directly
+  (uint/int as strings, bytes as ``0x`` hex, fully-named tuples as dicts) —
+  what the MCP ``read_contract`` tool hands to an agent.
 
 Supported types: ``uintN``/``intN``, ``address``, ``bool``, ``bytesN``,
-``bytes``, ``string``, fixed/dynamic arrays and (nested) tuples.
+``bytes``, ``string``, fixed/dynamic arrays and (nested) tuples. Anything else
+raises :class:`~aiochainscan.exceptions.AbiTypeNotSupportedError` rather than
+decoding to a wrong or empty value.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
-from ..crypto import keccak_hex
+from aiochainscan.crypto import keccak_hex
+from aiochainscan.exceptions import AbiTypeNotSupportedError
 
 __all__ = [
+    'TypeNode',
     'canonical_signature',
+    'compile_params',
     'decode_arguments',
+    'decode_values',
     'encode_arguments',
     'selector',
+    'to_json_values',
 ]
 
-_I64_MAX = 2**63 - 1
-_I64_MIN = -(2**63)
 _BASE_ALIASES = {
     'uint': 'uint256',
     'int': 'int256',
@@ -42,46 +52,36 @@ _BASE_ALIASES = {
 }
 
 
-@dataclass
+@dataclass(slots=True)
 class TypeNode:
-    """Parsed ABI type with canonical form and structural children."""
+    """Parsed ABI type: canonical form, structure, and precomputed layout.
+
+    Layout fields (``is_dynamic``, ``static_size``, ``head_size``,
+    ``tuple_keys``) are resolved once here so the decoder never recurses to
+    answer a question about the *shape* while walking bytes.
+    """
 
     canonical: str
     kind: str  # uint | int | address | bool | fixed_bytes | bytes | string | array | tuple
     bits: int = 0  # uint/int width or bytesN width
     length: int | None = None  # fixed-array length; None for dynamic
     elem: TypeNode | None = None
-    components: list[TypeNode] = field(default_factory=list)
-    raw_components: list[dict[str, Any]] = field(default_factory=list)
-    """Original ABI dicts of tuple components (names for dict alignment)."""
+    components: tuple[TypeNode, ...] = ()
+    component_names: tuple[str, ...] = ()
+    is_dynamic: bool = False
+    static_size: int = 32
+    head_size: int = 32
+    tuple_keys: tuple[str, ...] | None = None
+    """Component names, set only when *every* component is named."""
 
-    @property
-    def is_dynamic(self) -> bool:
-        if self.kind in ('bytes', 'string'):
-            return True
-        if self.kind == 'array':
-            return self.length is None or (self.elem is not None and self.elem.is_dynamic)
-        if self.kind == 'tuple':
-            return any(component.is_dynamic for component in self.components)
-        return False
 
-    @property
-    def head_size(self) -> int:
-        """Bytes occupied in the head area (32 for dynamic offsets)."""
-        if self.is_dynamic:
-            return 32
-        return self.static_size
+def compile_params(params: list[dict[str, Any]]) -> tuple[TypeNode, ...]:
+    """Parse a list of ABI parameters into reusable :class:`TypeNode` values.
 
-    @property
-    def static_size(self) -> int:
-        if self.kind in ('uint', 'int', 'bool', 'address', 'fixed_bytes'):
-            return 32
-        if self.kind == 'array':
-            assert self.length is not None and self.elem is not None
-            return self.length * self.elem.static_size
-        if self.kind == 'tuple':
-            return sum(component.static_size for component in self.components)
-        return 32  # dynamic types never reach here (head_size intercepts)
+    Callers that decode repeatedly against one ABI should keep the result:
+    parsing is the expensive half, decoding the cheap one.
+    """
+    return tuple(_parse_param(param) for param in params)
 
 
 def _parse_param(param: dict[str, Any]) -> TypeNode:
@@ -93,26 +93,35 @@ def _parse_param(param: dict[str, Any]) -> TypeNode:
         bracket = type_name.rfind('[')
         inner = _parse_param({**param, 'type': type_name[:bracket]})
         suffix = type_name[bracket:]
-        length: int | None = None
         size_text = suffix[1:-1]
-        if size_text:
-            length = int(size_text)
+        length = int(size_text) if size_text else None
+        is_dynamic = length is None or inner.is_dynamic
+        static_size = 32 if length is None or is_dynamic else length * inner.static_size
         return TypeNode(
             canonical=inner.canonical + suffix,
             kind='array',
             length=length,
             elem=inner,
+            is_dynamic=is_dynamic,
+            static_size=static_size,
+            head_size=32 if is_dynamic else static_size,
         )
 
     base = _BASE_ALIASES.get(type_name, type_name)
     if base == 'tuple':
-        parsed = [_parse_param(component) for component in components]
-        canonical = f"({','.join(node.canonical for node in parsed)})"
+        parsed = tuple(_parse_param(component) for component in components)
+        names = tuple(str(component.get('name') or '') for component in components)
+        is_dynamic = any(node.is_dynamic for node in parsed)
+        static_size = 32 if is_dynamic else sum(node.static_size for node in parsed)
         return TypeNode(
-            canonical=canonical,
+            canonical=f"({','.join(node.canonical for node in parsed)})",
             kind='tuple',
             components=parsed,
-            raw_components=components,
+            component_names=names,
+            is_dynamic=is_dynamic,
+            static_size=static_size,
+            head_size=32 if is_dynamic else static_size,
+            tuple_keys=names if all(names) else None,
         )
     if base.startswith('uint') and base[4:].isdigit():
         return TypeNode(canonical=base, kind='uint', bits=int(base[4:]))
@@ -123,12 +132,12 @@ def _parse_param(param: dict[str, Any]) -> TypeNode:
     if base == 'bool':
         return TypeNode(canonical=base, kind='bool')
     if base == 'string':
-        return TypeNode(canonical=base, kind='string')
+        return TypeNode(canonical=base, kind='string', is_dynamic=True)
     if base == 'bytes':
-        return TypeNode(canonical=base, kind='bytes')
+        return TypeNode(canonical=base, kind='bytes', is_dynamic=True)
     if base.startswith('bytes') and base[5:].isdigit():
         return TypeNode(canonical=base, kind='fixed_bytes', bits=int(base[5:]))
-    raise ValueError(f'Unsupported ABI type: {type_name!r}')
+    raise AbiTypeNotSupportedError(type_name)
 
 
 def canonical_signature(name: str, inputs: list[dict[str, Any]]) -> str:
@@ -156,13 +165,13 @@ def encode_arguments(inputs: list[dict[str, Any]], values: list[Any]) -> bytes:
     if len(inputs) != len(values):
         signature = canonical_signature('f', inputs)
         raise ValueError(f'{signature} expects {len(inputs)} argument(s), got {len(values)}')
-    nodes = [_parse_param(param) for param in inputs]
+    nodes = compile_params(inputs)
     return _encode_sequence(
         nodes, [_coerce(node, value) for value, node in zip(values, nodes, strict=True)]
     )
 
 
-def _encode_sequence(nodes: list[TypeNode], values: list[Any]) -> bytes:
+def _encode_sequence(nodes: tuple[TypeNode, ...] | list[TypeNode], values: list[Any]) -> bytes:
     """Head/tail encoding of an argument sequence (ABI spec layout)."""
     heads: list[bytes | None] = []
     tails: list[bytes] = []
@@ -213,7 +222,7 @@ def _encode_static(node: TypeNode, value: Any) -> bytes:
         return _encode_sequence([node.elem] * node.length, list(value))
     if node.kind == 'tuple':
         return _encode_sequence(node.components, _tuple_values(node, value))
-    raise ValueError(f'Unsupported static type: {node.canonical}')
+    raise AbiTypeNotSupportedError(node.canonical)
 
 
 def _encode_dynamic(node: TypeNode, value: Any) -> bytes:
@@ -228,19 +237,17 @@ def _encode_dynamic(node: TypeNode, value: Any) -> bytes:
         assert node.elem is not None
         items = list(value)
         length_prefix = b'' if node.length is not None else len(items).to_bytes(32, 'big')
-        nodes = [node.elem] * len(items)
-        return length_prefix + _encode_sequence(nodes, items)
+        return length_prefix + _encode_sequence([node.elem] * len(items), items)
     if node.kind == 'tuple':
         return _encode_sequence(node.components, _tuple_values(node, value))
-    raise ValueError(f'Unsupported dynamic type: {node.canonical}')
+    raise AbiTypeNotSupportedError(node.canonical)
 
 
 def _tuple_values(node: TypeNode, value: Any) -> list[Any]:
     """Align a tuple value (dict by component name, or sequence) with components."""
     if isinstance(value, dict):
-        names = [str(component.get('name') or '') for component in node.raw_components]
         resolved: list[Any] = []
-        for index, name in enumerate(names):
+        for index, name in enumerate(node.component_names):
             if name and name in value:
                 resolved.append(value[name])
             elif str(index) in value:
@@ -330,6 +337,17 @@ def _coerce_tuple(node: TypeNode, value: Any) -> Any:
 # ---------------------------------------------------------------------------
 
 
+def decode_values(nodes: tuple[TypeNode, ...], data: bytes) -> list[Any]:
+    """Decode ``data`` as the head/tail area of ``nodes``, as native values.
+
+    uint/int stay ``int``, ``bytes``/``bytesN`` stay ``bytes``, arrays and
+    tuples are ``list`` — the shape :mod:`aiochainscan.decode` normalises to
+    the fastabi JSON convention. Trailing bytes are ignored, matching what
+    real calldata carries.
+    """
+    return _decode_sequence(nodes, data, 0)
+
+
 def decode_arguments(outputs: list[dict[str, Any]], data: bytes | str) -> dict[str, Any]:
     """Decode raw ``eth_call`` output bytes into a name-keyed dict.
 
@@ -338,29 +356,52 @@ def decode_arguments(outputs: list[dict[str, Any]], data: bytes | str) -> dict[s
     lowercased hex, bytes values are ``0x``-prefixed.
     """
     raw = _coerce_hex_bytes(data)
-    nodes = [_parse_param(param) for param in outputs]
+    nodes = compile_params(outputs)
     if not any(node.is_dynamic for node in nodes):
         expected = sum(node.head_size for node in nodes)
         if len(raw) != expected:
             raise ValueError(
                 f'output data length {len(raw)} does not match ABI-encoded size {expected}'
             )
-    values = _decode_sequence(nodes, raw, 0)
-    names: list[str] = []
-    for index, param in enumerate(outputs):
-        name = str(param.get('name') or '')
-        names.append(name if name else str(index))
+    values = to_json_values(nodes, _decode_sequence(nodes, raw, 0))
+    names = [str(param.get('name') or '') or str(index) for index, param in enumerate(outputs)]
     return dict(zip(names, values, strict=True))
 
 
-def _decode_sequence(nodes: list[TypeNode], buf: bytes, base: int) -> list[Any]:
+def to_json_values(nodes: tuple[TypeNode, ...], values: list[Any]) -> list[Any]:
+    """Convert native decoded values to the fastabi JSON convention."""
+    return [_to_json(node, value) for node, value in zip(nodes, values, strict=True)]
+
+
+def _to_json(node: TypeNode, value: Any) -> Any:
+    kind = node.kind
+    if kind in ('uint', 'int'):
+        return str(value)
+    if kind in ('bytes', 'fixed_bytes'):
+        return '0x' + bytes(value).hex()
+    if kind == 'array':
+        assert node.elem is not None
+        return [_to_json(node.elem, item) for item in value]
+    if kind == 'tuple':
+        converted = [
+            _to_json(component, item)
+            for component, item in zip(node.components, value, strict=True)
+        ]
+        if node.tuple_keys is not None:
+            return dict(zip(node.tuple_keys, converted, strict=True))
+        return converted
+    return value
+
+
+def _decode_sequence(
+    nodes: tuple[TypeNode, ...] | list[TypeNode], buf: bytes, base: int
+) -> list[Any]:
     """Decode a head/tail sequence located at ``base`` (offsets are relative)."""
     values: list[Any] = []
     cursor = base
     for node in nodes:
         if node.is_dynamic:
-            offset = _read_uint(buf, cursor)
-            values.append(_decode_node(node, buf, base + offset))
+            values.append(_decode_node(node, buf, base + _read_uint(buf, cursor)))
             cursor += 32
         else:
             values.append(_decode_node(node, buf, cursor))
@@ -370,48 +411,42 @@ def _decode_sequence(nodes: list[TypeNode], buf: bytes, base: int) -> list[Any]:
 
 def _decode_node(node: TypeNode, buf: bytes, offset: int) -> Any:
     """Decode a single value of ``node`` at absolute ``offset``."""
-    if node.kind == 'uint':
-        return str(_read_uint(buf, offset))
-    if node.kind == 'int':
-        return str(_read_int(buf, offset))
-    if node.kind == 'bool':
+    kind = node.kind
+    if kind == 'uint':
+        return _read_uint(buf, offset)
+    if kind == 'int':
+        value = _read_uint(buf, offset)
+        return value - 2**256 if value >= 2**255 else value
+    if kind == 'bool':
         return _read_uint(buf, offset) != 0
-    if node.kind == 'address':
+    if kind == 'address':
         return '0x' + _slice(buf, offset + 12, offset + 32).hex()
-    if node.kind == 'fixed_bytes':
-        return '0x' + _slice(buf, offset, offset + node.bits).hex()
-    if node.kind == 'bytes':
+    if kind == 'fixed_bytes':
+        return _slice(buf, offset, offset + node.bits)
+    if kind == 'bytes':
         length = _read_uint(buf, offset)
-        data = _slice(buf, offset + 32, offset + 32 + length)
-        return '0x' + data.hex()
-    if node.kind == 'string':
+        return _slice(buf, offset + 32, offset + 32 + length)
+    if kind == 'string':
         length = _read_uint(buf, offset)
         return _slice(buf, offset + 32, offset + 32 + length).decode('utf-8')
-    if node.kind == 'array':
+    if kind == 'array':
         assert node.elem is not None
         if node.length is None:
             count = _read_uint(buf, offset)
-            nodes = [node.elem] * count
-            return _decode_sequence(nodes, buf, offset + 32)
-        nodes = [node.elem] * node.length
-        return _decode_sequence(nodes, buf, offset)
-    if node.kind == 'tuple':
-        names = node.raw_components
-        values = _decode_sequence(node.components, buf, offset)
-        if all(str(item.get('name') or '') for item in names):
-            keys = [str(item['name']) for item in names]
-            return dict(zip(keys, values, strict=True))
-        return values
-    raise ValueError(f'Unsupported type in decode: {node.canonical}')
+            return _decode_sequence([node.elem] * count, buf, offset + 32)
+        return _decode_sequence([node.elem] * node.length, buf, offset)
+    if kind == 'tuple':
+        return _decode_sequence(node.components, buf, offset)
+    raise AbiTypeNotSupportedError(node.canonical)
 
 
 def _read_uint(buf: bytes, offset: int) -> int:
-    return int.from_bytes(_slice(buf, offset, offset + 32), 'big')
-
-
-def _read_int(buf: bytes, offset: int) -> int:
-    value = _read_uint(buf, offset)
-    return value - 2**256 if value >= 2**255 else value
+    end = offset + 32
+    if offset < 0 or end > len(buf):
+        raise ValueError(
+            f'decoded data references bytes [{offset}:{end}] outside its length {len(buf)}'
+        )
+    return int.from_bytes(buf[offset:end], 'big')
 
 
 def _slice(buf: bytes, start: int, end: int) -> bytes:

@@ -444,7 +444,8 @@ Every `Method` enum value (33 total) maps to typed convenience methods on `Chain
 | `adapters/aiolimiter_adapter.py` | Rate limiting | Token bucket, burst=1 |
 | `convert.py` | Wei/hex/datetime conversion helpers | Exact `Decimal` math, hex-aware int parsing, tz-aware UTC |
 | `crypto.py` | Keccak-256, EIP-55 checksum | fastabi → eth-utils → pure-Python (`_keccak.py`) fallback chain — the base install always has a working backend |
-| `decode.py` | ABI decoding (Python) | Wraps Rust FFI, orjson parsing |
+| `decode.py` | ABI decoding (Python) | Backend chain fastabi → eth-abi (`[fallback]`) → `abi_pure.py`; orjson parsing; content+identity-cached ABI index |
+| `abi_pure.py` | Pure-Python ABI codec | The always-available decode floor AND the MCP calldata encoder — no dependencies beyond `crypto.py` |
 | `fastabi/src/lib.rs` | ABI decoding (Rust) | Returns JSON, LRU cache |
 | `mcp/` | MCP server for AI agents | Adapter over `ChainscanClient` — see MCP Server section |
 
@@ -503,7 +504,6 @@ Agent adapter over `ChainscanClient` — **run**: `python -m aiochainscan.mcp_se
 |------|---------|
 | `mcp/envelope.py` | `ToolResponse{data, notes, instructions, pagination, content_text}` + truncation (`{value_sample, value_truncated}`, 512 chars) + `format_units` (lossless int math) |
 | `mcp/cursors.py` | Opaque Base64URL cursors wrapping `fetch_page` scanner cursors (`InvalidCursorError` with "start over" advice) |
-| `mcp/abi_codec.py` | Pure-Python ABI encode (calldata) / decode (eth_call outputs) — covers what fastabi doesn't (it decodes *inputs* only). Cross-checked against `eth_abi` in tests |
 | `mcp/tools.py` | 12 tools as plain `client -> ToolResponse` functions (**no mcp import** — offline-testable) + `ClientPool` (one client per `(scanner, chain)`, connection pooling across calls) |
 | `mcp/server.py` | FastMCP wiring: envelope → `CallToolResult` (text + structuredContent), tool registration |
 | `mcp_server.py` | Entry point (historical import path preserved) |
@@ -639,6 +639,7 @@ from aiochainscan.exceptions import (
     PaginationDataLossError,      # Whale block: a single block over the API's cap
     CompletenessUnavailableError, # Endpoint has no splittable dimension here (.alternatives)
     ChainscanDataError,           # Data contract violation
+    AbiTypeNotSupportedError,     # ValueError subclass: pure ABI codec has no rule for this Solidity type
     MethodNotDeclaredError,       # ValueError subclass: method not in SPECS
     BlockRangeNotSupportedError,  # MethodNotDeclaredError subclass: bounded block range the provider's spec cannot carry (raised at every seam: call/fetch_page/stream)
     ProviderPoolExhaustedError,   # Pool: every provider failed (.attempts)
@@ -663,6 +664,33 @@ ruff format .
 ```
 
 Or in one shot: `make ci-local` (mirrors the disabled GitHub CI). Agents: run `make validate` before claiming DONE and `make commit MSG="..." PATHS="..."` to commit.
+
+---
+
+## ABI Decode Backend Chain
+
+`decode.py` picks a backend per process, mirroring `crypto.py`:
+`fastabi` (Rust, `[fastabi]`) → `eth-abi` (`[fallback]`) → `abi_pure.py`
+(always available). A bare `pip install aiochainscan` therefore decodes
+transaction inputs, event logs, `SmartContract.iter_events` and the MCP
+`read_contract` / `get_transaction_info` tools with no extras installed.
+
+- **One output convention across all three tiers** (the Rust one): ints above
+  `i64::MAX` as strings, `bytes`/`bytesN` as `0x` hex, arrays *and* tuples as
+  `list`. `tests/test_abi_pure.py::TestTierParity` pins it — a decoded value
+  must not change shape when a user adds or drops an extra.
+- **Unsupported Solidity type → `AbiTypeNotSupportedError`**, never an empty
+  `decoded_data`: a gap in this library must not read as undecodable
+  calldata. Malformed/truncated calldata stays non-fatal (empty result).
+- **The pure floor is ~2× faster than the `eth-abi` tier** on single decodes
+  (`-m benchmark` in `tests/test_abi_pure.py`), so `[fallback]` buys wider
+  type coverage, not speed. Bulk work (`decode_many`, streaming, DataFrames)
+  still belongs on `[fastabi]`.
+- **The ABI index is cached** (`_abi_index`): identity fast path, then a
+  content digest, holding the function/event maps plus each selector's
+  compiled decode plan — hashing an ABI costs more than decoding against it.
+  Consequence: do not mutate an ABI list *in place* between decodes; build a
+  new list.
 
 ---
 

@@ -93,6 +93,29 @@ class BlockRangeNotSupportedError(MethodNotDeclaredError):
     """
 
 
+class AbiTypeNotSupportedError(ValueError):
+    """The pure-Python ABI codec does not implement this Solidity type.
+
+    Raised by :mod:`aiochainscan.abi_pure` instead of returning a wrong or
+    empty value. The decode paths in :mod:`aiochainscan.decode` swallow
+    ordinary decode failures (malformed calldata is expected in the wild) but
+    let this one through: an unimplemented type is a gap in this library, not
+    bad input, and silently reporting no decoded data would hide it.
+
+    Subclasses :class:`ValueError`, matching what the codec's other rejections
+    raise, so MCP argument validation keeps its historical contract.
+    """
+
+    def __init__(self, abi_type: str) -> None:
+        self.abi_type = abi_type
+        super().__init__(
+            f'Unsupported ABI type {abi_type!r}. The pure-Python codec covers '
+            'uintN/intN, address, bool, bytesN, bytes, string, arrays and '
+            'tuples; install aiochainscan[fallback] or aiochainscan[fastabi] '
+            'for wider coverage.'
+        )
+
+
 class ProviderPoolExhaustedError(ChainscanClientError):
     """Every provider in the pool failed (or is in cooldown) for a request.
 
