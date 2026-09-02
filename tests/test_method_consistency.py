@@ -71,8 +71,14 @@ INVOCATIONS: dict[str, tuple[tuple[Any, ...], dict[str, Any]]] = {
     # Account
     'get_balance': ((CHECKSUM_ADDRESS,), {}),
     'get_transactions': ((CHECKSUM_ADDRESS,), {'start_block': 5, 'end_block': 10}),
+    'get_transactions_normalized': ((CHECKSUM_ADDRESS,), {'start_block': 5, 'end_block': 10}),
     'get_token_transfers': ((CHECKSUM_ADDRESS,), {'contract_address': CONTRACT_ADDRESS}),
+    'get_token_transfers_normalized': (
+        (CHECKSUM_ADDRESS,),
+        {'contract_address': CONTRACT_ADDRESS},
+    ),
     'get_internal_transactions': ((CHECKSUM_ADDRESS,), {}),
+    'get_internal_transactions_normalized': ((CHECKSUM_ADDRESS,), {}),
     'get_token_portfolio': ((CHECKSUM_ADDRESS,), {}),
     'get_erc721_transfers': ((CHECKSUM_ADDRESS,), {'contract_address': CONTRACT_ADDRESS}),
     'get_erc1155_transfers': ((CHECKSUM_ADDRESS,), {'contract_address': CONTRACT_ADDRESS}),
@@ -87,6 +93,7 @@ INVOCATIONS: dict[str, tuple[tuple[Any, ...], dict[str, Any]]] = {
     'wait_for_transaction': ((TX_HASH,), {}),
     # Blocks
     'get_block': ((19_500_000,), {}),
+    'get_block_normalized': ((19_500_000,), {}),
     'get_block_reward': ((19_500_000,), {}),
     'get_block_countdown': ((30_000_000,), {}),
     'get_block_by_timestamp': ((1_609_459_200,), {}),
@@ -116,6 +123,10 @@ INVOCATIONS: dict[str, tuple[tuple[Any, ...], dict[str, Any]]] = {
         {'from_block': 100, 'to_block': 200, 'topic0': TRANSFER_TOPIC0},
     ),
     'get_all_logs': ((CONTRACT_ADDRESS,), {}),
+    'get_logs_normalized': (
+        (CONTRACT_ADDRESS,),
+        {'from_block': 100, 'to_block': 200, 'topic0': TRANSFER_TOPIC0},
+    ),
     # Proxy
     'eth_call': ((CONTRACT_ADDRESS, '0x70a08231'), {}),
     'eth_get_balance': ((CHECKSUM_ADDRESS,), {}),

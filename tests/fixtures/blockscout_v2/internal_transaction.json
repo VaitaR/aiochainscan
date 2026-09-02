@@ -1,0 +1,122 @@
+{
+  "block_number": 25888752,
+  "created_contract": null,
+  "error": null,
+  "from": {
+    "ens_domain_name": null,
+    "hash": "0x7348Ed38BDC1fa2dE2061bF202D6eE7BD72E9CB8",
+    "implementations": [],
+    "is_contract": true,
+    "is_scam": false,
+    "is_verified": false,
+    "metadata": null,
+    "name": null,
+    "private_tags": [],
+    "proxy_type": null,
+    "public_tags": [],
+    "reputation": "ok",
+    "watchlist_names": []
+  },
+  "gas_limit": "53074",
+  "index": 1,
+  "success": true,
+  "timestamp": "2026-09-02T09:36:23.000000Z",
+  "to": {
+    "ens_domain_name": null,
+    "hash": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+    "implementations": [],
+    "is_contract": true,
+    "is_scam": false,
+    "is_verified": true,
+    "metadata": {
+      "tags": [
+        {
+          "meta": {
+            "projectName": "Tether",
+            "tagUrl": "https://app.klerosscout.eth.limo/#/?registry=Single_Tags&itemdetails=0xca4f86e999bee421567b4e8a094a7dff96fa821e9023a63b87f12b64d2356094@0x66260c69d03837016d88c9877e61e08ef74c59f2",
+            "tokenAttributes": "{\"logo_url\":\"https://cdn.kleros.link/ipfs/QmZF9JKGaGfT7LsARQaFdUUATDha4Ecx9PziFu2M8ifFmR/Bce2S3tXG2WL6pLnJAyHJyQ9B1MenRPiFnSVsNBgGXyWiNKTgcnTFcFjCcB9ujE5tJG7CjurLSL6XHoPQfu3Re4tqJ\",\"token_symbol\":\"USDT\",\"token_name\":\"Tether\",\"decimals\":6}",
+            "tooltipDescription": "Tether gives you the joint benefits of open blockchain technology and traditional currency by converting your cash into a stable digital currency equivalent.",
+            "tooltipUrl": "https://tether.to/",
+            "verifiedDomains": [
+              "app.mav.xyz",
+              "www.sushi.com",
+              "apeswap.finance",
+              "app.firebird.finance",
+              "app.uniswap.org",
+              "swap.defillama.com",
+              "swapr.eth.limo",
+              "stackly.eth.limo",
+              "traderjoexyz.com"
+            ]
+          },
+          "name": "USDT Stablecoin",
+          "ordinal": 10,
+          "slug": "usdt-stablecoin-1",
+          "tagType": "name"
+        },
+        {
+          "meta": {},
+          "name": "Token Contract",
+          "ordinal": 0,
+          "slug": "token-contract",
+          "tagType": "generic"
+        },
+        {
+          "meta": {},
+          "name": "Stablecoin",
+          "ordinal": 0,
+          "slug": "stablecoin",
+          "tagType": "generic"
+        },
+        {
+          "meta": {
+            "tooltipDescription": "Address blocked by a custodial stablecoin provider"
+          },
+          "name": "BLOCKED",
+          "ordinal": 0,
+          "slug": "blocked",
+          "tagType": "generic"
+        },
+        {
+          "meta": {
+            "tagIcon ": "https://blockscout-icons.s3.us-east-1.amazonaws.com/OLI_tag_logo.svg",
+            "textColor": "#C163D4",
+            "tooltipAttribution": "https://www.openlabelsinitiative.org?utm_source=blockscout",
+            "tooltipAttributionIcon": "https://blockscout-icons.s3.us-east-1.amazonaws.com/OLI_tag_logo.svg",
+            "tooltipDescription": "Provided by OLI"
+          },
+          "name": "USDT",
+          "ordinal": 0,
+          "slug": "usdt",
+          "tagType": "name"
+        },
+        {
+          "meta": {},
+          "name": "Tether",
+          "ordinal": 0,
+          "slug": "tether",
+          "tagType": "protocol"
+        },
+        {
+          "meta": {
+            "data": "ok"
+          },
+          "name": "Credible token",
+          "ordinal": 0,
+          "slug": "credible-token",
+          "tagType": "token_reputation"
+        }
+      ]
+    },
+    "name": "TetherToken",
+    "private_tags": [],
+    "proxy_type": null,
+    "public_tags": [],
+    "reputation": "ok",
+    "watchlist_names": []
+  },
+  "transaction_hash": "0x03d255df67f56e8fa36b3277ffebbd28f13d9522b901adddfa7f0a4caf9289a3",
+  "transaction_index": 428,
+  "type": "call",
+  "value": "0"
+}

@@ -6,6 +6,8 @@ import logging
 from typing import TYPE_CHECKING, Any, Protocol
 
 from ...domain.models import Address
+from ...domain.normalize import normalize_log
+from ...domain.normalized import Log
 from ...services.pagination import collect_all
 from ..method import Method
 from ..types import JSONList
@@ -64,6 +66,22 @@ class LogsMixin:
             params['topic3'] = topic3
         result: JSONList = await self.call(Method.EVENT_LOGS, **params)
         return result if isinstance(result, list) else []
+
+    async def get_logs_normalized(
+        self: _LogsClientProtocol,
+        address: str,
+        from_block: int = 0,
+        to_block: int | str | None = None,
+        topic0: str | None = None,
+        topic1: str | None = None,
+        topic2: str | None = None,
+        topic3: str | None = None,
+    ) -> list[Log]:
+        """Same page as ``get_logs``, mapped onto ``domain.normalized.Log``."""
+        raw = await LogsMixin.get_logs(
+            self, address, from_block, to_block, topic0, topic1, topic2, topic3
+        )
+        return [normalize_log(item) for item in raw]
 
     async def get_all_logs(
         self: _LogsClientProtocol,

@@ -6,6 +6,12 @@ import logging
 from typing import TYPE_CHECKING, Any, Protocol
 
 from ...domain.models import Address
+from ...domain.normalize import (
+    normalize_internal_transaction,
+    normalize_token_transfer,
+    normalize_transaction,
+)
+from ...domain.normalized import InternalTransaction, TokenTransfer, Transaction
 from ...services.pagination import collect_all, normalize_items
 from ..method import Method
 from ..types import JSONList
@@ -80,6 +86,20 @@ class AccountMixin:
         result: Any = await self.call(Method.ACCOUNT_TRANSACTIONS, **params)
         return result if isinstance(result, list) else []
 
+    async def get_transactions_normalized(
+        self: _AccountClientProtocol,
+        address: str,
+        start_block: int = 0,
+        end_block: int | None = None,
+        page: int = 1,
+        offset: int = 100,
+    ) -> list[Transaction]:
+        """Same page as ``get_transactions``, mapped onto ``domain.normalized.Transaction``."""
+        raw = await AccountMixin.get_transactions(
+            self, address, start_block, end_block, page, offset
+        )
+        return [normalize_transaction(item) for item in raw]
+
     async def get_token_transfers(
         self: _AccountClientProtocol,
         address: str,
@@ -97,6 +117,19 @@ class AccountMixin:
             params['end_block'] = end_block
         result: Any = await self.call(Method.ACCOUNT_ERC20_TRANSFERS, **params)
         return result if isinstance(result, list) else []
+
+    async def get_token_transfers_normalized(
+        self: _AccountClientProtocol,
+        address: str,
+        contract_address: str | None = None,
+        start_block: int = 0,
+        end_block: int | None = None,
+    ) -> list[TokenTransfer]:
+        """Same page as ``get_token_transfers``, mapped onto ``domain.normalized.TokenTransfer``."""
+        raw = await AccountMixin.get_token_transfers(
+            self, address, contract_address, start_block, end_block
+        )
+        return [normalize_token_transfer(item) for item in raw]
 
     async def get_internal_transactions(
         self: _AccountClientProtocol,
@@ -120,6 +153,21 @@ class AccountMixin:
             params['end_block'] = end_block
         result: Any = await self.call(Method.ACCOUNT_INTERNAL_TXS, **params)
         return result if isinstance(result, list) else []
+
+    async def get_internal_transactions_normalized(
+        self: _AccountClientProtocol,
+        address: str,
+        start_block: int = 0,
+        end_block: int | None = None,
+        page: int = 1,
+        offset: int = 100,
+        sort: str = 'asc',
+    ) -> list[InternalTransaction]:
+        """Same page as ``get_internal_transactions``, mapped onto ``domain.normalized.InternalTransaction``."""
+        raw = await AccountMixin.get_internal_transactions(
+            self, address, start_block, end_block, page, offset, sort
+        )
+        return [normalize_internal_transaction(item) for item in raw]
 
     async def get_token_portfolio(self: _AccountClientProtocol, address: str) -> JSONList:
         """Get all ERC20 tokens held by address."""
