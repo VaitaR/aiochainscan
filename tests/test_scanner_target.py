@@ -1,9 +1,11 @@
 """Unit tests for scanner target resolution (chain_registry.resolve_scanner_target)."""
 
 from dataclasses import FrozenInstanceError
+from typing import Any
 
 import pytest
 
+import aiochainscan.chain_registry as chain_registry
 from aiochainscan.chain_registry import (
     ScannerTarget,
     get_scanner_network_name,
@@ -259,6 +261,88 @@ class TestFromConfigIntegration:
 
         with pytest.raises(ValueError, match='Unknown scanner "moralis"'):
             ChainscanClient.from_config('moralis', 'ethereum')
+
+
+class TestSingleResolutionSeam:
+    """ScannerTarget is the only construction seam: resolution runs exactly
+    once per client, at ``resolve_scanner_target``, for every public form."""
+
+    @pytest.fixture
+    def counters(self, monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
+        """Count every resolution attempt the client path could make."""
+        counts = {'target': 0, 'chain_id': 0}
+        real_target = chain_registry.resolve_scanner_target
+        real_chain = chain_registry.resolve_chain_id
+
+        def counting_target(*args: Any, **kwargs: Any) -> ScannerTarget:
+            counts['target'] += 1
+            return real_target(*args, **kwargs)
+
+        def counting_chain(value: str | int) -> int:
+            counts['chain_id'] += 1
+            return real_chain(value)
+
+        # The client-module binding (used by from_config and the keyword
+        # constructor), the registry-internal binding (used by the resolver
+        # itself) and the Scanner fallback binding are all intercepted.
+        monkeypatch.setattr('aiochainscan.core.client.resolve_scanner_target', counting_target)
+        monkeypatch.setattr(chain_registry, 'resolve_chain_id', counting_chain)
+        monkeypatch.setattr('aiochainscan.scanners.base.resolve_chain_id', counting_chain)
+        return counts
+
+    async def test_from_config_resolves_exactly_once(self, counters: dict[str, int]) -> None:
+        from aiochainscan import ChainscanClient
+
+        client = ChainscanClient.from_config('blockscout_v2', 'ethereum')
+        try:
+            assert counters['target'] == 1
+            # registry resolver: 1; client re-derivation: 0; scanner fallback: 0
+            assert counters['chain_id'] == 1
+        finally:
+            await client.close()
+
+    async def test_chain_provider_form_resolves_exactly_once(
+        self, counters: dict[str, int]
+    ) -> None:
+        from aiochainscan import ChainscanClient
+
+        client = ChainscanClient(chain='ethereum', provider='etherscan', api_key='k')
+        try:
+            assert counters['target'] == 1
+            assert counters['chain_id'] == 1
+        finally:
+            await client.close()
+
+    async def test_direct_target_constructs_without_any_resolution(
+        self, counters: dict[str, int]
+    ) -> None:
+        from aiochainscan import ChainscanClient
+
+        target = chain_registry.resolve_scanner_target('blockscout_v2', 'ethereum')
+        counters['target'] = 0
+        counters['chain_id'] = 0
+
+        client = ChainscanClient(target)
+        try:
+            # The client trusts the target: no resolution, no re-derivation.
+            assert counters['target'] == 0
+            assert counters['chain_id'] == 0
+            assert client.scanner_name == 'blockscout'
+            assert client.chain_id == 1
+        finally:
+            await client.close()
+
+    async def test_url_network_resolved_once_by_registry(self, counters: dict[str, int]) -> None:
+        from aiochainscan import ChainscanClient
+
+        # 'ethereum' must arrive at the UrlBuilder as its dialect name 'main',
+        # resolved by the registry — never re-mapped by the client.
+        client = ChainscanClient.from_config('etherscan', 'ethereum', api_key='k')
+        try:
+            assert client._url_builder._network == 'main'
+            assert counters['chain_id'] == 1
+        finally:
+            await client.close()
 
 
 class TestScannerNetworkName:

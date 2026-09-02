@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from aiochainscan.chain_registry import resolve_scanner_target
 from aiochainscan.core.client import ChainscanClient
 from aiochainscan.domain.normalize import (
     normalize_block,
@@ -306,15 +307,39 @@ def test_new_constructor_blockscout_no_api_key_required():
     assert client.scanner_version == 'v2'
 
 
-def test_old_positional_constructor_still_works():
-    client = ChainscanClient('etherscan', 'v2', 'eth', 'ethereum', 'test_key')
+def test_direct_target_construction():
+    """ScannerTarget is the internal construction currency."""
+    target = resolve_scanner_target('etherscan', 'ethereum', api_key='test_key')
+    client = ChainscanClient(target)
     assert client.scanner_name == 'etherscan'
+    assert client.scanner_version == 'v2'
+    assert client.api_kind == 'eth'
     assert client.api_key == 'test_key'
+    assert client.chain_id == 1
 
 
-def test_mixing_new_and_old_style_rejected():
-    with pytest.raises(TypeError):
-        ChainscanClient('etherscan', network='ethereum', chain='ethereum', provider='etherscan')
+def test_positional_constructor_removed():
+    """The pre-1.0 positional form is gone (Python itself rejects the tuple)."""
+    with pytest.raises(TypeError, match='positional arguments'):
+        ChainscanClient('etherscan', 'v2', 'eth', 'ethereum', 'test_key')
+
+
+def test_positional_string_target_rejected():
+    """A lone positional string gets the migration error naming the seam."""
+    with pytest.raises(TypeError, match='ScannerTarget'):
+        ChainscanClient('etherscan')
+
+
+def test_target_rejects_resolution_kwargs():
+    target = resolve_scanner_target('etherscan', 'ethereum', api_key='k')
+    with pytest.raises(TypeError, match='already resolved'):
+        ChainscanClient(target, api_key='other')
+
+
+def test_mixing_target_and_chain_provider_rejected():
+    target = resolve_scanner_target('etherscan', 'ethereum', api_key='k')
+    with pytest.raises(TypeError, match='already resolved'):
+        ChainscanClient(target, chain='ethereum', provider='etherscan')
 
 
 def test_chain_without_provider_rejected():
@@ -322,6 +347,11 @@ def test_chain_without_provider_rejected():
         ChainscanClient(chain='ethereum', api_key='k')
 
 
-def test_incomplete_positional_style_rejected():
+def test_neither_target_nor_chain_provider_rejected():
+    with pytest.raises(TypeError):
+        ChainscanClient(timeout=5.0)
+
+
+def test_unknown_constructor_kwarg_rejected():
     with pytest.raises(TypeError):
         ChainscanClient(scanner_name='etherscan')

@@ -22,6 +22,7 @@ from unittest.mock import patch
 
 import pytest
 
+from aiochainscan.chain_registry import resolve_scanner_target
 from aiochainscan.core.client import ChainscanClient
 from aiochainscan.domain.normalized import InternalTransaction, Log, TokenTransfer, Transaction
 
@@ -107,7 +108,7 @@ class _StubScanner:
 def stub_client() -> tuple[ChainscanClient, TruncatingExplorer]:
     explorer = TruncatingExplorer(spread(range(0, 26), per_block=5))
     with patch('aiochainscan.core.client.get_scanner_class'):
-        client = ChainscanClient('etherscan', 'v2', 'eth', 'ethereum', 'key')
+        client = ChainscanClient(resolve_scanner_target('etherscan', 'ethereum', api_key='key'))
     client._scanner = _StubScanner(explorer)  # type: ignore[assignment]
     return client, explorer
 
@@ -294,7 +295,7 @@ class _LogsStubScanner:
 def logs_stub_client() -> tuple[ChainscanClient, TruncatingExplorer]:
     explorer = TruncatingExplorer(spread(range(0, 26), per_block=5))
     with patch('aiochainscan.core.client.get_scanner_class'):
-        client = ChainscanClient('etherscan', 'v2', 'eth', 'ethereum', 'key')
+        client = ChainscanClient(resolve_scanner_target('etherscan', 'ethereum', api_key='key'))
     client._scanner = _LogsStubScanner(explorer)  # type: ignore[assignment]
     return client, explorer
 
