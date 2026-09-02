@@ -166,10 +166,8 @@ async with ChainscanClient.from_config('etherscan', 'ethereum') as client:
 > raise site, e.g. NodeReal's 401 on an invalid path key or a WAF/proxy 403 —
 > plan restriction, method-not-declared) from
 > fatal ones (arguments, not-found, data contract) — only the former switch
-> providers. Sticky routing + per-class cooldowns (`max(retry_after, default)`
-> for rate limits) + half-open retry after cooldown; pagination calls
-> (`get_all_*` / `iter_*_streaming`) are PINNED to one provider per call
-> (failover only if the first page fails — cursors are provider-specific).
+> providers. Sticky routing, per-class cooldowns and pagination pinning: see
+> the "Multi-Provider Failover Pool" Semantics list below for the exact numbers.
 > Transparency: `last_provider`, `provider=<label>` stamp in progress
 > callbacks, `ChainscanProviderSwitchWarning` on switches,
 > `ProviderPoolExhaustedError.attempts = [(provider, exception), ...]`.
@@ -202,8 +200,7 @@ async with ChainscanClient.from_config('etherscan', 'ethereum') as client:
 >   way to tell (`confirmed=False`, message says "POSSIBLY truncated"). No
 >   probe can settle the ambiguous case: it is precisely the case where the
 >   provider returned no cursor, and cursors are opaque, so there is nothing
->   to request a further page with. Complete data is therefore never described
->   as lost.
+>   to request a further page with.
 > - **The split is adaptive**: on overflow the block range is cut at the block
 >   of the last record the provider managed to serve (arithmetic bisect only
 >   when items carry no block number), and each half is strictly narrower, so
@@ -212,7 +209,7 @@ async with ChainscanClient.from_config('etherscan', 'ethereum') as client:
 >   truncated attempt is discarded rather than yielded, so nothing duplicates),
 >   a buffer bounded by `result_window` items, and one unnecessary split for a
 >   range holding *exactly* the cap.
-> - **Two failure types, deliberately not one.**
+> - **Two failure types.**
 >   `PaginationDataLossError` (`start_block` / `end_block` / `api_limit` /
 >   `items_fetched` / `confirmed`) means a real block range was narrowed until
 >   a *single block* still exceeded the cap — splitting worked and ran out.
@@ -236,17 +233,14 @@ async with ChainscanClient.from_config('etherscan', 'ethereum') as client:
 >   flag to its member clients.
 
 ### ⚠️ Key Gotchas
-- `get_transactions()` returns **one page** (~50-100 items). Use `get_all_transactions()` for complete data.
-- `get_token_holders()` returns **one page**. Use `get_all_token_holders()` / `iter_token_holders_streaming()` for complete data.
-- `get_logs()` returns **≤1000 logs**. Use `get_all_logs()` for complete data.
+- `get_token_holders()` returns **one page**. Use `get_all_token_holders()` / `iter_token_holders_streaming()` for complete data. (`get_transactions()`/`get_logs()` single-page limits: see Pagination & Retry table below.)
 - `get_all_*()` now uses **streaming aggregation** under the hood; for very large datasets prefer `iter_*_streaming()`.
 - `get_all_*()` / `iter_*_streaming()` default to `guarantee_complete=True` — complete data or an exception, never silent truncation (see below).
 - A **bounded** block range (`from_block > 0` / concrete `to_block`) on a provider whose spec declares no block-range params (e.g. BlockScout V2 transactions) raises `BlockRangeNotSupportedError` at every seam — single-page `get_*`, `call()`, `fetch_page()`, streams — instead of silently dropping the bounds; unbounded calls behave exactly as before.
 - `get_transactions_df()` auto-paginates (uses `iter_transactions` internally).
 - Balance/value/supply values are **Wei strings** — convert with `wei_to_ether()` / `to_decimal_amount()` (exact `Decimal`), never `int(wei) / 10**18` float division.
 
-> **Note:** Legacy `Client` class and `modules/` were removed in v0.3.0.
-> Legacy facade/context/url-builder public entrypoints and old pagination-engine usage were purged in modern API docs.
+> **Note:** Legacy `Client` class and `modules/` were removed in v0.3.0 (see also the public API policy above).
 
 ---
 
