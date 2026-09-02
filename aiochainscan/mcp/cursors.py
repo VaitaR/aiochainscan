@@ -19,8 +19,10 @@ forged token can do is bounded by TWO mechanisms applied at merge time:
 
 An HMAC signature would add little for a stdio server: the "secret" would
 live in the same process (and thus be readable by the same attacker), so
-binding + whitelist is the honest boundary here. Tokens are also versioned
-(``v``) so the format can evolve.
+binding + whitelist is the honest boundary here. That reasoning is what a
+remote transport would invalidate — once ``mcp_server`` is reachable over the
+network, the token crosses a trust boundary and signing it stops being
+redundant. Tokens are versioned (``v``) so the format can evolve.
 """
 
 from __future__ import annotations

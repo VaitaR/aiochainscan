@@ -519,14 +519,20 @@ class ConfigurationManager:
         return ''
 
     def _get_api_key_suggestions(self, scanner_id: str) -> list[str]:
-        """Get suggestions for API key environment variable names."""
+        """Get suggestions for API key environment variable names.
+
+        Deduplicated, first spelling kept: a scanner whose display name equals
+        its id (``nodereal``) would otherwise be told to set ``NODEREAL_KEY``
+        twice, both in this error and in ``list_all_configurations()``.
+        """
         scanner_name = self.get_scanner_config(scanner_id).name.upper().replace(' ', '_')
-        return [
+        candidates = [
             f'{scanner_name}_KEY',  # Primary format: ETHERSCAN_KEY
             f'{scanner_id.upper()}_KEY',  # Fallback: ETH_KEY
             f'{scanner_id.upper()}_API_KEY',  # Alternative: ETH_API_KEY
             f'SCANNER_{scanner_id.upper()}_KEY',  # Generic: SCANNER_ETH_KEY
         ]
+        return list(dict.fromkeys(candidates))
 
     def get_supported_scanners(self) -> list[str]:
         """Get list of all supported scanner names."""

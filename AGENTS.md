@@ -220,7 +220,15 @@ async with ChainscanClient.from_config('etherscan', 'ethereum') as client:
 >   Etherscan's docs are **silent** on both caps, so measurement is the only
 >   source — and the 1000-per-page figure is a *dated* change (Etherscan cut it
 >   from 10_000 to 1000 in July 2026). Treat `max_page_size` as a measured
->   constant with a shelf life: re-measure it, do not reason about it.
+>   constant with a shelf life: re-measure it with `make probe-caps`
+>   (`scripts/agent/probe_provider_caps.py` — asks each provider for pages
+>   straddling its declared caps and exits non-zero on drift), do not reason
+>   about it. Last run 2026-09-02: Etherscan v2 and BlockScout V1 both
+>   reproduced their declarations for `ACCOUNT_TRANSACTIONS` and `EVENT_LOGS`
+>   (Etherscan serves 1000 per page and refuses `page*offset` at 11_000;
+>   BlockScout V1 serves 10_000 per page, refuses at 20_000, and answers
+>   `getLogs` page 2 with page 1's first record — the paging-ignored cap
+>   `RESULT_WINDOW_OVERRIDES` declares). NodeReal was reported BLOCKED, no key.
 > - **Reaching the cap has two flavours** and the error says which. The
 >   provider offered a continuation at the cap → records are definitely being
 >   cut off (`confirmed=True`). The window came back exactly full with *no*
@@ -299,6 +307,7 @@ Branch types: `feat | fix | chore | docs | arch | refactor` (2nd arg, default `f
 | `validate_fast.sh` | The DONE gate — ruff, format, import-lint, mypy --strict, full pytest |
 | `safe_commit.sh` | `git add` + commit with index.lock retry (worktree-aware; use `make commit`) |
 | `ci_watch.sh` | Bounded GH Actions poller; exit status is the verdict |
+| `probe_provider_caps.py` | Re-measures declared pagination caps live (`make probe-caps`); exit 1 on drift or on a provider left unconfirmed for want of a key |
 | `ruff_format_hook.py` | PostToolUse hook — auto-formats edited `*.py` |
 
 ### ⚠️ GitHub Actions temporarily DISABLED (Actions-minutes budget)
@@ -510,7 +519,16 @@ Every `Method` enum value (33 total) maps to typed convenience methods on `Chain
 > `NODEREAL_KEY` was available. Unverified there: the real response shape, whether `pageKey`
 > round-trips as documented, and whether `topN` truly orders descending (the docs say
 > "returned by balance order" without naming a direction — the declaration rests on the
-> parameter's name). NodeReal also documents these two methods as "BSC and ETH mainnet
+> parameter's name). What *is* verified is doc-conformance, re-checked against the rendered
+> reference pages on 2026-09-02: the ordered params (`Contract Address`, hex `PageSize`
+> "less equal than 100", `PageKey` "empty for the first page", optional hex `topN`), the
+> response `{pageKey, details: [{accountAddress, tokenBalance}]}`, and
+> `nr_getTokenHolderCount`'s bare hex scalar `"result": "0x123"` all match what this scanner
+> builds and parses. End-of-pagination is the one thing the docs state only by its
+> complement ("If more results are available, a pageKey will be returned"), so treating an
+> empty *or absent* `pageKey` as exhaustion is an inference — the code accepts both.
+> `make probe-caps` reports NodeReal BLOCKED and exits non-zero while no key exists, so the
+> gap cannot be mistaken for a pass. NodeReal also documents these two methods as "BSC and ETH mainnet
 > only" while `supported_networks` is BSC-only — deliberately not widened, since nothing
 > establishes ETH support for the other 22 methods.
 

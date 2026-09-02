@@ -65,6 +65,9 @@ ci-local: lint format-check import-lint typecheck test ## Full local CI mirror �
 preflight: ## Environment preflight — run BEFORE starting a task
 	./scripts/agent/preflight.sh
 
+probe-caps: ## Re-measure declared pagination caps against the live APIs (needs keys; exit 1 = drift or unconfirmed)
+	uv run python scripts/agent/probe_provider_caps.py $(ARGS)
+
 validate: ## The DONE gate — run BEFORE claiming a task finished
 	./scripts/agent/validate_fast.sh
 

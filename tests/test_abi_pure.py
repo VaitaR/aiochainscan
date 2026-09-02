@@ -170,6 +170,9 @@ NON_CANONICAL: list[tuple[str, str]] = [
     ('uint8', '100'.rjust(64, '0')),
     ('int8', 'ff'.rjust(64, '0')),
     ('bool', '2'.rjust(64, '0')),
+    # An all-ones bool word: the tiers once disagreed here (Rust rejected it,
+    # the floor read it as False), so parity on it is pinned, not assumed.
+    ('bool', 'ff' * 32),
     ('address', 'ff' * 12 + '11' * 20),
     ('bytes4', 'aabbccdd' + 'ff' * 28),
     ('string', '0' * 64),
