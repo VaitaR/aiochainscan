@@ -23,12 +23,18 @@ from aiochainscan.crypto import (
 KECCAK_VECTORS = [
     (b'', 'c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470'),
     (b'hello', '1c8aff950685c2ed4bc3174f3472287b56d9517b9c948127319a09a7a36deac8'),
+    (b'abc', '4e03657aea45a94fc7d47ba826c8d667c0d1e6e33a64a036ec44f58fa12d6c45'),
     # ERC-20 Transfer(address,address,uint256) event topic0
     (
         b'Transfer(address,address,uint256)',
         'ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef',
     ),
 ]
+
+# Multi-block inputs that cross the 136-byte (rate) block boundary, so the
+# padding + absorb loop of the pure-Python permutation are actually exercised
+# (a suite that only hashes short strings never runs a second block).
+MULTI_BLOCK_LENGTHS = [135, 136, 137, 200, 272, 273, 1000]
 
 
 @pytest.mark.parametrize(('data', 'expected_hex'), KECCAK_VECTORS)
@@ -166,8 +172,13 @@ def test_crypto_falls_back_to_eth_utils(reload_crypto) -> None:
     assert crypto_mod.keccak256(b'').hex() == KECCAK_VECTORS[0][1]
 
 
-def test_crypto_raises_without_any_backend(reload_crypto) -> None:
-    """Without fastabi and eth-utils, keccak256 raises a clear error."""
+def test_crypto_falls_back_to_pure_python(reload_crypto) -> None:
+    """Without fastabi and without eth-utils, keccak256 still works.
+
+    This is the base-install path (no [fastabi], no [fallback] extra): a
+    bare `pip install aiochainscan` must still be able to construct an
+    Address, so the chain no longer ends in ChainscanDependencyError.
+    """
     import aiochainscan.crypto as crypto_mod
 
     sys.modules['aiochainscan_fastabi'] = None
@@ -175,6 +186,71 @@ def test_crypto_raises_without_any_backend(reload_crypto) -> None:
     sys.modules['eth_utils'] = None
     importlib.reload(crypto_mod)
 
-    assert crypto_mod.KECCAK_BACKEND == 'none'
-    with pytest.raises(crypto_mod.ChainscanDependencyError, match='fallback'):
-        crypto_mod.keccak256(b'')
+    assert crypto_mod.KECCAK_BACKEND == 'python'
+    assert crypto_mod.keccak256(b'').hex() == KECCAK_VECTORS[0][1]
+
+
+def test_crypto_pure_python_address_checksum_roundtrip(reload_crypto) -> None:
+    """EIP-55 checksum through domain.models.Address, pure-Python backend forced."""
+    import aiochainscan.crypto as crypto_mod
+
+    sys.modules['aiochainscan_fastabi'] = None
+    sys.modules['aiochainscan.aiochainscan_fastabi'] = None
+    sys.modules['eth_utils'] = None
+    importlib.reload(crypto_mod)
+    assert crypto_mod.KECCAK_BACKEND == 'python'
+
+    from aiochainscan.domain.models import Address
+
+    raw, checksummed = CHECKSUM_VECTORS[0]
+    assert Address(raw).value == checksummed
+
+
+# --- Pure-Python backend: block-boundary vectors + cross-backend agreement --
+
+
+@pytest.mark.parametrize('length', MULTI_BLOCK_LENGTHS)
+def test_python_keccak_matches_reference_across_block_boundary(length: int) -> None:
+    """Exercise the padding + multi-block absorb loop, not just short inputs."""
+    from aiochainscan._keccak import keccak256 as python_keccak
+
+    data = (bytes(range(256)) * ((length // 256) + 1))[:length]
+    reference = eth_utils_ref.keccak(data)
+    assert python_keccak(data) == reference
+
+
+@pytest.mark.parametrize(('data', 'expected_hex'), KECCAK_VECTORS)
+def test_python_keccak_matches_official_vectors(data: bytes, expected_hex: str) -> None:
+    from aiochainscan._keccak import keccak256 as python_keccak
+
+    assert python_keccak(data).hex() == expected_hex
+
+
+def _import_fastabi_if_built():
+    """New top-level name first, legacy in-package name second — same
+    resolution order as aiochainscan.crypto itself."""
+    try:
+        import aiochainscan_fastabi as fastabi
+
+        return fastabi
+    except ImportError:
+        pass
+    try:
+        from aiochainscan import aiochainscan_fastabi as fastabi
+
+        return fastabi
+    except ImportError:
+        return None
+
+
+@pytest.mark.parametrize('length', [0, 1, 20, 32, 64, *MULTI_BLOCK_LENGTHS])
+def test_python_keccak_matches_fastabi_when_available(length: int) -> None:
+    """Strongest available proof: byte-identical to the Rust backend, when built."""
+    fastabi = _import_fastabi_if_built()
+    if fastabi is None:
+        pytest.skip('fastabi not built in this environment')
+
+    from aiochainscan._keccak import keccak256 as python_keccak
+
+    data = (bytes(range(256)) * ((length // 256) + 1))[:length]
+    assert python_keccak(data) == fastabi.keccak256(data)
