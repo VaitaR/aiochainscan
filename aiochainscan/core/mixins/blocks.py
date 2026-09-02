@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any, Protocol, cast
 
+from ...domain.normalize import normalize_block
+from ...domain.normalized import Block
 from ...exceptions import (
     ChainscanClientApiError,
     ChainscanClientError,
@@ -54,6 +56,11 @@ class BlockMixin:
         """Get block information by number."""
         result: JSONDict = await self.call(Method.BLOCK_BY_NUMBER, block_number=block_number)
         return result
+
+    async def get_block_normalized(self: _BlockClientProtocol, block_number: int | str) -> Block:
+        """Same response as ``get_block``, mapped onto ``domain.normalized.Block``."""
+        raw = await BlockMixin.get_block(self, block_number)
+        return normalize_block(raw)
 
     async def get_block_reward(self: _BlockClientProtocol, block_number: int) -> JSONDict:
         """Get block mining reward information."""

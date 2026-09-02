@@ -1,0 +1,52 @@
+{
+  "base_fee_per_gas": "15578805264",
+  "beacon_deposits_count": 1,
+  "blob_gas_price": null,
+  "blob_gas_used": "0",
+  "blob_transactions_count": 0,
+  "burnt_blob_fees": "0",
+  "burnt_fees": "466914724966938864",
+  "burnt_fees_percentage": 97.8086705943556,
+  "difficulty": "0",
+  "excess_blob_gas": "0",
+  "gas_limit": "30000000",
+  "gas_target_percentage": 99.80767333333333,
+  "gas_used": "29971151",
+  "gas_used_percentage": 99.90383666666666,
+  "hash": "0x52345c9721dcf84f8e659f8bda44b93d4e9b003bbd0693bb1bca601bbde3bb26",
+  "height": 19500000,
+  "internal_transactions_count": 228,
+  "is_pending_update": false,
+  "miner": {
+    "ens_domain_name": null,
+    "hash": "0x6d2e03b7EfFEae98BD302A9F836D0d6Ab0002766",
+    "implementations": [],
+    "is_contract": false,
+    "is_scam": false,
+    "is_verified": false,
+    "metadata": null,
+    "name": null,
+    "private_tags": [],
+    "proxy_type": null,
+    "public_tags": [],
+    "reputation": "ok",
+    "watchlist_names": []
+  },
+  "nonce": "0x0000000000000000",
+  "parent_hash": "0x8b4c18df69074c3349859b0339b3ca939f151ed9eb5865c9329fa27d98fddb5c",
+  "priority_fee": "10460871827936497",
+  "rewards": [
+    {
+      "reward": "10460871827936497",
+      "type": "Miner Reward"
+    }
+  ],
+  "size": 151992,
+  "timestamp": "2024-03-23T21:34:59.000000Z",
+  "total_difficulty": "58750003716598352816469",
+  "transaction_fees": "477375596794875361",
+  "transactions_count": 364,
+  "type": "block",
+  "uncles_hashes": [],
+  "withdrawals_count": 16
+}
