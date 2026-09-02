@@ -5,7 +5,6 @@ import json
 import logging
 import os
 import threading
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, ClassVar, cast
@@ -13,6 +12,48 @@ from typing import Any, ClassVar, cast
 # dotenv is optional - manual env file loading is implemented below
 
 logger = logging.getLogger(__name__)
+
+
+def credential_env_names(scanner_id: str, display_name: str | None = None) -> tuple[str, ...]:
+    """Credential env-var candidates for *scanner_id*, in priority order.
+
+    This function is the ONE statement of the priority order; every consumer
+    (env-state lookup, ``os.environ`` lookup, suggestion text, the ``.env``
+    template, and the V2-family fallback) derives its names from here, so the
+    order can never drift between lookup and error text:
+
+    1. ``{DISPLAY_NAME}_KEY`` — name-based, e.g. ``ETHERSCAN_KEY`` (skipped
+       when the display name is unknown)
+    2. ``{ID}_KEY`` — id-based, e.g. ``ETH_KEY`` (backward compatibility)
+    3. ``{ID}_API_KEY`` — e.g. ``ETH_API_KEY``
+    4. ``SCANNER_{ID}_KEY`` — generic prefix
+    5. ``API_KEY_{ID}`` — generic suffix
+
+    Args:
+        scanner_id: Scanner identifier (e.g. ``'eth'``).
+        display_name: Scanner display name (e.g. ``'Etherscan'``), uppercased
+           with spaces replaced by underscores for the primary pattern.
+           ``None`` means the name is unknown — the name-based candidate is
+           omitted (e.g. lookups for ids that are not registered).
+
+    Deduplicated, first spelling kept: a scanner whose display name equals its
+    id (``nodereal``) would otherwise repeat ``NODEREAL_KEY``, which is
+    harmless for a lookup but reads as a mistake in suggestion text and in
+    ``list_all_configurations()``.
+    """
+    scanner_id_upper = scanner_id.upper()
+    candidates: list[str] = []
+    if display_name is not None:
+        candidates.append(f'{display_name.upper().replace(" ", "_")}_KEY')
+    candidates.extend(
+        (
+            f'{scanner_id_upper}_KEY',
+            f'{scanner_id_upper}_API_KEY',
+            f'SCANNER_{scanner_id_upper}_KEY',
+            f'API_KEY_{scanner_id_upper}',
+        )
+    )
+    return tuple(dict.fromkeys(candidates))
 
 
 @dataclass
@@ -378,45 +419,31 @@ class ConfigurationManager:
 
     def _resolve_env_state_key(self, scanner_id: str) -> str | None:
         """Resolve an API key for *scanner_id* from internal ``.env`` state only."""
-        if scanner_id not in self._scanners:
+        scanner = self._scanners.get(scanner_id)
+        if scanner is None:
             return None
-        name = self._scanners[scanner_id].name.upper().replace(' ', '_')
-        for pattern in (
-            f'{name}_KEY',
-            f'{scanner_id.upper()}_KEY',
-            f'{scanner_id.upper()}_API_KEY',
-            f'SCANNER_{scanner_id.upper()}_KEY',
-            f'API_KEY_{scanner_id.upper()}',
-        ):
+        for pattern in credential_env_names(scanner_id, scanner.name):
             val = self._env_state.get(pattern)
             if val:
                 return val
         return None
 
     def _get_api_key_for_scanner(self, scanner_id: str) -> str | None:
-        """Get API key for scanner with multiple fallback strategies."""
-        # Priority order for API key lookup:
-        strategies: list[Callable[[], str | None]] = [
-            # 1. Primary: Scanner name-based variables (e.g., ETHERSCAN_KEY)
-            lambda: os.getenv(f'{self._scanners[scanner_id].name.upper().replace(" ", "_")}_KEY'),
-            # 2. Fallback: Scanner ID-based variables (e.g., ETH_KEY) - for backward compatibility
-            lambda: os.getenv(f'{scanner_id.upper()}_KEY'),
-            lambda: os.getenv(f'{scanner_id.upper()}_API_KEY'),
-            # 3. Generic patterns
-            lambda: os.getenv(f'SCANNER_{scanner_id.upper()}_KEY'),
-            lambda: os.getenv(f'API_KEY_{scanner_id.upper()}'),
-            # 4. Already set in scanner config
-            lambda: self._scanners[scanner_id].api_key,
-        ]
+        """Get API key for scanner with multiple fallback strategies.
 
-        for strategy in strategies:
-            try:
-                api_key = strategy()
-                if api_key:
-                    return api_key
-            except KeyError:
-                continue
-
+        Checks the shared candidate list (:func:`credential_env_names` — the
+        ONE priority order) against ``os.environ``; a key already stored on
+        the scanner config is the last resort. An unknown scanner id has no
+        name-based candidate and no cached key, so only the id-based env
+        candidates apply and the result is ``None`` when none is set.
+        """
+        scanner = self._scanners.get(scanner_id)
+        for pattern in credential_env_names(scanner_id, scanner.name if scanner else None):
+            api_key = os.getenv(pattern)
+            if api_key:
+                return api_key
+        if scanner is not None and scanner.api_key:
+            return scanner.api_key
         return None
 
     def register_scanner(self, scanner_id: str, config_data: dict[str, Any]) -> None:
@@ -500,17 +527,23 @@ class ConfigurationManager:
         from .chain_registry import V2_QUERY_AUTH_API_KINDS
 
         v2_scanners = V2_QUERY_AUTH_API_KINDS - {'eth'}
+        # The family's shared fallback credential is the *eth* scanner's
+        # primary env var (ETHERSCAN_KEY) — taken from the ONE pattern via the
+        # pristine builtin definition, not retyped as a literal here.
+        family_fallback: str | None = None
         if scanner_id in v2_scanners:
-            # Try ETHERSCAN_KEY as fallback for V2 API scanners
-            etherscan_key = os.getenv('ETHERSCAN_KEY') or self._env_state.get('ETHERSCAN_KEY')
-            if etherscan_key:
-                return etherscan_key
+            eth_builtin = self._get_builtin_scanner('eth')
+            if eth_builtin is not None:
+                family_fallback = credential_env_names('eth', eth_builtin.name)[0]
+                family_key = os.getenv(family_fallback) or self._env_state.get(family_fallback)
+                if family_key:
+                    return family_key
 
         if config.requires_api_key:
             suggestions = self._get_api_key_suggestions(scanner_id)
-            # Add ETHERSCAN_KEY to suggestions for V2 scanners
-            if scanner_id in v2_scanners and 'ETHERSCAN_KEY' not in suggestions:
-                suggestions.insert(0, 'ETHERSCAN_KEY')
+            # Add the family fallback to suggestions for V2 scanners
+            if family_fallback is not None and family_fallback not in suggestions:
+                suggestions.insert(0, family_fallback)
             raise ValueError(
                 f'API key required for {config.name}. '
                 f'Set one of these environment variables: {", ".join(suggestions)}'
@@ -521,18 +554,11 @@ class ConfigurationManager:
     def _get_api_key_suggestions(self, scanner_id: str) -> list[str]:
         """Get suggestions for API key environment variable names.
 
-        Deduplicated, first spelling kept: a scanner whose display name equals
-        its id (``nodereal``) would otherwise be told to set ``NODEREAL_KEY``
-        twice, both in this error and in ``list_all_configurations()``.
+        Exactly the lookup candidates of :func:`credential_env_names` in
+        priority order, so suggestion text cannot drift from the real lookup.
         """
-        scanner_name = self.get_scanner_config(scanner_id).name.upper().replace(' ', '_')
-        candidates = [
-            f'{scanner_name}_KEY',  # Primary format: ETHERSCAN_KEY
-            f'{scanner_id.upper()}_KEY',  # Fallback: ETH_KEY
-            f'{scanner_id.upper()}_API_KEY',  # Alternative: ETH_API_KEY
-            f'SCANNER_{scanner_id.upper()}_KEY',  # Generic: SCANNER_ETH_KEY
-        ]
-        return list(dict.fromkeys(candidates))
+        scanner_name = self.get_scanner_config(scanner_id).name
+        return list(credential_env_names(scanner_id, scanner_name))
 
     def get_supported_scanners(self) -> list[str]:
         """Get list of all supported scanner names."""
@@ -574,9 +600,9 @@ class ConfigurationManager:
 
         for scanner_id, config in self._scanners.items():
             if config.requires_api_key:
-                # Use primary format: scanner name + _KEY (e.g., ETHERSCAN_KEY)
-                scanner_name = config.name.upper().replace(' ', '_')
-                primary_var = f'{scanner_name}_KEY'
+                # Primary format = first candidate of the ONE credential
+                # pattern: scanner name + _KEY (e.g., ETHERSCAN_KEY).
+                primary_var = credential_env_names(scanner_id, config.name)[0]
                 lines.extend(
                     [
                         f'# {config.name} ({config.base_domain})',
