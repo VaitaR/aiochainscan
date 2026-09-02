@@ -25,6 +25,7 @@ class _TokenClientProtocol(Protocol):
         contract_address: str,
         batch_size: int = 1000,
         on_progress: ProgressCallback | None = None,
+        guarantee_complete: bool = True,
     ) -> Any: ...
 
 
@@ -80,13 +81,21 @@ class TokenMixin:
         self: _TokenClientProtocol,
         contract_address: str,
         on_progress: ProgressCallback | None = None,
+        guarantee_complete: bool = True,
     ) -> JSONList:
-        """Get all token holders by aggregating streaming batches."""
+        """Get all token holders by aggregating streaming batches.
+
+        ``guarantee_complete`` (default ``True``) forbids silent truncation:
+        an overflowing block range is split until complete, and
+        ``PaginationDataLossError`` is raised if it cannot be. Pass ``False``
+        for the cheaper pre-1.0 behaviour.
+        """
         return await collect_all(
             self.iter_token_holders_streaming(
                 contract_address=contract_address,
                 batch_size=1000,
                 on_progress=on_progress,
+                guarantee_complete=guarantee_complete,
             ),
             threshold=AGGREGATION_WARNING_THRESHOLD,
             warning='Aggregating >100k token holders in memory. '

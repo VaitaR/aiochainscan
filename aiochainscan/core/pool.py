@@ -701,6 +701,7 @@ class ChainscanPool(
         to_block: int | str | None = 'latest',
         batch_size: int = 1000,
         on_progress: ProgressCallback | None = None,
+        guarantee_complete: bool = True,
     ) -> AsyncIterator[list[dict[str, Any]]]:
         """Stream transaction batches, pinned to one provider per call.
 
@@ -721,6 +722,7 @@ class ChainscanPool(
                 to_block=to_block,
                 batch_size=batch_size,
                 on_progress=progress,
+                guarantee_complete=guarantee_complete,
             )
 
         return self._pinned_stream('iter_transactions_streaming', factory)
@@ -732,6 +734,7 @@ class ChainscanPool(
         to_block: int | str | None = 'latest',
         batch_size: int = 1000,
         on_progress: ProgressCallback | None = None,
+        guarantee_complete: bool = True,
     ) -> AsyncIterator[list[dict[str, Any]]]:
         """Stream internal-transaction batches, pinned per call."""
 
@@ -747,6 +750,7 @@ class ChainscanPool(
                 to_block=to_block,
                 batch_size=batch_size,
                 on_progress=progress,
+                guarantee_complete=guarantee_complete,
             )
 
         return self._pinned_stream('iter_internal_transactions_streaming', factory)
@@ -759,6 +763,7 @@ class ChainscanPool(
         contract_address: str | None = None,
         batch_size: int = 1000,
         on_progress: ProgressCallback | None = None,
+        guarantee_complete: bool = True,
     ) -> AsyncIterator[list[dict[str, Any]]]:
         """Stream ERC-20 transfer batches, pinned per call."""
 
@@ -775,6 +780,7 @@ class ChainscanPool(
                 contract_address=contract_address,
                 batch_size=batch_size,
                 on_progress=progress,
+                guarantee_complete=guarantee_complete,
             )
 
         return self._pinned_stream('iter_token_transfers_streaming', factory)
@@ -790,6 +796,7 @@ class ChainscanPool(
         topic3: str | None = None,
         batch_size: int = 1000,
         on_progress: ProgressCallback | None = None,
+        guarantee_complete: bool = True,
     ) -> AsyncIterator[list[dict[str, Any]]]:
         """Stream event-log batches, pinned per call."""
 
@@ -809,6 +816,7 @@ class ChainscanPool(
                 topic3=topic3,
                 batch_size=batch_size,
                 on_progress=progress,
+                guarantee_complete=guarantee_complete,
             )
 
         return self._pinned_stream('iter_logs_streaming', factory)
@@ -818,6 +826,7 @@ class ChainscanPool(
         contract_address: str,
         batch_size: int = 1000,
         on_progress: ProgressCallback | None = None,
+        guarantee_complete: bool = True,
     ) -> AsyncIterator[list[dict[str, Any]]]:
         """Stream token-holder batches, pinned per call."""
 
@@ -831,6 +840,7 @@ class ChainscanPool(
                 contract_address=contract_address,
                 batch_size=batch_size,
                 on_progress=progress,
+                guarantee_complete=guarantee_complete,
             )
 
         return self._pinned_stream('iter_token_holders_streaming', factory)

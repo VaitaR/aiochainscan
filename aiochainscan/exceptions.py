@@ -220,6 +220,77 @@ class ChainscanWaitTimeoutError(ChainscanClientError, TimeoutError):
         )
 
 
+class CompletenessUnavailableError(ChainscanClientError):
+    """Raised when ``guarantee_complete`` cannot be honoured for an endpoint.
+
+    Sibling of :class:`PaginationDataLossError`, for the case splitting cannot
+    address: the endpoint has **no splittable dimension** on this provider.
+    Token holders are the practical example — a holder list has no block range,
+    so a provider that caps its result window can never serve a complete one,
+    no matter how the request is narrowed.
+
+    This is a statement about the provider, not about the data: another
+    provider that paginates the same method by an exhaustible cursor
+    (``Scanner.result_window is None``) can serve it completely, and the
+    message names the ones that can.
+
+    Attributes:
+        method: Logical method name (``Method.TOKEN_HOLDERS.name``).
+        provider: Label of the provider that cannot complete it.
+        items_fetched: Records reachable before the window ran out.
+        api_limit: The provider's declared result window.
+        alternatives: Provider labels declaring ``method`` with no result
+            window. Computed from the scanner registry by the caller; empty
+            when none is registered.
+        confirmed: ``True`` when the provider signalled more records beyond
+            the window; ``False`` when it came back exactly full with no
+            continuation (possibly complete, unprovably so).
+    """
+
+    def __init__(
+        self,
+        method: str,
+        provider: str,
+        items_fetched: int,
+        api_limit: int,
+        alternatives: tuple[str, ...] = (),
+        *,
+        confirmed: bool = True,
+    ) -> None:
+        self.method = method
+        self.provider = provider
+        self.items_fetched = items_fetched
+        self.api_limit = api_limit
+        self.alternatives = alternatives
+        self.confirmed = confirmed
+        super().__init__(self._describe())
+
+    def _describe(self) -> str:
+        if self.confirmed:
+            cause = (
+                f'{self.provider} stopped at its {self.api_limit}-record window after '
+                f'{self.items_fetched} records and signalled more'
+            )
+        else:
+            cause = (
+                f'{self.provider} returned exactly its {self.api_limit}-record window '
+                f'({self.items_fetched} records) and offered no continuation, so the result '
+                f'is possibly truncated at exactly the cap'
+            )
+        if self.alternatives:
+            remedy = f'Providers that can serve it completely: {", ".join(self.alternatives)}.'
+        else:
+            remedy = 'No registered provider serves this method without a result window.'
+        return (
+            f'CANNOT GUARANTEE A COMPLETE {self.method} RESULT: {cause}. This endpoint has no '
+            f'block range to narrow, so range splitting cannot help. {remedy} '
+            f'Or pass guarantee_complete=False to accept a possibly truncated result.'
+        )
+
+    def __str__(self) -> str:
+        return self._describe()
+
+
 class PaginationDataLossError(ChainscanClientError):
     """Raised when a single block contains more transactions than the API's pagination limit.
 
@@ -234,6 +305,17 @@ class PaginationDataLossError(ChainscanClientError):
         items_fetched: Number of items successfully fetched (limited by API).
         api_limit: The API's maximum items per request.
         suggested_action: Human-readable guidance on how to resolve the issue.
+        start_block: Lower bound of the block range that overflowed. Defaults
+            to ``block_number`` (the single-block case).
+        end_block: Upper bound of the overflowing block range (see above).
+        confirmed: ``True`` when the provider itself signalled more records
+            beyond the window (data was definitely lost). ``False`` when the
+            window came back exactly full with no continuation — possibly
+            complete, unprovably so; see :meth:`_describe`.
+
+    An endpoint with no block-range dimension at all raises
+    :class:`CompletenessUnavailableError` instead — splitting cannot apply
+    there, so reporting it as a whale block would misdescribe it.
     """
 
     def __init__(
@@ -242,20 +324,42 @@ class PaginationDataLossError(ChainscanClientError):
         items_fetched: int,
         api_limit: int,
         suggested_action: str = 'Use GraphQL API, transaction index pagination, or topic filters.',
+        *,
+        start_block: int | None = None,
+        end_block: int | None = None,
+        confirmed: bool = True,
     ) -> None:
         self.block_number = block_number
         self.items_fetched = items_fetched
         self.api_limit = api_limit
         self.suggested_action = suggested_action
-        message = (
-            f'PAGINATION DATA LOSS DETECTED: Block {block_number} contains >={items_fetched} '
-            f'transactions, exceeding API limit of {api_limit}. Cannot fetch all data with REST API. '
-            f'Suggested action: {suggested_action}'
+        self.start_block = block_number if start_block is None else start_block
+        self.end_block = block_number if end_block is None else end_block
+        self.confirmed = confirmed
+        super().__init__(self._describe())
+
+    def _subject(self) -> str:
+        """Describe what overflowed: one block or a block range."""
+        if self.start_block != self.end_block:
+            return f'block range [{self.start_block}, {self.end_block}]'
+        return f'block {self.block_number}'
+
+    def _describe(self) -> str:
+        if self.confirmed:
+            return (
+                f'PAGINATION DATA LOSS: {self._subject()} holds more than the '
+                f'{self.api_limit}-record window this API serves, and cannot be narrowed '
+                f'further. {self.items_fetched} records were reachable; the rest are not. '
+                f'Suggested action: {self.suggested_action}'
+            )
+        return (
+            f'PAGINATION COMPLETENESS UNPROVEN: {self._subject()} returned exactly the '
+            f'{self.api_limit}-record window this API serves and offered no continuation, '
+            f'so the result is POSSIBLY truncated at exactly the cap — the API gives no way '
+            f'to tell a complete result of {self.items_fetched} records from a capped one. '
+            f'The range cannot be narrowed further. '
+            f'Suggested action: {self.suggested_action}'
         )
-        super().__init__(message)
 
     def __str__(self) -> str:
-        return (
-            f'Block {self.block_number} has >={self.items_fetched} transactions '
-            f'(limit: {self.api_limit}). {self.suggested_action}'
-        )
+        return self._describe()
