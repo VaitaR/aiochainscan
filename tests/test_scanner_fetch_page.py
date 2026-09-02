@@ -138,10 +138,18 @@ class TestFakeAdapterContract:
         txs = [tx async for tx in client.iter_transactions('0xabc')]
 
         assert [tx['hash'] for tx in txs] == ['0x1', '0x2', '0x3']
-        # First page: only the address
-        assert fake.seen_params[0] == {'address': '0xabc'}
+        # First page: the uniform public-dialect params every scanner now
+        # receives (a real BlockScout V2 scanner filters the keys its
+        # endpoint never took — see the real-adapter tests below).
+        first = fake.seen_params[0]
+        assert first['address'] == '0xabc'
+        assert first['start_block'] == 0
+        assert first['page'] == 1
         # Second page: the cursor was merged back into params
-        assert fake.seen_params[1] == {'address': '0xabc', 'block_number': 5, 'index': 1}
+        second = fake.seen_params[1]
+        assert second['address'] == '0xabc'
+        assert second['block_number'] == 5
+        assert second['index'] == 1
         # None cursor terminated iteration (no over-fetch)
         assert len(fake.seen_params) == 2
 

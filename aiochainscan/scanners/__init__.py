@@ -6,7 +6,7 @@ through the Scanner base class and registry system.
 """
 
 from ..core.method import Method
-from .base import Scanner
+from .base import Scanner, spec_declares_block_range
 
 # Global scanner registry: (name, version) -> Scanner class
 SCANNER_REGISTRY: dict[tuple[str, str], type[Scanner]] = {}
@@ -93,6 +93,28 @@ def scanners_serving_completely(method: Method) -> tuple[str, ...]:
     )
 
 
+def scanners_serving_block_range(method: Method) -> tuple[str, ...]:
+    """Labels of registered scanners that declare a block range for ``method``.
+
+    Derived from ``Scanner.supports_block_range`` (spec ``param_map``, never
+    scanner names). Used to name working alternatives when the configured
+    provider would silently drop a bounded block range.
+
+    Args:
+        method: Logical method to look for.
+
+    Returns:
+        Sorted ``'name/version'`` labels; empty when none qualifies.
+    """
+    return tuple(
+        sorted(
+            f'{name}/{version}'
+            for (name, version), scanner in SCANNER_REGISTRY.items()
+            if method in scanner.SPECS and spec_declares_block_range(scanner.SPECS[method])
+        )
+    )
+
+
 # Import scanner implementations to trigger registration
 # This must be done after register_scanner is defined to avoid circular imports
 from .blockscout_v1 import BlockScoutV1  # noqa: E402
@@ -106,6 +128,7 @@ __all__ = [
     'get_scanner_class',
     'list_scanners',
     'scanners_serving_completely',
+    'scanners_serving_block_range',
     'EtherscanV2',
     'BlockScoutV1',
     'BlockScoutV2Scanner',

@@ -34,7 +34,7 @@ class TruncatingExplorer:
 
     Mirrors ``tests/test_pagination_guarantee.py::TruncatingExplorer`` (kept
     as a separate copy so this file stands alone) — a request for
-    ``[startblock, endblock]`` sees only the first ``result_window`` matching
+    ``[start_block, end_block]`` sees only the first ``result_window`` matching
     records, exactly the silent-truncation failure mode Track C exists for.
     Items carry every field the ``domain.normalize`` mappers read for
     transactions/token-transfers/internal-transactions/logs so normalization
@@ -69,8 +69,8 @@ class TruncatingExplorer:
     async def fetch(
         self, params: dict[str, Any]
     ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
-        start = int(params['startblock'])
-        end = int(params['endblock'])
+        start = int(params['start_block'])
+        end = int(params['end_block'])
         page = int(params.get('page', 1))
         offset = int(params['offset'])
         self.requests.append((start, end, page))
@@ -93,6 +93,9 @@ class _StubScanner:
     def __init__(self, explorer: TruncatingExplorer) -> None:
         self.explorer = explorer
         self.result_window = explorer.result_window
+
+    def supports_block_range(self, method: Any) -> bool:
+        return True  # emulates an Etherscan-like provider (ranged specs)
 
     async def fetch_page(
         self, method: Any, params: dict[str, Any]
@@ -266,18 +269,21 @@ async def test_get_all_internal_transactions_normalized_opt_out_still_truncates(
 
 
 class _LogsStubScanner:
-    """Minimal page provider for EVENT_LOGS (fromBlock/toBlock params)."""
+    """Minimal page provider for EVENT_LOGS (from_block/to_block params)."""
 
     def __init__(self, explorer: TruncatingExplorer) -> None:
         self.explorer = explorer
         self.result_window = explorer.result_window
 
+    def supports_block_range(self, method: Any) -> bool:
+        return True  # emulates an Etherscan-like provider (ranged specs)
+
     async def fetch_page(
         self, method: Any, params: dict[str, Any]
     ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
         remapped = {
-            'startblock': params['fromBlock'],
-            'endblock': params['toBlock'],
+            'start_block': params['from_block'],
+            'end_block': params['to_block'],
             'page': params.get('page', 1),
             'offset': params['offset'],
         }
