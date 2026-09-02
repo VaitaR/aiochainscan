@@ -24,6 +24,7 @@ from ..ports.rate_limiter import RateLimiter, RetryPolicy
 from ..scanners import get_scanner_class
 from ..scanners.base import Scanner
 from ..services.pagination import (
+    PaginationContext,
     iter_items,
     iter_pages,
     normalize_items,
@@ -442,6 +443,21 @@ class ChainscanClient(
     # PUBLIC API - Typed convenience methods with autocomplete support
     # =========================================================================
 
+    def _pagination_context(self, method: Method) -> PaginationContext:
+        """Identity passed to the pagination engine for honest error messages.
+
+        ``alternatives`` is computed from the scanner registry, not hardcoded:
+        any registered scanner declaring ``method`` with no result window can
+        serve it completely.
+        """
+        from ..scanners import scanners_serving_completely
+
+        return PaginationContext(
+            method=method.name,
+            provider=f'{self.scanner_name}/{self.scanner_version}',
+            alternatives=scanners_serving_completely(method),
+        )
+
     # =========================================================================
     # STREAMING API - Memory-efficient iteration with optional decoding
     # =========================================================================
@@ -527,6 +543,7 @@ class ChainscanClient(
             decode=decode,
             guarantee_complete=guarantee_complete,
             result_window=self._scanner.result_window,
+            context=self._pagination_context(Method.ACCOUNT_TRANSACTIONS),
         ):
             yield tx
 
@@ -610,6 +627,7 @@ class ChainscanClient(
             operation='transactions',
             guarantee_complete=guarantee_complete,
             result_window=self._scanner.result_window,
+            context=self._pagination_context(Method.ACCOUNT_TRANSACTIONS),
         ):
             yield batch
 
@@ -661,6 +679,7 @@ class ChainscanClient(
             operation='internal_transactions',
             guarantee_complete=guarantee_complete,
             result_window=self._scanner.result_window,
+            context=self._pagination_context(Method.ACCOUNT_INTERNAL_TXS),
         ):
             yield batch
 
@@ -716,6 +735,7 @@ class ChainscanClient(
             operation='token_transfers',
             guarantee_complete=guarantee_complete,
             result_window=self._scanner.result_window,
+            context=self._pagination_context(Method.ACCOUNT_ERC20_TRANSFERS),
         ):
             yield batch
 
@@ -783,6 +803,7 @@ class ChainscanClient(
             operation='logs',
             guarantee_complete=guarantee_complete,
             result_window=self._scanner.result_window,
+            context=self._pagination_context(Method.EVENT_LOGS),
         ):
             yield batch
 
@@ -834,6 +855,7 @@ class ChainscanClient(
             operation='token_holders',
             guarantee_complete=guarantee_complete,
             result_window=self._scanner.result_window,
+            context=self._pagination_context(Method.TOKEN_HOLDERS),
         ):
             yield batch
 
@@ -946,6 +968,7 @@ class ChainscanClient(
             decode=_decode_with_abi(decode_log_data, abi),
             guarantee_complete=guarantee_complete,
             result_window=self._scanner.result_window,
+            context=self._pagination_context(Method.EVENT_LOGS),
         ):
             yield log
 

@@ -193,6 +193,15 @@ async with ChainscanClient.from_config('etherscan', 'ethereum') as client:
 >   page boundary. BlockScout V1's cap is *assumed* equal to Etherscan's: it
 >   could not be confirmed from this repo, and over-assuming only costs
 >   requests while under-assuming loses data.
+> - **Reaching the cap has two flavours** and the error says which. The
+>   provider offered a continuation at the cap → records are definitely being
+>   cut off (`confirmed=True`). The window came back exactly full with *no*
+>   continuation → possibly complete, possibly capped, and the API offers no
+>   way to tell (`confirmed=False`, message says "POSSIBLY truncated"). No
+>   probe can settle the ambiguous case: it is precisely the case where the
+>   provider returned no cursor, and cursors are opaque, so there is nothing
+>   to request a further page with. Complete data is therefore never described
+>   as lost.
 > - **The split is adaptive**: on overflow the block range is cut at the block
 >   of the last record the provider managed to serve (arithmetic bisect only
 >   when items carry no block number), and each half is strictly narrower, so
@@ -201,11 +210,25 @@ async with ChainscanClient.from_config('etherscan', 'ethereum') as client:
 >   truncated attempt is discarded rather than yielded, so nothing duplicates),
 >   a buffer bounded by `result_window` items, and one unnecessary split for a
 >   range holding *exactly* the cap.
-> - **`PaginationDataLossError`** carries `start_block` / `end_block` /
->   `api_limit` / `items_fetched`. It fires when a single block still exceeds
->   the cap, and for requests with no block range to narrow —
->   `get_all_token_holders` on Etherscan is the practical case: a token with
->   >=10_000 holders now raises instead of quietly returning 10_000.
+> - **Two failure types, deliberately not one.**
+>   `PaginationDataLossError` (`start_block` / `end_block` / `api_limit` /
+>   `items_fetched` / `confirmed`) means a real block range was narrowed until
+>   a *single block* still exceeded the cap — splitting worked and ran out.
+>   `CompletenessUnavailableError` (`method` / `provider` / `alternatives` /
+>   `api_limit` / `items_fetched` / `confirmed`) means the endpoint has **no
+>   splittable dimension** on this provider, so narrowing cannot apply at all;
+>   its message names the providers that *can* serve the method completely,
+>   computed from the scanner registry via
+>   `scanners.scanners_serving_completely(method)` (a scanner qualifies by
+>   declaring the method with `result_window is None`) — nothing is hardcoded.
+> - **Visible break: `get_all_token_holders` / `iter_token_holders_streaming`
+>   on Etherscan.** A holder list has no block range, so for a token with
+>   >=10_000 holders the call now raises `CompletenessUnavailableError`
+>   instead of silently returning the first 10_000. The remedy is a provider
+>   switch — `blockscout_v2` serves holders natively via
+>   `/api/v2/tokens/{addr}/holders` and follows `next_page_params` to
+>   exhaustion — or `guarantee_complete=False` to accept truncation
+>   deliberately. The error message states both.
 > - `guarantee_complete=False` restores the pre-1.0 behaviour (fewer requests
 >   on wide ranges, silent truncation possible). `ChainscanPool` forwards the
 >   flag to its member clients.
@@ -376,6 +399,8 @@ Every `Method` enum value (33 total) maps to typed convenience methods on `Chain
 | Wrap async generator with `@retry` | Apply retry inside generator at page-fetch level | Tenacity completes when generator is created, not exhausted |
 | Reset adaptive offset per page | Persist offset state across all pages | "Yo-yo effect" doubles API requests |
 | Skip whale blocks silently | Raise `PaginationDataLossError` | Silent data loss is unacceptable |
+| Report a rangeless capped endpoint as a whale block | Raise `CompletenessUnavailableError` naming a provider that can serve it | Holder lists have no range to split - "could not split" misdescribes it and offers no remedy |
+| Call complete data "lost" when the window came back exactly full | Say *possibly* truncated (`confirmed=False`) | A false error on correct data is not loud, it is wrong |
 | Trust a partial page to mean "end of data" | Treat `>= Scanner.result_window` records as overflow | A capped page/offset API truncates with a partial page and no error |
 | Split a range in fixed-width windows | Bisect on the *observed* overflow boundary | Fixed windows cost requests where data is sparse and still truncate where it is dense |
 
@@ -426,7 +451,7 @@ Every `Method` enum value (33 total) maps to typed convenience methods on `Chain
 | Scanner | Version | Free? | Key Env Var | Method coverage |
 |---------|---------|-------|-------------|-----------------|
 | BlockScout | v1 | ✅ Yes | - | Etherscan-like surface minus token holders (its Etherscan-compat layer answers "Unknown action" for the token module holder actions); `TX_BY_HASH`/`PROXY_*` served via the instance's `/api/eth-rpc` JSON-RPC (see below) |
-| BlockScout | **v2** | ✅ Yes | - | Subset: `ACCOUNT_BALANCE`, `ACCOUNT_TRANSACTIONS`, `ACCOUNT_TOKEN_PORTFOLIO`, `CONTRACT_ABI`, `BLOCK_BY_NUMBER`, `TOKEN_HOLDERS` (native `/api/v2/tokens/{addr}/holders`), `TOKEN_HOLDER_COUNT` (token info `holders_count`) |
+| BlockScout | **v2** | ✅ Yes | - | Cursor-paginated (no result window → the only provider that can guarantee a complete `TOKEN_HOLDERS` list). Subset: `ACCOUNT_BALANCE`, `ACCOUNT_TRANSACTIONS`, `ACCOUNT_TOKEN_PORTFOLIO`, `CONTRACT_ABI`, `BLOCK_BY_NUMBER`, `TOKEN_HOLDERS` (native `/api/v2/tokens/{addr}/holders`), `TOKEN_HOLDER_COUNT` (token info `holders_count`) |
 | Etherscan | v2 | ❌ No | `ETHERSCAN_KEY` | Full Etherscan-like surface + token holders (`tokenholderlist`/`topholders`/`tokenholdercount` are PRO endpoints) — all 33 `Method` values |
 | NodeReal | v1 | Free tier | `NODEREAL_KEY` | BSC-only subset (22 `Method` values) incl. the only `CONTRACT_ABI`/`CONTRACT_SOURCE`/`ACCOUNT_INTERNAL_TXS` alternative for keyless-free BSC analytics |
 
@@ -607,7 +632,8 @@ Semantics:
 from aiochainscan.exceptions import (
     ChainscanRateLimitError,      # Retry with backoff
     ChainscanNetworkError,        # Retry (connection issues)
-    PaginationDataLossError,      # Whale block - manual handling needed
+    PaginationDataLossError,      # Whale block: a single block over the API's cap
+    CompletenessUnavailableError, # Endpoint has no splittable dimension here (.alternatives)
     ChainscanDataError,           # Data contract violation
     MethodNotDeclaredError,       # ValueError subclass: method not in SPECS
     ProviderPoolExhaustedError,   # Pool: every provider failed (.attempts)
