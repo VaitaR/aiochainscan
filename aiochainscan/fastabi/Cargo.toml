@@ -18,8 +18,16 @@ thiserror = "1.0"
 twox-hash = "1.6"
 dashmap = "6"
 mini-moka = "0.10"
-arrow = { version = "53", default-features = false, features = ["ffi"] }
-pyo3-arrow = "0.5"
+# Optional: zero-copy Arrow output for decode_many_to_arrow(). Off by default —
+# benchmarked (docs/V1_PLAN.md Track A) as a small win (~2x on a 150k-row batch,
+# ~0.17s absolute) next to the network time (~0.5-1.3s per single explorer page)
+# that dominates any real pagination workload. Enable with `--features arrow`.
+arrow = { version = "53", default-features = false, features = ["ffi"], optional = true }
+pyo3-arrow = { version = "0.5", optional = true }
+
+[features]
+default = []
+arrow = ["dep:arrow", "dep:pyo3-arrow"]
 
 [build-dependencies]
 pyo3-build-config = "0.22"
