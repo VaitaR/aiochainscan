@@ -293,6 +293,11 @@ class NodeRealScanner(Scanner):
 
     supported_networks = {'bsc', 'bnb', 'binance', 'bsc-testnet'}
 
+    # ``fetch_page`` already walks the block range in 1000-block windows and
+    # follows ``pageKey`` inside each one, so no result window is exposed to
+    # the pagination engine (see base class).
+    result_window = None
+
     auth_mode = 'query'  # informational; the key rides in the URL path
     auth_field = 'apikey'
 

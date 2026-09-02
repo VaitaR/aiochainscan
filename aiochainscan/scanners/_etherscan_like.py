@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..constants import API_MAX_OFFSET_ETHERSCAN
 from ..core.endpoint import PARSERS, EndpointSpec
 from ..core.method import Method
 from .base import Scanner
@@ -14,6 +15,14 @@ class EtherscanLikeScanner(Scanner):
 
     auth_mode = 'query'
     auth_field = 'apikey'
+
+    # page/offset REST: ``page * offset`` is bounded, so a block range holding
+    # more than this many matching records is truncated without any error.
+    # Verified in-repo for Etherscan only (``constants.py`` documents the
+    # ``page * offset <= 10_000`` rule); BlockScout V1 inherits it because
+    # assuming a cap that may not exist only costs extra requests, while
+    # missing a real one loses data.
+    result_window = API_MAX_OFFSET_ETHERSCAN
 
     async def fetch_page(
         self,

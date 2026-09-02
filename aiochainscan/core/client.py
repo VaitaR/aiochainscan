@@ -453,6 +453,7 @@ class ChainscanClient(
         from_block: int = 0,
         to_block: int | str | None = 'latest',
         batch_size: int = 1000,
+        guarantee_complete: bool = True,
     ) -> AsyncIterator[dict[str, Any]]:
         """
         Iterate through transactions one at a time with optional decoding.
@@ -500,7 +501,14 @@ class ChainscanClient(
         )
         if is_blockscout_v2:
             params: dict[str, Any] = {'address': address}
-        elif abi is None and from_block == 0 and (to_block is None or to_block == 'latest'):
+        elif (
+            abi is None
+            and from_block == 0
+            and (to_block is None or to_block == 'latest')
+            and not guarantee_complete
+        ):
+            # Rangeless shortcut: fewer params, but nothing to split if the
+            # provider's result window is hit.
             params = {'address': address, 'page': 1, 'offset': batch_size}
         else:
             end_block = _resolve_end_block_int(to_block)
@@ -513,7 +521,13 @@ class ChainscanClient(
                 'sort': 'asc',
             }
 
-        async for tx in iter_items(fetch, params, decode=decode):
+        async for tx in iter_items(
+            fetch,
+            params,
+            decode=decode,
+            guarantee_complete=guarantee_complete,
+            result_window=self._scanner.result_window,
+        ):
             yield tx
 
     # =========================================================================
@@ -527,6 +541,7 @@ class ChainscanClient(
         to_block: int | str | None = 'latest',
         batch_size: int = 1000,
         on_progress: 'ProgressCallback | None' = None,
+        guarantee_complete: bool = True,
     ) -> AsyncIterator[list[dict[str, Any]]]:
         """
         Stream transactions in batches for maximum memory efficiency.
@@ -545,6 +560,15 @@ class ChainscanClient(
             to_block: Ending block number or 'latest' (default: 'latest')
             batch_size: Number of transactions per batch (default: 1000)
             on_progress: Optional callback for progress updates
+
+            guarantee_complete: When ``True`` (default) the engine detects a
+                provider result-window overflow and splits the block range
+                until every matching record is returned, raising
+                ``PaginationDataLossError`` if a single block still exceeds
+                the cap. ``False`` restores the pre-1.0 behaviour: fewer
+                requests on wide ranges, at the risk of silent truncation.
+                Inert for scanners that paginate by opaque cursor
+                (``Scanner.result_window is None``).
 
         Yields:
             Batches of transaction dictionaries (list[dict])
@@ -584,6 +608,8 @@ class ChainscanClient(
             params,
             on_progress=on_progress,
             operation='transactions',
+            guarantee_complete=guarantee_complete,
+            result_window=self._scanner.result_window,
         ):
             yield batch
 
@@ -594,6 +620,7 @@ class ChainscanClient(
         to_block: int | str | None = 'latest',
         batch_size: int = 1000,
         on_progress: 'ProgressCallback | None' = None,
+        guarantee_complete: bool = True,
     ) -> AsyncIterator[list[dict[str, Any]]]:
         """
         Stream internal transactions in batches for maximum memory efficiency.
@@ -604,6 +631,15 @@ class ChainscanClient(
             to_block: Ending block number or 'latest' (default: 'latest')
             batch_size: Number of transactions per batch (default: 1000)
             on_progress: Optional callback for progress updates
+
+            guarantee_complete: When ``True`` (default) the engine detects a
+                provider result-window overflow and splits the block range
+                until every matching record is returned, raising
+                ``PaginationDataLossError`` if a single block still exceeds
+                the cap. ``False`` restores the pre-1.0 behaviour: fewer
+                requests on wide ranges, at the risk of silent truncation.
+                Inert for scanners that paginate by opaque cursor
+                (``Scanner.result_window is None``).
 
         Yields:
             Batches of internal transaction dictionaries
@@ -623,6 +659,8 @@ class ChainscanClient(
             params,
             on_progress=on_progress,
             operation='internal_transactions',
+            guarantee_complete=guarantee_complete,
+            result_window=self._scanner.result_window,
         ):
             yield batch
 
@@ -634,6 +672,7 @@ class ChainscanClient(
         contract_address: str | None = None,
         batch_size: int = 1000,
         on_progress: 'ProgressCallback | None' = None,
+        guarantee_complete: bool = True,
     ) -> AsyncIterator[list[dict[str, Any]]]:
         """
         Stream ERC20 token transfers in batches for maximum memory efficiency.
@@ -645,6 +684,15 @@ class ChainscanClient(
             contract_address: Filter by specific token contract (optional)
             batch_size: Number of transfers per batch (default: 1000)
             on_progress: Optional callback for progress updates
+
+            guarantee_complete: When ``True`` (default) the engine detects a
+                provider result-window overflow and splits the block range
+                until every matching record is returned, raising
+                ``PaginationDataLossError`` if a single block still exceeds
+                the cap. ``False`` restores the pre-1.0 behaviour: fewer
+                requests on wide ranges, at the risk of silent truncation.
+                Inert for scanners that paginate by opaque cursor
+                (``Scanner.result_window is None``).
 
         Yields:
             Batches of token transfer dictionaries
@@ -666,6 +714,8 @@ class ChainscanClient(
             params,
             on_progress=on_progress,
             operation='token_transfers',
+            guarantee_complete=guarantee_complete,
+            result_window=self._scanner.result_window,
         ):
             yield batch
 
@@ -680,6 +730,7 @@ class ChainscanClient(
         topic3: str | None = None,
         batch_size: int = 1000,
         on_progress: 'ProgressCallback | None' = None,
+        guarantee_complete: bool = True,
     ) -> AsyncIterator[list[dict[str, Any]]]:
         """
         Stream event logs in batches for maximum memory efficiency.
@@ -694,6 +745,15 @@ class ChainscanClient(
             topic3: Indexed parameter 3 (optional)
             batch_size: Number of logs per batch (default: 1000)
             on_progress: Optional callback for progress updates
+
+            guarantee_complete: When ``True`` (default) the engine detects a
+                provider result-window overflow and splits the block range
+                until every matching record is returned, raising
+                ``PaginationDataLossError`` if a single block still exceeds
+                the cap. ``False`` restores the pre-1.0 behaviour: fewer
+                requests on wide ranges, at the risk of silent truncation.
+                Inert for scanners that paginate by opaque cursor
+                (``Scanner.result_window is None``).
 
         Yields:
             Batches of event log dictionaries
@@ -721,6 +781,8 @@ class ChainscanClient(
             params,
             on_progress=on_progress,
             operation='logs',
+            guarantee_complete=guarantee_complete,
+            result_window=self._scanner.result_window,
         ):
             yield batch
 
@@ -729,6 +791,7 @@ class ChainscanClient(
         contract_address: str,
         batch_size: int = 1000,
         on_progress: 'ProgressCallback | None' = None,
+        guarantee_complete: bool = True,
     ) -> AsyncIterator[list[dict[str, Any]]]:
         """
         Stream token holders in batches for maximum memory efficiency.
@@ -743,6 +806,15 @@ class ChainscanClient(
             batch_size: Number of holders per batch (default: 1000; Etherscan
                 caps a page at 1000)
             on_progress: Optional callback for progress updates
+
+            guarantee_complete: When ``True`` (default) the engine detects a
+                provider result-window overflow and splits the block range
+                until every matching record is returned, raising
+                ``PaginationDataLossError`` if a single block still exceeds
+                the cap. ``False`` restores the pre-1.0 behaviour: fewer
+                requests on wide ranges, at the risk of silent truncation.
+                Inert for scanners that paginate by opaque cursor
+                (``Scanner.result_window is None``).
 
         Yields:
             Batches of token holder dictionaries
@@ -760,6 +832,8 @@ class ChainscanClient(
             params,
             on_progress=on_progress,
             operation='token_holders',
+            guarantee_complete=guarantee_complete,
+            result_window=self._scanner.result_window,
         ):
             yield batch
 
@@ -809,6 +883,7 @@ class ChainscanClient(
         batch_size: int = 1000,
         topics: list[str] | None = None,
         topic_operators: list[str] | None = None,
+        guarantee_complete: bool = True,
     ) -> AsyncIterator[dict[str, Any]]:
         """
         Iterate through event logs one at a time with optional decoding.
@@ -869,6 +944,8 @@ class ChainscanClient(
             page_fetcher(self._scanner, Method.EVENT_LOGS),
             params,
             decode=_decode_with_abi(decode_log_data, abi),
+            guarantee_complete=guarantee_complete,
+            result_window=self._scanner.result_window,
         ):
             yield log
 
