@@ -34,6 +34,7 @@ class _LogsClientProtocol(Protocol):
         topic3: str | None = None,
         batch_size: int = 1000,
         on_progress: ProgressCallback | None = None,
+        guarantee_complete: bool = True,
     ) -> Any: ...
 
 
@@ -93,6 +94,7 @@ class LogsMixin:
         topic2: str | None = None,
         topic3: str | None = None,
         on_progress: ProgressCallback | None = None,
+        guarantee_complete: bool = True,
     ) -> JSONList:
         return await collect_all(
             self.iter_logs_streaming(
@@ -105,6 +107,7 @@ class LogsMixin:
                 topic3=topic3,
                 batch_size=1000,
                 on_progress=on_progress,
+                guarantee_complete=guarantee_complete,
             ),
             threshold=AGGREGATION_WARNING_THRESHOLD,
             warning='Aggregating >100k logs in memory. '

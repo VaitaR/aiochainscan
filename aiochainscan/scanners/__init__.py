@@ -5,6 +5,7 @@ This module provides a unified interface for different blockchain scanner APIs
 through the Scanner base class and registry system.
 """
 
+from ..core.method import Method
 from .base import Scanner
 
 # Global scanner registry: (name, version) -> Scanner class
@@ -69,6 +70,29 @@ def list_scanners() -> dict[tuple[str, str], type[Scanner]]:
     return dict(SCANNER_REGISTRY)
 
 
+def scanners_serving_completely(method: Method) -> tuple[str, ...]:
+    """Labels of registered scanners that can serve ``method`` in full.
+
+    "In full" means the scanner declares ``method`` and has no result window
+    (``Scanner.result_window is None``): it paginates by a server-issued cursor
+    that runs to exhaustion, so no cap can truncate it. Used to name a working
+    alternative when the configured provider cannot guarantee completeness.
+
+    Args:
+        method: Logical method to look for.
+
+    Returns:
+        Sorted ``'name/version'`` labels; empty when none qualifies.
+    """
+    return tuple(
+        sorted(
+            f'{name}/{version}'
+            for (name, version), scanner in SCANNER_REGISTRY.items()
+            if scanner.result_window is None and method in scanner.SPECS
+        )
+    )
+
+
 # Import scanner implementations to trigger registration
 # This must be done after register_scanner is defined to avoid circular imports
 from .blockscout_v1 import BlockScoutV1  # noqa: E402
@@ -81,6 +105,7 @@ __all__ = [
     'register_scanner',
     'get_scanner_class',
     'list_scanners',
+    'scanners_serving_completely',
     'EtherscanV2',
     'BlockScoutV1',
     'BlockScoutV2Scanner',
