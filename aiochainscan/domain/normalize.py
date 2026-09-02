@@ -192,7 +192,7 @@ def normalize_transaction(item: Mapping[str, Any]) -> Transaction:
         nonce=_int_or_none(item.get('nonce')),
         timestamp=_timestamp_or_none(_first(item, 'timeStamp', 'timestamp')),
         is_error=_is_error(item),
-        input_data=item.get('input'),
+        input_data=_first(item, 'input', 'raw_input'),
         provider_data=freeze_provider_data(item),
     )
 

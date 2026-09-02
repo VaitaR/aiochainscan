@@ -240,6 +240,14 @@ def test_normalize_transaction_blockscout_v2_native_fixture():
     assert tx.to_address is not None
 
 
+def test_normalize_transaction_blockscout_calldata_comes_from_raw_input():
+    """BlockScout V2 names the calldata field ``raw_input``; Etherscan uses ``input``."""
+    raw = load_fixture('transaction.json')
+    assert 'input' not in raw  # guard: if BlockScout ever adds `input`, revisit the alias order
+    tx = normalize_transaction(raw)
+    assert tx.input_data == raw['raw_input']
+
+
 def test_normalize_token_transfer_blockscout_v2_native_fixture():
     xfer = normalize_token_transfer(load_fixture('token_transfer.json'))
     assert xfer.transaction_hash is not None
