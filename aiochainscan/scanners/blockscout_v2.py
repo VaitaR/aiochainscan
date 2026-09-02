@@ -21,10 +21,8 @@ from typing import TYPE_CHECKING, Any, ClassVar
 from ..core.endpoint import EndpointSpec
 from ..core.method import Method
 from ..core.url_builder import UrlBuilder
-from ..crypto import to_checksum_address
-from ..exceptions import ChainscanClientError, ChainscanNetworkError, MethodNotDeclaredError
 from . import register_scanner
-from .base import Scanner
+from .base import Scanner, checksummed_holder_address, translate_unexpected_errors
 
 if TYPE_CHECKING:
     from ..network import Network
@@ -38,6 +36,10 @@ if TYPE_CHECKING:
 def _parse_balance(response: dict[str, Any]) -> str:
     """
     Extract balance from V2 address response.
+
+    Deliberately NOT shared with ``nodereal._parse_balance``: this one reads
+    a dict envelope whose ``coin_balance`` is already a decimal Wei string,
+    while NodeReal normalizes a bare ``eth_getBalance`` hex quantity.
 
     Response format:
     {
@@ -106,16 +108,6 @@ def _parse_raw(response: dict[str, Any]) -> dict[str, Any]:
     return response
 
 
-def _checksummed_holder_address(value: Any) -> Any:
-    """Checksum a holder address, passing through values EIP-55 cannot digest."""
-    if isinstance(value, str):
-        try:
-            return to_checksum_address(value)
-        except ValueError:
-            return value
-    return value
-
-
 def _normalize_token_holder_entry(entry: dict[str, Any]) -> dict[str, Any]:
     """Flatten one ``/tokens/{address}/holders`` entry to the unified shape.
 
@@ -126,7 +118,7 @@ def _normalize_token_holder_entry(entry: dict[str, Any]) -> dict[str, Any]:
     holder = entry.get('address')
     address = holder.get('hash') if isinstance(holder, dict) else holder
     return {
-        'address': _checksummed_holder_address(address),
+        'address': checksummed_holder_address(address),
         'value': str(entry.get('value') or '0'),
     }
 
@@ -425,21 +417,17 @@ class BlockScoutV2Scanner(Scanner):
             'Accept-Encoding': 'gzip, deflate',
         }
 
-        if self._network_client is None:
-            raise RuntimeError(
-                f'{self.name} v{self.version}: network_client is required. '
-                'Create scanner via ChainscanClient.from_config() which injects it automatically.'
-            )
+        network = self._require_network_client()
 
         if spec.http_method == 'GET':
-            return await self._network_client.request(
+            return await network.request(
                 method='GET',
                 url=url,
                 params=query_params if query_params else None,
                 headers=headers,
             )
         else:  # POST
-            return await self._network_client.request(
+            return await network.request(
                 method='POST',
                 url=url,
                 json_data=query_params if query_params else None,
@@ -465,14 +453,7 @@ class BlockScoutV2Scanner(Scanner):
         Returns:
             Tuple of (items, next_cursor)
         """
-        if method not in self.SPECS:
-            available = [str(m) for m in self.SPECS]
-            raise MethodNotDeclaredError(
-                f'Method {method} not supported by {self.name} v{self.version}. '
-                f'Available: {", ".join(available)}'
-            )
-
-        spec = self.SPECS[method]
+        spec = self._spec_for(method)
         raw_response = await self._request_raw(spec, **params)
 
         if isinstance(raw_response, dict):
@@ -520,36 +501,16 @@ class BlockScoutV2Scanner(Scanner):
             ValueError: If method is not supported
             Exception: On API errors
         """
-        if method not in self.SPECS:
-            available = [str(m) for m in self.SPECS]
-            raise MethodNotDeclaredError(
-                f'Method {method} not supported by {self.name} v{self.version}. '
-                f'Available: {", ".join(available)}'
-            )
+        spec = self._spec_for(method)
 
-        spec = self.SPECS[method]
+        # Missing-client guard before error translation: a missing Network is
+        # a programming error (RuntimeError), never a network failure.
+        self._require_network_client()
 
-        if self._network_client is None:
-            raise RuntimeError(
-                f'{self.name} v{self.version}: network_client is required. '
-                'Create scanner via ChainscanClient.from_config() which injects it automatically.'
-            )
-
-        try:
+        with translate_unexpected_errors(f'Blockscout V2 unexpected error for {self.base_url}'):
             raw_response = await self._request_raw(spec, **params)
 
             return spec.parse_response(raw_response)
-
-        except ChainscanClientError:
-            # Re-raise our own exceptions (transport, API and validation
-            # errors such as the expected-chain guard) unchanged — never
-            # mask them as opaque network failures.
-            raise
-        except Exception as e:
-            raise ChainscanNetworkError(
-                f'Blockscout V2 unexpected error for {self.base_url}: {e}',
-                retryable=False,
-            ) from e
 
     # ========================================================================
     # Scanner-port methods (explicit dependencies, see docstrings)
@@ -574,18 +535,14 @@ class BlockScoutV2Scanner(Scanner):
         spec = self.SPECS[Method.ACCOUNT_BALANCE]
         url = self._build_url(spec, address=address)
 
-        if self._network_client is None:
-            raise RuntimeError(
-                f'{self.name} v{self.version}: network_client is required. '
-                'Create scanner via ChainscanClient.from_config() which injects it automatically.'
-            )
+        network = self._require_network_client()
 
         headers = {
             'Accept': 'application/json',
             'Accept-Encoding': 'gzip, deflate',
         }
 
-        result = await self._network_client.request(method='GET', url=url, headers=headers)
+        result = await network.request(method='GET', url=url, headers=headers)
         if isinstance(result, dict):
             return dict(result)
         return {}

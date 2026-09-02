@@ -6,7 +6,7 @@ One-line entries for domain terms used across aiochainscan.
 - **Port** — Interface in `aiochainscan/ports/` defining a capability the domain needs; surviving ports: `cache`, `progress`, `rate_limiter`.
 - **Adapter** — Concrete implementation of a port in `aiochainscan/adapters/`; surviving: `memory_cache`, `aiolimiter_adapter`, `simple_rate_limiter`, `retry_exponential`, `tenacity_retry`.
 - **Scanner** — Per-explorer API adapter (`scanners/`) mapping `Method` enum values to `EndpointSpec` (path, params, parser) via a `SPECS` dict.
-- **EndpointSpec** — Frozen dataclass in `core/endpoint.py` describing one scanner endpoint; `PARSERS` registry holds shared response parsers (`etherscan`, `raw`).
+- **EndpointSpec** — Frozen dataclass in `core/endpoint.py` describing one scanner endpoint; shared response parsers (e.g. `etherscan_parser`) are plain callables referenced directly from specs.
 - **Streaming aggregation** — Pagination strategy behind `get_all_*`: pages are fetched and materialized via a streaming path so `iter_*_streaming` can run in constant memory.
 - **Page cursor** — Opaque dict returned by `Scanner.fetch_page` next to the items; `None` means "no more pages", otherwise the caller merges it into the params of the next `fetch_page` call (e.g. BlockScout V2 `next_page_params`, Etherscan page/offset).
 - **Pagination engine** — The single deep module owning every paginated loop (`aiochainscan/services/pagination.py`): `iter_pages`/`iter_items` (batches/items over `Scanner.fetch_page`, opaque cursor merge, `None` termination, cycle/advance guards, progress), `normalize_items` (response → items), `collect_all` (get_all_* materialization + 100k warning), `page_fetcher` (binds scanner+method).

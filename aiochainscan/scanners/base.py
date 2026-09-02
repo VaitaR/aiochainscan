@@ -3,14 +3,61 @@ Base scanner class for implementing different blockchain explorer APIs.
 """
 
 from abc import ABC
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any, Literal
 
 from ..chain_registry import resolve_chain_id
-from ..core.endpoint import EndpointSpec
+from ..core.endpoint import EndpointSpec, coerce_response_items
 from ..core.method import Method
 from ..core.url_builder import UrlBuilder
-from ..exceptions import MethodNotDeclaredError
+from ..crypto import to_checksum_address
+from ..exceptions import ChainscanClientError, ChainscanNetworkError, MethodNotDeclaredError
 from ..network import Network
+
+
+def hex_block_tag(value: Any) -> Any:
+    """Coerce a block identifier to a JSON-RPC hex-quantity tag.
+
+    ``int`` and decimal-digit strings (``123``, ``'123'``) become ``'0x...'``
+    tags; anything else passes through unchanged (``'latest'``, an existing
+    ``'0x...'`` tag). Shared by the scanners that route block-shaped methods
+    through JSON-RPC (BlockScout V1 eth-rpc, NodeReal eth_*).
+    """
+    if isinstance(value, int):
+        return hex(value)
+    if isinstance(value, str) and value.isdigit():
+        return hex(int(value))
+    return value
+
+
+def checksummed_holder_address(value: Any) -> Any:
+    """Checksum a holder address, passing through values EIP-55 cannot digest."""
+    if isinstance(value, str):
+        try:
+            return to_checksum_address(value)
+        except ValueError:
+            return value
+    return value
+
+
+@contextmanager
+def translate_unexpected_errors(context: str) -> Iterator[None]:
+    """Error-translation ladder shared by the concrete scanners.
+
+    Every library error propagates unchanged: all ``Chainscan*`` exceptions
+    (transport, API, proxy, rate limit — the enumerated classes some scanners
+    listed individually are all subclasses of :class:`ChainscanClientError`)
+    must keep their identity so the Network retry policy and pool failure
+    classification keep working. Any other exception is masked as a
+    non-retryable :class:`ChainscanNetworkError` carrying ``context``.
+    """
+    try:
+        yield
+    except ChainscanClientError:
+        raise
+    except Exception as exc:
+        raise ChainscanNetworkError(f'{context}: {exc}', retryable=False) from exc
 
 
 class Scanner(ABC):
@@ -163,13 +210,41 @@ class Scanner(ABC):
 
     @staticmethod
     def _coerce_items(result: Any) -> list[dict[str, Any]]:
-        """Best-effort coercion of a parsed response into a list of items."""
-        if isinstance(result, list):
-            return list(result)
-        if isinstance(result, dict):
-            items = result.get('items')
-            return list(items) if items else []
-        return []
+        """Best-effort coercion of a parsed response into a list of items.
+
+        Canonical implementation: :func:`core.endpoint.coerce_response_items`
+        (shared with ``services.pagination.normalize_items``).
+        """
+        return coerce_response_items(result)
+
+    def _spec_for(self, method: Method) -> EndpointSpec:
+        """Return the endpoint spec for ``method`` or raise the standard error.
+
+        Raises:
+            MethodNotDeclaredError: If ``method`` is not in this scanner's
+                SPECS (message names the scanner and its available methods).
+        """
+        if method not in self.SPECS:
+            available = [str(m) for m in self.SPECS]
+            raise MethodNotDeclaredError(
+                f'Method {method} not supported by {self.name} v{self.version}. '
+                f'Available: {", ".join(available)}'
+            )
+        return self.SPECS[method]
+
+    def _require_network_client(self) -> Network:
+        """Return the injected :class:`Network` or raise the standard RuntimeError.
+
+        The scanner does not own HTTP: a client must have been injected via
+        ``ChainscanClient.from_config()`` (the constructor accepts ``None``
+        only because construction and wiring are separate steps).
+        """
+        if self._network_client is None:
+            raise RuntimeError(
+                f'{self.name} v{self.version}: network_client is required. '
+                'Create scanner via ChainscanClient.from_config() which injects it automatically.'
+            )
+        return self._network_client
 
     async def call(self, method: Method, **params: Any) -> Any:
         """
@@ -186,22 +261,10 @@ class Scanner(ABC):
             ValueError: If method is not supported
             Various network/API errors
         """
-        if method not in self.SPECS:
-            available = [str(m) for m in self.SPECS]
-            raise MethodNotDeclaredError(
-                f'Method {method} not supported by {self.name} v{self.version}. '
-                f'Available: {", ".join(available)}'
-            )
-
-        spec = self.SPECS[method]
+        spec = self._spec_for(method)
         request_data = self._build_request(spec, **params)
 
-        if self._network_client is None:
-            raise RuntimeError(
-                f'{self.name} v{self.version}: network_client is required. '
-                'Create scanner via ChainscanClient.from_config() which injects it automatically.'
-            )
-        network = self._network_client
+        network = self._require_network_client()
 
         if spec.http_method == 'GET':
             raw_response = await network.get(
