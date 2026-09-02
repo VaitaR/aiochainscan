@@ -375,7 +375,7 @@ Every `Method` enum value (33 total) maps to typed convenience methods on `Chain
 | `adapters/memory_cache.py` | In-memory LRU | O(1) ops, asyncio.Lock |
 | `adapters/aiolimiter_adapter.py` | Rate limiting | Token bucket, burst=1 |
 | `convert.py` | Wei/hex/datetime conversion helpers | Exact `Decimal` math, hex-aware int parsing, tz-aware UTC |
-| `crypto.py` | Keccak-256, EIP-55 checksum | fastabi → eth-utils fallback chain |
+| `crypto.py` | Keccak-256, EIP-55 checksum | fastabi → eth-utils → pure-Python (`_keccak.py`) fallback chain — the base install always has a working backend |
 | `decode.py` | ABI decoding (Python) | Wraps Rust FFI, orjson parsing |
 | `fastabi/src/lib.rs` | ABI decoding (Rust) | Returns JSON, LRU cache |
 | `mcp/` | MCP server for AI agents | Adapter over `ChainscanClient` — see MCP Server section |
