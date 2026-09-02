@@ -19,14 +19,50 @@ class EndpointSpec:
     http_method: Literal['GET', 'POST']
     """HTTP method to use for the request."""
 
-    path: str
-    """Relative path for the endpoint (e.g., '/api', '/api/v5/explorer')."""
+    path: str = ''
+    """Relative path for the endpoint (e.g., '/api', '/api/v5/explorer').
+
+    Optional: dialect scanners whose URLs are built outside the spec (their
+    ``_perform_request`` override owns the transport, e.g. JSON-RPC endpoints
+    with the API key in the URL path) leave it empty rather than declare a
+    path nothing reads.
+    """
 
     query: dict[str, Any] = field(default_factory=dict)
-    """Static query parameters that are always included."""
+    """Static parameters that are always included.
+
+    ``query``-style specs: static query parameters. ``rpc-positional`` specs:
+    static trailing positional constants, appended verbatim after the mapped
+    values in declaration order (the key documents the value's meaning, e.g.
+    ``{'include_full_tx_objects': False}``).
+    """
 
     param_map: dict[str, str] = field(default_factory=dict)
-    """Maps public parameter names to scanner-specific parameter names."""
+    """Maps public parameter names to scanner-specific parameter names.
+
+    For ``rpc-positional`` style the declaration order IS the positional wire
+    order; for ``rpc-object`` style the values are the keys of the object
+    argument. Alternate tolerated input spellings (aliases) are declared here
+    too — first declared wins — so the executed builders, the block-range
+    capability and the consistency sweep all read the same map. An empty
+    wire name declares an accepted-but-inert input: something a dialect
+    must tolerate (mixin parity) but that carries no wire parameter.
+    """
+
+    param_style: Literal['query', 'rpc-positional', 'rpc-object'] = 'query'
+    """How the mapped parameters reach the wire.
+
+    ``'query'`` (default): :meth:`map_params` builds the query string / JSON
+    body — the classic explorer-REST contract.
+
+    ``'rpc-positional'``: the wire call takes a positional parameter list
+    (JSON-RPC); the declaring scanner's builder reads ``param_map`` for the
+    public→wire sources in declared order and encodes the values.
+
+    ``'rpc-object'``: the wire call takes a single object argument (a JSON-RPC
+    filter object); the declaring scanner's object builder assembles it from
+    the ``param_map`` sources.
+    """
 
     parser: Callable[[Any], Any] | None = None
     """Optional function to transform raw API response to standardized format."""
@@ -52,11 +88,13 @@ class EndpointSpec:
         """
         Map public parameters to scanner-specific parameter names.
 
-        The ONE param-mapping implementation for every scanner: static
+        The ONE param-mapping implementation for ``query``-style specs: static
         :attr:`query` first (public params win on key collision), then the
         provided params — ``None`` values skipped, path placeholders
         excluded, names translated through :attr:`param_map`, unknown names
-        handled per :attr:`unknown_params`.
+        handled per :attr:`unknown_params`. JSON-RPC styles
+        (``rpc-positional`` / ``rpc-object``) are mapped by the declaring
+        scanner's builders from the same :attr:`param_map` declaration.
 
         Args:
             **params: Public parameter names and values
