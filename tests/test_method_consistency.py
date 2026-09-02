@@ -84,8 +84,11 @@ INVOCATIONS: dict[str, tuple[tuple[Any, ...], dict[str, Any]]] = {
     'get_erc1155_transfers': ((CHECKSUM_ADDRESS,), {'contract_address': CONTRACT_ADDRESS}),
     'get_nft_portfolio': ((CHECKSUM_ADDRESS,), {}),
     'get_all_transactions': ((CHECKSUM_ADDRESS,), {}),
+    'get_all_transactions_normalized': ((CHECKSUM_ADDRESS,), {}),
     'get_all_token_transfers': ((CHECKSUM_ADDRESS,), {}),
+    'get_all_token_transfers_normalized': ((CHECKSUM_ADDRESS,), {}),
     'get_all_internal_transactions': ((CHECKSUM_ADDRESS,), {}),
+    'get_all_internal_transactions_normalized': ((CHECKSUM_ADDRESS,), {}),
     # Transactions
     'get_transaction': ((TX_HASH,), {}),
     'get_transaction_status': ((TX_HASH,), {}),
@@ -123,6 +126,7 @@ INVOCATIONS: dict[str, tuple[tuple[Any, ...], dict[str, Any]]] = {
         {'from_block': 100, 'to_block': 200, 'topic0': TRANSFER_TOPIC0},
     ),
     'get_all_logs': ((CONTRACT_ADDRESS,), {}),
+    'get_all_logs_normalized': ((CONTRACT_ADDRESS,), {}),
     'get_logs_normalized': (
         (CONTRACT_ADDRESS,),
         {'from_block': 100, 'to_block': 200, 'topic0': TRANSFER_TOPIC0},
@@ -200,6 +204,12 @@ class _RecordingClient(
     iter_internal_transactions_streaming = _empty_stream
     iter_logs_streaming = _empty_stream
     iter_token_holders_streaming = _empty_stream
+    # get_all_*_normalized mixin methods call these (defined on ChainscanClient
+    # itself, next to the streaming versions above) — stub them the same way.
+    iter_transactions_normalized = _empty_stream
+    iter_token_transfers_normalized = _empty_stream
+    iter_internal_transactions_normalized = _empty_stream
+    iter_logs_normalized = _empty_stream
 
 
 def _public_convenience_methods(mixin: type) -> list[str]:

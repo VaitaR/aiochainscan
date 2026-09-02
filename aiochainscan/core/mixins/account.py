@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any, Protocol
 
 from ...domain.models import Address
@@ -59,6 +60,37 @@ class _AccountClientProtocol(Protocol):
         on_progress: ProgressCallback | None = None,
         guarantee_complete: bool = True,
     ) -> Any: ...
+
+    def iter_transactions_normalized(
+        self,
+        address: str,
+        from_block: int = 0,
+        to_block: int | str | None = 'latest',
+        batch_size: int = 1000,
+        on_progress: ProgressCallback | None = None,
+        guarantee_complete: bool = True,
+    ) -> AsyncIterator[list[Transaction]]: ...
+
+    def iter_token_transfers_normalized(
+        self,
+        address: str,
+        from_block: int = 0,
+        to_block: int | str | None = 'latest',
+        contract_address: str | None = None,
+        batch_size: int = 1000,
+        on_progress: ProgressCallback | None = None,
+        guarantee_complete: bool = True,
+    ) -> AsyncIterator[list[TokenTransfer]]: ...
+
+    def iter_internal_transactions_normalized(
+        self,
+        address: str,
+        from_block: int = 0,
+        to_block: int | str | None = 'latest',
+        batch_size: int = 1000,
+        on_progress: ProgressCallback | None = None,
+        guarantee_complete: bool = True,
+    ) -> AsyncIterator[list[InternalTransaction]]: ...
 
 
 class AccountMixin:
@@ -324,3 +356,99 @@ class AccountMixin:
             'Consider using iter_internal_transactions_streaming() to avoid OOM.',
             logger=logger,
         )
+
+    # =========================================================================
+    # NORMALIZED "GET ALL" API - complete history, mapped onto domain models
+    # =========================================================================
+    #
+    # Each materializes the client's matching ``iter_*_normalized`` generator
+    # (defined on ``ChainscanClient`` itself, next to ``iter_*_streaming`` —
+    # see core/client.py), which normalizes items batch-by-batch as they
+    # arrive, never after collecting the raw list. ``guarantee_complete`` is
+    # forwarded unchanged: the completeness engine underneath
+    # (``services/pagination.py``) decides whether a batch is complete before
+    # normalization ever sees it.
+
+    async def get_all_transactions_normalized(
+        self: _AccountClientProtocol,
+        address: str,
+        from_block: int = 0,
+        to_block: int | str | None = None,
+        on_progress: ProgressCallback | None = None,
+        guarantee_complete: bool = True,
+    ) -> list[Transaction]:
+        """Materialize ``iter_transactions_normalized`` into one list.
+
+        Same completeness guarantee as :meth:`get_all_transactions`; the only
+        difference is the item type (``Transaction`` instead of ``dict``).
+        """
+        items: list[Transaction] = []
+        async for batch in self.iter_transactions_normalized(
+            address=address,
+            from_block=from_block,
+            to_block=to_block,
+            batch_size=1000,
+            on_progress=on_progress,
+            guarantee_complete=guarantee_complete,
+        ):
+            items.extend(batch)
+            if len(items) == AGGREGATION_WARNING_THRESHOLD:
+                logger.warning(
+                    'Aggregating >100k normalized transactions in memory. '
+                    'Consider using iter_transactions_normalized() to avoid OOM.'
+                )
+        return items
+
+    async def get_all_token_transfers_normalized(
+        self: _AccountClientProtocol,
+        address: str,
+        contract_address: str | None = None,
+        from_block: int = 0,
+        to_block: int | str | None = None,
+        on_progress: ProgressCallback | None = None,
+        guarantee_complete: bool = True,
+    ) -> list[TokenTransfer]:
+        """Materialize ``iter_token_transfers_normalized`` into one list."""
+        items: list[TokenTransfer] = []
+        async for batch in self.iter_token_transfers_normalized(
+            address=address,
+            from_block=from_block,
+            to_block=to_block,
+            contract_address=contract_address,
+            batch_size=1000,
+            on_progress=on_progress,
+            guarantee_complete=guarantee_complete,
+        ):
+            items.extend(batch)
+            if len(items) == AGGREGATION_WARNING_THRESHOLD:
+                logger.warning(
+                    'Aggregating >100k normalized token transfers in memory. '
+                    'Consider using iter_token_transfers_normalized() to avoid OOM.'
+                )
+        return items
+
+    async def get_all_internal_transactions_normalized(
+        self: _AccountClientProtocol,
+        address: str,
+        from_block: int = 0,
+        to_block: int | str | None = None,
+        on_progress: ProgressCallback | None = None,
+        guarantee_complete: bool = True,
+    ) -> list[InternalTransaction]:
+        """Materialize ``iter_internal_transactions_normalized`` into one list."""
+        items: list[InternalTransaction] = []
+        async for batch in self.iter_internal_transactions_normalized(
+            address=address,
+            from_block=from_block,
+            to_block=to_block,
+            batch_size=1000,
+            on_progress=on_progress,
+            guarantee_complete=guarantee_complete,
+        ):
+            items.extend(batch)
+            if len(items) == AGGREGATION_WARNING_THRESHOLD:
+                logger.warning(
+                    'Aggregating >100k normalized internal transactions in memory. '
+                    'Consider using iter_internal_transactions_normalized() to avoid OOM.'
+                )
+        return items

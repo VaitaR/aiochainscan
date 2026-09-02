@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any, Protocol
 
 from ...domain.models import Address
@@ -36,6 +37,20 @@ class _LogsClientProtocol(Protocol):
         on_progress: ProgressCallback | None = None,
         guarantee_complete: bool = True,
     ) -> Any: ...
+
+    def iter_logs_normalized(
+        self,
+        address: str | None,
+        from_block: int = 0,
+        to_block: int | str | None = 'latest',
+        topic0: str | None = None,
+        topic1: str | None = None,
+        topic2: str | None = None,
+        topic3: str | None = None,
+        batch_size: int = 1000,
+        on_progress: ProgressCallback | None = None,
+        guarantee_complete: bool = True,
+    ) -> AsyncIterator[list[Log]]: ...
 
 
 class LogsMixin:
@@ -114,3 +129,44 @@ class LogsMixin:
             'Consider using iter_logs_streaming() to avoid OOM.',
             logger=logger,
         )
+
+    async def get_all_logs_normalized(
+        self: _LogsClientProtocol,
+        address: str,
+        from_block: int = 0,
+        to_block: int | str | None = None,
+        topic0: str | None = None,
+        topic1: str | None = None,
+        topic2: str | None = None,
+        topic3: str | None = None,
+        on_progress: ProgressCallback | None = None,
+        guarantee_complete: bool = True,
+    ) -> list[Log]:
+        """Materialize ``iter_logs_normalized`` into one list.
+
+        Same completeness guarantee as :meth:`get_all_logs`; the only
+        difference is the item type (``Log`` instead of ``dict``). The
+        generator itself lives on ``ChainscanClient`` next to
+        ``iter_logs_streaming`` (see core/client.py) and normalizes each
+        batch as it arrives, never after collecting the raw list.
+        """
+        items: list[Log] = []
+        async for batch in self.iter_logs_normalized(
+            address,
+            from_block=from_block,
+            to_block=to_block,
+            topic0=topic0,
+            topic1=topic1,
+            topic2=topic2,
+            topic3=topic3,
+            batch_size=1000,
+            on_progress=on_progress,
+            guarantee_complete=guarantee_complete,
+        ):
+            items.extend(batch)
+            if len(items) == AGGREGATION_WARNING_THRESHOLD:
+                logger.warning(
+                    'Aggregating >100k normalized logs in memory. '
+                    'Consider using iter_logs_normalized() to avoid OOM.'
+                )
+        return items
