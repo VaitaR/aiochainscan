@@ -34,9 +34,29 @@ class EndpointSpec:
     requires_api_key: bool = True
     """Whether this endpoint requires API key authentication."""
 
+    unknown_params: Literal['pass', 'drop'] = 'pass'
+    """Policy for public parameter names the ``param_map`` does not declare.
+
+    ``'pass'`` (default) forwards them under their public name — the classic
+    Etherscan contract, where any extra query parameter rides along.
+    ``'drop'`` silently discards them — for strict path-parameter APIs
+    (BlockScout V2) whose endpoints reject unknown query keys and where a
+    server cursor must never smuggle undeclared state onto the wire.
+
+    Path parameters are excluded from the mapped query regardless of this
+    policy: a public name appearing as ``{name}`` in :attr:`path` is consumed
+    by URL substitution, never sent as a query/body parameter.
+    """
+
     def map_params(self, **params: Any) -> dict[str, Any]:
         """
         Map public parameters to scanner-specific parameter names.
+
+        The ONE param-mapping implementation for every scanner: static
+        :attr:`query` first (public params win on key collision), then the
+        provided params — ``None`` values skipped, path placeholders
+        excluded, names translated through :attr:`param_map`, unknown names
+        handled per :attr:`unknown_params`.
 
         Args:
             **params: Public parameter names and values
@@ -44,16 +64,20 @@ class EndpointSpec:
         Returns:
             Dictionary with scanner-specific parameter names
         """
-        mapped: dict[str, Any] = {}
+        mapped: dict[str, Any] = dict(self.query)
 
-        # Add static query parameters
-        mapped.update(self.query)
-
-        # Map provided parameters
         for public_name, value in params.items():
-            if value is not None:
-                scanner_param = self.param_map.get(public_name, public_name)
-                mapped[scanner_param] = value
+            if value is None:
+                continue
+            # Path parameter: consumed by URL substitution, never the query.
+            if f'{{{public_name}}}' in self.path:
+                continue
+            scanner_param = self.param_map.get(public_name)
+            if scanner_param is None:
+                if self.unknown_params == 'drop':
+                    continue
+                scanner_param = public_name
+            mapped[scanner_param] = value
 
         return mapped
 

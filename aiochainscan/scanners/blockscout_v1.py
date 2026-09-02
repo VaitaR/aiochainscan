@@ -13,12 +13,13 @@ Supports multiple blockchain networks through different BlockScout instances:
 
 from typing import TYPE_CHECKING, Any
 
+from ..chain_registry import BLOCKSCOUT_INSTANCE_HOSTS
 from ..core.endpoint import EndpointSpec
 from ..core.url_builder import UrlBuilder
 from ..domain.method import Method
 from . import register_scanner
 from ._etherscan_like import EtherscanLikeScanner
-from .base import hex_block_tag, translate_unexpected_errors
+from .base import hex_block_tag
 
 if TYPE_CHECKING:
     from ..network import Network
@@ -73,23 +74,9 @@ class BlockScoutV1(EtherscanLikeScanner):
         'bsc',  # BNB Smart Chain
     }
 
-    # BlockScout typically doesn't require API keys
-    auth_mode = 'query'
-    auth_field = 'apikey'
-
-    # Network to BlockScout instance mapping
-    NETWORK_INSTANCES = {
-        'eth': 'eth.blockscout.com',  # Ethereum mainnet - ADDED!
-        'sepolia': 'eth-sepolia.blockscout.com',
-        'gnosis': 'gnosis.blockscout.com',
-        'polygon': 'polygon.blockscout.com',
-        'optimism': 'optimism.blockscout.com',
-        'arbitrum': 'arbitrum.blockscout.com',
-        'base': 'base.blockscout.com',
-        'scroll': 'scroll.blockscout.com',
-        'linea': 'linea.blockscout.com',
-        'bsc': 'bsc.blockscout.com',  # BNB Smart Chain
-    }
+    # Network to BlockScout instance mapping — the shared per-alias host
+    # table from the chain registry (one table for BlockScout v1 and v2).
+    NETWORK_INSTANCES = dict(BLOCKSCOUT_INSTANCE_HOSTS)
 
     def __init__(
         self,
@@ -119,82 +106,50 @@ class BlockScoutV1(EtherscanLikeScanner):
             self.instance_domain: str | None = None
             return
 
-        # Get BlockScout instance for this network
-        self.instance_domain = self.NETWORK_INSTANCES.get(network)
-        if not self.instance_domain:
-            available = ', '.join(sorted(self.NETWORK_INSTANCES.keys()))
-            raise ValueError(
-                f"Network '{network}' not mapped to BlockScout instance. Available: {available}"
-            )
+        # Get BlockScout instance for this network (shared unknown-network
+        # ValueError shape lives on the base).
+        self.instance_domain = self._require_mapped_network(
+            self.NETWORK_INSTANCES, 'BlockScout instance'
+        )
 
-    def _build_request(self, spec: EndpointSpec, **params: Any) -> dict[str, Any]:
-        """
-        Override to handle BlockScout-specific URL building.
+    # ------------------------------------------------------------------
+    # Provider dialect (the base owns the ladder, dispatch and params)
+    # ------------------------------------------------------------------
 
-        BlockScout uses different base URLs for each network instance,
-        unlike Etherscan which uses subdomains.
-        """
-        # Get base request data from parent
-        request_data: dict[str, Any] = super()._build_request(spec, **params)
+    def _instance_root(self) -> str:
+        """Instance root for requests: custom self-hosted URL or the
+        registry-mapped public instance."""
+        return self.base_url or f'https://{self.instance_domain}'
 
-        # BlockScout often works without API keys
-        if not self.api_key:
-            # Remove empty apikey parameter
-            if spec.http_method == 'GET' and 'params' in request_data:
-                request_data['params'].pop('apikey', None)
-            elif spec.http_method == 'POST' and 'data' in request_data:
-                request_data['data'].pop('apikey', None)
+    def _request_url(self, spec: EndpointSpec, params: dict[str, Any]) -> str:
+        """Full per-instance URL: BlockScout instances live on their own
+        hosts, unlike Etherscan's shared subdomain layout."""
+        return f'{self._instance_root()}{spec.path}'
 
-        return request_data
+    def _error_context(self, method: Method) -> str:
+        return f'BlockScout unexpected error for {self.base_url or self.instance_domain}'
 
-    async def call(self, method: Method, **params: Any) -> Any:
-        """
-        Override call to use proper BlockScout instance URL.
+    async def _perform_request(
+        self,
+        spec: EndpointSpec,
+        method: Method,
+        params: dict[str, Any],
+    ) -> Any:
+        """Route proxy-shaped methods through the instance's JSON-RPC endpoint.
 
-        BlockScout instances have different base URLs, so we need to
-        construct the full URL manually. Proxy-shaped methods
-        (``eth_call``/``eth_getBalance``/``eth_getTransactionByHash``/
-        ``eth_getBlockByNumber``) route through the instance's JSON-RPC
-        endpoint because the compatibility REST does not implement
-        ``module=proxy``.
+        BlockScout instances have different base URLs (handled by the base
+        dispatch via :meth:`_request_url`); the JSON-RPC detour below is the
+        only v1-specific transport, because the compatibility REST does not
+        implement ``module=proxy`` (``eth_call``/``eth_getBalance``/
+        ``eth_getTransactionByHash``/``eth_getBlockByNumber``). The JSON-RPC
+        result arrives already unwrapped to its final shape (the Network
+        layer extracted the envelope), so the spec parser is skipped — same
+        pass-through the Etherscan proxy module's results get.
         """
         rpc_action = _JSON_RPC_ACTIONS.get(method)
         if rpc_action is not None:
             return await self._call_json_rpc(rpc_action, params)
-
-        spec = self._spec_for(method)
-        request_data = self._build_request(spec, **params)
-
-        # Build the complete BlockScout URL: custom self-hosted root or the
-        # registry-mapped public instance.
-        base_url = self.base_url or f'https://{self.instance_domain}'
-        full_url = base_url + spec.path
-
-        # Use Network layer for proper connection pooling, rate limiting, and
-        # retries. Missing-client guard sits before error translation: a
-        # missing Network is a programming error (RuntimeError), never a
-        # network failure.
-        network = self._require_network_client()
-
-        with translate_unexpected_errors(
-            f'BlockScout unexpected error for {self.base_url or self.instance_domain}'
-        ):
-            if spec.http_method == 'GET':
-                raw_response = await network.request(
-                    method='GET',
-                    url=full_url,
-                    params=request_data.get('params'),
-                    headers=request_data.get('headers', {}),
-                )
-            else:  # POST
-                raw_response = await network.request(
-                    method='POST',
-                    url=full_url,
-                    json_data=request_data.get('data'),
-                    headers=request_data.get('headers', {}),
-                )
-
-            return spec.parse_response(raw_response)
+        return await super()._perform_request(spec, method, params)
 
     async def _call_json_rpc(self, rpc_method: str, params: dict[str, Any]) -> Any:
         """Execute a proxy method via ``POST {base_url}/api/eth-rpc``.
@@ -224,10 +179,9 @@ class BlockScoutV1(EtherscanLikeScanner):
         else:  # eth_getTransactionByHash
             rpc_params = [params.get('txhash', '')]
 
-        base_url = self.base_url or f'https://{self.instance_domain}'
         return await network.request(
             method='POST',
-            url=f'{base_url}/api/eth-rpc',
+            url=f'{self._instance_root()}/api/eth-rpc',
             json_data={'jsonrpc': '2.0', 'method': rpc_method, 'params': rpc_params, 'id': 1},
             headers={},
         )

@@ -18,6 +18,7 @@ from __future__ import annotations
 import urllib.parse
 from typing import TYPE_CHECKING, Any, ClassVar
 
+from ..chain_registry import BLOCKSCOUT_INSTANCE_HOSTS
 from ..core.endpoint import EndpointSpec
 from ..core.url_builder import UrlBuilder
 from ..domain.method import Method
@@ -208,27 +209,18 @@ class BlockScoutV2Scanner(Scanner):
         'zksync',
     }
 
-    # Network -> Base URL mapping for Blockscout instances
+    # Network -> Base URL mapping for Blockscout instances — derived from the
+    # shared per-alias host table (one table for BlockScout v1 and v2).
     BASE_URLS: ClassVar[dict[str, str]] = {
-        'ethereum': 'https://eth.blockscout.com',
-        'eth': 'https://eth.blockscout.com',
-        'sepolia': 'https://eth-sepolia.blockscout.com',
-        'gnosis': 'https://gnosis.blockscout.com',
-        'polygon': 'https://polygon.blockscout.com',
-        'arbitrum': 'https://arbitrum.blockscout.com',
-        'optimism': 'https://optimism.blockscout.com',
-        'base': 'https://base.blockscout.com',
-        'scroll': 'https://scroll.blockscout.com',
-        'linea': 'https://linea.blockscout.com',
-        'zksync': 'https://zksync.blockscout.com',
+        alias: f'https://{host}' for alias, host in BLOCKSCOUT_INSTANCE_HOSTS.items()
     }
-
-    # No API key required for Blockscout V2
-    auth_mode = 'query'
-    auth_field = 'apikey'
 
     # Endpoint specifications
     # Note: path contains {address} placeholder for path parameter substitution
+    # (consumed by URL substitution — ``EndpointSpec.map_params`` never sends
+    # path params as query). ``unknown_params='drop'``: V2 endpoints reject
+    # undeclared query keys, and a server cursor must never smuggle foreign
+    # state onto the wire (pinned by tests).
     SPECS = {
         Method.ACCOUNT_BALANCE: EndpointSpec(
             http_method='GET',
@@ -237,6 +229,7 @@ class BlockScoutV2Scanner(Scanner):
             param_map={'address': 'address'},
             parser=_parse_balance,
             requires_api_key=False,
+            unknown_params='drop',
         ),
         Method.ACCOUNT_TOKEN_PORTFOLIO: EndpointSpec(
             http_method='GET',
@@ -245,6 +238,7 @@ class BlockScoutV2Scanner(Scanner):
             param_map={'address': 'address'},
             parser=_parse_token_portfolio,
             requires_api_key=False,
+            unknown_params='drop',
         ),
         Method.ACCOUNT_TRANSACTIONS: EndpointSpec(
             http_method='GET',
@@ -259,6 +253,7 @@ class BlockScoutV2Scanner(Scanner):
             },
             parser=_parse_transactions,
             requires_api_key=False,
+            unknown_params='drop',
         ),
         Method.CONTRACT_ABI: EndpointSpec(
             http_method='GET',
@@ -267,6 +262,7 @@ class BlockScoutV2Scanner(Scanner):
             param_map={'address': 'address'},
             parser=_parse_contract_abi,
             requires_api_key=False,
+            unknown_params='drop',
         ),
         Method.BLOCK_BY_NUMBER: EndpointSpec(
             http_method='GET',
@@ -275,6 +271,7 @@ class BlockScoutV2Scanner(Scanner):
             param_map={'block_number': 'block_number'},
             parser=_parse_raw,
             requires_api_key=False,
+            unknown_params='drop',
         ),
         Method.TOKEN_HOLDERS: EndpointSpec(
             http_method='GET',
@@ -289,6 +286,7 @@ class BlockScoutV2Scanner(Scanner):
             },
             parser=_parse_token_holders,
             requires_api_key=False,
+            unknown_params='drop',
         ),
         Method.TOKEN_HOLDER_COUNT: EndpointSpec(
             http_method='GET',
@@ -297,6 +295,7 @@ class BlockScoutV2Scanner(Scanner):
             param_map={'contract_address': 'contract_address'},
             parser=_parse_token_holder_count,
             requires_api_key=False,
+            unknown_params='drop',
         ),
     }
 
@@ -324,15 +323,10 @@ class BlockScoutV2Scanner(Scanner):
         super().__init__(api_key, network, url_builder, chain_id, network_client, base_url)
 
         # Resolve the instance root: explicit self-hosted URL or the
-        # per-network public instance mapping.
+        # per-network public instance mapping (shared unknown-network
+        # ValueError shape lives on the base).
         if base_url is None:
-            self.base_url = self.BASE_URLS.get(network)
-            if not self.base_url:
-                available = ', '.join(sorted(self.BASE_URLS.keys()))
-                raise ValueError(
-                    f"Network '{network}' not mapped to Blockscout V2 instance. "
-                    f'Available: {available}'
-                )
+            self.base_url = self._require_mapped_network(self.BASE_URLS, 'Blockscout V2 instance')
 
     def _build_url(self, spec: EndpointSpec, **params: Any) -> str:
         """
@@ -357,82 +351,26 @@ class BlockScoutV2Scanner(Scanner):
 
         return f'{self.base_url}{path}'
 
-    def _build_query_params(self, spec: EndpointSpec, **params: Any) -> dict[str, Any]:
-        """
-        Build query parameters, excluding path parameters.
+    # ------------------------------------------------------------------
+    # Provider dialect (the base owns the ladder, dispatch and params)
+    # ------------------------------------------------------------------
 
-        Args:
-            spec: Endpoint specification
-            **params: All parameters
+    def _request_url(self, spec: EndpointSpec, params: dict[str, Any]) -> str:
+        """Full per-instance URL with path placeholders substituted."""
+        return self._build_url(spec, **params)
 
-        Returns:
-            Query parameters dictionary
-        """
-        query_params: dict[str, Any] = {}
-
-        # Add static query parameters from spec
-        query_params.update(spec.query)
-
-        # Add any additional params that are not path parameters
-        for param_name, value in params.items():
-            placeholder = f'{{{param_name}}}'
-            # Skip if this is a path parameter
-            if placeholder not in spec.path and value is not None:
-                # Map to scanner-specific name if defined
-                if param_name not in spec.param_map:
-                    continue
-                scanner_param = spec.param_map[param_name]
-                query_params[scanner_param] = value
-
-        return query_params
-
-    async def _request_raw(self, spec: EndpointSpec, **params: Any) -> Any:
-        """
-        Perform the HTTP request for an endpoint spec and return the raw response.
-
-        Shared by :meth:`call` (which applies the spec parser) and
-        :meth:`fetch_page` (which needs the unparsed envelope to extract
-        ``next_page_params``).
-
-        Args:
-            spec: Endpoint specification
-            **params: Parameters for the method
-
-        Returns:
-            Raw (already JSON-parsed) response body
-
-        Raises:
-            RuntimeError: If no network client is injected
-            ChainscanNetworkError: On network failures
-        """
-        # Build URL with path parameters substituted
-        url = self._build_url(spec, **params)
-
-        # Build query parameters (excluding path params)
-        query_params = self._build_query_params(spec, **params)
-
-        # Headers that disable brotli compression (not always supported)
+    def _transport_headers(self, spec: EndpointSpec) -> dict[str, str]:
+        """Headers that disable brotli compression (not always supported)."""
         headers = {
             'Accept': 'application/json',
             'Accept-Encoding': 'gzip, deflate',
         }
+        if spec.http_method == 'POST':
+            headers['Content-Type'] = 'application/json'
+        return headers
 
-        network = self._require_network_client()
-
-        if spec.http_method == 'GET':
-            return await network.request(
-                method='GET',
-                url=url,
-                params=query_params if query_params else None,
-                headers=headers,
-            )
-        else:  # POST
-            return await network.request(
-                method='POST',
-                url=url,
-                json_data=query_params if query_params else None,
-                headers={**headers, 'Content-Type': 'application/json'},
-            )
+    def _error_context(self, method: Method) -> str:
+        return f'Blockscout V2 unexpected error for {self.base_url}'
 
     async def fetch_page(
         self,
@@ -443,7 +381,9 @@ class BlockScoutV2Scanner(Scanner):
         Fetch one page, preserving BlockScout V2's ``next_page_params`` cursor.
 
         Follows the base cursor contract: merge a non-``None`` cursor into
-        ``params`` for the next call; ``None`` terminates pagination.
+        ``params`` for the next call; ``None`` terminates pagination. The
+        request runs under the shared error ladder (the ``call()`` path gets
+        it from :meth:`Scanner.call`).
 
         Args:
             method: Logical method to execute
@@ -454,7 +394,12 @@ class BlockScoutV2Scanner(Scanner):
             Tuple of (items, next_cursor)
         """
         spec = self._spec_for(method)
-        raw_response = await self._request_raw(spec, **params)
+        # Missing-client guard before the ladder: a missing Network is a
+        # programming error (RuntimeError), never a network failure.
+        self._require_network_client()
+
+        with translate_unexpected_errors(self._error_context(method)):
+            raw_response = await self._perform_raw_request(spec, method, params)
 
         if isinstance(raw_response, dict):
             items = raw_response.get('items', [])
@@ -481,37 +426,6 @@ class BlockScoutV2Scanner(Scanner):
 
         return list(items) if items else [], cursor or None
 
-    async def call(self, method: Method, **params: Any) -> Any:
-        """
-        Execute a logical method call against Blockscout V2 API.
-
-        Handles:
-        - Path parameter substitution
-        - Query parameter building
-        - Response parsing
-
-        Args:
-            method: Logical method to execute
-            **params: Parameters for the method
-
-        Returns:
-            Parsed response from the API
-
-        Raises:
-            ValueError: If method is not supported
-            Exception: On API errors
-        """
-        spec = self._spec_for(method)
-
-        # Missing-client guard before error translation: a missing Network is
-        # a programming error (RuntimeError), never a network failure.
-        self._require_network_client()
-
-        with translate_unexpected_errors(f'Blockscout V2 unexpected error for {self.base_url}'):
-            raw_response = await self._request_raw(spec, **params)
-
-            return spec.parse_response(raw_response)
-
     # ========================================================================
     # Scanner-port methods (explicit dependencies, see docstrings)
     # ========================================================================
@@ -533,16 +447,11 @@ class BlockScoutV2Scanner(Scanner):
             Full address info dict
         """
         spec = self.SPECS[Method.ACCOUNT_BALANCE]
-        url = self._build_url(spec, address=address)
+        request_data = self._build_request(spec, address=address)
 
         network = self._require_network_client()
 
-        headers = {
-            'Accept': 'application/json',
-            'Accept-Encoding': 'gzip, deflate',
-        }
-
-        result = await network.request(method='GET', url=url, headers=headers)
+        result = await self._dispatch_request(spec, request_data, network)
         if isinstance(result, dict):
             return dict(result)
         return {}

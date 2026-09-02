@@ -60,18 +60,29 @@ def checksummed_holder_address(value: Any) -> Any:
 
 @contextmanager
 def translate_unexpected_errors(context: str) -> Iterator[None]:
-    """Error-translation ladder shared by the concrete scanners.
+    """Error-translation ladder applied once at the scanner seams.
 
     Every library error propagates unchanged: all ``Chainscan*`` exceptions
     (transport, API, proxy, rate limit — the enumerated classes some scanners
     listed individually are all subclasses of :class:`ChainscanClientError`)
     must keep their identity so the Network retry policy and pool failure
-    classification keep working. Any other exception is masked as a
-    non-retryable :class:`ChainscanNetworkError` carrying ``context``.
+    classification keep working, and so must
+    :class:`MethodNotDeclaredError` — a capability error (deliberately *not*
+    a ``ChainscanClientError``) that the provider pool routes on. Any other
+    exception is masked as a non-retryable :class:`ChainscanNetworkError`
+    carrying ``context``.
+
+    The base :meth:`Scanner.call` and every ``fetch_page`` path apply this
+    ladder exactly once; provider-dialect translations (e.g. NodeReal
+    JSON-RPC ``-32005``) compose inside it.
     """
     try:
         yield
     except ChainscanClientError:
+        raise
+    except MethodNotDeclaredError:
+        # Capability error (ValueError family): the pool routes on it —
+        # masking it would turn silent provider failover into a cooldown.
         raise
     except Exception as exc:
         raise ChainscanNetworkError(f'{context}: {exc}', retryable=False) from exc
@@ -187,7 +198,6 @@ class Scanner(ABC):
         else:
             self.chain_id = resolve_chain_id(network)
         self._network_client = network_client
-        self._owns_network = False  # Scanner doesn't own injected client
 
     async def fetch_page(
         self,
@@ -199,7 +209,7 @@ class Scanner(ABC):
 
         This is the pagination seam of the Scanner port: page cursors flow
         *through* this interface, so callers never reach into scanner
-        internals (``SPECS`` / ``_build_url`` / ``_build_query_params``).
+        internals (``SPECS`` / ``_build_url`` / ``map_params``).
 
         Cursor contract:
         - Returns ``(items, next_cursor)``.
@@ -207,8 +217,12 @@ class Scanner(ABC):
         - ``next_cursor`` is opaque to callers. To fetch the next page, merge
           it into ``params`` (``params = {**params, **next_cursor}``) and call
           ``fetch_page`` again. Callers must not inspect or modify its contents.
-        - Exceptions from the underlying request machinery propagate
-          unchanged; this method adds no retry or wrapping of its own.
+        - Exceptions surface through the shared error ladder: every
+          ``Chainscan*`` and capability error propagates unchanged, anything
+          unexpected is masked as a non-retryable
+          :class:`ChainscanNetworkError` (the base default routes through
+          :meth:`call`; overriding implementations apply
+          :func:`translate_unexpected_errors` themselves). No retry here.
 
         The default implementation routes through :meth:`call` and always
         terminates after a single page (cursor is ``None``). Scanners with
@@ -273,6 +287,14 @@ class Scanner(ABC):
         """
         Execute a logical method call.
 
+        The base owns the whole seam: SPECS lookup, the missing-client guard,
+        the error-translation ladder (applied exactly once — see
+        :func:`translate_unexpected_errors`), request building and the ONE
+        transport dispatch (:meth:`_perform_request`). Concrete scanners
+        override only the provider-dialect hooks
+        (:meth:`_perform_request`, :meth:`_request_url`,
+        :meth:`_transport_headers`, :meth:`_error_context`).
+
         Args:
             method: Logical method to execute
             **params: Parameters for the method
@@ -281,24 +303,139 @@ class Scanner(ABC):
             Parsed response from the API
 
         Raises:
-            ValueError: If method is not supported
+            MethodNotDeclaredError: If method is not supported (a
+                ``ValueError`` subclass)
             Various network/API errors
         """
         spec = self._spec_for(method)
-        request_data = self._build_request(spec, **params)
+        # Missing-client guard before the ladder: a missing Network is a
+        # programming error (RuntimeError), never a network failure.
+        self._require_network_client()
 
-        network = self._require_network_client()
+        with translate_unexpected_errors(self._error_context(method)):
+            return await self._perform_request(spec, method, params)
 
-        if spec.http_method == 'GET':
-            raw_response = await network.get(
-                params=request_data.get('params'), headers=request_data.get('headers')
-            )
-        else:  # POST
-            raw_response = await network.post(
-                data=request_data.get('data'), headers=request_data.get('headers')
-            )
+    async def _perform_request(
+        self,
+        spec: EndpointSpec,
+        method: Method,
+        params: dict[str, Any],
+    ) -> Any:
+        """Perform the request for ``spec`` and return the parsed result.
 
+        The default dialect is fully SPECS-driven: build the request from the
+        spec (:meth:`_build_request` — param policy, auth, chain-id
+        placeholders, URL), send it through the ONE transport dispatch
+        (:meth:`_perform_raw_request`) and apply the spec parser. Override
+        only for a provider dialect no spec can express (NodeReal JSON-RPC
+        envelopes, BlockScout V1 ``/api/eth-rpc`` proxy routing) — a dialect
+        whose transport already yields the final shape returns it directly
+        and skips the parser.
+
+        Args:
+            spec: Endpoint specification for ``method``
+            method: Logical method being executed
+            params: Public parameters (mutable copy owned by the override)
+
+        Returns:
+            Parsed response
+        """
+        raw_response = await self._perform_raw_request(spec, method, params)
         return spec.parse_response(raw_response)
+
+    async def _perform_raw_request(
+        self,
+        spec: EndpointSpec,
+        method: Method,
+        params: dict[str, Any],
+    ) -> Any:
+        """Build and send the request for ``spec``; return the raw response.
+
+        The raw seam ``fetch_page`` implementations build on (they need the
+        unparsed envelope to extract their cursor). Default implementation
+        builds via :meth:`_build_request` and dispatches via
+        :meth:`_dispatch_request`.
+        """
+        request_data = self._build_request(spec, **params)
+        network = self._require_network_client()
+        return await self._dispatch_request(spec, request_data, network)
+
+    async def _dispatch_request(
+        self,
+        spec: EndpointSpec,
+        request_data: dict[str, Any],
+        network: Network,
+    ) -> Any:
+        """The ONE transport dispatch, shared by every SPECS-driven request.
+
+        Two URL topologies, one mechanism:
+
+        - no ``'url'`` in ``request_data``: the endpoint lives at the
+          UrlBuilder's ``API_URL`` — ``network.get/post`` apply the profile's
+          filtering and signing;
+        - ``'url'`` present (a :meth:`_request_url` override): the scanner
+          owns the full URL — sent via ``network.request`` with no UrlBuilder
+          signing; GET carries query params, POST sends the mapped params as
+          a JSON body (an empty payload is sent as ``None``, matching the
+          providers that reject empty bodies).
+        """
+        url = request_data.get('url')
+        headers = request_data.get('headers')
+        if url is None:
+            if spec.http_method == 'GET':
+                return await network.get(params=request_data.get('params'), headers=headers)
+            return await network.post(data=request_data.get('data'), headers=headers)
+
+        payload = (
+            request_data.get('params') if spec.http_method == 'GET' else request_data.get('data')
+        )
+        if spec.http_method == 'GET':
+            return await network.request(
+                method='GET', url=url, params=payload or None, headers=headers
+            )
+        return await network.request(
+            method='POST', url=url, json_data=payload or None, headers=headers
+        )
+
+    def _request_url(self, spec: EndpointSpec, params: dict[str, Any]) -> str | None:
+        """Full request URL for full-URL scanners; ``None`` for UrlBuilder ones.
+
+        Default ``None``: the request targets the UrlBuilder's ``API_URL``
+        through ``network.get/post``. Full-URL scanners (per-instance hosts,
+        path placeholders) return ``f'{root}{spec.path}'`` here and their
+        requests go through ``network.request`` instead.
+        """
+        return None
+
+    def _transport_headers(self, spec: EndpointSpec) -> dict[str, str]:
+        """Per-scanner transport headers merged into every built request.
+
+        Default: none. Full-URL scanners use this for provider quirks the
+        UrlBuilder profile cannot express (e.g. BlockScout V2 advertising
+        ``gzip, deflate`` only — never brotli).
+        """
+        return {}
+
+    def _error_context(self, method: Method) -> str:
+        """Context string the error ladder stamps on unexpected failures."""
+        return f'{self.name} v{self.version} unexpected error for {method.name}'
+
+    def _require_mapped_network(self, mapping: dict[str, str], kind: str) -> str:
+        """Resolve :attr:`network` through a per-scanner URL map.
+
+        The ONE unknown-network ValueError shape, shared by every scanner
+        whose ``__init__`` resolves its endpoints from a network → URL table.
+        Unreachable through the client (the base constructor validates
+        ``supported_networks`` first and every table covers them) — kept as
+        the defensive guard for direct scanner construction.
+        """
+        resolved = mapping.get(self.network)
+        if resolved is None:
+            available = ', '.join(sorted(mapping))
+            raise ValueError(
+                f"Network '{self.network}' not mapped to a {kind}. Available: {available}"
+            )
+        return resolved
 
     def _build_request(self, spec: EndpointSpec, **params: Any) -> dict[str, Any]:
         """
@@ -309,9 +446,12 @@ class Scanner(ABC):
             **params: Method parameters
 
         Returns:
-            Dictionary with request data (params/data and headers)
+            Dictionary with request data (``headers``, ``params``/``data``
+            and, for full-URL scanners, ``url``)
         """
-        # Map parameters using the spec
+        # Map parameters using the spec (unknown-param policy + path
+        # placeholders are the spec's own declaration — see
+        # ``EndpointSpec.map_params``).
         mapped_params = spec.map_params(**params)
 
         # Substitute chain_id placeholders
@@ -321,7 +461,7 @@ class Scanner(ABC):
                     mapped_params[key] = self.chain_id
 
         # Set up authentication
-        headers = {}
+        headers: dict[str, str] = dict(self._transport_headers(spec))
         if spec.requires_api_key and self.api_key:
             if self.auth_mode == 'query':
                 mapped_params[self.auth_field] = self.api_key
@@ -329,7 +469,11 @@ class Scanner(ABC):
                 headers[self.auth_field] = self.api_key
 
         # Build request data
-        request_data = {'headers': headers}
+        request_data: dict[str, Any] = {'headers': headers}
+
+        url = self._request_url(spec, params)
+        if url is not None:
+            request_data['url'] = url
 
         if spec.http_method == 'GET':
             request_data['params'] = mapped_params
@@ -337,18 +481,6 @@ class Scanner(ABC):
             request_data['data'] = mapped_params
 
         return request_data
-
-    async def close(self) -> None:
-        """
-        Close network client if owned by this scanner.
-
-        Note: If a network_client was injected, this is a no-op since
-        the caller owns the lifecycle. Only closes self-created clients.
-        """
-        if self._owns_network and self._network_client is not None:
-            await self._network_client.close()
-            self._network_client = None
-            self._owns_network = False
 
     def supports_method(self, method: Method) -> bool:
         """

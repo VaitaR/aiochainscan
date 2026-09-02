@@ -72,7 +72,12 @@ class ChainProbeTransport(Protocol):
 
 
 def _hex_chain_id(value: Any) -> int | None:
-    """Convert a JSON-RPC ``eth_chainId`` result (``"0x1"``) to an int."""
+    """Convert a JSON-RPC ``eth_chainId`` result (``"0x1"``) to an int.
+
+    Local, not ``convert.hex_to_int``: hex quantities only (no decimal
+    strings), and a non-hex/non-string probe answer means "unknown chain"
+    (``None``) rather than corrupted data to raise on.
+    """
     if not isinstance(value, str) or not value.startswith('0x'):
         return None
     try:

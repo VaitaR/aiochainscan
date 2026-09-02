@@ -32,7 +32,11 @@ def _address_field(value: Any) -> str:
 
 
 def _int_field(value: Any) -> int:
-    """Read decimal/hex explorer scalars used by decoded domain objects."""
+    """Read decimal/hex explorer scalars used by decoded domain objects.
+
+    Local, not ``convert.hex_to_int``: missing fields default to ``0``
+    (decoded objects tolerate absent data) instead of raising.
+    """
     if isinstance(value, int):
         return value
     if isinstance(value, str) and value:
