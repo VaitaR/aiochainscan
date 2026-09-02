@@ -18,6 +18,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
+from aiochainscan.chain_registry import resolve_scanner_target
 from aiochainscan.core.client import ChainscanClient
 from aiochainscan.domain.method import Method
 from aiochainscan.domain.models import TxHash
@@ -73,7 +74,7 @@ FAST_POLL = {'timeout': 5.0, 'poll_interval': 0.01}
 def client() -> ChainscanClient:
     """Create a ChainscanClient with a mocked scanner (no network calls)."""
     with patch('aiochainscan.core.client.get_scanner_class'):
-        return ChainscanClient('etherscan', 'v2', 'eth', 'ethereum', 'test_key')
+        return ChainscanClient(resolve_scanner_target('etherscan', 'ethereum', api_key='test_key'))
 
 
 @pytest.fixture

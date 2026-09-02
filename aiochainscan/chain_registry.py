@@ -484,6 +484,32 @@ BLOCKSCOUT_CONFIG_IDS: dict[str, str] = {
     'linea': 'blockscout_linea',
 }
 
+# Networks each configuration-manager scanner id serves, in the config
+# lookup dialect ('main'/'test'-style names, not registry chain names).
+# Single source of the network-validity oracle for client construction
+# (:func:`resolve_scanner_target`); the configuration manager derives its
+# builtin ``supported_networks`` from this table instead of mirroring it.
+# BlockScout ids serve exactly their host suffix (derived from
+# :data:`BLOCKSCOUT_HOSTS`, so a new instance registers once for both).
+SCANNER_CONFIG_NETWORKS: dict[str, frozenset[str]] = {
+    'eth': frozenset({'main', 'test', 'goerli', 'sepolia'}),
+    'bsc': frozenset({'main', 'test'}),
+    'polygon': frozenset({'main', 'mumbai', 'test'}),
+    'optimism': frozenset({'main', 'goerli', 'test'}),
+    'arbitrum': frozenset({'main', 'nova', 'goerli', 'test'}),
+    'fantom': frozenset({'main', 'test'}),
+    'gnosis': frozenset({'main', 'chiado'}),
+    'flare': frozenset({'main', 'test'}),
+    'linea': frozenset({'main', 'test'}),
+    'blast': frozenset({'main', 'sepolia'}),
+    'base': frozenset({'main', 'goerli', 'sepolia'}),
+    'nodereal': frozenset({'bsc', 'bsc-testnet'}),
+    **{
+        scanner_id: frozenset({scanner_id.removeprefix('blockscout_')})
+        for scanner_id in BLOCKSCOUT_HOSTS
+    },
+}
+
 # Per-scanner network-name aliases, used for configuration-manager lookups only
 SCANNER_NETWORK_ALIASES: dict[str, dict[str, str]] = {
     'etherscan': {
@@ -527,17 +553,67 @@ CUSTOM_BASE_URL_SCANNERS: frozenset[str] = frozenset({'etherscan', 'blockscout',
 CUSTOM_NETWORK_LABEL = 'custom'
 
 
+def _resolve_scanner_identity(scanner: str, scanner_version: str | None) -> tuple[str, str]:
+    """Apply version defaulting and the ``blockscout_v2`` public alias.
+
+    'blockscout_v2' is a public alias for the ``('blockscout', 'v2')`` pair —
+    an explicit version never downgrades it (a single v2 entry point). Every
+    other scanner name passes through with its defaulted version ('v2' for
+    the registry-declared default family, 'v1' otherwise). Shared by both
+    resolution branches (alias and custom base URL) — the rename/default
+    logic lives exactly once.
+    """
+    version = (
+        scanner_version
+        if scanner_version is not None
+        else DEFAULT_SCANNER_VERSIONS.get(scanner, 'v1')
+    )
+    if scanner == 'blockscout_v2':
+        return 'blockscout', 'v2'
+    return scanner, version
+
+
+def _lookup_api_key(scanner_id: str, config_network: str) -> str:
+    """Resolve the credential for ``scanner_id`` from the configuration manager.
+
+    The registry owns the network-validity oracle for its builtin scanner ids
+    (:data:`SCANNER_CONFIG_NETWORKS`); the configuration manager owns
+    credentials only (env vars / ``.env`` / config files). Ids unknown to the
+    table — dynamically registered scanners — are served by the configuration
+    manager alone, which raises the honest ``Unknown scanner`` error for names
+    that exist nowhere.
+    """
+    supported = SCANNER_CONFIG_NETWORKS.get(scanner_id)
+    if supported is not None and config_network not in supported:
+        display_name = get_config_manager().get_scanner_config(scanner_id).name
+        raise ValueError(
+            f'Network "{config_network}" not supported by {display_name}. '
+            f'Available networks: {", ".join(sorted(supported))}'
+        )
+    return get_config_manager().get_api_key(scanner_id)
+
+
 @dataclass(frozen=True)
 class ScannerTarget:
     """Fully resolved construction target for ``ChainscanClient``.
 
     Carries exactly the values the scanner stack consumes: ``scanner_name`` /
-    ``scanner_version`` select the ``Scanner`` class, ``api_kind`` selects the
-    UrlBuilder profile, ``network`` is the canonical network name, ``api_key``
-    the resolved credential (``''`` when the scanner needs none), ``chain_id``
-    the numeric chain identifier (``None`` for custom base URLs without an
-    ``expected_chain_id`` — unknown until the instance is probed) and
-    ``base_url`` an optional custom instance root overriding the registry.
+    ``scanner_version`` select the ``Scanner`` class, ``api_kind`` +
+    ``url_network`` select the UrlBuilder profile (``url_network`` is the
+    profile-dialect network name — ``'main'`` for Ethereum mainnet, the
+    canonical registry chain name otherwise), ``network`` is the canonical
+    network name, ``api_key`` the resolved credential (``''`` when the scanner
+    needs none), ``chain_id`` the numeric chain identifier (``None`` for
+    custom base URLs without an ``expected_chain_id`` — unknown until the
+    instance is probed), ``expected_chain_id`` the caller's chain expectation
+    (validated lazily before the first request), and ``base_url`` an optional
+    custom instance root overriding the registry.
+
+    Resolution ownership: :func:`resolve_scanner_target` is the single owner
+    of chain-id and UrlBuilder-network resolution. ``ChainscanClient`` and
+    :class:`~aiochainscan.scanners.base.Scanner` trust this object and never
+    re-derive either value (the Scanner's registry fallback serves direct
+    scanner construction only, never the client path).
     """
 
     scanner_name: str
@@ -546,7 +622,9 @@ class ScannerTarget:
     api_kind: str
     api_key: str
     chain_id: int | None
+    url_network: str
     base_url: str | None = None
+    expected_chain_id: int | None = None
 
 
 def resolve_scanner_target(
@@ -612,21 +690,15 @@ def resolve_scanner_target(
             allow_http=allow_http,
         )
 
-    # Default scanner version if not provided
-    if scanner_version is None:
-        scanner_version = DEFAULT_SCANNER_VERSIONS.get(scanner, 'v1')
-
-    # 'blockscout_v2' is a public alias for ('blockscout', 'v2')
-    actual_scanner_name = scanner
-    if scanner == 'blockscout_v2':
-        actual_scanner_name = 'blockscout'
-        scanner_version = 'v2'
+    # Version defaulting + the blockscout_v2 alias (single helper, both branches)
+    actual_scanner_name, scanner_version = _resolve_scanner_identity(scanner, scanner_version)
 
     # Canonical chain resolution — raises ValueError for unknown chains
     chain_id = resolve_chain_id(network)
 
     # Canonical network name: ints resolve via the registry, strings are preserved
-    network_str = get_chain_name(chain_id) if isinstance(network, int) else str(network)
+    canonical_name = get_chain_name(chain_id)
+    network_str = canonical_name if isinstance(network, int) else str(network)
 
     # Normalize network aliases for configuration lookup only
     config_network = network_str  # Preserve original for the client property
@@ -641,18 +713,23 @@ def resolve_scanner_target(
     else:
         scanner_id = SCANNER_CONFIG_IDS.get(scanner, scanner)
 
-    # Resolve the API key
+    # Resolve the API key (registry-side network validation first — the
+    # configuration manager is a credential store, not a network oracle)
     if scanner == 'blockscout_v2':
         resolved_api_key = ''  # BlockScout V2 doesn't require API key
     elif api_key is not None:
         resolved_api_key = api_key
     else:
-        resolved_api_key = get_config_manager().create_client_config(scanner_id, config_network)[
-            'api_key'
-        ]
+        resolved_api_key = _lookup_api_key(scanner_id, config_network)
 
     # UrlBuilder api_kind (BlockScout v1 uses the network-specific scanner id)
     api_kind = scanner_id if scanner == 'blockscout' else SCANNER_API_KINDS.get(scanner, scanner)
+
+    # UrlBuilder network name, resolved exactly once on the whole
+    # construction path — THIS resolver owns it (the client and the Scanner
+    # trust the target): the canonical registry chain name, except Ethereum
+    # mainnet, whose UrlBuilder dialect name is 'main'.
+    url_network = 'main' if canonical_name == 'ethereum' else canonical_name
 
     return ScannerTarget(
         scanner_name=actual_scanner_name,
@@ -661,6 +738,8 @@ def resolve_scanner_target(
         api_kind=api_kind,
         api_key=resolved_api_key,
         chain_id=chain_id,
+        url_network=url_network,
+        expected_chain_id=expected_chain_id,
     )
 
 
@@ -687,14 +766,8 @@ def _resolve_custom_base_url_target(
             f'{scanner!r} does not support a custom base_url; supported scanners: {supported}'
         )
 
-    if scanner_version is None:
-        scanner_version = DEFAULT_SCANNER_VERSIONS.get(scanner, 'v1')
-
-    # 'blockscout_v2' is a public alias for ('blockscout', 'v2')
-    actual_scanner_name = scanner
-    if scanner == 'blockscout_v2':
-        actual_scanner_name = 'blockscout'
-        scanner_version = 'v2'
+    # Version defaulting + the blockscout_v2 alias (single helper, both branches)
+    actual_scanner_name, scanner_version = _resolve_scanner_identity(scanner, scanner_version)
 
     resolved_api_key = ''
     if actual_scanner_name == 'etherscan':
@@ -703,10 +776,8 @@ def _resolve_custom_base_url_target(
                 'expected_chain_id is required for etherscan with a custom base_url: '
                 'the V2 multichain API routes every request by chainid'
             )
-        if api_key is not None:
-            resolved_api_key = api_key
-        else:
-            resolved_api_key = get_config_manager().create_client_config('eth', 'main')['api_key']
+        # Credential lookup for the unified Etherscan endpoint
+        resolved_api_key = api_key if api_key is not None else _lookup_api_key('eth', 'main')
 
     if resolved_api_key and base_url.startswith('http://'):
         warnings.warn(
@@ -725,6 +796,8 @@ def _resolve_custom_base_url_target(
         api_kind='eth' if actual_scanner_name == 'etherscan' else 'blockscout_eth',
         api_key=resolved_api_key,
         chain_id=expected_chain_id,
+        url_network=CUSTOM_NETWORK_LABEL,
+        expected_chain_id=expected_chain_id,
         base_url=base_url,
     )
 

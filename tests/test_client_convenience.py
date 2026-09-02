@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from aiochainscan.chain_registry import resolve_scanner_target
 from aiochainscan.core.client import ChainscanClient
 from aiochainscan.domain.method import Method
 from aiochainscan.domain.models import Address, TxHash
@@ -29,9 +30,14 @@ TEST_TX_HASH = '0x' + ('a' * 64)
 
 @pytest.fixture
 def client() -> ChainscanClient:
-    """Create a ChainscanClient with a mocked scanner (no network calls)."""
+    """Create a ChainscanClient with a mocked scanner (no network calls).
+
+    Construction goes through the ScannerTarget seam: the target is resolved
+    once by ``resolve_scanner_target`` and handed to the constructor; only the
+    scanner class itself is mocked.
+    """
     with patch('aiochainscan.core.client.get_scanner_class'):
-        return ChainscanClient('etherscan', 'v2', 'eth', 'ethereum', 'test_key')
+        return ChainscanClient(resolve_scanner_target('etherscan', 'ethereum', api_key='test_key'))
 
 
 @pytest.fixture
