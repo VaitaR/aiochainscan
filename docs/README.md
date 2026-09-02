@@ -1,7 +1,9 @@
 # Documentation
 
-This directory contains user guides, design notes, and historical engineering
-records for `aiochainscan`.
+User guides, plans, and reference material for `aiochainscan`. The canonical
+project guide is [`AGENTS.md`](../AGENTS.md) at the repo root; the scanner
+method declarations in `aiochainscan/scanners/` are authoritative when a doc
+and the implementation differ.
 
 ## User guides
 
@@ -15,30 +17,28 @@ records for `aiochainscan`.
   collecting every item in memory.
 - [Migration guide](MIGRATION_GUIDE.md): moving from removed legacy entrypoints
   to `ChainscanClient`.
-- [PyPI publishing](PYPI_PUBLISHING.md): maintainer release procedure.
+- [PyPI publishing](PYPI_PUBLISHING.md): maintainer release procedure for the
+  two distributions (`aiochainscan` + `aiochainscan-fastabi`).
+
+## Plans
+
+- [V1_PLAN.md](V1_PLAN.md): v1 track plan — ground truth, decisions, and open
+  items (referenced from `AGENTS.md`).
+- [ROADMAP.md](ROADMAP.md): forward-looking feature plan.
 
 ## Reference
 
-The current public surface is defined by:
+- [skill.md](skill.md): AI-agent skill card — scanner matrix, method surface,
+  and usage rules in one compressed page.
 
-- `aiochainscan.ChainscanClient`
-- `aiochainscan.Method`
-- the scanner support declarations in `aiochainscan/scanners/`
+## Review log
 
-The repository does not currently generate a versioned API reference site.
-Method signatures and scanner declarations in the source are authoritative when
-a guide and the implementation differ.
+[`reviews/`](reviews/): review artifacts appended by tooling
+(`INDEX.md` is generated — do not edit by hand).
 
-## Engineering records
+---
 
-Files named `*_IMPLEMENTATION*.md`, `*_SUMMARY.md`, `AUDIT_*.md`,
-`QA_REPORT_*.md`, and bug-fix reports document earlier development work. They
-are retained as historical records, not as current product claims or setup
-instructions.
-
-Other technical notes, including [Streaming decoder](STREAMING_DECODER.md), may
-describe the implementation at the time they were written. Verify their paths,
-benchmarks, and status claims against the current source before relying on them.
-
-Start with the [project README](../README.md) for installation and the supported
-public API.
+One-time engineering records (February 2026 implementation summaries, bug-fix
+reports, audits, QA snapshots) were removed in the 2026-09-02 docs
+consolidation: their durable facts live in `AGENTS.md` and the guides above,
+and the originals remain recoverable from git history.

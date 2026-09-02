@@ -123,6 +123,5 @@ pip install git+https://github.com/VaitaR/aiochainscan.git@develop
 
 ## Related Documentation
 
-- [CI_SIMPLIFICATION.md](../../docs/CI_SIMPLIFICATION.md) - Why we simplified
 - [PYPI_PUBLISHING.md](../../docs/PYPI_PUBLISHING.md) - Publishing guide
 - [CONTRIBUTING.md](../../CONTRIBUTING.md) - Development guide

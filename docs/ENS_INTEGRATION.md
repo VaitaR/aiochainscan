@@ -475,8 +475,7 @@ python examples/ens_demo.py
 ## Related Documentation
 
 - [SMART_CONTRACT_API.md](SMART_CONTRACT_API.md) - SmartContract integration
-- [STREAMING_DECODER.md](STREAMING_DECODER.md) - Transaction/event decoding
-- [QUICK_REFERENCE.md](QUICK_REFERENCE.md) - API overview
+- [skill.md](skill.md) - AI-agent skill card (full method surface)
 
 ## Future Enhancements
 
