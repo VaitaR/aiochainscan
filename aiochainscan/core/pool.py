@@ -54,6 +54,7 @@ from ..exceptions import (
     ChainscanNetworkError,
     ChainscanProviderSwitchWarning,
     ChainscanRateLimitError,
+    CompletenessUnavailableError,
     MethodNotDeclaredError,
     ProviderPoolExhaustedError,
 )
@@ -218,6 +219,19 @@ def _record_attempt(attempts: list[tuple[str, Exception]], label: str, error: Ex
     """Append ``(label, error)`` keeping at most one entry per provider."""
     if all(existing != label for existing, _ in attempts):
         attempts.append((label, error))
+
+
+def _serves_completely(state: _ProviderState, method: Method) -> bool:
+    """True if this member declares ``method`` with no result window.
+
+    ``Scanner.result_window is None`` means the provider paginates by an
+    exhaustible server cursor (BlockScout V2, NodeReal) — nothing can
+    overflow it, so it can serve ``method`` completely regardless of dataset
+    size. A capped provider (``result_window`` is an int) can still succeed
+    for a dataset under its cap, but cannot GUARANTEE it, which is exactly
+    what ``guarantee_complete=True`` promises.
+    """
+    return state.client.supports_method(method) and state.client._scanner.result_window is None
 
 
 def _inject_provider_progress(label: str, callback: ProgressCallback) -> ProgressCallback:
@@ -533,6 +547,8 @@ class ChainscanPool(
         self,
         operation: str,
         factory: Callable[[_ProviderState], AsyncIterator[T]],
+        *,
+        candidates: list[_ProviderState] | None = None,
     ) -> AsyncIterator[T]:
         """Bind a pagination call to ONE provider with first-page failover.
 
@@ -549,12 +565,20 @@ class ChainscanPool(
         serve the operation — including METHOD_UNDECLARED, which deliberately
         never enters cooldown — is excluded from THIS operation for good
         instead of being re-selected in a tight loop.
+
+        Args:
+            candidates: Pre-filtered/ordered provider list for THIS call,
+                overriding :meth:`_candidates`. Used by completeness-aware
+                routing (see :meth:`_guaranteed_pinned_stream`) to exclude,
+                before any request, providers that cannot honour
+                ``guarantee_complete`` — they never appear here, so they
+                never receive a request and never enter ``attempts``.
         """
 
         async def _generate() -> AsyncIterator[T]:
             attempts: list[tuple[str, Exception]] = []
             pending: tuple[str, float] | None = None
-            for state in self._candidates():
+            for state in candidates if candidates is not None else self._candidates():
                 if state.in_cooldown(self._clock()):
                     # Skip without any HTTP attempt; keep the error that
                     # cooled the provider for the exhaustion report.
@@ -599,6 +623,81 @@ class ChainscanPool(
             raise ProviderPoolExhaustedError(operation, attempts)
 
         return _generate()
+
+    def _guaranteed_pinned_stream(
+        self,
+        operation: str,
+        method: Method,
+        factory: Callable[[_ProviderState], AsyncIterator[T]],
+    ) -> AsyncIterator[T]:
+        """Pin to a completeness-capable provider, deciding before any request.
+
+        For an endpoint with no splittable dimension (token holders being the
+        real case), a provider with a result window (``Scanner.result_window``
+        is an int) cannot GUARANTEE completeness — Track C's
+        ``CompletenessUnavailableError`` already detects the overflow, but
+        only at the END of pagination, after the whole capped window was
+        fetched and discarded. Reacting there means doubling the request
+        budget on a rate-limited free API and, worse, would require
+        restarting pagination on a different provider mid-stream — exactly
+        what the pinning invariant forbids (cursors are provider-specific).
+
+        So this decides BEFORE spending a single request: prefer a member
+        that declares ``method`` with ``result_window is None`` (runs to
+        exhaustion on an opaque cursor, nothing to overflow). Respects
+        cooldowns — a completeness-capable member that is currently cooling
+        is treated as unavailable, never as a fallback target, because
+        falling back to a capped member would defeat the whole point.
+
+        If NO pool member declares ``method`` at all, this defers entirely to
+        :meth:`_pinned_stream` with the normal candidate order, so the
+        existing METHOD_UNDECLARED capability routing (and its
+        ``ProviderPoolExhaustedError`` on total exhaustion) is unaffected —
+        that failure has nothing to do with completeness.
+        """
+        if not any(state.client.supports_method(method) for state in self._providers):
+            return self._pinned_stream(operation, factory)
+
+        now = self._clock()
+        capable = [
+            state
+            for state in self._candidates()
+            if not state.in_cooldown(now) and _serves_completely(state, method)
+        ]
+        if capable:
+            return self._pinned_stream(operation, factory, candidates=capable)
+
+        considered = tuple(state.label for state in self._providers)
+        alternatives = tuple(
+            state.label for state in self._providers if _serves_completely(state, method)
+        )
+        declaring = next(
+            (
+                state
+                for state in self._candidates()
+                if not state.in_cooldown(now) and state.client.supports_method(method)
+            ),
+            None,
+        )
+        window = declaring.client._scanner.result_window if declaring is not None else None
+        provider_desc = (
+            f'{declaring.label} (pool considered: {", ".join(considered)})'
+            if declaring is not None
+            else f'no available pool member declares it (considered: {", ".join(considered)})'
+        )
+
+        async def _raise() -> AsyncIterator[T]:
+            raise CompletenessUnavailableError(
+                method=method.name,
+                provider=provider_desc,
+                items_fetched=0,
+                api_limit=window if isinstance(window, int) else 0,
+                alternatives=alternatives,
+                confirmed=False,
+            )
+            yield  # pragma: no cover - unreachable; keeps this an async generator
+
+        return _raise()
 
     # -- public API: request routing ----------------------------------------
 
@@ -828,7 +927,16 @@ class ChainscanPool(
         on_progress: ProgressCallback | None = None,
         guarantee_complete: bool = True,
     ) -> AsyncIterator[list[dict[str, Any]]]:
-        """Stream token-holder batches, pinned per call."""
+        """Stream token-holder batches, pinned per call.
+
+        Token holders have no block range to split, so when
+        ``guarantee_complete`` is ``True`` (default) the pool routes to a
+        member that can serve the method completely (``Scanner.result_window
+        is None``) BEFORE issuing any request, rather than starting on a
+        capped provider and finding out only at the end of pagination — see
+        :meth:`_guaranteed_pinned_stream`. ``guarantee_complete=False``
+        restores the plain pinned-stream behaviour verbatim.
+        """
 
         def factory(state: _ProviderState) -> AsyncIterator[list[dict[str, Any]]]:
             progress = (
@@ -843,6 +951,10 @@ class ChainscanPool(
                 guarantee_complete=guarantee_complete,
             )
 
+        if guarantee_complete:
+            return self._guaranteed_pinned_stream(
+                'iter_token_holders_streaming', Method.TOKEN_HOLDERS, factory
+            )
         return self._pinned_stream('iter_token_holders_streaming', factory)
 
     # -- public API: DataFrame helpers ---------------------------------------
