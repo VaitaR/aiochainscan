@@ -51,6 +51,7 @@ from aiochainscan.exceptions import (
     ChainscanNetworkError,
     ChainscanProviderSwitchWarning,
     ChainscanRateLimitError,
+    CompletenessUnavailableError,
     MethodNotDeclaredError,
     ProviderPoolExhaustedError,
 )
@@ -727,6 +728,16 @@ class TestPinnedStreamMethodUndeclared:
         )
 
     async def test_stream_fails_over_to_declaring_provider(self) -> None:
+        """``guarantee_complete=False`` isolates this from completeness routing.
+
+        Both pool members are result-window-capped (v1 does not even declare
+        the method), so under the default ``guarantee_complete=True`` this
+        scenario now hits the completeness pre-check (see
+        ``TestCompletenessRouting``) and raises before any request — that is
+        the intended behaviour change. This test keeps exercising its
+        original, unrelated regression: METHOD_UNDECLARED must fail over
+        instead of spinning on the same provider.
+        """
         holder_page = [{'TokenHolderAddress': HOLDER, 'TokenHolderQuantity': '5'}]
         v1_network = _ReplayNetwork([])  # must never be asked
         etherscan_network = _ReplayNetwork([holder_page])
@@ -734,7 +745,12 @@ class TestPinnedStreamMethodUndeclared:
             [self._v1_client(v1_network), self._etherscan_client(etherscan_network)]
         )
 
-        batches = [batch async for batch in pool.iter_token_holders_streaming(TOKEN, batch_size=2)]
+        batches = [
+            batch
+            async for batch in pool.iter_token_holders_streaming(
+                TOKEN, batch_size=2, guarantee_complete=False
+            )
+        ]
 
         assert batches == [[{'address': HOLDER, 'value': '5'}]]
         assert pool.last_provider == 'etherscan/main'
@@ -755,6 +771,123 @@ class TestPinnedStreamMethodUndeclared:
         attempts = excinfo.value.attempts
         assert len(attempts) == 1
         assert isinstance(attempts[0][1], MethodNotDeclaredError)
+
+
+# ---------------------------------------------------------------------------
+# Completeness-aware routing: decide BEFORE any request, never react after
+# ---------------------------------------------------------------------------
+
+
+class TestCompletenessRouting:
+    """``guarantee_complete=True`` on a rangeless-and-capped endpoint (token
+    holders) must route to a completeness-capable member (``Scanner.
+    result_window is None``) BEFORE issuing any request, instead of starting
+    on a capped provider and only finding out at the end of pagination.
+
+    ``pool`` fixture: etherscan (priority 1, ``result_window=10_000``) then
+    blockscout (priority 2, ``result_window=None``).
+    """
+
+    async def test_routes_to_completeness_capable_provider_with_zero_requests_on_capped_one(
+        self, pool: ChainscanPool
+    ) -> None:
+        etherscan, blockscout = (p.client for p in pool._providers)
+        eth_calls = {'n': 0}
+
+        def eth_stream(*_a: Any, **_kw: Any) -> AsyncIterator[list[dict[str, Any]]]:
+            eth_calls['n'] += 1  # pragma: no cover - must never run
+            return stream_stub([{'address': HOLDER, 'value': '999'}])()
+
+        etherscan.iter_token_holders_streaming = eth_stream  # type: ignore[assignment]
+        blockscout.iter_token_holders_streaming = stream_stub(  # type: ignore[assignment]
+            [{'address': HOLDER, 'value': '5'}]
+        )
+
+        with pytest.warns(ChainscanProviderSwitchWarning):
+            batches = [batch async for batch in pool.iter_token_holders_streaming(TOKEN)]
+
+        assert batches == [[{'address': HOLDER, 'value': '5'}]]
+        assert eth_calls['n'] == 0, 'capped provider must receive zero requests'
+        assert pool.last_provider == 'blockscout/ethereum'
+
+    async def test_no_capable_provider_raises_immediately_with_zero_requests(
+        self, etherscan: ChainscanClient, clock: FakeClock
+    ) -> None:
+        """Single capped provider (etherscan) and no alternative in the pool."""
+        pool = ChainscanPool([etherscan], clock=clock)
+        eth_calls = {'n': 0}
+
+        def eth_stream(*_a: Any, **_kw: Any) -> AsyncIterator[list[dict[str, Any]]]:
+            eth_calls['n'] += 1  # pragma: no cover - must never run
+            return stream_stub([{'address': HOLDER, 'value': '5'}])()
+
+        etherscan.iter_token_holders_streaming = eth_stream  # type: ignore[assignment]
+
+        async def collect() -> list[list[dict[str, Any]]]:
+            return [batch async for batch in pool.iter_token_holders_streaming(TOKEN)]
+
+        with pytest.raises(CompletenessUnavailableError) as excinfo:
+            await asyncio.wait_for(collect(), timeout=5.0)
+
+        assert eth_calls['n'] == 0, 'no request should be issued before the raise'
+        assert excinfo.value.method == Method.TOKEN_HOLDERS.name
+        assert excinfo.value.alternatives == ()
+        assert pool.last_provider is None
+
+    async def test_capable_provider_in_cooldown_is_not_selected(
+        self, pool: ChainscanPool, clock: FakeClock
+    ) -> None:
+        """blockscout (completeness-capable) is cooling → must not be used,
+
+        and the pool must not fall back to the capped etherscan either: it
+        raises immediately instead, exactly as with no alternative at all.
+        """
+        etherscan, blockscout = (p.client for p in pool._providers)
+        eth_calls = {'n': 0}
+        bs_calls = {'n': 0}
+
+        def eth_stream(*_a: Any, **_kw: Any) -> AsyncIterator[list[dict[str, Any]]]:
+            eth_calls['n'] += 1  # pragma: no cover - must never run
+            return stream_stub([{'address': HOLDER, 'value': '5'}])()
+
+        def bs_stream(*_a: Any, **_kw: Any) -> AsyncIterator[list[dict[str, Any]]]:
+            bs_calls['n'] += 1  # pragma: no cover - cooling, must never run
+            return stream_stub([{'address': HOLDER, 'value': '5'}])()
+
+        etherscan.iter_token_holders_streaming = eth_stream  # type: ignore[assignment]
+        blockscout.iter_token_holders_streaming = bs_stream  # type: ignore[assignment]
+
+        # Put blockscout into cooldown directly (no request needed to test this).
+        pool._providers[1].enter_cooldown(
+            clock.now + 3600.0, ValueError('cooling'), FailureKind.TRANSIENT
+        )
+
+        async def collect() -> list[list[dict[str, Any]]]:
+            return [batch async for batch in pool.iter_token_holders_streaming(TOKEN)]
+
+        with pytest.raises(CompletenessUnavailableError) as excinfo:
+            await asyncio.wait_for(collect(), timeout=5.0)
+
+        assert eth_calls['n'] == 0
+        assert bs_calls['n'] == 0
+        # The cooling capable provider is still named as a real remedy.
+        assert excinfo.value.alternatives == ('blockscout/ethereum',)
+
+    async def test_guarantee_complete_false_is_unaffected(self, pool: ChainscanPool) -> None:
+        """With ``guarantee_complete=False`` the capped priority-1 provider serves as before."""
+        etherscan, blockscout = (p.client for p in pool._providers)
+        etherscan.iter_token_holders_streaming = stream_stub(  # type: ignore[assignment]
+            [{'address': HOLDER, 'value': '5'}]
+        )
+        blockscout.iter_token_holders_streaming = stream_stub()  # type: ignore[assignment]
+
+        batches = [
+            batch
+            async for batch in pool.iter_token_holders_streaming(TOKEN, guarantee_complete=False)
+        ]
+
+        assert batches == [[{'address': HOLDER, 'value': '5'}]]
+        assert pool.last_provider == 'etherscan/ethereum'
 
 
 # ---------------------------------------------------------------------------
