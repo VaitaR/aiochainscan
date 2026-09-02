@@ -185,8 +185,11 @@ Merged into `main`, `make validate` green (`1089 passed, 13 skipped`, mypy --str
    endpoints enforce `page * offset <= 10_000` and say so (`status=0`, "Result window is too
    large…"), an over-cap `offset` is clamped rather than refused, and `logs/getLogs` ignores
    page/offset while capping at 1000 with `status=1` — a smaller window than the scanner
-   declared, now carried by `RESULT_WINDOW_OVERRIDES`. Etherscan's half stays open: no API key
-   is available in the dev environment, so its cap is still taken from the documented rule.
+   declared, now carried by `RESULT_WINDOW_OVERRIDES`. **Closed** the same day for Etherscan v2
+   (key-authenticated): `page * offset <= 10_000` is enforced with an error, and the per-page
+   limit is a separate silent clamp to 1000 items — `batch_size=5000` was losing 1009 of 2009
+   transactions with `guarantee_complete=True`, now fixed by `Scanner.max_page_size`. Both
+   providers return identical counts for the same ranges (1085 logs, 2009 txs).
 5. A bare base install cannot decode ABI/calldata (needs `[fallback]` or `[fastabi]`). Must be
    stated next to the install instructions in `README.md`, or the first `iter_events` call
    fails with an opaque dependency error. **Closed** by `aiochainscan/abi_pure.py`: the base

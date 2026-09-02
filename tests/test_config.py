@@ -423,6 +423,34 @@ class TestLazyLoading:
         assert manager._builtin_loaded is False
         assert manager._env_loaded is True  # Env is loaded for API keys
 
+    def test_lazy_path_applies_a_key_that_exists_only_in_a_dotenv_file(self, tmp_path):
+        """A ``.env`` key must survive the lazy single-scanner path.
+
+        That path serves every builtin scanner, so reading only ``os.environ``
+        there made a documented setup (``ETHERSCAN_KEY`` in ``.env``, which is
+        what ``make wt-new`` copies into a worktree) fail with "API key
+        required".
+        """
+        (tmp_path / '.env').write_text('ETHERSCAN_KEY=from_dotenv_only\n')
+        ConfigurationManager.reset_instance()
+        manager = ConfigurationManager(tmp_path)
+
+        with patch.dict(os.environ, {}, clear=True):
+            assert manager.get_api_key('eth') == 'from_dotenv_only'
+            assert manager._builtin_loaded is False  # still the lazy path
+
+        ConfigurationManager.reset_instance()
+
+    def test_os_environ_overrides_the_dotenv_key(self, tmp_path):
+        (tmp_path / '.env').write_text('ETHERSCAN_KEY=from_dotenv\n')
+        ConfigurationManager.reset_instance()
+        manager = ConfigurationManager(tmp_path)
+
+        with patch.dict(os.environ, {'ETHERSCAN_KEY': 'from_environ'}, clear=True):
+            assert manager.get_api_key('eth') == 'from_environ'
+
+        ConfigurationManager.reset_instance()
+
     def test_get_supported_scanners_triggers_full_init(self):
         """Test that get_supported_scanners() triggers full initialization."""
         ConfigurationManager.reset_instance()

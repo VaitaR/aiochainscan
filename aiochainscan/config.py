@@ -173,7 +173,15 @@ class ConfigurationManager:
             with self._lock:
                 if scanner_id not in self._scanners:
                     self._scanners[scanner_id] = builtin_config
-                    # Load API key for this scanner
+                    # Same priority ladder as _load_api_keys (the full path):
+                    # ``.env`` state first, then os.environ overriding it. The
+                    # env_state leg is not optional — this lazy path serves
+                    # every builtin scanner, so without it a key that exists
+                    # only in a ``.env`` file is silently ignored and the
+                    # scanner reports "API key required".
+                    env_key = self._resolve_env_state_key(scanner_id)
+                    if env_key:
+                        self._scanners[scanner_id].api_key = env_key
                     api_key = self._get_api_key_for_scanner(scanner_id)
                     if api_key:
                         self._scanners[scanner_id].api_key = api_key

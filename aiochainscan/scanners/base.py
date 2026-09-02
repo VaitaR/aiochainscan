@@ -125,6 +125,15 @@ class Scanner(ABC):
     ``guarantee_complete`` — the engine has no way to detect its cap.
     """
 
+    max_page_size: int | None = None
+    """Largest page size (``offset``) the provider serves in one request.
+
+    Declared where the provider **silently clamps** a larger request instead of
+    refusing it: the short page then looks like the end of the data to any
+    "partial page means done" stop condition, and the rest of the range is lost
+    without an error. ``None`` means no known clamp (nothing to correct for).
+    """
+
     RESULT_WINDOW_OVERRIDES: dict[Method, int | None] = {}
     """Per-method windows for endpoints that do not share the scanner's cap.
 

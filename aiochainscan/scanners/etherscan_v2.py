@@ -15,6 +15,7 @@ inheriting them would falsely widen BlockScout v1's declared surface.
 from dataclasses import replace
 from typing import Any
 
+from ..constants import API_MAX_PAGE_SIZE_ETHERSCAN
 from ..core.endpoint import EndpointSpec, etherscan_parser
 from ..domain.method import Method
 from . import register_scanner
@@ -86,6 +87,12 @@ class EtherscanV2(EtherscanLikeScanner):
 
     name = 'etherscan'
     version = 'v2'
+
+    # Etherscan serves at most 1000 records per page and clamps a larger
+    # ``offset`` silently (status=1, 1000 items). Verified live 2026-09-02:
+    # ``offset=10000`` returns 1000, while ``page * offset > 10000`` is the only
+    # thing it answers with an error.
+    max_page_size = API_MAX_PAGE_SIZE_ETHERSCAN
     supported_networks = {
         'main',  # Ethereum mainnet (legacy alias)
         'ethereum',

@@ -49,10 +49,21 @@ class EtherscanLikeScanner(Scanner):
         Returns:
             Tuple of (items, next_cursor)
         """
+        offset = params.get('offset')
+        if (
+            isinstance(offset, int)
+            and self.max_page_size is not None
+            and offset > self.max_page_size
+        ):
+            # The provider would serve max_page_size items and say status=1, and
+            # that short page would read as "no more data" three lines below —
+            # silently dropping the rest of the range. Ask for what it serves.
+            offset = self.max_page_size
+            params = {**params, 'offset': offset}
+
         result = await self.call(method, **params)
         items = self._coerce_items(result)
 
-        offset = params.get('offset')
         if not items or not isinstance(offset, int) or len(items) < offset:
             return items, None
         if not self._spec_pages_by_offset(method):

@@ -206,8 +206,18 @@ async with ChainscanClient.from_config('etherscan', 'ethereum') as client:
 >   `API_MAX_OFFSET_LOGS` = 1000 (declared in `RESULT_WINDOW_OVERRIDES`), and
 >   `EtherscanLikeScanner.fetch_page` issues no cursor for a spec that maps
 >   neither `page` nor `offset`, because "the next page" there is the first page
->   again. Etherscan's own caps are still unverified live (no API key in the dev
->   environment) and rest on the documented `page * offset <= 10_000` rule.
+>   again.
+> - **Etherscan v2's caps are live-verified too** (2026-09-02, key-authenticated).
+>   `page * offset <= 10_000` is enforced with an error, but the per-page size is
+>   a separate, *silent* limit: `offset=5000` or `offset=10000` answers **1000**
+>   items with `status=1` "OK". A short page like that reads as end-of-data, so
+>   `batch_size=5000` returned 1000 of 2009 transactions — silent loss under the
+>   default `guarantee_complete=True`, because 1000 never reaches the 10_000
+>   window. `Scanner.max_page_size` declares what a provider actually serves
+>   (Etherscan 1000, BlockScout V1 10_000, both measured) and `fetch_page`
+>   clamps `offset` to it, so the page-full test compares against a number the
+>   provider agreed to. Cross-check: Etherscan and BlockScout V1 now return
+>   byte-identical counts for the same range (1085 logs, 2009 txs).
 > - **Reaching the cap has two flavours** and the error says which. The
 >   provider offered a continuation at the cap → records are definitely being
 >   cut off (`confirmed=True`). The window came back exactly full with *no*
@@ -418,6 +428,8 @@ Every `Method` enum value (33 total) maps to typed convenience methods on `Chain
 | Report a rangeless capped endpoint as a whale block | Raise `CompletenessUnavailableError` naming a provider that can serve it | Holder lists have no range to split - "could not split" misdescribes it and offers no remedy |
 | Call complete data "lost" when the window came back exactly full | Say *possibly* truncated (`confirmed=False`) | A false error on correct data is not loud, it is wrong |
 | Trust a partial page to mean "end of data" | Treat `>= Scanner.result_window` records as overflow | A capped page/offset API truncates with a partial page and no error |
+| Assume the provider honoured the `offset` you sent | Clamp it to `Scanner.max_page_size` before comparing | Etherscan serves 1000 for `offset=5000` with `status=1` — the "partial" page is a full one |
+| Give every endpoint the scanner's one `result_window` | Declare the tighter ones in `RESULT_WINDOW_OVERRIDES` | BlockScout V1 `getLogs` caps at 1000 and ignores paging; walking to 10_000 re-fetches page 1 ten times |
 | Split a range in fixed-width windows | Bisect on the *observed* overflow boundary | Fixed windows cost requests where data is sparse and still truncate where it is dense |
 
 ### Network

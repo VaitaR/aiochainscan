@@ -13,7 +13,7 @@ Supports multiple blockchain networks through different BlockScout instances:
 
 from typing import TYPE_CHECKING, Any
 
-from ..constants import API_MAX_OFFSET_LOGS
+from ..constants import API_MAX_OFFSET_ETHERSCAN, API_MAX_OFFSET_LOGS
 from ..core.endpoint import EndpointSpec
 from ..core.url_builder import UrlBuilder
 from ..domain.method import Method
@@ -73,6 +73,12 @@ class BlockScoutV1(EtherscanLikeScanner):
         'linea',  # Linea mainnet
         'bsc',  # BNB Smart Chain
     }
+
+    # Unlike Etherscan, BlockScout V1 does serve a 10_000-item page — but it
+    # clamps anything above that silently (``offset=10001`` → 10_000 items,
+    # ``status=1``), so the page size still has to be declared. Verified live
+    # 2026-09-02.
+    max_page_size = API_MAX_OFFSET_ETHERSCAN
 
     # ``getLogs`` here is NOT a page/offset endpoint: it ignores both params and
     # answers at most API_MAX_OFFSET_LOGS logs with ``status=1`` "OK", so its

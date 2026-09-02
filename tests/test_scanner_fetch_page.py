@@ -18,7 +18,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from aiochainscan.constants import API_MAX_OFFSET_ETHERSCAN, API_MAX_OFFSET_LOGS
+from aiochainscan.constants import (
+    API_MAX_OFFSET_ETHERSCAN,
+    API_MAX_OFFSET_LOGS,
+    API_MAX_PAGE_SIZE_ETHERSCAN,
+)
 from aiochainscan.core.client import ChainscanClient
 from aiochainscan.domain.method import Method
 from aiochainscan.exceptions import ChainscanNetworkError
@@ -488,6 +492,57 @@ class TestUnpaginableSpecStopsAfterOnePage:
         )
 
         assert cursor == {'page': 2, 'offset': 2}
+
+
+class TestPageSizeClamp:
+    """An oversized page size must be clamped to what the provider serves.
+
+    Etherscan answers ``offset=5000`` with 1000 items and ``status=1``; taking
+    that at face value made the short page read as end-of-data and dropped the
+    rest of the range (live: 1000 of 2009 transactions with ``batch_size=5000``).
+    """
+
+    @pytest.mark.asyncio
+    async def test_oversized_offset_is_clamped_on_the_wire(self) -> None:
+        net = FakeNetwork(
+            [{'status': '1', 'message': 'OK', 'result': [{'hash': f'0x{i}'} for i in range(1000)]}]
+        )
+        scanner = _etherscan_scanner(net)
+
+        items, cursor = await scanner.fetch_page(
+            Method.ACCOUNT_TRANSACTIONS, {'address': '0xabc', 'page': 1, 'offset': 5000}
+        )
+
+        assert len(items) == 1000
+        assert net.calls[0]['params']['offset'] == API_MAX_PAGE_SIZE_ETHERSCAN
+        # A full clamped page continues; without the clamp this cursor was None.
+        assert cursor == {'page': 2, 'offset': API_MAX_PAGE_SIZE_ETHERSCAN}
+
+    @pytest.mark.asyncio
+    async def test_offset_within_the_page_cap_passes_through(self) -> None:
+        net = FakeNetwork([{'status': '1', 'message': 'OK', 'result': [{'hash': '0x1'}]}])
+        scanner = _etherscan_scanner(net)
+
+        _, cursor = await scanner.fetch_page(
+            Method.ACCOUNT_TRANSACTIONS, {'address': '0xabc', 'page': 1, 'offset': 500}
+        )
+
+        assert net.calls[0]['params']['offset'] == 500
+        assert cursor is None
+
+    @pytest.mark.asyncio
+    async def test_provider_with_a_larger_page_is_not_clamped_to_1000(self) -> None:
+        net = FakeNetwork(
+            [{'status': '1', 'message': 'OK', 'result': [{'hash': f'0x{i}'} for i in range(2000)]}]
+        )
+        scanner = _blockscout_v1_scanner(net)
+
+        _, cursor = await scanner.fetch_page(
+            Method.ACCOUNT_TRANSACTIONS, {'address': '0xabc', 'page': 1, 'offset': 2000}
+        )
+
+        assert net.calls[0]['params']['offset'] == 2000
+        assert cursor == {'page': 2, 'offset': 2000}
 
 
 class TestPerMethodResultWindow:
