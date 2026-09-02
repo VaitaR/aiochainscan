@@ -60,7 +60,9 @@ data = [
 # Rust-accelerated ABI decoding / keccak256 (separate distribution — see
 # aiochainscan/fastabi/pyproject.toml). Base install stays pure Python.
 fastabi = [
-    "aiochainscan-fastabi",
+    # Floor matches decode.py's _MIN_FASTABI_VERSION: older extensions decode by
+    # the pre-strict rules and are refused at import, so let the resolver fail loudly.
+    "aiochainscan-fastabi>=0.2.0",
 ]
 
 [project.scripts]
