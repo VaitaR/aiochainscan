@@ -38,7 +38,7 @@ def _abi_decode_params(
     Second and last tier of the decode chain — fastabi decodes whole calldata
     upstream and never reaches here. Returns native Python values (``int``,
     ``bytes``, …), normalised to the fastabi JSON convention by
-    :func:`_convert_bytes_to_hex` / :func:`_convert_large_ints_to_strings`.
+    :func:`_to_rust_convention`.
 
     ``index`` + ``plan_key`` memoise the compiled decode plan across every
     item decoded against the same ABI.
@@ -275,33 +275,27 @@ def _build_abi_index(abi: list[dict[str, Any]]) -> _AbiIndex:
     return _AbiIndex(function_map=function_map, event_map=event_map)
 
 
-def _convert_bytes_to_hex(data: Any) -> Any:
-    """Recursively traverses data structures and converts bytes to hex strings.
+def _to_rust_convention(data: Any) -> Any:
+    """Normalise decoded values to what the Rust backend serializes.
 
-    Arrays and tuples come out as ``list`` whatever the backend produced them
-    as (the pure floor returns Python tuples), so both decode tiers agree with
-    the Rust one, which serializes both as JSON arrays.
+    ``bytes`` become ``0x`` hex, ints outside i64 become strings, and arrays
+    and tuples both become ``list`` (the pure floor returns Python tuples) --
+    so a decoded value does not change shape when a user adds or drops
+    ``[fastabi]``. One traversal, not one per rule: this runs on every
+    pure-floor decode.
     """
     if isinstance(data, bytes):
         return '0x' + data.hex()
-    if isinstance(data, dict):
-        return {key: _convert_bytes_to_hex(value) for key, value in data.items()}
-    if isinstance(data, list | tuple):
-        return [_convert_bytes_to_hex(item) for item in cast(Sequence[Any], data)]
-    return data
-
-
-def _convert_large_ints_to_strings(data: Any) -> Any:
-    """Recursively converts large integers to strings for compatibility."""
     if isinstance(data, int):
-        # Convert integers larger than i64::MAX to strings for consistency with Rust
+        # bool is an int subclass and always falls inside the range, so it
+        # survives as a bool.
         if data > 9223372036854775807 or data < -9223372036854775808:
             return str(data)
         return data
     if isinstance(data, dict):
-        return {key: _convert_large_ints_to_strings(value) for key, value in data.items()}
+        return {key: _to_rust_convention(value) for key, value in data.items()}
     if isinstance(data, list | tuple):
-        return [_convert_large_ints_to_strings(item) for item in cast(Sequence[Any], data)]
+        return [_to_rust_convention(item) for item in data]
     return data
 
 
@@ -360,13 +354,14 @@ def _decode_transaction_input_python(
         transaction['decoded_data'] = {}
         return transaction
 
-    func_selector = cast(str, transaction['input'])[:FUNCTION_SELECTOR_LENGTH]
+    # typing.cast is a real call at runtime; annotated locals cost nothing.
+    raw_input: str = transaction['input']
+    func_selector = raw_input[:FUNCTION_SELECTOR_LENGTH]
     function = function_map.get(func_selector)
 
     if function:
-        # Decode input transaction
-        input_params = cast(list[dict[str, Any]], function['inputs'])
-        input_data = cast(str, transaction['input'])[FUNCTION_SELECTOR_LENGTH:]
+        input_params: list[dict[str, Any]] = function['inputs']
+        input_data = raw_input[FUNCTION_SELECTOR_LENGTH:]
         try:
             decoded_input = _abi_decode_params(
                 input_params, bytes.fromhex(input_data), index, func_selector
@@ -376,14 +371,13 @@ def _decode_transaction_input_python(
             transaction['decoded_func'] = function['name']
 
             # Create a new dictionary for decoded transaction
-            decoded_transaction: dict[str, Any] = dict(
+            transaction['decoded_data'] = dict(
                 zip(
-                    [cast(str, param['name']) for param in input_params],
+                    [param['name'] for param in input_params],
                     decoded_input,
                     strict=False,
                 )
             )
-            transaction['decoded_data'] = decoded_transaction
         except AbiTypeNotSupportedError:
             # A gap in this library, not malformed calldata — never silenced.
             raise
@@ -402,9 +396,7 @@ def _decode_transaction_input_python(
         transaction['decoded_data'] = {}
 
     if transaction.get('decoded_data'):
-        transaction['decoded_data'] = _convert_bytes_to_hex(transaction['decoded_data'])
-        # Convert large integers to strings for compatibility with Rust implementation
-        transaction['decoded_data'] = _convert_large_ints_to_strings(transaction['decoded_data'])
+        transaction['decoded_data'] = _to_rust_convention(transaction['decoded_data'])
 
     return transaction
 
@@ -625,8 +617,7 @@ def decode_log_data(log: dict[str, Any], abi: list[dict[str, Any]]) -> dict[str,
     # which is the desired behavior.
 
     if log.get('decoded_data'):
-        log['decoded_data'] = _convert_bytes_to_hex(log['decoded_data'])
-        log['decoded_data'] = _convert_large_ints_to_strings(log['decoded_data'])
+        log['decoded_data'] = _to_rust_convention(log['decoded_data'])
 
     return log
 

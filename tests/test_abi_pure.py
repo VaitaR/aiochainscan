@@ -241,7 +241,11 @@ class TestTierParity:
 
         assert pure == with_fastabi
 
-    def test_pure_floor_output_convention(self):
+    def test_pure_floor_output_convention(self, monkeypatch):
+        # Without this the call dispatches to Rust wherever fastabi is built,
+        # and the assertion below stops covering the floor it is named after.
+        monkeypatch.setattr(decode_module, 'FASTABI_AVAILABLE', False)
+
         decoded = decode_transaction_input({'input': self._calldata()}, self.ABI)['decoded_data']
 
         assert decoded == {

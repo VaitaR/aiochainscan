@@ -446,7 +446,13 @@ def _to_json(node: TypeNode, value: Any) -> Any:
 
 def _unsigned_word(node: TypeNode, buf: bytes, offset: int) -> int:
     """Read an unsigned value of ``node.bits`` and reject non-zero padding."""
-    value = _read_uint(buf, offset)
+    # _read_uint inlined: this is the most frequent leaf in real calldata.
+    end = offset + 32
+    if offset < 0 or end > len(buf):
+        raise ValueError(
+            f'decoded data references bytes [{offset}:{end}] outside its length {len(buf)}'
+        )
+    value = int.from_bytes(buf[offset:end], 'big')
     if node.bits != 256 and value >> node.bits:
         raise ValueError(f'{node.canonical}: value does not fit, padding is not zero')
     return value
@@ -472,7 +478,9 @@ def _decode_sequence(
     """Decode a head/tail sequence located at ``base`` (offsets are relative)."""
     values: list[Any] = []
     cursor = base
-    head_size = sum(node.head_size for node in nodes)
+    head_size = 0
+    for node in nodes:
+        head_size += node.head_size
     for node in nodes:
         if node.is_dynamic:
             # A pointer into the head area cannot be what an encoder produced:
@@ -488,6 +496,29 @@ def _decode_sequence(
         else:
             values.append(_decode_node(node, buf, cursor))
             cursor += node.static_size
+    return values
+
+
+def _decode_array(elem: TypeNode, count: int, buf: bytes, base: int) -> list[Any]:
+    """Decode ``count`` elements of one type -- the same head/tail rules as
+    :func:`_decode_sequence`, without materialising ``[elem] * count``."""
+    values: list[Any] = []
+    head_size = count * elem.head_size
+    cursor = base
+    if elem.is_dynamic:
+        for _ in range(count):
+            pointer = _read_uint(buf, cursor)
+            if pointer < head_size:
+                raise ValueError(
+                    f'{elem.canonical}: dynamic offset {pointer} points inside the '
+                    f'{head_size}-byte head area'
+                )
+            values.append(_decode_node(elem, buf, base + pointer))
+            cursor += 32
+    else:
+        for _ in range(count):
+            values.append(_decode_node(elem, buf, cursor))
+            cursor += elem.static_size
     return values
 
 
@@ -536,8 +567,8 @@ def _decode_node(node: TypeNode, buf: bytes, offset: int) -> Any:
                     f'{node.canonical} declares {count} items, more than the '
                     f'remaining {len(buf) - offset - 32} bytes can hold'
                 )
-            return _decode_sequence([node.elem] * count, buf, offset + 32)
-        return _decode_sequence([node.elem] * node.length, buf, offset)
+            return _decode_array(node.elem, count, buf, offset + 32)
+        return _decode_array(node.elem, node.length, buf, offset)
     if kind == 'tuple':
         return _decode_sequence(node.components, buf, offset)
     raise AbiTypeNotSupportedError(node.canonical)
