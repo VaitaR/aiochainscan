@@ -1058,5 +1058,9 @@ fn aiochainscan_fastabi(m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "arrow")]
     m.add_function(wrap_pyfunction!(decode_many_to_arrow, m)?)?; // Zero-copy Arrow
     m.add_function(wrap_pyfunction!(keccak256_py, m)?)?; // Hash primitive for selectors/EIP-55
+    // Decode semantics (string validity, padding strictness, fixed-point width)
+    // are versioned with the crate: decode.py refuses an extension older than
+    // its _MIN_FASTABI_VERSION rather than letting the two tiers disagree.
+    m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     Ok(())
 }

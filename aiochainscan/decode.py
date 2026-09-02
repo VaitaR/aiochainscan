@@ -60,6 +60,49 @@ def _parse_json(json_str: str) -> Any:
     return orjson.loads(json_str)
 
 
+# The Rust tier must agree with the pure-Python floor on decode semantics
+# (UTF-8 string validity, dynamic-value padding, full-width fixed point). Those
+# rules landed in the accelerator at 0.2.0, so an older locally built extension
+# would silently decode by the pre-strict rules while this module decodes by the
+# new ones. Refuse it and use the floor instead.
+_MIN_FASTABI_VERSION = (0, 2, 0)
+
+
+def _parse_extension_version(raw: object) -> tuple[int, ...] | None:
+    """Return an extension version as a comparable tuple, or None if unreadable."""
+    if not isinstance(raw, str):
+        return None
+    parts: list[int] = []
+    for chunk in raw.split('.')[:3]:
+        digits = ''
+        for char in chunk:
+            if not char.isdigit():
+                break
+            digits += char
+        if not digits:
+            return None
+        parts.append(int(digits))
+    return tuple(parts) or None
+
+
+def _require_strict_fastabi(module: Any) -> None:
+    """Raise ImportError when the loaded extension predates the strict semantics."""
+    version = _parse_extension_version(getattr(module, '__version__', None))
+    if version is not None and version >= _MIN_FASTABI_VERSION:
+        return
+    reported = getattr(module, '__version__', None) or 'unknown (pre-0.2.0)'
+    warnings.warn(
+        f'Ignoring the aiochainscan-fastabi extension at {module.__file__}: it reports '
+        f'version {reported}, but strict ABI decode semantics require '
+        f'{".".join(str(part) for part in _MIN_FASTABI_VERSION)} or newer. '
+        'Decoding falls back to the pure-Python backend. Rebuild with: '
+        'cd aiochainscan/fastabi && maturin develop --release',
+        PureAbiDecodeWarning,
+        stacklevel=2,
+    )
+    raise ImportError('aiochainscan-fastabi is older than the strict decode semantics')
+
+
 # Try to import fastabi Rust backend. The accelerator is now the top-level
 # `aiochainscan_fastabi` distribution (separate from the pure-Python
 # `aiochainscan` package — see docs/V1_PLAN.md Track A); an existing
@@ -75,6 +118,8 @@ try:
         # graph doesn't see decode.py depending on the whole `aiochainscan`
         # package (this branch never runs a real cross-layer import).
         _fastabi = importlib.import_module('aiochainscan.aiochainscan_fastabi')
+
+    _require_strict_fastabi(_fastabi)
 
     _fast_decode_input_json = _fastabi.decode_input
     _fast_decode_many_json = _fastabi.decode_many

@@ -1,6 +1,6 @@
 [project]
 name = "aiochainscan-fastabi"
-version = "0.1.0"
+version = "0.2.0"
 description = "Rust-accelerated ABI decoding for aiochainscan (optional extra)"
 authors = [
     { name = "VaitaR", email = "andrey.shivalin@gmail.com" }

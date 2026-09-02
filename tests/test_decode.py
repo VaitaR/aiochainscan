@@ -1,9 +1,15 @@
+import subprocess
+import sys
 from unittest.mock import patch
 
 import pytest
 
 from aiochainscan.decode import (
+    _MIN_FASTABI_VERSION,
+    FASTABI_AVAILABLE,
+    _parse_extension_version,
     _preprocess_abi,
+    _require_strict_fastabi,
     canonical_abi_type,
     decode_log_data,
     decode_transaction_input,
@@ -11,6 +17,7 @@ from aiochainscan.decode import (
     generate_function_abi,
     keccak_hash,
 )
+from aiochainscan.exceptions import PureAbiDecodeWarning
 
 # Check if eth-hash backend is available
 try:
@@ -544,3 +551,74 @@ class TestDecodeIntegration:
         """Test error handling in decode functions."""
         # Test various error scenarios
         pass
+
+
+class TestFastabiVersionGate:
+    """The Rust tier is refused unless it carries the strict decode semantics."""
+
+    class _Ext:
+        __file__ = '/tmp/aiochainscan_fastabi.so'
+
+        def __init__(self, version=None):
+            if version is not None:
+                self.__version__ = version
+
+    @pytest.mark.parametrize(
+        ('raw', 'expected'),
+        [
+            ('0.2.0', (0, 2, 0)),
+            ('0.2.1', (0, 2, 1)),
+            ('1.0', (1, 0)),
+            ('0.2.0rc1', (0, 2, 0)),
+            ('0.2.0.dev3', (0, 2, 0)),
+            ('', None),
+            ('abc', None),
+            (None, None),
+            (0.2, None),
+        ],
+    )
+    def test_version_parsing(self, raw, expected):
+        assert _parse_extension_version(raw) == expected
+
+    @pytest.mark.parametrize('version', ['0.2.0', '0.2.1', '0.3.0', '1.0.0'])
+    def test_strict_extension_accepted(self, version):
+        _require_strict_fastabi(self._Ext(version))
+
+    @pytest.mark.parametrize('version', [None, '0.1.0', '0.1.9', '0.0.1', 'garbage'])
+    def test_stale_extension_refused(self, version):
+        with (
+            pytest.warns(PureAbiDecodeWarning, match='strict ABI decode semantics'),
+            pytest.raises(ImportError),
+        ):
+            _require_strict_fastabi(self._Ext(version))
+
+    def test_live_extension_satisfies_the_gate_when_available(self):
+        """Whatever the suite decodes with must be the strict tier, not a stale build."""
+        if not FASTABI_AVAILABLE:
+            pytest.skip('fastabi extension not built')
+        import aiochainscan.decode as decode_module
+
+        live = _parse_extension_version(decode_module._fastabi.__version__)
+        assert live is not None and live >= _MIN_FASTABI_VERSION
+
+
+def test_stale_extension_leaves_the_import_block_on_the_pure_floor(tmp_path):
+    """The gate is wired into the import, not merely importable: a pre-0.2.0
+    extension must leave FASTABI_AVAILABLE False in a fresh interpreter."""
+    script = tmp_path / 'stale.py'
+    script.write_text(
+        'import sys, types, warnings\n'
+        "fake = types.ModuleType('aiochainscan_fastabi')\n"
+        "fake.__version__ = '0.1.0'\n"
+        "fake.__file__ = '/fake/aiochainscan_fastabi.so'\n"
+        "sys.modules['aiochainscan_fastabi'] = fake\n"
+        'with warnings.catch_warnings(record=True) as caught:\n'
+        "    warnings.simplefilter('always')\n"
+        '    import aiochainscan.decode as d\n'
+        "print(d.FASTABI_AVAILABLE, d.ARROW_AVAILABLE, 'PureAbiDecodeWarning' in "
+        '[type(w.message).__name__ for w in caught])\n'
+    )
+    result = subprocess.run(
+        [sys.executable, str(script)], capture_output=True, text=True, check=True
+    )
+    assert result.stdout.split() == ['False', 'False', 'True']

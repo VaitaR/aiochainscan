@@ -757,6 +757,13 @@ transaction inputs, event logs, `SmartContract.iter_events` and the MCP
 ## Rust FFI Notes (fastabi/)
 
 - **Build**: NOT automatic. Since the distribution split the base package builds with hatchling, so `uv sync --extra dev` installs no Rust extension — build it explicitly with `cd aiochainscan/fastabi && uv run --with maturin maturin develop --release`, or pass `AIO_BUILD_FASTABI=1` to `make wt-new`. Without it `tests/test_crypto.py` skips 12 tests and `decode()` uses the Python fallback; `scripts/agent/preflight.sh` reports which module (if any) is live.
+- **Version floor**: the extension exports `__version__` from `CARGO_PKG_VERSION`, and
+  `decode.py` refuses anything below `_MIN_FASTABI_VERSION` (0.2.0) — the release that made
+  the Rust tier reject non-UTF-8 strings and dirty dynamic padding. A stale local build is
+  ignored with `PureAbiDecodeWarning` and decoding drops to the pure floor, because a tier
+  that decodes by the pre-strict rules is worse than no Rust tier. Bump both
+  `fastabi/Cargo.toml` and `fastabi/pyproject.toml` whenever decode semantics change, and
+  raise the floor with them.
 - **Cache**: LRU with 1000 entries max (~50MB)
 - **GIL**: Released during computation AND serialization
 - **Return format**: JSON string → parsed by orjson in Python; `keccak256` returns bytes
