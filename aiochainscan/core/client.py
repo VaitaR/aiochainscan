@@ -27,10 +27,12 @@ from ..domain.normalize import (
     normalize_transaction,
 )
 from ..domain.normalized import InternalTransaction, Log, TokenTransfer, Transaction
+from ..exceptions import BlockRangeNotSupportedError
 from ..ports.rate_limiter import RateLimiter, RetryPolicy
 from ..scanners import get_scanner_class
 from ..scanners.base import Scanner
 from ..services.pagination import (
+    BoundPageFetch,
     PaginationContext,
     iter_items,
     iter_pages,
@@ -523,6 +525,51 @@ class ChainscanClient(
             alternatives=scanners_serving_completely(method),
         )
 
+    def _stream_fetch(self, method: Method) -> BoundPageFetch:
+        """Bind scanner + method into one page fetch for the pagination engine.
+
+        The binding carries the provider's declared ``result_window`` and the
+        method's :class:`PaginationContext`, so streaming call sites pass a
+        single object to ``iter_pages``/``iter_items`` instead of threading
+        parallel ``result_window=``/``context=`` kwargs (explicit kwargs
+        still override the binding when given).
+        """
+        return page_fetcher(self._scanner, method, context=self._pagination_context(method))
+
+    def _guard_block_range(
+        self,
+        method: Method,
+        from_block: int,
+        to_block: int | str | None,
+    ) -> None:
+        """Refuse a BOUNDED range the provider would silently drop.
+
+        A single guard for every streaming/paginated path: when the requested
+        range is bounded (``from_block > 0`` or a concrete ``to_block``) and
+        the scanner's ``SPECS`` declare no block-range parameter for the
+        method, the bounds never reach the wire — the request would silently
+        answer a wider range than asked for. Providers able to narrow the
+        query are named from the scanner registry.
+        """
+        bounded = from_block > 0 or (to_block is not None and to_block != 'latest')
+        if not bounded or self._scanner.supports_block_range(method):
+            return
+        from ..scanners import scanners_serving_block_range
+
+        provider = f'{self.scanner_name}/{self.scanner_version}'
+        alternatives = scanners_serving_block_range(method)
+        if alternatives:
+            remedy = f'Providers that declare a block range for it: {", ".join(alternatives)}.'
+        else:
+            remedy = f'No registered provider declares a block range for {method.name}.'
+        raise BlockRangeNotSupportedError(
+            f'{provider} does not declare a block-range parameter for {method.name}, so the '
+            f'requested bounds (from_block={from_block}, to_block={to_block!r}) would be '
+            f'silently dropped: the answer would cover a wider range than asked for. '
+            f'Request an unbounded range (from_block=0, to_block=None) or use a provider '
+            f'that declares the range. {remedy}'
+        )
+
     # =========================================================================
     # STREAMING API - Memory-efficient iteration with optional decoding
     # =========================================================================
@@ -572,17 +619,16 @@ class ChainscanClient(
         validate_batch_size(batch_size)
 
         decode = _decode_with_abi(decode_transaction_input, abi)
-        fetch = page_fetcher(self._scanner, Method.ACCOUNT_TRANSACTIONS)
+        fetch = self._stream_fetch(Method.ACCOUNT_TRANSACTIONS)
+        self._guard_block_range(Method.ACCOUNT_TRANSACTIONS, from_block, to_block)
 
+        # Every scanner speaks the same public param dialect here; its SPECS
+        # translate to wire names (or drop params the endpoint never took —
+        # only possible for an unbounded range, which the guard above ensures).
         # For simple pagination without decoding and no block range, use
         # cursor pagination through the scanner port: fetch_page() returns
         # (items, next_cursor) where a None cursor ends iteration.
-        is_blockscout_v2 = self.scanner_name in {'blockscout', 'blockscout_v2'} and (
-            self.scanner_version == 'v2'
-        )
-        if is_blockscout_v2:
-            params: dict[str, Any] = {'address': address}
-        elif (
+        if (
             abi is None
             and from_block == 0
             and (to_block is None or to_block == 'latest')
@@ -590,13 +636,13 @@ class ChainscanClient(
         ):
             # Rangeless shortcut: fewer params, but nothing to split if the
             # provider's result window is hit.
-            params = {'address': address, 'page': 1, 'offset': batch_size}
+            params: dict[str, Any] = {'address': address, 'page': 1, 'offset': batch_size}
         else:
             end_block = _resolve_end_block_int(to_block)
             params = {
                 'address': address,
-                'startblock': from_block,
-                'endblock': end_block,
+                'start_block': from_block,
+                'end_block': end_block,
                 'page': 1,
                 'offset': batch_size,
                 'sort': 'asc',
@@ -607,8 +653,6 @@ class ChainscanClient(
             params,
             decode=decode,
             guarantee_complete=guarantee_complete,
-            result_window=self._scanner.result_window,
-            context=self._pagination_context(Method.ACCOUNT_TRANSACTIONS),
         ):
             yield tx
 
@@ -676,23 +720,22 @@ class ChainscanClient(
             - iter_transactions_streaming: 1M txs = ~10MB RAM (yields batches)
         """
         validate_batch_size(batch_size)
+        self._guard_block_range(Method.ACCOUNT_TRANSACTIONS, from_block, to_block)
         end_block = _resolve_end_block_int(to_block)
         params: dict[str, Any] = {
             'address': address,
-            'startblock': from_block,
-            'endblock': end_block,
+            'start_block': from_block,
+            'end_block': end_block,
             'page': 1,
             'offset': batch_size,
             'sort': 'asc',
         }
         async for batch in iter_pages(
-            page_fetcher(self._scanner, Method.ACCOUNT_TRANSACTIONS),
+            self._stream_fetch(Method.ACCOUNT_TRANSACTIONS),
             params,
             on_progress=on_progress,
             operation='transactions',
             guarantee_complete=guarantee_complete,
-            result_window=self._scanner.result_window,
-            context=self._pagination_context(Method.ACCOUNT_TRANSACTIONS),
         ):
             yield batch
 
@@ -755,23 +798,22 @@ class ChainscanClient(
             Batches of internal transaction dictionaries
         """
         validate_batch_size(batch_size)
+        self._guard_block_range(Method.ACCOUNT_INTERNAL_TXS, from_block, to_block)
         end_block = _resolve_end_block_int(to_block)
         params: dict[str, Any] = {
             'address': address,
-            'startblock': from_block,
-            'endblock': end_block,
+            'start_block': from_block,
+            'end_block': end_block,
             'page': 1,
             'offset': batch_size,
             'sort': 'asc',
         }
         async for batch in iter_pages(
-            page_fetcher(self._scanner, Method.ACCOUNT_INTERNAL_TXS),
+            self._stream_fetch(Method.ACCOUNT_INTERNAL_TXS),
             params,
             on_progress=on_progress,
             operation='internal_transactions',
             guarantee_complete=guarantee_complete,
-            result_window=self._scanner.result_window,
-            context=self._pagination_context(Method.ACCOUNT_INTERNAL_TXS),
         ):
             yield batch
 
@@ -833,25 +875,24 @@ class ChainscanClient(
             Batches of token transfer dictionaries
         """
         validate_batch_size(batch_size)
+        self._guard_block_range(Method.ACCOUNT_ERC20_TRANSFERS, from_block, to_block)
         end_block = _resolve_end_block_int(to_block)
         params: dict[str, Any] = {
             'address': address,
-            'startblock': from_block,
-            'endblock': end_block,
+            'start_block': from_block,
+            'end_block': end_block,
             'page': 1,
             'offset': batch_size,
             'sort': 'asc',
         }
         if contract_address is not None:
-            params['contractaddress'] = contract_address
+            params['contract_address'] = contract_address
         async for batch in iter_pages(
-            page_fetcher(self._scanner, Method.ACCOUNT_ERC20_TRANSFERS),
+            self._stream_fetch(Method.ACCOUNT_ERC20_TRANSFERS),
             params,
             on_progress=on_progress,
             operation='token_transfers',
             guarantee_complete=guarantee_complete,
-            result_window=self._scanner.result_window,
-            context=self._pagination_context(Method.ACCOUNT_ERC20_TRANSFERS),
         ):
             yield batch
 
@@ -921,10 +962,11 @@ class ChainscanClient(
             Batches of event log dictionaries
         """
         validate_batch_size(batch_size)
+        self._guard_block_range(Method.EVENT_LOGS, from_block, to_block)
         end_block = _resolve_end_block_param(to_block)
         params: dict[str, Any] = {
-            'fromBlock': from_block,
-            'toBlock': end_block,
+            'from_block': from_block,
+            'to_block': end_block,
             'page': 1,
             'offset': batch_size,
         }
@@ -939,13 +981,11 @@ class ChainscanClient(
         if topic3 is not None:
             params['topic3'] = topic3
         async for batch in iter_pages(
-            page_fetcher(self._scanner, Method.EVENT_LOGS),
+            self._stream_fetch(Method.EVENT_LOGS),
             params,
             on_progress=on_progress,
             operation='logs',
             guarantee_complete=guarantee_complete,
-            result_window=self._scanner.result_window,
-            context=self._pagination_context(Method.EVENT_LOGS),
         ):
             yield batch
 
@@ -1023,13 +1063,11 @@ class ChainscanClient(
             'offset': batch_size,
         }
         async for batch in iter_pages(
-            page_fetcher(self._scanner, Method.TOKEN_HOLDERS),
+            self._stream_fetch(Method.TOKEN_HOLDERS),
             params,
             on_progress=on_progress,
             operation='token_holders',
             guarantee_complete=guarantee_complete,
-            result_window=self._scanner.result_window,
-            context=self._pagination_context(Method.TOKEN_HOLDERS),
         ):
             yield batch
 
@@ -1113,11 +1151,12 @@ class ChainscanClient(
         from ..decode import decode_log_data
 
         validate_batch_size(batch_size)
+        self._guard_block_range(Method.EVENT_LOGS, from_block, to_block)
         end_block = _resolve_end_block_param(to_block)
         params: dict[str, Any] = {
             'address': address,
-            'fromBlock': from_block,
-            'toBlock': end_block,
+            'from_block': from_block,
+            'to_block': end_block,
             'page': 1,
             'offset': batch_size,
         }
@@ -1137,12 +1176,10 @@ class ChainscanClient(
                 params[f'topic{i}_{i + 1}_opr'] = operator
 
         async for log in iter_items(
-            page_fetcher(self._scanner, Method.EVENT_LOGS),
+            self._stream_fetch(Method.EVENT_LOGS),
             params,
             decode=_decode_with_abi(decode_log_data, abi),
             guarantee_complete=guarantee_complete,
-            result_window=self._scanner.result_window,
-            context=self._pagination_context(Method.EVENT_LOGS),
         ):
             yield log
 

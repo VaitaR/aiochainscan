@@ -22,6 +22,24 @@ class MethodNotDeclaredError(ValueError):
     """
 
 
+class BlockRangeNotSupportedError(MethodNotDeclaredError):
+    """The scanner declares the method but not a block-range bound for it.
+
+    Raised by the streaming/paginated client paths *before any request* when
+    a BOUNDED block range (``from_block > 0`` or a concrete ``to_block``) is
+    requested from a scanner whose ``EndpointSpec.param_map`` declares no
+    block-range parameter for that method — the bounds would otherwise be
+    silently dropped on the wire (BlockScout V2's address endpoints, for
+    example, take no Etherscan-style block bounds). The remedy is an
+    unbounded call (``from_block=0, to_block=None``) or a provider whose
+    spec declares the range; the message names both.
+
+    Subclasses :class:`MethodNotDeclaredError` (hence :class:`ValueError`)
+    so the provider pool routes around this capability gap exactly as it
+    does an undeclared method: silent failover, no cooldown.
+    """
+
+
 class ProviderPoolExhaustedError(ChainscanClientError):
     """Every provider in the pool failed (or is in cooldown) for a request.
 
