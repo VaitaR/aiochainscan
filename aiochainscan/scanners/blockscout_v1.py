@@ -20,7 +20,7 @@ from ..core.url_builder import UrlBuilder
 from ..domain.method import Method
 from . import register_scanner
 from ._etherscan_like import EtherscanLikeScanner
-from .base import hex_block_tag
+from .base import checksummed_holder_address, hex_block_tag
 
 if TYPE_CHECKING:
     from ..network import Network
@@ -39,6 +39,32 @@ _JSON_RPC_ACTIONS: dict[Method, str] = {
     Method.PROXY_ETH_CALL: 'eth_call',
     Method.PROXY_GET_BALANCE: 'eth_getBalance',
 }
+
+
+def _parse_token_holders(response: Any) -> list[dict[str, Any]]:
+    """Normalize BlockScout V1 ``token/getTokenHolders`` items.
+
+    Unlike Etherscan's ``TokenHolderAddress``/``TokenHolderQuantity`` field
+    names, BlockScout's own action already answers the unified field names
+    (verified live 2026-09-02 against ``eth.blockscout.com``):
+    ``{"status":"1","message":"OK","result":[{"address":"0x...","value":"..."}]}``.
+    The parser runs at the post-unwrap seam (``Network._handle_response`` has
+    already extracted ``result``), so only checksumming and str-coercion are
+    needed to match the shape ``etherscan_v2``/``blockscout_v2`` produce.
+    """
+    if not isinstance(response, list):
+        return []
+    items: list[dict[str, Any]] = []
+    for raw in response:
+        if not isinstance(raw, dict):
+            continue
+        items.append(
+            {
+                'address': checksummed_holder_address(raw.get('address')),
+                'value': str(raw.get('value') or '0'),
+            }
+        )
+    return items
 
 
 @register_scanner
@@ -88,7 +114,22 @@ class BlockScoutV1(EtherscanLikeScanner):
     # holding 1085 logs came back as 1000, identical on every page). Without
     # this the guarantee layer walked to 10_000 by re-fetching the same first
     # page ten times before splitting.
-    RESULT_WINDOW_OVERRIDES = {Method.EVENT_LOGS: API_MAX_OFFSET_LOGS}
+    #
+    # ``token/getTokenHolders`` (BlockScout's own action, not Etherscan's
+    # ``tokenholderlist``) has NO observed result window: ``page=11&offset=1000``
+    # (11k deep) and ``page=5&offset=10000`` (50k deep) both answered
+    # ``status=1`` with full pages, where the account endpoints reject
+    # ``page=11&offset=1000`` outright. Verified live 2026-09-02, walking a
+    # 33-holder token (Spiko EU T-Bills, 0xa0769f7a8fc65e47de93797b4e21c073c117fc80)
+    # to exhaustion at offset=10: pages 1-3 returned 10 items each, page 4
+    # returned 3 (a genuine short final page) and the total — 33 unique
+    # addresses — matched BlockScout V2's independent ``holders_count`` field
+    # for the same token exactly. ``None`` here is that positive claim of
+    # completeness, not an absence of a cap.
+    RESULT_WINDOW_OVERRIDES = {
+        Method.EVENT_LOGS: API_MAX_OFFSET_LOGS,
+        Method.TOKEN_HOLDERS: None,
+    }
 
     # Network to BlockScout instance mapping — the shared per-alias host
     # table from the chain registry (one table for BlockScout v1 and v2).
@@ -216,10 +257,31 @@ class BlockScoutV1(EtherscanLikeScanner):
             f'methods={len(self.SPECS)})'
         )
 
-    # All SPECS are inherited from the shared Etherscan-like implementation.
+    # Most SPECS are inherited from the shared Etherscan-like implementation.
     # BlockScout supports the same endpoints:
     # - ACCOUNT_BALANCE, ACCOUNT_TRANSACTIONS, ACCOUNT_INTERNAL_TXS
     # - ACCOUNT_ERC20_TRANSFERS, TX_BY_HASH, TX_RECEIPT_STATUS
     # - BLOCK_BY_NUMBER, BLOCK_REWARD, CONTRACT_ABI, CONTRACT_SOURCE
     # - TOKEN_BALANCE, TOKEN_SUPPLY, GAS_ORACLE, EVENT_LOGS
     # - ETH_SUPPLY, ETH_PRICE, PROXY_ETH_CALL
+    #
+    # TOKEN_HOLDERS is the one override below: Etherscan's action name
+    # (``tokenholderlist``) really does answer "Unknown action" on
+    # BlockScout's Etherscan-compat layer, but that is a naming mismatch, not
+    # a missing capability — BlockScout's OWN action name
+    # (``module=token&action=getTokenHolders``) works and paginates for real
+    # (verified live 2026-09-02 against eth.blockscout.com).
+    SPECS = {
+        **EtherscanLikeScanner.SPECS,
+        Method.TOKEN_HOLDERS: EndpointSpec(
+            http_method='GET',
+            path='/api',
+            query={'module': 'token', 'action': 'getTokenHolders'},
+            param_map={
+                'contract_address': 'contractaddress',
+                'page': 'page',
+                'offset': 'offset',
+            },
+            parser=_parse_token_holders,
+        ),
+    }
