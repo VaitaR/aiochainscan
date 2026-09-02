@@ -190,7 +190,7 @@ class TestDecodeTransactionInput:
             'blockNumber': '12345',
         }
 
-    @patch('aiochainscan.decode._eth_abi_decode')
+    @patch('aiochainscan.decode._abi_decode_params')
     @patch('aiochainscan.decode.keccak_hash')
     def test_decode_transaction_input_success(self, mock_keccak, mock_decode):
         """Test successful transaction input decoding."""
@@ -223,7 +223,7 @@ class TestDecodeTransactionInput:
         assert result['decoded_func'] == ''
         assert result['decoded_data'] == {}
 
-    @patch('aiochainscan.decode._eth_abi_decode')
+    @patch('aiochainscan.decode._abi_decode_params')
     @patch('aiochainscan.decode.keccak_hash')
     def test_decode_transaction_input_with_bytes_conversion(self, mock_keccak, mock_decode):
         """Test transaction decoding with bytes conversion."""
@@ -330,7 +330,7 @@ class TestDecodeLogData:
             'data': '0x000000000000000000000000000000000000000000000000de0b6b3a76400000',  # value (non-indexed)
         }
 
-    @patch('aiochainscan.decode._eth_abi_decode')
+    @patch('aiochainscan.decode._abi_decode_params')
     @patch('aiochainscan.decode.keccak_hash')
     def test_decode_log_data_success(self, mock_keccak, mock_decode):
         """Test successful log data decoding."""
@@ -356,7 +356,7 @@ class TestDecodeLogData:
         assert decoded['to'] == '0xabc123def456789012345678901234567890abcd'
         assert decoded['value'] == 1000000000000000000
 
-    @patch('aiochainscan.decode._eth_abi_decode')
+    @patch('aiochainscan.decode._abi_decode_params')
     @patch('aiochainscan.decode.keccak_hash')
     def test_decode_log_data_stringifies_uint_above_i64(self, mock_keccak, mock_decode):
         mock_keccak.return_value = (
@@ -385,7 +385,7 @@ class TestDecodeLogData:
         # Should not have decoded_data if no match
         assert 'decoded_data' not in result
 
-    @patch('aiochainscan.decode._eth_abi_decode')
+    @patch('aiochainscan.decode._abi_decode_params')
     @patch('aiochainscan.decode.keccak_hash')
     def test_decode_log_data_with_bytes_conversion(self, mock_keccak, mock_decode):
         """Test log decoding with bytes data conversion."""
@@ -424,7 +424,7 @@ class TestDecodeLogData:
 
         assert 'decoded_data' not in result
 
-    @patch('aiochainscan.decode._eth_abi_decode')
+    @patch('aiochainscan.decode._abi_decode_params')
     @patch('aiochainscan.decode.keccak_hash')
     def test_decode_log_data_only_indexed_params(self, mock_keccak, mock_decode):
         """Test log decoding with only indexed parameters."""
@@ -499,7 +499,7 @@ class TestDecodeLogData:
 
         assert result['decoded_data'][parameter['name']] == raw_topic.lower()
 
-    @patch('aiochainscan.decode._eth_abi_decode', return_value=(7,))
+    @patch('aiochainscan.decode._abi_decode_params', return_value=(7,))
     def test_unique_anonymous_event_is_decoded(self, mock_decode):
         event_abi = [
             {

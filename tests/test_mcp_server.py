@@ -395,7 +395,7 @@ class TestAbiCodecDecode:
 
 
 class TestAbiCodecAgainstEthAbi:
-    """Cross-check the pure-Python codec against eth-abi (dev/fallback extra)."""
+    """Cross-check the pure-Python codec against eth-abi (a dev-only oracle)."""
 
     def test_encode_matches_eth_abi(self) -> None:
         eth_abi = pytest.importorskip('eth_abi')

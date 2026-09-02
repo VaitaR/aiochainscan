@@ -1,13 +1,14 @@
 """The pure-Python ABI decode floor: correctness, tier parity, speed.
 
 Three oracles, in decreasing order of independence: hand-written calldata with
-known values, ``eth_abi`` (cross-checked round-trips), and the decode tiers
-against each other. The tier-parity tests are the point of the exercise — a
-base install and an ``aiochainscan[fallback]`` install must not disagree about
-what a transaction says.
+known values, ``eth_abi`` (cross-checked round-trips; a dev-only oracle, not a
+decode tier), and the two decode tiers against each other. The parity tests are
+the point of the exercise — a base install and an ``aiochainscan[fastabi]``
+install must not disagree about what a transaction says.
 """
 
 import warnings
+from decimal import Decimal
 from typing import Any
 
 import pytest
@@ -21,7 +22,6 @@ from aiochainscan.abi_pure import (
     encode_arguments,
 )
 from aiochainscan.decode import (
-    ETH_ABI_AVAILABLE,
     FASTABI_AVAILABLE,
     canonical_abi_type,
     decode_log_data,
@@ -31,7 +31,14 @@ from aiochainscan.decode import (
 )
 from aiochainscan.exceptions import AbiTypeNotSupportedError, PureAbiDecodeWarning
 
-requires_eth_abi = pytest.mark.skipif(not ETH_ABI_AVAILABLE, reason='eth-abi not installed')
+try:  # eth-abi is a test oracle only -- it is no longer a decode tier
+    import eth_abi  # noqa: F401
+
+    ETH_ABI_ORACLE = True
+except ImportError:  # pragma: no cover - dev extra always installs it
+    ETH_ABI_ORACLE = False
+
+requires_eth_abi = pytest.mark.skipif(not ETH_ABI_ORACLE, reason='eth-abi oracle not installed')
 
 # (id, params, values) — values in the encoder's native form.
 VECTORS: list[tuple[str, list[dict[str, Any]], list[Any]]] = [
@@ -41,6 +48,11 @@ VECTORS: list[tuple[str, list[dict[str, Any]], list[Any]]] = [
         'bool_bytes',
         [{'type': 'bool'}, {'type': 'bytes4'}, {'type': 'bytes'}],
         [True, b'\xde\xad\xbe\xef', b'\x00' * 70],
+    ),
+    (
+        'fixed_point',
+        [{'type': 'ufixed128x18'}, {'type': 'fixed128x18'}, {'type': 'fixed8x1'}],
+        [Decimal('1.5'), Decimal('-2.25'), Decimal('-0.1')],
     ),
     ('unicode_string', [{'type': 'string'}], ['ключ ' * 20]),
     ('empty_string', [{'type': 'string'}], ['']),
@@ -142,8 +154,35 @@ class TestCrossOracle:
         assert encode_arguments(params, list(values)) == eth_encode(types, values)
 
 
+@requires_eth_abi
+@pytest.mark.parametrize(
+    ('abi_type', 'payload'),
+    [
+        ('uint8', '100'.rjust(64, '0')),
+        ('int8', 'ff'.rjust(64, '0')),
+        ('bool', '2'.rjust(64, '0')),
+        ('address', 'ff' * 12 + '11' * 20),
+        ('bytes4', 'aabbccdd' + 'ff' * 28),
+        ('string', '0' * 64),
+        ('uint256', '00' * 16),
+        ('string', 'ffff'.rjust(64, '0')),
+        ('uint8[]', '20'.rjust(64, '0') + 'ffffff'.rjust(64, '0')),
+    ],
+)
+def test_pure_floor_refuses_exactly_what_eth_abi_refuses(abi_type, payload):
+    """Strictness parity: the floor rejects everything eth-abi rejected."""
+    from eth_abi.abi import decode as eth_decode
+    from eth_abi.exceptions import DecodingError
+
+    data = bytes.fromhex(payload)
+    with pytest.raises(DecodingError):
+        eth_decode([abi_type], data)
+    with pytest.raises(ValueError):
+        decode_values(compile_params([{'type': abi_type}]), data)
+
+
 class TestTierParity:
-    """A base install and an ``[fallback]`` install decode identically."""
+    """A base install and an ``[fastabi]`` install decode identically."""
 
     ABI = [
         {
@@ -176,26 +215,16 @@ class TestTierParity:
         )
         return '0x' + keccak_hash(signature)[:8] + args.hex()
 
-    @requires_eth_abi
-    def test_eth_abi_and_pure_tiers_agree(self, monkeypatch):
-        transaction = {'input': self._calldata()}
-        with_eth_abi = decode_transaction_input(dict(transaction), self.ABI)
-
-        monkeypatch.setattr(decode_module, '_eth_abi_decode', None)
-        pure = decode_transaction_input(dict(transaction), self.ABI)
-
-        assert pure == with_eth_abi
-
     @pytest.mark.parametrize(
         ('params', 'values'),
         [pytest.param(params, values, id=name) for name, params, values in VECTORS],
     )
     @pytest.mark.skipif(not FASTABI_AVAILABLE, reason='fastabi extension not built')
-    def test_every_tier_agrees_with_the_rust_backend(self, params, values, monkeypatch):
-        """fastabi is the reference convention; the other two tiers follow it.
+    def test_the_pure_floor_agrees_with_the_rust_backend(self, params, values):
+        """fastabi is the reference convention; the pure floor follows it.
 
-        Covers what the converters normalise: eth-abi hands back Python tuples
-        for arrays and structs where fastabi emits JSON arrays.
+        Covers what the converters normalise: the pure floor hands back Python
+        tuples for arrays and structs where fastabi emits JSON arrays.
         """
         named = [
             {**param, 'name': param.get('name') or f'p{position}'}
@@ -208,16 +237,11 @@ class TestTierParity:
         }
 
         with_fastabi = decode_module._decode_transaction_input_fast(dict(transaction), abi)
-        with_eth_abi = decode_module._decode_transaction_input_python(dict(transaction), abi)
-        monkeypatch.setattr(decode_module, '_eth_abi_decode', None)
         pure = decode_module._decode_transaction_input_python(dict(transaction), abi)
 
-        assert with_eth_abi == with_fastabi
         assert pure == with_fastabi
 
-    def test_pure_floor_output_convention(self, monkeypatch):
-        monkeypatch.setattr(decode_module, '_eth_abi_decode', None)
-
+    def test_pure_floor_output_convention(self):
         decoded = decode_transaction_input({'input': self._calldata()}, self.ABI)['decoded_data']
 
         assert decoded == {
@@ -228,11 +252,10 @@ class TestTierParity:
 
 
 class TestBaseInstall:
-    """No fastabi, no eth-abi — what ``pip install aiochainscan`` gets."""
+    """No fastabi — what ``pip install aiochainscan`` gets."""
 
     @pytest.fixture(autouse=True)
     def _pure_floor_only(self, monkeypatch):
-        monkeypatch.setattr(decode_module, '_eth_abi_decode', None)
         monkeypatch.setattr(decode_module, 'FASTABI_AVAILABLE', False)
 
     def test_real_transfer_calldata(self):
@@ -297,26 +320,26 @@ class TestBaseInstall:
             {
                 'type': 'function',
                 'name': 'setRate',
-                'inputs': [{'type': 'fixed128x18', 'name': 'rate'}],
+                'inputs': [{'type': 'uint257', 'name': 'rate'}],
             }
         ]
-        selector = '0x' + keccak_hash('setRate(fixed128x18)')[:8]
+        selector = '0x' + keccak_hash('setRate(uint257)')[:8]
 
         with pytest.raises(AbiTypeNotSupportedError) as excinfo:
             decode_transaction_input({'input': selector + '00' * 32}, abi)
 
-        assert excinfo.value.abi_type == 'fixed128x18'
+        assert excinfo.value.abi_type == 'uint257'
 
     def test_unsupported_type_in_event_raises(self):
         abi = [
             {
                 'type': 'event',
                 'name': 'RateSet',
-                'inputs': [{'type': 'fixed128x18', 'name': 'rate', 'indexed': False}],
+                'inputs': [{'type': 'uint257', 'name': 'rate', 'indexed': False}],
             }
         ]
         log = {
-            'topics': ['0x' + keccak_hash('RateSet(fixed128x18)')],
+            'topics': ['0x' + keccak_hash('RateSet(uint257)')],
             'data': '0x' + '00' * 32,
         }
 
@@ -389,34 +412,53 @@ class TestBaseInstall:
             warnings.simplefilter('error', PureAbiDecodeWarning)
             decode_transaction_inputs_batch(batch, abi)
 
-    def test_narrow_ints_sign_extend_from_their_declared_width(self):
-        """A payload whose high bytes are not sign padding must not change the number."""
-        abi = [
-            {
-                'type': 'function',
-                'name': 'narrow',
-                'inputs': [{'type': 'int8', 'name': 'a'}, {'type': 'int16', 'name': 'b'}],
-            }
-        ]
-        selector = '0x' + keccak_hash('narrow(int8,int16)')[:8]
-        # int8(-1) and int16(-1) written without the leading 0xff padding.
-        calldata = selector + 'ff'.rjust(64, '0') + 'ffff'.rjust(64, '0')
+    @pytest.mark.parametrize(
+        ('abi_type', 'word'),
+        [
+            ('uint8', '100'),  # does not fit in 8 bits
+            ('int8', 'ff'),  # padding is not the sign extension
+            ('bool', '2'),  # neither 0 nor 1
+            ('address', 'ff' * 12 + '11' * 20),  # padding is not zero
+            ('bytes4', 'aabbccdd' + 'ff' * 28),  # trailing padding is not zero
+        ],
+    )
+    def test_non_canonical_padding_is_rejected(self, abi_type, word):
+        """The spec requires zero padding; a value no encoder could produce is not data."""
+        abi = [{'type': 'function', 'name': 'f', 'inputs': [{'type': abi_type, 'name': 'x'}]}]
+        selector = '0x' + keccak_hash(f'f({abi_type})')[:8]
+        calldata = selector + (word if len(word) == 64 else word.rjust(64, '0'))
 
         result = decode_transaction_input({'input': calldata}, abi)
 
-        assert result['decoded_data'] == {'a': -1, 'b': -1}
+        assert result['decoded_data'] == {}
 
-    def test_only_a_canonical_one_is_true(self):
-        """A garbage bool word decodes False, not True."""
-        abi = [{'type': 'function', 'name': 'flag', 'inputs': [{'type': 'bool', 'name': 'x'}]}]
-        selector = '0x' + keccak_hash('flag(bool)')[:8]
+    def test_canonical_padding_still_decodes(self):
+        """The strict rules must not reject anything a compliant encoder emits."""
+        abi = [
+            {
+                'type': 'function',
+                'name': 'f',
+                'inputs': [
+                    {'type': 'int8', 'name': 'a'},
+                    {'type': 'bool', 'name': 'b'},
+                    {'type': 'bytes4', 'name': 'c'},
+                ],
+            }
+        ]
+        selector = '0x' + keccak_hash('f(int8,bool,bytes4)')[:8]
+        calldata = selector + 'ff' * 32 + '1'.rjust(64, '0') + 'aabbccdd' + '0' * 56
 
-        assert decode_transaction_input({'input': selector + '2'.rjust(64, '0')}, abi)[
-            'decoded_data'
-        ] == {'x': False}
-        assert decode_transaction_input({'input': selector + '1'.rjust(64, '0')}, abi)[
-            'decoded_data'
-        ] == {'x': True}
+        result = decode_transaction_input({'input': calldata}, abi)
+
+        assert result['decoded_data'] == {'a': -1, 'b': True, 'c': '0xaabbccdd'}
+
+    def test_dynamic_offset_into_the_head_area_is_rejected(self):
+        abi = [{'type': 'function', 'name': 'f', 'inputs': [{'type': 'string', 'name': 'x'}]}]
+        selector = '0x' + keccak_hash('f(string)')[:8]
+
+        result = decode_transaction_input({'input': selector + '0' * 64}, abi)
+
+        assert result['decoded_data'] == {}
 
     def test_small_bulk_decode_stays_silent(self, monkeypatch):
         """A batch below the threshold is not slow enough to be worth a message."""
@@ -454,9 +496,8 @@ class TestAbiIndexCache:
         assert index_a is not index_b
         assert set(index_a.function_map) != set(index_b.function_map)
 
-    def test_cached_plans_do_not_leak_between_selectors(self, monkeypatch):
+    def test_cached_plans_do_not_leak_between_selectors(self):
         """Two functions of one ABI must not reuse each other's decode plan."""
-        monkeypatch.setattr(decode_module, '_eth_abi_decode', None)
         abi = [
             {'type': 'function', 'name': 'one', 'inputs': [{'type': 'uint256', 'name': 'x'}]},
             {'type': 'function', 'name': 'two', 'inputs': [{'type': 'address', 'name': 'y'}]},
@@ -569,9 +610,14 @@ class TestTypeNodeLayout:
         assert node.is_dynamic is is_dynamic
         assert node.static_size == static_size
 
-    def test_unsupported_type_is_rejected_at_parse_time(self):
+    @pytest.mark.parametrize(
+        'abi_type',
+        ['uint257', 'uint0', 'int12', 'bytes33', 'bytes0', 'fixed128x81', 'fixed127x18'],
+    )
+    def test_widths_outside_the_spec_are_rejected_at_parse_time(self, abi_type):
+        """Same set eth-abi rejects; a bogus width must not decode to a number."""
         with pytest.raises(AbiTypeNotSupportedError):
-            compile_params([{'type': 'ufixed64x8'}])
+            compile_params([{'type': abi_type}])
 
 
 @pytest.mark.benchmark(group='abi_decode_tiers')
@@ -609,15 +655,7 @@ class TestPureFloorBenchmarks:
         )
         self.transaction = {'input': '0x' + keccak_hash(signature)[:8] + args.hex()}
 
-    def test_pure_floor_single(self, benchmark, monkeypatch):
-        monkeypatch.setattr(decode_module, '_eth_abi_decode', None)
-
-        result = benchmark(lambda: decode_transaction_input(dict(self.transaction), self.ABI))
-
-        assert result['decoded_func'] == 'swapExactTokensForTokens'
-
-    @requires_eth_abi
-    def test_eth_abi_tier_single(self, benchmark):
+    def test_pure_floor_single(self, benchmark):
         result = benchmark(lambda: decode_transaction_input(dict(self.transaction), self.ABI))
 
         assert result['decoded_func'] == 'swapExactTokensForTokens'

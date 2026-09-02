@@ -38,7 +38,6 @@ dev = [
     { name = "ruff" },
 ]
 fallback = [
-    { name = "eth-abi" },
     { name = "eth-hash", extra = ["pycryptodome"] },
     { name = "eth-utils" },
 ]
@@ -58,7 +57,6 @@ requires-dist = [
     { name = "aiolimiter", specifier = ">=1.1.0" },
     { name = "coveralls", marker = "extra == 'dev'", specifier = ">=3.3.1" },
     { name = "eth-abi", marker = "extra == 'dev'" },
-    { name = "eth-abi", marker = "extra == 'fallback'" },
     { name = "eth-hash", extras = ["pycryptodome"], marker = "extra == 'dev'" },
     { name = "eth-hash", extras = ["pycryptodome"], marker = "extra == 'fallback'" },
     { name = "eth-utils", marker = "extra == 'dev'", specifier = ">=2.0.0" },

@@ -35,13 +35,15 @@ dev = [
     "ruff==0.4.7",
     "mypy",
     "import-linter>=2.0.0",
+    # eth-abi is a TEST ORACLE only -- it is not a decode tier (see abi_pure.py).
     "eth-abi",
     "eth-utils>=2.0.0",
     "eth-hash[pycryptodome]",
 ]
-# Pure-Python keccak/ABI-decode fallback when the fastabi Rust extension is absent
+# Native keccak when the fastabi Rust extension is absent. ABI decoding needs
+# no extra: aiochainscan/abi_pure.py covers the whole spec. Keccak has no such
+# floor -- aiochainscan/_keccak.py is ~97x slower than eth-hash.
 fallback = [
-    "eth-abi",
     "eth-utils>=2.0.0",
     "eth-hash[pycryptodome]",
 ]
@@ -225,7 +227,8 @@ module = [
 ignore_missing_imports = true
 
 # Per-module overrides for optional dependencies
-# These packages are installed via extras: aiochainscan[data,mcp] / [fallback]
+# These packages are installed via extras: aiochainscan[data,mcp] / [fallback],
+# or by [dev] alone in the case of eth_abi (a test oracle, not a runtime path).
 
 [[tool.mypy.overrides]]
 module = ["polars", "polars.*"]

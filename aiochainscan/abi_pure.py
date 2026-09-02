@@ -1,8 +1,7 @@
 """Pure-Python Solidity ABI codec — the always-available decode floor.
 
-Third and last tier of the decode backend chain in :mod:`aiochainscan.decode`
-(``fastabi`` → ``eth-abi`` → this module), mirroring the keccak chain in
-:mod:`aiochainscan.crypto`. Unlike :mod:`aiochainscan._keccak` this is not
+Second and last tier of the decode backend chain in :mod:`aiochainscan.decode`
+(``fastabi`` → this module). Unlike :mod:`aiochainscan._keccak` this is not
 only a correctness floor: it is the decode path of every base install, so the
 parse step is separated from the decode step and every per-value property is
 precomputed at parse time.
@@ -18,14 +17,21 @@ Two output conventions, deliberately:
   what the MCP ``read_contract`` tool hands to an agent.
 
 Supported types: ``uintN``/``intN``, ``address``, ``bool``, ``bytesN``,
-``bytes``, ``string``, fixed/dynamic arrays and (nested) tuples. Anything else
-raises :class:`~aiochainscan.exceptions.AbiTypeNotSupportedError` rather than
-decoding to a wrong or empty value.
+``bytes``, ``string``, ``fixedMxN``/``ufixedMxN``, fixed/dynamic arrays and
+(nested) tuples — everything the ABI spec defines. Anything else raises
+:class:`~aiochainscan.exceptions.AbiTypeNotSupportedError` rather than decoding
+to a wrong or empty value.
+
+Decoding is *strict*, as the spec requires: a static value's padding must be
+zero (sign extension for ``intN``) and a dynamic offset must point past the
+head area. Accepting non-canonical padding would mean handing back a confident
+number that no compliant encoder could have produced.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Any
 
 from aiochainscan.crypto import keccak_hex
@@ -62,8 +68,12 @@ class TypeNode:
     """
 
     canonical: str
-    kind: str  # uint | int | address | bool | fixed_bytes | bytes | string | array | tuple
-    bits: int = 0  # uint/int width or bytesN width
+    kind: str
+    """uint | int | ufixed | fixed | address | bool | fixed_bytes | bytes |
+    string | array | tuple"""
+
+    bits: int = 0  # uint/int/fixed width, or bytesN width
+    decimals: int = 0  # fixedMxN scale; the N
     length: int | None = None  # fixed-array length; None for dynamic
     elem: TypeNode | None = None
     components: tuple[TypeNode, ...] = ()
@@ -124,9 +134,9 @@ def _parse_param(param: dict[str, Any]) -> TypeNode:
             tuple_keys=names if all(names) else None,
         )
     if base.startswith('uint') and base[4:].isdigit():
-        return TypeNode(canonical=base, kind='uint', bits=int(base[4:]))
+        return TypeNode(canonical=base, kind='uint', bits=_integer_width(type_name, base[4:]))
     if base.startswith('int') and base[3:].isdigit():
-        return TypeNode(canonical=base, kind='int', bits=int(base[3:]))
+        return TypeNode(canonical=base, kind='int', bits=_integer_width(type_name, base[3:]))
     if base == 'address':
         return TypeNode(canonical=base, kind='address')
     if base == 'bool':
@@ -136,8 +146,32 @@ def _parse_param(param: dict[str, Any]) -> TypeNode:
     if base == 'bytes':
         return TypeNode(canonical=base, kind='bytes', is_dynamic=True)
     if base.startswith('bytes') and base[5:].isdigit():
-        return TypeNode(canonical=base, kind='fixed_bytes', bits=int(base[5:]))
+        width = int(base[5:])
+        if not 0 < width <= 32:
+            raise AbiTypeNotSupportedError(type_name)
+        return TypeNode(canonical=base, kind='fixed_bytes', bits=width)
+    for prefix, kind in (('ufixed', 'ufixed'), ('fixed', 'fixed')):
+        if base.startswith(prefix):
+            width_text, _, scale_text = base[len(prefix) :].partition('x')
+            if width_text.isdigit() and scale_text.isdigit():
+                scale = int(scale_text)
+                if not 0 < scale <= 80:
+                    raise AbiTypeNotSupportedError(type_name)
+                return TypeNode(
+                    canonical=base,
+                    kind=kind,
+                    bits=_integer_width(type_name, width_text),
+                    decimals=scale,
+                )
     raise AbiTypeNotSupportedError(type_name)
+
+
+def _integer_width(type_name: str, digits: str) -> int:
+    """Validate a spec integer width: a multiple of 8 in 8..256."""
+    width = int(digits)
+    if width % 8 or not 0 < width <= 256:
+        raise AbiTypeNotSupportedError(type_name)
+    return width
 
 
 def canonical_signature(name: str, inputs: list[dict[str, Any]]) -> str:
@@ -206,6 +240,19 @@ def _encode_static(node: TypeNode, value: Any) -> bytes:
     if node.kind == 'int':
         number = _coerce_int(value)
         if not -(2 ** (node.bits - 1)) <= number < 2 ** (node.bits - 1):
+            raise ValueError(f'{node.canonical} out of range: {value!r}')
+        return (number % 2**256).to_bytes(32, 'big')
+    if node.kind in ('ufixed', 'fixed'):
+        scaled = Decimal(str(value)).scaleb(node.decimals)
+        if scaled != scaled.to_integral_value():
+            raise ValueError(f'{node.canonical} cannot represent {value!r} exactly')
+        number = int(scaled)
+        low, high = (
+            (0, 2**node.bits)
+            if node.kind == 'ufixed'
+            else (-(2 ** (node.bits - 1)), 2 ** (node.bits - 1))
+        )
+        if not low <= number < high:
             raise ValueError(f'{node.canonical} out of range: {value!r}')
         return (number % 2**256).to_bytes(32, 'big')
     if node.kind == 'bool':
@@ -377,6 +424,10 @@ def _to_json(node: TypeNode, value: Any) -> Any:
     kind = node.kind
     if kind in ('uint', 'int'):
         return str(value)
+    if kind in ('ufixed', 'fixed'):
+        # Fixed-point keeps its declared scale rather than normalising, so the
+        # rendered string says how many decimals the type carries.
+        return format(value, 'f')
     if kind in ('bytes', 'fixed_bytes'):
         return '0x' + bytes(value).hex()
     if kind == 'array':
@@ -393,15 +444,46 @@ def _to_json(node: TypeNode, value: Any) -> Any:
     return value
 
 
+def _unsigned_word(node: TypeNode, buf: bytes, offset: int) -> int:
+    """Read an unsigned value of ``node.bits`` and reject non-zero padding."""
+    value = _read_uint(buf, offset)
+    if node.bits != 256 and value >> node.bits:
+        raise ValueError(f'{node.canonical}: value does not fit, padding is not zero')
+    return value
+
+
+def _signed_word(node: TypeNode, buf: bytes, offset: int) -> int:
+    """Read a two's-complement value of ``node.bits`` and reject bad padding."""
+    raw = _read_uint(buf, offset)
+    bits = node.bits
+    if bits == 256:
+        return raw - 2**256 if raw >= 2**255 else raw
+    value = raw & ((1 << bits) - 1)
+    sign_bit = 1 << (bits - 1)
+    negative = bool(value & sign_bit)
+    if raw >> bits != ((1 << (256 - bits)) - 1 if negative else 0):
+        raise ValueError(f'{node.canonical}: padding is not the sign extension')
+    return value - (sign_bit << 1) if negative else value
+
+
 def _decode_sequence(
     nodes: tuple[TypeNode, ...] | list[TypeNode], buf: bytes, base: int
 ) -> list[Any]:
     """Decode a head/tail sequence located at ``base`` (offsets are relative)."""
     values: list[Any] = []
     cursor = base
+    head_size = sum(node.head_size for node in nodes)
     for node in nodes:
         if node.is_dynamic:
-            values.append(_decode_node(node, buf, base + _read_uint(buf, cursor)))
+            # A pointer into the head area cannot be what an encoder produced:
+            # the tail starts where the head ends.
+            pointer = _read_uint(buf, cursor)
+            if pointer < head_size:
+                raise ValueError(
+                    f'{node.canonical}: dynamic offset {pointer} points inside the '
+                    f'{head_size}-byte head area'
+                )
+            values.append(_decode_node(node, buf, base + pointer))
             cursor += 32
         else:
             values.append(_decode_node(node, buf, cursor))
@@ -413,23 +495,27 @@ def _decode_node(node: TypeNode, buf: bytes, offset: int) -> Any:
     """Decode a single value of ``node`` at absolute ``offset``."""
     kind = node.kind
     if kind == 'uint':
-        return _read_uint(buf, offset)
+        return _unsigned_word(node, buf, offset)
     if kind == 'int':
-        # Sign-extend from the declared width, not from bit 255: a malformed
-        # payload whose high bytes are not the sign padding must decode the
-        # way the Rust backend decodes it, or the same calldata would yield
-        # different numbers depending on which extra is installed.
-        value = _read_uint(buf, offset) & ((1 << node.bits) - 1)
-        sign_bit = 1 << (node.bits - 1)
-        return value - (sign_bit << 1) if value & sign_bit else value
+        return _signed_word(node, buf, offset)
     if kind == 'bool':
-        # Only a canonical 0x01 is true, again matching the Rust backend --
-        # ``!= 0`` would read a garbage word such as 0x02 as ``True``.
-        return _read_uint(buf, offset) & 0xFF == 1
+        word = _read_uint(buf, offset)
+        if word > 1:
+            raise ValueError(f'bool: word is {word}, not 0 or 1')
+        return word == 1
     if kind == 'address':
+        if _read_uint(buf, offset) >> 160:
+            raise ValueError('address: padding is not zero')
         return '0x' + _slice(buf, offset + 12, offset + 32).hex()
     if kind == 'fixed_bytes':
-        return _slice(buf, offset, offset + node.bits)
+        width = node.bits
+        if width != 32 and any(_slice(buf, offset + width, offset + 32)):
+            raise ValueError(f'{node.canonical}: trailing padding is not zero')
+        return _slice(buf, offset, offset + width)
+    if kind == 'ufixed':
+        return Decimal(_unsigned_word(node, buf, offset)).scaleb(-node.decimals)
+    if kind == 'fixed':
+        return Decimal(_signed_word(node, buf, offset)).scaleb(-node.decimals)
     if kind == 'bytes':
         length = _read_uint(buf, offset)
         return _slice(buf, offset + 32, offset + 32 + length)

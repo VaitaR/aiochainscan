@@ -142,11 +142,11 @@ pip install aiochainscan                 # pure Python, no Rust toolchain
 pip install aiochainscan[fastabi]        # + Rust ABI decoder (optional accelerator)
 pip install aiochainscan[data]           # + Polars DataFrames
 pip install aiochainscan[mcp]            # + MCP server
-pip install aiochainscan[fallback]       # + pure-Python ABI decode without fastabi
+pip install aiochainscan[fallback]       # + native keccak without fastabi
 ```
 
-Note: a bare install cannot decode ABI/calldata — add `[fallback]` or `[fastabi]`
-before the first `iter_events` / `read_contract` call.
+Note: a bare install decodes ABI/calldata on the pure-Python floor — no extra
+needed. `[fallback]` only accelerates keccak; `[fastabi]` accelerates both.
 
 ## Tips for AI agents
 

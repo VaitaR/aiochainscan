@@ -183,7 +183,8 @@ Merged into `main`, `make validate` green (`1089 passed, 13 skipped`, mypy --str
    remains a documented conservative assumption. Etherscan's 10_000 comes from a repo comment.
 5. A bare base install cannot decode ABI/calldata (needs `[fallback]` or `[fastabi]`). Must be
    stated next to the install instructions in `README.md`, or the first `iter_events` call
-   fails with an opaque dependency error.
+   fails with an opaque dependency error. **Closed** by `aiochainscan/abi_pure.py`: the base
+   install now decodes the whole ABI spec with no extra.
 
 ### Update — open items 1 and 2 closed
 

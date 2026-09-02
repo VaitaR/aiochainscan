@@ -16,29 +16,15 @@ from aiochainscan.exceptions import (
     PureAbiDecodeWarning,
 )
 
-_eth_abi_decode: Any
-_eth_abi_decoding_error: type[Exception] | None
-try:
-    from eth_abi.abi import decode as _eth_abi_decode
-    from eth_abi.exceptions import DecodingError
-
-    _eth_abi_decoding_error = DecodingError
-    ETH_ABI_AVAILABLE = True
-except ImportError:
-    _eth_abi_decode = None
-    _eth_abi_decoding_error = None
-    ETH_ABI_AVAILABLE = False
-
-# Malformed calldata must stay non-fatal on every tier. eth-abi signals it with
-# DecodingError, which descends from Exception rather than ValueError, so the
-# handlers below would let it escape and turn spam calldata into a crash.
+# Malformed calldata must stay non-fatal: a spam transaction whose selector
+# happens to collide must not crash a decode loop.
 _MALFORMED_CALLDATA_ERRORS: tuple[type[BaseException], ...] = (
     ValueError,
     TypeError,
     KeyError,
     IndexError,
     AttributeError,
-) + ((_eth_abi_decoding_error,) if _eth_abi_decoding_error is not None else ())
+)
 
 
 def _abi_decode_params(
@@ -47,25 +33,16 @@ def _abi_decode_params(
     index: _AbiIndex | None = None,
     plan_key: str | None = None,
 ) -> Sequence[Any]:
-    """Decode an ABI parameter sequence with the best available backend.
+    """Decode an ABI parameter sequence on the pure-Python floor.
 
-    Tiers 2 and 3 of the decode chain — fastabi decodes whole calldata
-    upstream and never reaches here. Both tiers return native Python values
-    (``int``, ``bytes``, …), normalised to the fastabi JSON convention by
+    Second and last tier of the decode chain — fastabi decodes whole calldata
+    upstream and never reaches here. Returns native Python values (``int``,
+    ``bytes``, …), normalised to the fastabi JSON convention by
     :func:`_convert_bytes_to_hex` / :func:`_convert_large_ints_to_strings`.
 
-    ``index`` + ``plan_key`` memoise the per-parameter-list preparation (the
-    canonical type strings for eth-abi, the compiled nodes for the pure floor)
-    across every item decoded against the same ABI.
+    ``index`` + ``plan_key`` memoise the compiled decode plan across every
+    item decoded against the same ABI.
     """
-    if _eth_abi_decode is not None:
-        types = None if index is None or plan_key is None else index.types.get(plan_key)
-        if types is None:
-            types = [canonical_abi_type(param) for param in params]
-            if index is not None and plan_key is not None:
-                index.types[plan_key] = types
-        return cast('Sequence[Any]', _eth_abi_decode(types, data))
-
     nodes = None if index is None or plan_key is None else index.nodes.get(plan_key)
     if nodes is None:
         nodes = compile_params(params)
@@ -215,13 +192,12 @@ class _AbiIndex:
 
     Building the maps keccak-hashes every function and event signature (~120 µs
     for a 20-function ABI), which the batch and streaming paths would otherwise
-    repeat per item. ``types`` and ``nodes`` then memoise the per-parameter-list
-    work of the two decode tiers, keyed by selector / topic hash.
+    repeat per item. ``nodes`` then memoises each parameter list's compiled
+    decode plan, keyed by selector / topic hash.
     """
 
     function_map: dict[str, dict[str, Any]]
     event_map: dict[str, dict[str, Any]]
-    types: dict[str, list[str]] = field(default_factory=dict)
     nodes: dict[str, tuple[TypeNode, ...]] = field(default_factory=dict)
 
 
@@ -303,8 +279,8 @@ def _convert_bytes_to_hex(data: Any) -> Any:
     """Recursively traverses data structures and converts bytes to hex strings.
 
     Arrays and tuples come out as ``list`` whatever the backend produced them
-    as (eth-abi returns Python tuples), so every decode tier agrees with the
-    Rust one, which serializes both as JSON arrays.
+    as (the pure floor returns Python tuples), so both decode tiers agree with
+    the Rust one, which serializes both as JSON arrays.
     """
     if isinstance(data, bytes):
         return '0x' + data.hex()
@@ -356,7 +332,13 @@ def _decode_transaction_input_fast(
         # Call Rust decoder - returns parsed dict via orjson
         result = _fast_decode_input(input_bytes, abi_json)
 
-        # Map Rust result format to Python format
+        # An empty function name means the Rust backend did not recognise the
+        # call -- including when it cannot build a signature for a type it does
+        # not implement (fixed-point). The Python tier covers the whole spec,
+        # so let it try before reporting nothing.
+        if not result['function_name']:
+            return _decode_transaction_input_python(transaction, abi)
+
         transaction['decoded_func'] = result['function_name']
         transaction['decoded_data'] = result['decoded_data']
 
@@ -662,9 +644,8 @@ def _warn_bulk_on_pure_floor(count: int) -> None:
     if _bulk_warning_emitted or FASTABI_AVAILABLE or count < _BULK_WARNING_THRESHOLD:
         return
     _bulk_warning_emitted = True
-    backend = 'eth-abi' if ETH_ABI_AVAILABLE else 'pure-Python'
     warnings.warn(
-        f'Decoding {count} inputs on the {backend} backend. '
+        f'Decoding {count} inputs on the pure-Python backend. '
         "Install 'aiochainscan[fastabi]' for the Rust decoder "
         '(roughly an order of magnitude faster on bulk workloads).',
         PureAbiDecodeWarning,

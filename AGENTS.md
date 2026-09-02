@@ -444,7 +444,7 @@ Every `Method` enum value (33 total) maps to typed convenience methods on `Chain
 | `adapters/aiolimiter_adapter.py` | Rate limiting | Token bucket, burst=1 |
 | `convert.py` | Wei/hex/datetime conversion helpers | Exact `Decimal` math, hex-aware int parsing, tz-aware UTC |
 | `crypto.py` | Keccak-256, EIP-55 checksum | fastabi → eth-utils → pure-Python (`_keccak.py`) fallback chain — the base install always has a working backend |
-| `decode.py` | ABI decoding (Python) | Backend chain fastabi → eth-abi (`[fallback]`) → `abi_pure.py`; orjson parsing; content+identity-cached ABI index |
+| `decode.py` | ABI decoding (Python) | Backend chain fastabi → `abi_pure.py` (no third tier); orjson parsing; content+identity-cached ABI index |
 | `abi_pure.py` | Pure-Python ABI codec | The always-available decode floor AND the MCP calldata encoder — no dependencies beyond `crypto.py` |
 | `fastabi/src/lib.rs` | ABI decoding (Rust) | Returns JSON, LRU cache |
 | `mcp/` | MCP server for AI agents | Adapter over `ChainscanClient` — see MCP Server section |
@@ -671,35 +671,51 @@ Or in one shot: `make ci-local` (mirrors the disabled GitHub CI). Agents: run `m
 
 ## ABI Decode Backend Chain
 
-`decode.py` picks a backend per process, mirroring `crypto.py`:
-`fastabi` (Rust, `[fastabi]`) → `eth-abi` (`[fallback]`) → `abi_pure.py`
-(always available). A bare `pip install aiochainscan` therefore decodes
+`decode.py` picks a backend per process: `fastabi` (Rust, `[fastabi]`) →
+`abi_pure.py` (always available). There is no third tier — `abi_pure.py`
+covers the whole ABI spec, so a bare `pip install aiochainscan` decodes
 transaction inputs, event logs, `SmartContract.iter_events` and the MCP
 `read_contract` / `get_transaction_info` tools with no extras installed.
+`eth-abi` is a **test oracle** in `[dev]`, never a runtime path.
 
-- **One output convention across all three tiers** (the Rust one): ints above
+- **One output convention across both tiers** (the Rust one): ints above
   `i64::MAX` as strings, `bytes`/`bytesN` as `0x` hex, arrays *and* tuples as
   `list`. `tests/test_abi_pure.py::TestTierParity` pins it — a decoded value
-  must not change shape when a user adds or drops an extra.
+  must not change shape when a user adds or drops `[fastabi]`.
 - **Unsupported Solidity type → `AbiTypeNotSupportedError`**, never an empty
   `decoded_data`: a gap in this library must not read as undecodable
-  calldata. Malformed/truncated calldata stays non-fatal (empty result) —
-  note that eth-abi signals it with `DecodingError`, which is NOT a
-  `ValueError`, so it needs the explicit `_MALFORMED_CALLDATA_ERRORS` tuple.
-- **Malformed *values* follow the Rust backend, which is lenient**, not
-  eth-abi, which rejects: dirty `address`/`bytesN` padding, a zero dynamic
-  offset and an out-of-range `uint8` all decode. Where leniency would change
-  the *number*, the pure floor copies Rust exactly — `int<N>` sign-extends
-  from bit `N-1` (not 255) and only a canonical `0x01` is `True`. One known
-  residual: an all-ones `bool` word is `None` on Rust and `False` on the pure
-  floor.
-- **The pure floor is ~2× faster than the `eth-abi` tier** on single decodes
-  (`-m benchmark` in `tests/test_abi_pure.py`), so `[fallback]` buys wider
-  type coverage, not speed. Bulk work (`decode_many`, streaming, DataFrames)
-  still belongs on `[fastabi]`, and
-  `decode_transaction_inputs_batch` says so once per process
-  (`PureAbiDecodeWarning`) for batches of 50+. Log decoding never had a Rust
-  path at all (fastabi decodes *inputs* only), so it warns about nothing.
+  calldata. Malformed/truncated calldata stays non-fatal (empty result), which
+  is what `_MALFORMED_CALLDATA_ERRORS` is for — a spam transaction whose
+  selector collides must not kill a decode loop.
+- **Both tiers are strict about padding**, and deliberately so: the spec says
+  the unused bits of a word are zero (or the sign extension, for `int<N>`), so
+  rejecting is more defensible than guessing. Dirty `address`/`bytesN`
+  padding, an out-of-range `uint<N>`/`int<N>`, a non-canonical `bool` and a
+  dynamic offset pointing into the head area all raise. `ethabi` is lenient
+  and has no strict mode, so the Rust tier gets a hand-written validation pass
+  (`validate_sequence` in `lib.rs`) before `Function::decode_input`; it works
+  on byte slices only, no bignum. Do not implement this by re-encoding and
+  comparing — that is *over*-strict (it rejects non-minimal but legal offsets).
+- **Cost of strictness: +12% end-to-end on the pure floor**
+  (`decode_transaction_input`, ERC-20 `transfer`; `-m benchmark` in
+  `tests/test_abi_pure.py`), **+2% single / +25% bulk on the Rust tier**
+  (0.516→0.526 us/call, 1.045→1.311 ms per 1000). Keep `validate_sequence`
+  generic over the parameter iterator: materializing a `Vec<ParamType>` per
+  call instead cost +99% single / +143% bulk, which is what the pass looked
+  like before that one allocation was removed. Bulk work (`decode_many`, streaming, DataFrames)
+  still belongs on `[fastabi]`, and `decode_transaction_inputs_batch` says so
+  once per process (`PureAbiDecodeWarning`) for batches of 50+. Log decoding
+  never had a Rust path at all (fastabi decodes *inputs* only), so it warns
+  about nothing.
+- **`fixedMxN` / `ufixedMxN` decode to `Decimal`** (`raw / 10**N`, exact via
+  `scaleb`). They exist so `AbiTypeNotSupportedError` cannot fire where the
+  old eth-abi tier coped. Widths are validated at parse time: `int`/`uint`
+  a multiple of 8 in 8..256, `bytesN` 0<N≤32, fixed scale 0<N≤80.
+- **The Rust tier falls through, not out**, when it recognises nothing:
+  `fastabi` answers an unimplemented type with an empty `function_name`
+  rather than an error, which would silently give `[fastabi]` users *less*
+  than a base install. `_decode_transaction_input_fast` therefore retries on
+  the pure floor whenever the Rust result is empty.
 - **The ABI index is cached** (`_abi_index`): identity fast path, then a
   content digest, holding the function/event maps plus each selector's
   compiled decode plan — hashing an ABI costs more than decoding against it.
@@ -740,7 +756,9 @@ export ETHERSCAN_KEY="your_key"  # Optional
 ```
 
 Required runtime deps are just: `httpx`, `orjson`, `tenacity`, `aiolimiter`.
-Everything else is an extra (`data`, `mcp`, `http2`, `fallback`).
+Everything else is an extra (`data`, `mcp`, `http2`, `fallback`). `[fallback]`
+is native **keccak** only (`_keccak.py` is ~97× slower than `eth-hash`); ABI
+decoding needs no extra at all.
 
 ---
 
