@@ -154,7 +154,12 @@ def _flat_address(value: Any) -> str:
 
 
 def _int_field(value: Any, default: int = 0) -> int:
-    """Read decimal/hex explorer scalars as int."""
+    """Read decimal/hex explorer scalars as int.
+
+    Local, not ``convert.hex_to_int``: curated tool output tolerates
+    absent/corrupted scalars via ``default`` instead of raising, and booleans
+    must not parse as ints.
+    """
     if isinstance(value, bool):
         return default
     if isinstance(value, int):

@@ -345,12 +345,17 @@ class TestUrlBuilding:
         expected = f'https://eth.blockscout.com/api/v2/smart-contracts/{address}'
         assert url == expected
 
-    def test_build_query_params_excludes_path_params(self, scanner: BlockScoutV2Scanner) -> None:
-        """_build_query_params should not include path parameters."""
+    def test_build_request_excludes_path_params(self, scanner: BlockScoutV2Scanner) -> None:
+        """Built query params include static query but never path params.
+
+        Path parameters are consumed by URL substitution
+        (``EndpointSpec.map_params``), never sent as query/body parameters.
+        """
         spec = BlockScoutV2Scanner.SPECS[Method.ACCOUNT_TOKEN_PORTFOLIO]
         address = '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045'
 
-        params = scanner._build_query_params(spec, address=address)
+        request_data = scanner._build_request(spec, address=address)
+        params = request_data['params']
 
         # Should include static query params but not address
         assert 'type' in params
@@ -358,13 +363,24 @@ class TestUrlBuilding:
         # Address should NOT be in query params (it's a path param)
         assert 'address' not in params
 
-    def test_build_query_params_includes_static_params(self, scanner: BlockScoutV2Scanner) -> None:
-        """_build_query_params should include static query parameters."""
+    def test_build_request_includes_static_params_only(self, scanner: BlockScoutV2Scanner) -> None:
+        """Built query params carry exactly the spec's static query."""
         spec = BlockScoutV2Scanner.SPECS[Method.ACCOUNT_TOKEN_PORTFOLIO]
 
-        params = scanner._build_query_params(spec, address='0x...')
+        request_data = scanner._build_request(spec, address='0x...')
 
-        assert params == {'type': 'ERC-20'}
+        assert request_data['params'] == {'type': 'ERC-20'}
+
+    def test_build_request_drops_unknown_public_params(self, scanner: BlockScoutV2Scanner) -> None:
+        """``unknown_params='drop'``: names outside the param_map never reach
+        the wire (Etherscan-style pass-through would send them)."""
+        spec = BlockScoutV2Scanner.SPECS[Method.ACCOUNT_TRANSACTIONS]
+
+        request_data = scanner._build_request(
+            spec, address='0xabc', start_block=1, end_block=2, page=1, offset=10, tag='latest'
+        )
+
+        assert request_data['params'] == {}
 
 
 # ============================================================================

@@ -81,17 +81,29 @@ URL_BUILDER_CURRENCIES: dict[str, str] = {
 }
 
 
+#: Network alias → public BlockScout instance host. The ONE host table for
+#: both BlockScout scanners (v1 ``NETWORK_INSTANCES``, v2 ``BASE_URLS``);
+#: ``BLOCKSCOUT_HOSTS`` below re-keys the same hosts by UrlBuilder api_kind.
+BLOCKSCOUT_INSTANCE_HOSTS: dict[str, str] = {
+    'eth': 'eth.blockscout.com',
+    'ethereum': 'eth.blockscout.com',
+    'sepolia': 'eth-sepolia.blockscout.com',
+    'gnosis': 'gnosis.blockscout.com',
+    'polygon': 'polygon.blockscout.com',
+    'optimism': 'optimism.blockscout.com',
+    'arbitrum': 'arbitrum.blockscout.com',
+    'base': 'base.blockscout.com',
+    'scroll': 'scroll.blockscout.com',
+    'linea': 'linea.blockscout.com',
+    'bsc': 'bsc.blockscout.com',
+    'zksync': 'zksync.blockscout.com',
+}
+
+
 BLOCKSCOUT_HOSTS: dict[str, str] = {
-    'blockscout_eth': 'eth.blockscout.com',
-    'blockscout_sepolia': 'eth-sepolia.blockscout.com',
-    'blockscout_gnosis': 'gnosis.blockscout.com',
-    'blockscout_polygon': 'polygon.blockscout.com',
-    'blockscout_base': 'base.blockscout.com',
-    'blockscout_bsc': 'bsc.blockscout.com',
-    'blockscout_optimism': 'optimism.blockscout.com',
-    'blockscout_arbitrum': 'arbitrum.blockscout.com',
-    'blockscout_scroll': 'scroll.blockscout.com',
-    'blockscout_linea': 'linea.blockscout.com',
+    f'blockscout_{alias}': host
+    for alias, host in BLOCKSCOUT_INSTANCE_HOSTS.items()
+    if f'blockscout_{alias}' in URL_BUILDER_CURRENCIES
 }
 
 

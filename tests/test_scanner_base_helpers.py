@@ -38,8 +38,13 @@ from aiochainscan.scanners.base import (
     hex_block_tag,
     translate_unexpected_errors,
 )
+from aiochainscan.scanners.blockscout_v1 import BlockScoutV1
 from aiochainscan.scanners.blockscout_v2 import BlockScoutV2Scanner
+from aiochainscan.scanners.etherscan_v2 import EtherscanV2
+from aiochainscan.scanners.nodereal import NodeRealScanner
 from aiochainscan.services.pagination import normalize_items
+
+CHECKSUM_ADDRESS = '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045'
 
 
 def _scanner(network_client: Any = None) -> BlockScoutV2Scanner:
@@ -154,6 +159,112 @@ class TestTranslateUnexpectedErrors:
     def test_no_error_is_noop(self) -> None:
         with translate_unexpected_errors('never seen'):
             pass
+
+    def test_method_not_declared_passes_through_unmasked(self) -> None:
+        """Capability errors are routed on by the provider pool — the ladder
+        must never mask them into network failures."""
+        err = MethodNotDeclaredError('not declared')
+
+        with (
+            pytest.raises(MethodNotDeclaredError) as excinfo,
+            translate_unexpected_errors('Scanner unexpected error'),
+        ):
+            raise err
+
+        assert excinfo.value is err
+
+
+# ============================================================================
+# The ladder at the scanner seams — one translated envelope per scanner
+# ============================================================================
+
+
+class ExplodingNetwork:
+    """Network stand-in whose every transport entry point fails unexpectedly.
+
+    ``RuntimeError`` is deliberately NOT a library error: it simulates an
+    unexpected network-level failure (the class of bug the ladder exists for).
+    """
+
+    async def request(self, **kwargs: Any) -> Any:
+        raise RuntimeError('boom')
+
+    async def get(self, **kwargs: Any) -> Any:
+        raise RuntimeError('boom')
+
+    async def post(self, **kwargs: Any) -> Any:
+        raise RuntimeError('boom')
+
+
+def _etherscan_v2(network: Any) -> EtherscanV2:
+    return EtherscanV2(
+        api_key='test_key', network='main', url_builder=MagicMock(), network_client=network
+    )
+
+
+def _blockscout_v1(network: Any) -> BlockScoutV1:
+    return BlockScoutV1(api_key='', network='eth', url_builder=MagicMock(), network_client=network)
+
+
+def _nodereal(network: Any) -> NodeRealScanner:
+    return NodeRealScanner(
+        api_key='test_key', network='bsc', url_builder=MagicMock(), network_client=network
+    )
+
+
+class TestLadderAtTheSeams:
+    """``Scanner.call`` (and every ``fetch_page`` path) applies the shared
+    error ladder exactly once: an unexpected transport failure surfaces as a
+    non-retryable :class:`ChainscanNetworkError` for every scanner."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        'factory',
+        [
+            _etherscan_v2,
+            _blockscout_v1,
+            lambda net: _scanner(net),
+            _nodereal,
+        ],
+        ids=['etherscan-v2', 'blockscout-v1', 'blockscout-v2', 'nodereal'],
+    )
+    async def test_unexpected_transport_error_is_translated(self, factory: Any) -> None:
+        scanner = factory(ExplodingNetwork())
+
+        with pytest.raises(ChainscanNetworkError) as excinfo:
+            await scanner.call(Method.ACCOUNT_BALANCE, address=CHECKSUM_ADDRESS)
+
+        error = excinfo.value
+        assert error.retryable is False
+        assert 'boom' in str(error)
+
+    @pytest.mark.asyncio
+    async def test_blockscout_v2_fetch_page_translates_unexpected_errors(self) -> None:
+        """The cursor pagination path is laddered too (was the only unwrapped
+        paginated path before the base owned the seam)."""
+        scanner = _scanner(ExplodingNetwork())
+
+        with pytest.raises(ChainscanNetworkError) as excinfo:
+            await scanner.fetch_page(Method.ACCOUNT_TRANSACTIONS, {'address': CHECKSUM_ADDRESS})
+
+        error = excinfo.value
+        assert error.retryable is False
+        assert 'boom' in str(error)
+
+    @pytest.mark.asyncio
+    async def test_etherscan_like_fetch_page_translates_unexpected_errors(self) -> None:
+        """Etherscan-like page/offset pagination routes through ``call``, so
+        the base ladder covers it."""
+        scanner = _etherscan_v2(ExplodingNetwork())
+
+        with pytest.raises(ChainscanNetworkError) as excinfo:
+            await scanner.fetch_page(
+                Method.ACCOUNT_TRANSACTIONS, {'address': CHECKSUM_ADDRESS, 'page': 1, 'offset': 10}
+            )
+
+        error = excinfo.value
+        assert error.retryable is False
+        assert 'boom' in str(error)
 
 
 # ============================================================================

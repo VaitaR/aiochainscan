@@ -68,7 +68,9 @@ _TIP_CURSOR = '__nr_tip'
 
 # ---------------------------------------------------------------------------
 # Hex helpers — NodeReal returns hex quantities; the library contract is
-# decimal Wei strings.
+# decimal Wei strings. Deliberately local, not ``convert.hex_to_int``: the
+# wire/cursor values here are optional and default on absence/invalid input,
+# where ``hex_to_int`` raises.
 # ---------------------------------------------------------------------------
 
 
@@ -579,13 +581,9 @@ class NodeRealScanner(Scanner):
                 'embed the API key in the URL path and are not self-hostable'
             )
         super().__init__(api_key, network, url_builder, chain_id, network_client)
-        self.rpc_base_url = self.RPC_BASE_URLS.get(network)
-        self.contract_path = self.CONTRACT_PATHS.get(network)
-        if self.rpc_base_url is None or self.contract_path is None:
-            available = ', '.join(sorted(self.RPC_BASE_URLS))
-            raise ValueError(
-                f"Network '{network}' not mapped to a NodeReal endpoint. Available: {available}"
-            )
+        # Shared unknown-network ValueError shape lives on the base.
+        self.rpc_base_url = self._require_mapped_network(self.RPC_BASE_URLS, 'NodeReal endpoint')
+        self.contract_path = self._require_mapped_network(self.CONTRACT_PATHS, 'NodeReal endpoint')
 
     # ------------------------------------------------------------------
     # Transport
@@ -604,9 +602,10 @@ class NodeRealScanner(Scanner):
 
         ``Network._handle_response`` unwraps the JSON-RPC ``result`` and maps
         ``error`` objects to :class:`ChainscanClientProxyError`; the -32005
-        usage-limit code is re-raised as a retryable rate-limit error.
-        Unexpected failures are masked by the shared error-translation
-        ladder (``translate_unexpected_errors``).
+        usage-limit code is re-raised as a retryable rate-limit error —
+        provider-dialect translation composing with the shared error ladder
+        (this ladder also covers the ``fetch_page`` paths that call ``_rpc``
+        directly, outside :meth:`Scanner.call`).
         """
         envelope = {'jsonrpc': '2.0', 'method': wire_method, 'params': rpc_params, 'id': 1}
         network = self._require_network_client()
@@ -740,31 +739,47 @@ class NodeRealScanner(Scanner):
     # Scanner port
     # ------------------------------------------------------------------
 
+    def _error_context(self, method: Method) -> str:
+        return f'NodeReal unexpected error for {method.name}'
+
+    async def _perform_request(
+        self,
+        spec: EndpointSpec,
+        method: Method,
+        params: dict[str, Any],
+    ) -> Any:
+        """Provider dialect: JSON-RPC envelopes and the contract REST.
+
+        NodeReal's wire format (positional JSON-RPC params, ``nr_*`` enhanced
+        methods, API key in the URL path) is not expressible as an
+        ``EndpointSpec``, so this override replaces the SPECS-driven default;
+        the error ladder and the missing-client guard stay on the base
+        :meth:`Scanner.call`. The spec parser still applies to the raw
+        JSON-RPC/REST payload.
+        """
+        if method in self._REST_METHODS:
+            address = str(params['address'])
+            action = 'getabi' if method == Method.CONTRACT_ABI else 'getsourcecode'
+            raw_response = await self._rest_contract(action, address)
+        else:
+            if method in self._TRANSFER_METHODS:
+                # Single-page semantics: without explicit bounds, serve the
+                # most recent window; with start_block, the window at start.
+                tip, window = await self._resolve_window(params)
+                params = dict(params)
+                params[_TIP_CURSOR] = tip
+                if window is not None and params.get(_WINDOW_CURSOR) is None:
+                    params[_WINDOW_CURSOR] = [window[0], window[1]]
+            rpc_params = self._build_rpc_params(method, params)
+            raw_response = await self._rpc(self._WIRE_METHODS[method], rpc_params)
+        return spec.parse_response(raw_response)
+
     async def call(self, method: Method, **params: Any) -> Any:
         """Execute a logical method against NodeReal (JSON-RPC or contract REST)."""
-        spec = self._spec_for(method)
-        self._require_network_client()
-
-        with translate_unexpected_errors(f'NodeReal unexpected error for {method.name}'):
-            if method in self._REST_METHODS:
-                address = str(params['address'])
-                action = 'getabi' if method == Method.CONTRACT_ABI else 'getsourcecode'
-                raw_response = await self._rest_contract(action, address)
-            else:
-                if method in self._TRANSFER_METHODS:
-                    # Single-page semantics: without explicit bounds, serve the
-                    # most recent window; with start_block, the window at start.
-                    tip, window = await self._resolve_window(params)
-                    params = dict(params)
-                    params[_TIP_CURSOR] = tip
-                    if window is not None and params.get(_WINDOW_CURSOR) is None:
-                        params[_WINDOW_CURSOR] = [window[0], window[1]]
-                rpc_params = self._build_rpc_params(method, params)
-                raw_response = await self._rpc(self._WIRE_METHODS[method], rpc_params)
-            parsed_response = spec.parse_response(raw_response)
-            if method in self._TRANSFER_METHODS and isinstance(parsed_response, list):
-                return _filter_transfer_items(parsed_response, params)
-            return parsed_response
+        result = await super().call(method, **params)
+        if method in self._TRANSFER_METHODS and isinstance(result, list):
+            return _filter_transfer_items(result, params)
+        return result
 
     async def fetch_page(
         self,

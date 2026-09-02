@@ -557,10 +557,25 @@ Agent adapter over `ChainscanClient` — **run**: `python -m aiochainscan.mcp_se
 
 ### Adding a New Scanner
 1. Create `scanners/newscan_v1.py`
-2. Inherit from `Scanner` base class
-3. Define `SPECS` dict mapping `Method` → `EndpointSpec`
-4. **Use `self._network_client.request()`** - never create own HTTP session
-5. Register in `scanners/__init__.py`
+2. Inherit from `Scanner` (or `EtherscanLikeScanner`) base class
+3. Define `SPECS` dict mapping `Method` → `EndpointSpec` (set
+   `unknown_params='drop'` for strict query APIs; path placeholders in
+   `path` are excluded from the query automatically)
+4. The base owns the seams — do NOT override `call()` for transport:
+   `Scanner.call()` applies the error ladder (`translate_unexpected_errors`)
+   exactly once and dispatches through ONE mechanism (UrlBuilder endpoint
+   via `network.get/post`, or a full URL via the `_request_url` hook).
+   Override only dialect hooks: `_request_url` (per-instance hosts),
+   `_transport_headers` (provider header quirks), `_error_context`,
+   `_perform_request` / `_perform_raw_request` (transports no spec can
+   express — JSON-RPC envelopes), `_require_mapped_network` for the
+   network→URL table lookup. **Never touch HTTP sessions** — every request
+   goes through the injected Network client.
+5. Declare pagination caps where you measured them: `result_window`
+   (scanner-wide `page * offset` cap), `max_page_size` (silent per-page
+   clamp), and `RESULT_WINDOW_OVERRIDES` (per-method windows tighter than the
+   scanner's) — see the guarantee-complete notes above.
+6. Register in `scanners/__init__.py`
 
 ### Adding Bulk Fetch Support
 1. Extend `ChainscanClient` methods and scanner `SPECS` first
