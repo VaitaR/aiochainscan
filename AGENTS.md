@@ -683,7 +683,16 @@ transaction inputs, event logs, `SmartContract.iter_events` and the MCP
   must not change shape when a user adds or drops an extra.
 - **Unsupported Solidity type → `AbiTypeNotSupportedError`**, never an empty
   `decoded_data`: a gap in this library must not read as undecodable
-  calldata. Malformed/truncated calldata stays non-fatal (empty result).
+  calldata. Malformed/truncated calldata stays non-fatal (empty result) —
+  note that eth-abi signals it with `DecodingError`, which is NOT a
+  `ValueError`, so it needs the explicit `_MALFORMED_CALLDATA_ERRORS` tuple.
+- **Malformed *values* follow the Rust backend, which is lenient**, not
+  eth-abi, which rejects: dirty `address`/`bytesN` padding, a zero dynamic
+  offset and an out-of-range `uint8` all decode. Where leniency would change
+  the *number*, the pure floor copies Rust exactly — `int<N>` sign-extends
+  from bit `N-1` (not 255) and only a canonical `0x01` is `True`. One known
+  residual: an all-ones `bool` word is `None` on Rust and `False` on the pure
+  floor.
 - **The pure floor is ~2× faster than the `eth-abi` tier** on single decodes
   (`-m benchmark` in `tests/test_abi_pure.py`), so `[fallback]` buys wider
   type coverage, not speed. Bulk work (`decode_many`, streaming, DataFrames)
@@ -694,8 +703,11 @@ transaction inputs, event logs, `SmartContract.iter_events` and the MCP
 - **The ABI index is cached** (`_abi_index`): identity fast path, then a
   content digest, holding the function/event maps plus each selector's
   compiled decode plan — hashing an ABI costs more than decoding against it.
-  Consequence: do not mutate an ABI list *in place* between decodes; build a
-  new list.
+  The index is built from a round-trip of the serialized ABI, so it shares no
+  mutable state with any caller: one index serves every equal ABI list, and
+  without the copy an in-place mutation of one list would change how every
+  other one decodes. Mutating a list in place still leaves *its own* cached
+  index stale (the identity path never rehashes) — build a new list instead.
 
 ---
 

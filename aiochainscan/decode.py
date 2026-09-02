@@ -17,13 +17,28 @@ from aiochainscan.exceptions import (
 )
 
 _eth_abi_decode: Any
+_eth_abi_decoding_error: type[Exception] | None
 try:
     from eth_abi.abi import decode as _eth_abi_decode
+    from eth_abi.exceptions import DecodingError
 
+    _eth_abi_decoding_error = DecodingError
     ETH_ABI_AVAILABLE = True
 except ImportError:
     _eth_abi_decode = None
+    _eth_abi_decoding_error = None
     ETH_ABI_AVAILABLE = False
+
+# Malformed calldata must stay non-fatal on every tier. eth-abi signals it with
+# DecodingError, which descends from Exception rather than ValueError, so the
+# handlers below would let it escape and turn spam calldata into a crash.
+_MALFORMED_CALLDATA_ERRORS: tuple[type[BaseException], ...] = (
+    ValueError,
+    TypeError,
+    KeyError,
+    IndexError,
+    AttributeError,
+) + ((_eth_abi_decoding_error,) if _eth_abi_decoding_error is not None else ())
 
 
 def _abi_decode_params(
@@ -224,15 +239,22 @@ def _abi_index(abi: list[dict[str, Any]]) -> _AbiIndex:
     identity level retains the list, so ``is`` can never match a recycled
     address; it does go stale if a caller mutates an ABI list *in place*
     between decodes, which no caller in this library does.
+
+    The index is built from a round-trip of the serialized ABI rather than
+    from ``abi`` itself, so it shares no mutable state with the caller. A
+    content digest means one index serves every equal ABI list, and without
+    the copy an in-place mutation of one list would change how every other
+    one decodes.
     """
     by_identity = _ABI_INDEX_BY_IDENTITY.get(id(abi))
     if by_identity is not None and by_identity[0] is abi:
         return by_identity[1]
 
-    digest = blake2b(orjson.dumps(abi), digest_size=16).digest()
+    payload = orjson.dumps(abi)
+    digest = blake2b(payload, digest_size=16).digest()
     index = _ABI_INDEX_BY_DIGEST.get(digest)
     if index is None:
-        index = _build_abi_index(abi)
+        index = _build_abi_index(cast('list[dict[str, Any]]', orjson.loads(payload)))
         if len(_ABI_INDEX_BY_DIGEST) >= _ABI_MAPS_CACHE_MAX:
             _ABI_INDEX_BY_DIGEST.clear()
         _ABI_INDEX_BY_DIGEST[digest] = index
@@ -383,12 +405,7 @@ def _decode_transaction_input_python(
         except AbiTypeNotSupportedError:
             # A gap in this library, not malformed calldata — never silenced.
             raise
-        except (ValueError, TypeError, KeyError, IndexError, AttributeError) as e:
-            # ValueError: invalid hex input data
-            # TypeError: ABI decoding type errors
-            # KeyError: missing dict keys during decode
-            # IndexError: tuple unpacking errors
-            # AttributeError: method call errors
+        except _MALFORMED_CALLDATA_ERRORS as e:
             transaction['decoded_func'] = ''
             transaction['decoded_data'] = {}
             # Log at debug level to help with troubleshooting

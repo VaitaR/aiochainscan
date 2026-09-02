@@ -389,6 +389,35 @@ class TestBaseInstall:
             warnings.simplefilter('error', PureAbiDecodeWarning)
             decode_transaction_inputs_batch(batch, abi)
 
+    def test_narrow_ints_sign_extend_from_their_declared_width(self):
+        """A payload whose high bytes are not sign padding must not change the number."""
+        abi = [
+            {
+                'type': 'function',
+                'name': 'narrow',
+                'inputs': [{'type': 'int8', 'name': 'a'}, {'type': 'int16', 'name': 'b'}],
+            }
+        ]
+        selector = '0x' + keccak_hash('narrow(int8,int16)')[:8]
+        # int8(-1) and int16(-1) written without the leading 0xff padding.
+        calldata = selector + 'ff'.rjust(64, '0') + 'ffff'.rjust(64, '0')
+
+        result = decode_transaction_input({'input': calldata}, abi)
+
+        assert result['decoded_data'] == {'a': -1, 'b': -1}
+
+    def test_only_a_canonical_one_is_true(self):
+        """A garbage bool word decodes False, not True."""
+        abi = [{'type': 'function', 'name': 'flag', 'inputs': [{'type': 'bool', 'name': 'x'}]}]
+        selector = '0x' + keccak_hash('flag(bool)')[:8]
+
+        assert decode_transaction_input({'input': selector + '2'.rjust(64, '0')}, abi)[
+            'decoded_data'
+        ] == {'x': False}
+        assert decode_transaction_input({'input': selector + '1'.rjust(64, '0')}, abi)[
+            'decoded_data'
+        ] == {'x': True}
+
     def test_small_bulk_decode_stays_silent(self, monkeypatch):
         """A batch below the threshold is not slow enough to be worth a message."""
         monkeypatch.setattr(decode_module, '_bulk_warning_emitted', False)
@@ -396,7 +425,7 @@ class TestBaseInstall:
 
         with warnings.catch_warnings():
             warnings.simplefilter('error', PureAbiDecodeWarning)
-            decode_transaction_inputs_batch([{'input': '0x' + keccak_hash('ping()')[2:10]}], abi)
+            decode_transaction_inputs_batch([{'input': '0x' + keccak_hash('ping()')[:8]}], abi)
 
 
 class TestAbiIndexCache:
@@ -443,6 +472,51 @@ class TestAbiIndexCache:
 
         assert one['decoded_data'] == {'x': str(int(word, 16))}
         assert two['decoded_data'] == {'y': '0x' + '33' * 20}
+
+    def test_mutating_one_abi_never_changes_how_another_decodes(self):
+        """Equal ABI lists share one cached index; it must share no state with them."""
+
+        def make_abi() -> list[dict[str, Any]]:
+            return [
+                {
+                    'type': 'function',
+                    'name': 'transfer',
+                    'inputs': [
+                        {'type': 'address', 'name': 'to'},
+                        {'type': 'uint256', 'name': 'value'},
+                    ],
+                }
+            ]
+
+        seeded, untouched = make_abi(), make_abi()
+        assert seeded is not untouched and seeded == untouched
+        calldata = (
+            '0xa9059cbb'
+            '000000000000000000000000d8da6bf26964af9d7eed9e03e53415d37aa96045'
+            '00000000000000000000000000000000000000000000000000000002540be400'
+        )
+
+        decode_transaction_input({'input': calldata}, seeded)
+        seeded[0]['name'] = 'POISONED'
+        seeded[0]['inputs'][0]['name'] = 'poisoned_param'
+
+        result = decode_transaction_input({'input': calldata}, untouched)
+
+        assert result['decoded_func'] == 'transfer'
+        assert set(result['decoded_data']) == {'to', 'value'}
+
+
+@requires_eth_abi
+def test_malformed_padding_is_non_fatal_on_the_eth_abi_tier(monkeypatch):
+    """eth-abi raises DecodingError, which is not a ValueError, for bad padding."""
+    monkeypatch.setattr(decode_module, 'FASTABI_AVAILABLE', False)
+    abi = [{'type': 'function', 'name': 'flag', 'inputs': [{'type': 'bool', 'name': 'x'}]}]
+    calldata = '0x' + keccak_hash('flag(bool)')[:8] + '2'.rjust(64, '0')
+
+    result = decode_transaction_input({'input': calldata}, abi)
+
+    assert result['decoded_func'] == ''
+    assert result['decoded_data'] == {}
 
 
 class TestMcpConvention:

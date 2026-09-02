@@ -415,10 +415,17 @@ def _decode_node(node: TypeNode, buf: bytes, offset: int) -> Any:
     if kind == 'uint':
         return _read_uint(buf, offset)
     if kind == 'int':
-        value = _read_uint(buf, offset)
-        return value - 2**256 if value >= 2**255 else value
+        # Sign-extend from the declared width, not from bit 255: a malformed
+        # payload whose high bytes are not the sign padding must decode the
+        # way the Rust backend decodes it, or the same calldata would yield
+        # different numbers depending on which extra is installed.
+        value = _read_uint(buf, offset) & ((1 << node.bits) - 1)
+        sign_bit = 1 << (node.bits - 1)
+        return value - (sign_bit << 1) if value & sign_bit else value
     if kind == 'bool':
-        return _read_uint(buf, offset) != 0
+        # Only a canonical 0x01 is true, again matching the Rust backend --
+        # ``!= 0`` would read a garbage word such as 0x02 as ``True``.
+        return _read_uint(buf, offset) & 0xFF == 1
     if kind == 'address':
         return '0x' + _slice(buf, offset + 12, offset + 32).hex()
     if kind == 'fixed_bytes':

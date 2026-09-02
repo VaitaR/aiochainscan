@@ -870,6 +870,18 @@ class TestReadContract:
         response = await mcp_tools.read_contract(client, TOKEN, 'balanceOf', args=f'["{WALLET}"]')
         assert response.data is not None
         assert response.data['result'] is None
+
+    async def test_undecodable_outputs_are_not_reported_as_reverted(self) -> None:
+        """A call that returned data must never be summarised as empty/reverted."""
+        client = StubClient()
+        client.support(Method.CONTRACT_ABI, Method.PROXY_ETH_CALL)
+        client.get_contract_abi.value = json.dumps(BALANCE_OF_ABI)
+        client.eth_call.value = '0xdeadbeef'  # too short for a uint256 output
+        response = await mcp_tools.read_contract(client, TOKEN, 'balanceOf', args=f'["{WALLET}"]')
+        assert response.data is not None
+        assert response.data['result'] is None
+        assert 'empty/reverted' not in response.content_text
+        assert '0xdeadbeef' in response.content_text
         assert response.notes
 
 
