@@ -6,8 +6,43 @@ on:
   workflow_dispatch:  # Allow manual trigger
 
 jobs:
-  build_wheels:
-    name: Build wheels on ${{ matrix.os }}
+  # aiochainscan (base): pure Python, universal wheel + sdist, no Rust toolchain needed.
+  build_pure_python:
+    name: Build pure-Python aiochainscan (wheel + sdist)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build wheel + sdist
+        run: pipx run build
+
+      - name: Smoke test — import with no Rust toolchain on PATH
+        run: |
+          python -m venv /tmp/aiochainscan-smoke
+          /tmp/aiochainscan-smoke/bin/pip install dist/*.whl
+          /tmp/aiochainscan-smoke/bin/python -c "
+          import aiochainscan
+          from aiochainscan import ChainscanClient
+          from aiochainscan.decode import FASTABI_AVAILABLE
+          assert not FASTABI_AVAILABLE, 'base wheel must not bundle the accelerator'
+          print('pure-Python base import OK, FASTABI_AVAILABLE =', FASTABI_AVAILABLE)
+          "
+
+      - name: Upload aiochainscan artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: aiochainscan-dist
+          path: dist/*
+
+  # aiochainscan-fastabi (optional accelerator): native wheels per platform, built by
+  # maturin from aiochainscan/fastabi/ — a separate distribution, top-level module name.
+  build_fastabi_wheels:
+    name: Build fastabi wheels on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -27,6 +62,8 @@ jobs:
 
       - name: Build wheels
         uses: pypa/cibuildwheel@v2.20.0
+        with:
+          package-dir: aiochainscan/fastabi
         env:
           # Build for Python 3.12, 3.13 only (requires-python >= 3.12)
           CIBW_BUILD: "cp312-* cp313-*"
@@ -43,9 +80,9 @@ jobs:
           # Ensure Rust is in PATH
           CIBW_ENVIRONMENT_LINUX: 'PATH="$HOME/.cargo/bin:$PATH"'
 
-          # Test the bundled native extension, not just package metadata
+          # Test the native extension itself (top-level module, no aiochainscan needed)
           CIBW_TEST_COMMAND: >-
-            python -c "import json; from aiochainscan.aiochainscan_fastabi import decode_one;
+            python -c "import json; from aiochainscan_fastabi import decode_one;
             result = json.loads(decode_one(b'', '[]'));
             assert result == {'function_name': '', 'decoded_data': {}};
             print('Native fastabi smoke test passed')"
@@ -53,27 +90,27 @@ jobs:
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
-          name: wheels-${{ matrix.os }}
+          name: fastabi-wheels-${{ matrix.os }}
           path: ./wheelhouse/*.whl
 
-  build_sdist:
-    name: Build source distribution
+  build_fastabi_sdist:
+    name: Build fastabi source distribution
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - name: Build sdist
-        run: pipx run build --sdist
+        run: pipx run build --sdist --outdir dist aiochainscan/fastabi
 
       - name: Upload sdist
         uses: actions/upload-artifact@v4
         with:
-          name: sdist
+          name: fastabi-sdist
           path: dist/*.tar.gz
 
   publish:
     name: Publish to PyPI
-    needs: [build_wheels, build_sdist]
+    needs: [build_pure_python, build_fastabi_wheels, build_fastabi_sdist]
     runs-on: ubuntu-latest
     if: github.event_name == 'release'
 

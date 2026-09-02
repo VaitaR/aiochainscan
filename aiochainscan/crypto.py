@@ -32,7 +32,10 @@ _KECCAK: _KeccakFn | None = None
 KECCAK_BACKEND = 'none'
 
 try:
-    from aiochainscan.aiochainscan_fastabi import keccak256 as _fastabi_keccak
+    try:
+        from aiochainscan_fastabi import keccak256 as _fastabi_keccak
+    except ImportError:
+        from aiochainscan.aiochainscan_fastabi import keccak256 as _fastabi_keccak
 
     _KECCAK = _fastabi_keccak
     KECCAK_BACKEND = 'fastabi'

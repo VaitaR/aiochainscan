@@ -38,28 +38,44 @@ def _parse_json(json_str: str) -> Any:
     return orjson.loads(json_str)
 
 
-# Try to import fastabi Rust backend
+# Try to import fastabi Rust backend. The accelerator is now the top-level
+# `aiochainscan_fastabi` distribution (separate from the pure-Python
+# `aiochainscan` package — see docs/V1_PLAN.md Track A); an existing
+# maturin/editable checkout may still build it as `aiochainscan.aiochainscan_fastabi`,
+# so that name is tried second.
 try:
-    from aiochainscan.aiochainscan_fastabi import decode_input as _fast_decode_input_json
-    from aiochainscan.aiochainscan_fastabi import decode_many as _fast_decode_many_json
-    from aiochainscan.aiochainscan_fastabi import (
-        decode_many_direct as _fast_decode_many_direct_json,
-    )
-    from aiochainscan.aiochainscan_fastabi import decode_many_flat as _fast_decode_many_flat_json
-    from aiochainscan.aiochainscan_fastabi import decode_many_hex as _fast_decode_many_hex_json
-    from aiochainscan.aiochainscan_fastabi import decode_many_raw as _fast_decode_many_raw_json
-    from aiochainscan.aiochainscan_fastabi import (
-        decode_many_to_arrow as _fast_decode_many_to_arrow,
-    )
-    from aiochainscan.aiochainscan_fastabi import decode_one as _fast_decode_one_json
-    from aiochainscan.aiochainscan_fastabi import decode_one_direct as _fast_decode_one_direct_json
+    import importlib
+
+    try:
+        _fastabi = importlib.import_module('aiochainscan_fastabi')
+    except ImportError:
+        # Legacy location — resolved dynamically so import-linter's static
+        # graph doesn't see decode.py depending on the whole `aiochainscan`
+        # package (this branch never runs a real cross-layer import).
+        _fastabi = importlib.import_module('aiochainscan.aiochainscan_fastabi')
+
+    _fast_decode_input_json = _fastabi.decode_input
+    _fast_decode_many_json = _fastabi.decode_many
+    _fast_decode_many_direct_json = _fastabi.decode_many_direct
+    _fast_decode_many_flat_json = _fastabi.decode_many_flat
+    _fast_decode_many_hex_json = _fastabi.decode_many_hex
+    _fast_decode_many_raw_json = _fastabi.decode_many_raw
+    _fast_decode_one_json = _fastabi.decode_one
+    _fast_decode_one_direct_json = _fastabi.decode_one_direct
 
     FASTABI_AVAILABLE = True
-    ARROW_AVAILABLE = True
+    # decode_many_to_arrow only exists when fastabi was built with the
+    # off-by-default `arrow` cargo feature (see fastabi/Cargo.toml).
+    ARROW_AVAILABLE = hasattr(_fastabi, 'decode_many_to_arrow')
 
     def _fast_decode_to_arrow(calldatas: list[bytes], abi_json: str) -> Any:
         """Decode many transactions and return Arrow RecordBatch (zero-copy)."""
-        return _fast_decode_many_to_arrow(calldatas, abi_json)
+        if not ARROW_AVAILABLE:
+            raise ChainscanDependencyError(
+                'Arrow zero-copy requires fastabi built with the "arrow" cargo feature: '
+                'cd aiochainscan/fastabi && maturin develop --release --features arrow'
+            )
+        return _fastabi.decode_many_to_arrow(calldatas, abi_json)
 
     # Wrapper functions that parse JSON returned from Rust
     # This avoids GIL blocking - orjson is optimized for fast object creation

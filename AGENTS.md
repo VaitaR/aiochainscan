@@ -603,7 +603,16 @@ Or in one shot: `make ci-local` (mirrors the disabled GitHub CI). Agents: run `m
 - **GIL**: Released during computation AND serialization
 - **Return format**: JSON string → parsed by orjson in Python; `keccak256` returns bytes
 - **Key invariant**: Never return PyDict/PyList directly (blocks GIL)
-- **Imports**: canonical module name is `aiochainscan.aiochainscan_fastabi` (NOT top-level `aiochainscan_fastabi`)
+- **Imports**: canonical module name is top-level `aiochainscan_fastabi` (published as the
+  separate `aiochainscan-fastabi` distribution — `aiochainscan[fastabi]` extra). Every
+  import site tries the new top-level name first and falls back to the legacy
+  `aiochainscan.aiochainscan_fastabi` name, so an existing maturin/editable checkout
+  built under the old layout keeps working.
+- **Arrow**: `decode_many_to_arrow` / zero-copy Polars export is behind the off-by-default
+  `arrow` cargo feature (benchmarked as a small win next to network time — see
+  `docs/V1_PLAN.md` Track A). `decode.py:ARROW_AVAILABLE` reflects whether the loaded
+  extension was built with it; build with
+  `cd aiochainscan/fastabi && maturin develop --release --features arrow` to enable it.
 
 ---
 
