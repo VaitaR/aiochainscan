@@ -59,7 +59,7 @@ from aiochainscan.exceptions import (
     ProviderPoolExhaustedError,
 )
 from aiochainscan.network import Network
-from aiochainscan.scanners.blockscout_v1 import BlockScoutV1
+from aiochainscan.scanners.blockscout_v2 import BlockScoutV2Scanner
 from aiochainscan.scanners.etherscan_v2 import EtherscanV2
 
 ADDR = '0x742d35Cc6634C0532925a3b8D9Fa7a3D91aC0b6f'
@@ -781,13 +781,15 @@ class TestPinnedStreamMethodUndeclared:
     """
 
     @staticmethod
-    def _v1_client(network: _ReplayNetwork) -> ChainscanClient:
-        # BlockScout v1 does not declare the token-holder methods.
+    def _v2_client(network: _ReplayNetwork) -> ChainscanClient:
+        # BlockScout V2 is the one streaming-capable scanner that declares no
+        # EVENT_LOGS spec: its address-scoped logs endpoint carries neither a
+        # topic nor a block-range filter, so the method stays undeclared.
         return _bare_client(
-            BlockScoutV1(
-                api_key='', network='eth', url_builder=MagicMock(), network_client=network
+            BlockScoutV2Scanner(
+                api_key='', network='ethereum', url_builder=MagicMock(), network_client=network
             ),
-            'eth',
+            'ethereum',
         )
 
     @staticmethod
@@ -805,40 +807,40 @@ class TestPinnedStreamMethodUndeclared:
     async def test_stream_fails_over_to_declaring_provider(self) -> None:
         """``guarantee_complete=False`` isolates this from completeness routing.
 
-        Both pool members are result-window-capped (v1 does not even declare
-        the method), so under the default ``guarantee_complete=True`` this
-        scenario now hits the completeness pre-check (see
-        ``TestCompletenessRouting``) and raises before any request — that is
-        the intended behaviour change. This test keeps exercising its
-        original, unrelated regression: METHOD_UNDECLARED must fail over
+        Both pool members are result-window-capped for event logs (V2 does not
+        even declare the method), so under the default
+        ``guarantee_complete=True`` this scenario hits the completeness
+        pre-check (see ``TestCompletenessRouting``) and raises before any
+        request — that is the intended behaviour. This test keeps exercising
+        its original, unrelated regression: METHOD_UNDECLARED must fail over
         instead of spinning on the same provider.
         """
-        holder_page = [{'TokenHolderAddress': HOLDER, 'TokenHolderQuantity': '5'}]
-        v1_network = _ReplayNetwork([])  # must never be asked
-        etherscan_network = _ReplayNetwork([holder_page])
+        log_page = [{'address': TOKEN, 'topics': [], 'data': '0x', 'blockNumber': '0x1'}]
+        v2_network = _ReplayNetwork([])  # must never be asked
+        etherscan_network = _ReplayNetwork([log_page])
         pool = ChainscanPool(
-            [self._v1_client(v1_network), self._etherscan_client(etherscan_network)]
+            [self._v2_client(v2_network), self._etherscan_client(etherscan_network)]
         )
 
         batches = [
             batch
-            async for batch in pool.iter_token_holders_streaming(
+            async for batch in pool.iter_logs_streaming(
                 TOKEN, batch_size=2, guarantee_complete=False
             )
         ]
 
-        assert batches == [[{'address': HOLDER, 'value': '5'}]]
+        assert batches == [log_page]
         assert pool.last_provider == 'etherscan/main'
         # The non-declaring provider raised before any HTTP attempt.
-        assert v1_network.calls == []
+        assert v2_network.calls == []
         assert len(etherscan_network.calls) == 1
 
     async def test_no_provider_declares_terminates(self) -> None:
         """Nobody declares the method → finite exhaustion, not a hang."""
-        pool = ChainscanPool([self._v1_client(_ReplayNetwork([]))])
+        pool = ChainscanPool([self._v2_client(_ReplayNetwork([]))])
 
         async def collect() -> list[list[dict[str, Any]]]:
-            return [batch async for batch in pool.iter_token_holders_streaming(TOKEN)]
+            return [batch async for batch in pool.iter_logs_streaming(TOKEN)]
 
         with pytest.raises(ProviderPoolExhaustedError) as excinfo:
             await asyncio.wait_for(collect(), timeout=5.0)
