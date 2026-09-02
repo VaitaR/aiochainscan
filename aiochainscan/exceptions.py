@@ -1,12 +1,63 @@
 from __future__ import annotations
 
+from enum import Enum
 from typing import Any
 
 
-class ChainscanClientError(Exception):
-    """Base error type for aiochainscan client failures."""
+class FailureKind(Enum):
+    """What a provider failure means for pool routing.
 
-    pass
+    The single failure-classification vocabulary: exceptions carry their
+    kind as a ``failure_kind`` attribute — a class-level default per
+    exception class, overridable per raise site via the ``failure_kind``
+    constructor keyword.
+    :func:`aiochainscan.core.pool.classify_failure` returns a carried kind
+    as-is, so the meaning of a failure is decided where the failure is
+    detected (the transport detecting a rate limit inside HTTP 200, a
+    scanner translating its provider's rejection) instead of being
+    re-parsed from message text in core. A new scanner's failure mode
+    becomes wireable by raising a kind-carrying exception — no core edits
+    required.
+    """
+
+    RATE_LIMIT = 'rate_limit'
+    """Provider is throttling us — cooldown honours ``retry_after``."""
+
+    TRANSIENT = 'transient'
+    """Network/5xx trouble that survived the client's transport retries."""
+
+    AUTH = 'auth'
+    """Missing or invalid API key — will not heal itself, long cooldown."""
+
+    PLAN_RESTRICTED = 'plan_restricted'
+    """The current API plan does not serve the chain/endpoint (e.g. Etherscan
+    V2 free tier answering ``Free API Access is not supported for this chain``)."""
+
+    METHOD_UNDECLARED = 'method_undeclared'
+    """The provider never declared this method in its SPECS — capability
+    routing, not a failure: no cooldown, no warning, just next provider."""
+
+    FATAL = 'fatal'
+    """Caller's problem (bad arguments, not-found, data contract) — switching
+    providers cannot help; propagate immediately."""
+
+
+class ChainscanClientError(Exception):
+    """Base error type for aiochainscan client failures.
+
+    Routing: every exception class declares a :attr:`failure_kind` default
+    mirroring its historical classification in the pool's fallback ladder;
+    raise sites that know better override it per instance via the
+    ``failure_kind`` constructor keyword.
+    """
+
+    failure_kind: FailureKind | None = FailureKind.FATAL
+    """Default routing classification for this exception class."""
+
+    def __init__(self, *args: object, failure_kind: FailureKind | None = None) -> None:
+        super().__init__(*args)
+        if failure_kind is not None:
+            self.failure_kind = failure_kind
 
 
 class MethodNotDeclaredError(ValueError):
@@ -20,6 +71,8 @@ class MethodNotDeclaredError(ValueError):
     ``except ChainscanClientError`` handlers must not start catching
     capability errors.
     """
+
+    failure_kind: FailureKind | None = FailureKind.METHOD_UNDECLARED
 
 
 class ProviderPoolExhaustedError(ChainscanClientError):
@@ -82,9 +135,26 @@ class ChainscanResponseTooLargeError(ChainscanClientError):
 
 
 class ChainscanClientApiError(ChainscanClientError):
-    def __init__(self, message: str | None, result: Any) -> None:
+    """An explorer API answered an error envelope (``status != 1``)."""
+
+    failure_kind: FailureKind | None = None
+    """``None`` (the class default) means *not decided at the raise site*:
+    classification falls back to the Etherscan-style text patterns in
+    :func:`aiochainscan.network.api_error_failure_kind`. The Network
+    transport passes the computed kind when raising, so exceptions that
+    travelled through it classify without any text matching."""
+
+    def __init__(
+        self,
+        message: str | None,
+        result: Any,
+        *,
+        failure_kind: FailureKind | None = None,
+    ) -> None:
         self.message: str | None = message
         self.result: Any = result
+        if failure_kind is not None:
+            self.failure_kind = failure_kind
 
     def __str__(self) -> str:  # pragma: no cover - trivial
         return f'[{self.message}] {self.result}'
@@ -96,35 +166,22 @@ class ChainscanClientProxyError(ChainscanClientError):
     https://www.jsonrpc.org/specification#error_object
     """
 
-    def __init__(self, code: int | None, message: str | None) -> None:
+    failure_kind: FailureKind | None = FailureKind.FATAL
+
+    def __init__(
+        self,
+        code: int | None,
+        message: str | None,
+        *,
+        failure_kind: FailureKind | None = None,
+    ) -> None:
         self.code: int | None = code
         self.message: str | None = message
+        if failure_kind is not None:
+            self.failure_kind = failure_kind
 
     def __str__(self) -> str:  # pragma: no cover - trivial
         return f'[{self.code}] {self.message}'
-
-
-class FeatureNotSupportedError(ChainscanClientError):
-    """Raised when a feature is not supported by the specific blockchain scanner."""
-
-    def __init__(self, feature: str, scanner: str) -> None:
-        self.feature = feature
-        self.scanner = scanner
-        super().__init__(f'Feature "{feature}" is not supported by {scanner}')
-
-    def __str__(self) -> str:  # pragma: no cover - trivial
-        return f'Feature "{self.feature}" is not supported by {self.scanner}'
-
-
-class SourceNotVerifiedError(ChainscanClientError):
-    """Contract source code is not verified on explorer."""
-
-    def __init__(self, address: str) -> None:
-        self.address = address
-        super().__init__(f'Contract source code not verified for address {address}')
-
-    def __str__(self) -> str:  # pragma: no cover - trivial
-        return f'Contract source code not verified for address {self.address}'
 
 
 class ChainscanRateLimitError(ChainscanClientError):
@@ -135,36 +192,40 @@ class ChainscanRateLimitError(ChainscanClientError):
     This exception signals that the request should be retried after a delay.
     """
 
+    failure_kind: FailureKind | None = FailureKind.RATE_LIMIT
+
     def __init__(
-        self, message: str | None = None, result: Any = None, retry_after: int = 5
+        self,
+        message: str | None = None,
+        result: Any = None,
+        retry_after: int = 5,
+        *,
+        failure_kind: FailureKind | None = None,
     ) -> None:
         self.message: str | None = message
         self.result: Any = result
         self.retry_after = retry_after
-        super().__init__(str(self))
+        super().__init__(str(self), failure_kind=failure_kind)
 
     def __str__(self) -> str:
         return f'Rate limit exceeded: [{self.message}] {self.result}'
 
 
-class ChainscanInvalidAddressError(ChainscanClientError):
-    """Invalid address format."""
-
-    def __init__(self, address: str) -> None:
-        self.address = address
-        super().__init__(str(self))
-
-    def __str__(self) -> str:
-        return f'Invalid address format: {self.address}'
-
-
 class ChainscanNetworkError(ChainscanClientError):
     """Network/connection error."""
 
-    def __init__(self, message: str, retryable: bool = True) -> None:
+    failure_kind: FailureKind | None = FailureKind.TRANSIENT
+
+    def __init__(
+        self,
+        message: str,
+        retryable: bool = True,
+        *,
+        failure_kind: FailureKind | None = None,
+    ) -> None:
         self.message = message
         self.retryable = retryable
-        super().__init__(str(self))
+        super().__init__(str(self), failure_kind=failure_kind)
 
     def __str__(self) -> str:
         return self.message
@@ -180,10 +241,18 @@ class ChainscanDataError(ChainscanClientError):
     - Data that violates expected contracts
     """
 
-    def __init__(self, message: str, details: Any = None) -> None:
+    failure_kind: FailureKind | None = FailureKind.FATAL
+
+    def __init__(
+        self,
+        message: str,
+        details: Any = None,
+        *,
+        failure_kind: FailureKind | None = None,
+    ) -> None:
         self.message = message
         self.details = details
-        super().__init__(str(self))
+        super().__init__(str(self), failure_kind=failure_kind)
 
     def __str__(self) -> str:
         if self.details:
