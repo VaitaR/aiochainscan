@@ -30,6 +30,12 @@ class EtherscanLikeScanner(Scanner):
     # real and it truncates without an error at exactly this window.
     result_window = API_MAX_OFFSET_ETHERSCAN
 
+    # The page/offset dialect is uniform: every cursor this family emits is
+    # exactly ``{'page': next, 'offset': size}`` (see ``fetch_page``). Declared
+    # once here so the MCP cursor whitelist derives it instead of hand-copying
+    # the key names (base ``Scanner.cursor_keys`` default is empty).
+    cursor_keys = frozenset({'page', 'offset'})
+
     async def fetch_page(
         self,
         method: Method,

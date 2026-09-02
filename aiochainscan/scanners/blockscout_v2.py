@@ -301,6 +301,25 @@ class BlockScoutV2Scanner(Scanner):
     # so there is no page/offset result window to overflow (see base class).
     result_window = None
 
+    # Cursor vocabulary per paginated endpoint: the keys BlockScout returns in
+    # ``next_page_params`` for that endpoint (the same fields the SPECS'
+    # ``param_map`` entries declare for cursor threading below). Declared once
+    # here — where the cursor is produced — so the MCP cursor whitelist derives
+    # these server-controlled key names instead of hand-copying them
+    # (``Scanner.cursor_keys`` stays empty: the dialect differs per endpoint).
+    CURSOR_KEYS: ClassVar[dict[Method, frozenset[str]]] = {
+        Method.ACCOUNT_TRANSACTIONS: frozenset({'block_number', 'index', 'items_count'}),
+        Method.ACCOUNT_INTERNAL_TXS: frozenset(
+            {'block_number', 'index', 'items_count', 'transaction_index'}
+        ),
+        Method.ACCOUNT_ERC20_TRANSFERS: frozenset({'block_number', 'index'}),
+        Method.ACCOUNT_TOKEN_PORTFOLIO: frozenset({'fiat_value', 'items_count', 'token', 'value'}),
+        Method.ACCOUNT_NFT_PORTFOLIO: frozenset(
+            {'items_count', 'token_contract_address_hash', 'token_id', 'token_type'}
+        ),
+        Method.TOKEN_HOLDERS: frozenset({'address_hash', 'items_count', 'value'}),
+    }
+
     # BlockScout V2 supports many networks through different instances
     supported_networks = {
         'ethereum',

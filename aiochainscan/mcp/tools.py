@@ -36,6 +36,7 @@ from ..decode import decode_transaction_input
 from ..domain.method import Method
 from ..domain.models import Address
 from ..exceptions import ChainscanClientError
+from ..scanners import SCANNER_REGISTRY
 from .cursors import decode_tool_cursor, encode_cursor
 from .envelope import (
     NextCall,
@@ -67,6 +68,7 @@ __all__ = [
     'read_contract',
     'resolve_default_scanner',
     'resolve_ens',
+    'scanner_cursor_keys',
 ]
 
 DEFAULT_SCANNER = 'blockscout'
@@ -292,44 +294,34 @@ def _next_call_params(
     return merged
 
 
-# Scanner-cursor keys each paginated tool may merge back into request params
-# (union across the scanners that can serve the tool). Anything else inside a
-# cursor token — notably resource-identity params such as ``address``,
-# ``contract_address``, ``module`` or ``action`` — is rejected by
-# ``decode_tool_cursor``: a cursor may only advance pagination, never
-# re-target the query (see ``aiochainscan.mcp.cursors`` for the model).
-_TX_CURSOR_KEYS = frozenset(
-    {
-        'page',
-        'offset',  # Etherscan-like page/offset walk
-        'block_number',
-        'index',
-        'items_count',  # BlockScout V2 txlist cursor
-        '__nr_window',
-        '__nr_tip',
-        'pageKey',  # NodeReal window/pageKey cursor
-    }
-)
-_PORTFOLIO_CURSOR_KEYS = frozenset(
-    {
-        'page',
-        'offset',  # Etherscan-like page/offset walk
-        'page_size',  # NodeReal holdings cursor
-        'fiat_value',
-        'items_count',
-        'token',
-        'value',  # BlockScout V2 tokens cursor
-    }
-)
-_HOLDERS_CURSOR_KEYS = frozenset(
-    {
-        'page',
-        'offset',  # Etherscan-like page/offset walk
-        'value',
-        'address_hash',
-        'items_count',  # BlockScout V2 holders cursor
-    }
-)
+# Cursor allow-lists are DERIVED, not hand-listed: every scanner declares the
+# cursor-key vocabulary it may emit per method (``Scanner.cursor_keys`` /
+# ``Scanner.CURSOR_KEYS``, read via ``Scanner.cursor_keys_for``), and
+# :func:`scanner_cursor_keys` unions those declarations over the registered
+# scanners that serve a method. Anything else inside a cursor token — notably
+# resource-identity params such as ``address``, ``contract_address``,
+# ``module`` or ``action`` — is rejected by ``decode_tool_cursor``: a cursor
+# may only advance pagination, never re-target the query (see
+# ``aiochainscan.mcp.cursors`` for the model).
+
+
+def scanner_cursor_keys(method: Method) -> frozenset[str]:
+    """Cursor keys any registered scanner may carry for ``method``.
+
+    Derived live from the scanner registry: every registered scanner that
+    declares ``method`` contributes the vocabulary it declares for it
+    (:meth:`Scanner.cursor_keys_for`). Third-party scanners register through
+    the same ``@register_scanner`` decorator, so their cursor keys are
+    accepted without editing this module; a scanner declaring nothing for a
+    method contributes nothing. Membership requires the method to be declared
+    (``method in SPECS``): a scanner that cannot serve the method can never
+    return a cursor for it, so its keys must not widen the whitelist.
+    """
+    keys: set[str] = set()
+    for scanner_cls in SCANNER_REGISTRY.values():
+        if method in scanner_cls.SPECS:
+            keys |= scanner_cls.cursor_keys_for(method)
+    return frozenset(keys)
 
 
 def _pagination(
@@ -480,7 +472,11 @@ async def get_transactions(
     page_size = clamp_page_size(limit)
     params: dict[str, Any] = {'address': wallet, 'page': 1, 'offset': page_size}
     if cursor is not None:
-        params.update(decode_tool_cursor(cursor, 'get_transactions', _TX_CURSOR_KEYS))
+        params.update(
+            decode_tool_cursor(
+                cursor, 'get_transactions', scanner_cursor_keys(Method.ACCOUNT_TRANSACTIONS)
+            )
+        )
 
     items, scanner_cursor = await client.fetch_page(Method.ACCOUNT_TRANSACTIONS, params)
     transactions = [_curate_transaction(item, client.currency) for item in items[:page_size]]
@@ -648,7 +644,13 @@ async def get_token_portfolio(
     page_size = clamp_page_size(limit)
     params: dict[str, Any] = {'address': wallet, 'page': 1, 'offset': page_size}
     if cursor is not None:
-        params.update(decode_tool_cursor(cursor, 'get_token_portfolio', _PORTFOLIO_CURSOR_KEYS))
+        params.update(
+            decode_tool_cursor(
+                cursor,
+                'get_token_portfolio',
+                scanner_cursor_keys(Method.ACCOUNT_TOKEN_PORTFOLIO),
+            )
+        )
 
     items, scanner_cursor = await client.fetch_page(Method.ACCOUNT_TOKEN_PORTFOLIO, params)
     tokens = [_token_fields(item) for item in items[:page_size]]
@@ -762,7 +764,11 @@ async def get_token_holders(
     page_size = clamp_page_size(limit)
     params: dict[str, Any] = {'contract_address': token, 'page': 1, 'offset': page_size}
     if cursor is not None:
-        params.update(decode_tool_cursor(cursor, 'get_token_holders', _HOLDERS_CURSOR_KEYS))
+        params.update(
+            decode_tool_cursor(
+                cursor, 'get_token_holders', scanner_cursor_keys(Method.TOKEN_HOLDERS)
+            )
+        )
     items, scanner_cursor = await client.fetch_page(Method.TOKEN_HOLDERS, params)
 
     holders = []

@@ -651,6 +651,14 @@ Agent adapter over `ChainscanClient` — **run**: `python -m aiochainscan.mcp_se
 - Curation caps: ≤50 items/page (`clamp_page_size`), curated field sets per tool.
 - Pagination = one `client.fetch_page` call per response; `next_call.params`
   carries the new cursor — agents never parse cursors.
+- Cursor allow-lists are derived, never hand-listed: each Scanner declares the
+  cursor-key vocabulary it may emit per method (`Scanner.cursor_keys` for a
+  uniform dialect, `Scanner.CURSOR_KEYS` per `Method`, read via
+  `cursor_keys_for`), and `mcp/tools.py`'s `scanner_cursor_keys` unions those
+  declarations over the registered scanners serving the method. No
+  scanner-private cursor key names (`__nr_window`, `pageKey`, `address_hash`,
+  ...) appear as literals in `mcp/tools.py` — a new scanner's keys are
+  accepted by registering the scanner alone.
 - Unsupported scanner methods → envelope `notes` (with scanner hints), never a
   crash; primary-call failures still raise (clean MCP error).
 - Default scanner `blockscout` (keyless, v1); override per call (`scanner=`)
