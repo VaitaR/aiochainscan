@@ -20,6 +20,10 @@ KEY_ENV_VARS = (
     'ETH_API_KEY',
     'SCANNER_ETH_KEY',
     'API_KEY_ETH',
+    # NodeReal resolves its key through the generic SUGGESTED-NAME ladder
+    # (NODEREAL_KEY / NODEREAL_API_KEY), so a shell export must be cleared too.
+    'NODEREAL_KEY',
+    'NODEREAL_API_KEY',
 )
 
 

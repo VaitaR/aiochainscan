@@ -32,8 +32,9 @@ Pagination notes (verified against BSC mainnet):
   ``nr_getTokenHolderCount`` (``TOKEN_HOLDER_COUNT``) returns a hex-encoded
   scalar. Both are documented "Supported on BSC and ETH mainnet only" —
   narrower than this scanner's own ``supported_networks`` (BSC only); see
-  AGENTS.md for the discrepancy. NONE of this was verified against the live
-  API (no NodeReal API key available) — implemented from documentation only.
+  AGENTS.md for the discrepancy. The list shape was live-verified
+  (2026-09-02, bsc-mainnet); the count envelope accepts both the documented
+  and the live-nested shape.
 - API exhaustion surfaces as JSON-RPC error ``-32005`` and is translated to
   :class:`~aiochainscan.exceptions.ChainscanRateLimitError` so the transport
   retry policy applies.
@@ -45,11 +46,13 @@ library-wide "Wei strings" convention; unknown provider fields are preserved.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, ClassVar
 
 import orjson
 
 from ..constants import MAX_BLOCK_NUMBER
+from ..convert import hex_to_int
 from ..core.endpoint import EndpointSpec
 from ..core.url_builder import UrlBuilder
 from ..domain.method import Method
@@ -60,7 +63,12 @@ from ..exceptions import (
     ChainscanRateLimitError,
 )
 from . import register_scanner
-from .base import Scanner, checksummed_holder_address, hex_block_tag, translate_unexpected_errors
+from .base import (
+    Scanner,
+    checksummed_holder_address,
+    hex_block_tag,
+    translate_unexpected_errors,
+)
 
 if TYPE_CHECKING:
     from ..network import Network
@@ -68,7 +76,6 @@ if TYPE_CHECKING:
 # Wire-level (JSON-RPC) limits of nr_getTransactionByAddress.
 _TRANSFER_WINDOW = 1000
 _TRANSFER_MAX_COUNT = 1000
-_HISTORICAL_TRANSFER_WINDOW = 100_000  # nr_getAssetTransfers limit (unused here, documented)
 _HOLDINGS_PAGE_SIZE = 100  # nr_get*Holdings pageSize cap ("should be less equal than 100")
 _RATE_LIMIT_JSONRPC_CODE = -32005
 
@@ -79,9 +86,9 @@ _TIP_CURSOR = '__nr_tip'
 
 # ---------------------------------------------------------------------------
 # Hex helpers — NodeReal returns hex quantities; the library contract is
-# decimal Wei strings. Deliberately local, not ``convert.hex_to_int``: the
-# wire/cursor values here are optional and default on absence/invalid input,
-# where ``hex_to_int`` raises.
+# decimal Wei strings. Parsing semantics are ``convert.hex_to_int``; the
+# wrapper exists because the wire/cursor values here are optional and must
+# default on absence/corruption, where ``hex_to_int`` raises.
 # ---------------------------------------------------------------------------
 
 
@@ -95,22 +102,12 @@ def _hex_qty_to_decimal_str(value: Any) -> Any:
     return value
 
 
-def _int_to_hex_quantity(value: int) -> str:
-    return hex(value)
-
-
 def _parse_hex_int(value: Any, default: int = 0) -> int:
-    """Parse a hex quantity or int; fall back to ``default`` for None/invalid."""
+    """Tolerant quantity parse (hex/decimal/int) falling back to ``default``."""
     if value is None:
         return default
-    if isinstance(value, int):
-        return value
     try:
-        return (
-            int(value, 16)
-            if isinstance(value, str) and value.startswith(('0x', '0X'))
-            else int(value)
-        )
+        return hex_to_int(value)
     except (TypeError, ValueError):
         return default
 
@@ -148,10 +145,16 @@ def _parse_transfer_items(result: Any) -> list[dict[str, Any]]:
 
 
 def _filter_transfer_items(
-    items: list[dict[str, Any]], params: dict[str, Any]
+    spec: EndpointSpec,
+    items: list[dict[str, Any]],
+    params: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """Apply token-contract filtering unsupported by the NodeReal wire API."""
-    requested_contract = _param(params, 'contract_address', 'contractaddress')
+    """Apply token-contract filtering unsupported by the NodeReal wire API.
+
+    The accepted public spellings are the spec's declared ``contract_address``
+    sources — the same declaration every other builder reads.
+    """
+    requested_contract = _param(params, *_declared_sources(spec, 'contract_address'))
     if not requested_contract:
         return items
     normalized_contract = str(requested_contract).lower()
@@ -173,8 +176,7 @@ def _parse_holdings(result: Any) -> list[dict[str, Any]]:
 def _parse_token_holders(result: Any) -> list[dict[str, Any]]:
     """``nr_getTokenHolders`` ``details`` → unified holder shape.
 
-    Doc-only (never verified live — see module docstring): each entry is
-    ``{'accountAddress': str, 'tokenBalance': hex str}``
+    Each entry is ``{'accountAddress': str, 'tokenBalance': hex str}``
     (https://docs.nodereal.io/reference/nr_gettokenholders). Normalized to
     the library-wide ``{'address': EIP-55 str, 'value': str}`` shape, matching
     ``etherscan_v2._parse_token_holders`` / ``blockscout_v2._normalize_token_holder_entry``
@@ -299,9 +301,13 @@ def _parse_logs(result: Any) -> list[dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
-# Wire parameter builders. Public param names come from the mixins (see
-# ``tests/test_method_consistency.py`` INVOCATIONS) and the streaming
-# iterators (``startblock``/``endblock`` spellings).
+# Wire parameter builders. Every public→wire name comes from the method's
+# ``EndpointSpec.param_map`` (first declared source wins) and the shape from
+# its ``param_style`` — the same declarations ``supports_block_range`` and
+# the consistency sweep read. Public param names come from the mixins (see
+# ``tests/test_method_consistency.py`` INVOCATIONS), the streaming builders
+# (``start_block``/``end_block``) and Etherscan-style direct callers (the
+# ``startblock``/``endblock`` aliases).
 # ---------------------------------------------------------------------------
 
 
@@ -312,9 +318,112 @@ def _param(params: dict[str, Any], *names: str, default: Any = None) -> Any:
     return default
 
 
+def _declared_sources(spec: EndpointSpec, wire_name: str) -> tuple[str, ...]:
+    """Public names declared to feed one wire parameter, in declaration order.
+
+    The alias tolerance is the spec's own business: every public name whose
+    declared wire name matches ``wire_name`` is accepted (alternate input
+    spellings are declared in ``param_map`` too), first declared wins.
+    """
+    return tuple(public for public, wire in spec.param_map.items() if wire == wire_name)
+
+
+def _take(params: dict[str, Any], public: str) -> Any:
+    """Required public scalar, passed through (a missing one is a caller bug)."""
+    return params[public]
+
+
+def _tag_param(params: dict[str, Any], public: str) -> Any:
+    """Block tag: quoted ``'latest'`` when absent."""
+    value = params.get(public)
+    return str(value) if value is not None else 'latest'
+
+
+def _block_number_param(params: dict[str, Any], public: str) -> Any:
+    """Block identifier → JSON-RPC hex-quantity tag (``'latest'`` passes through)."""
+    return hex_block_tag(params[public])
+
+
+def _timestamp_param(params: dict[str, Any], public: str) -> Any:
+    """Timestamp as an int (the wire wants a number, not a quoted string)."""
+    return int(_param(params, public))
+
+
+def _closest_param(params: dict[str, Any], public: str) -> Any:
+    """``before``/``after`` hint, uppercased; anything else is a caller bug."""
+    closest = str(_param(params, public, default='before')).upper()
+    if closest not in ('BEFORE', 'AFTER'):
+        raise ValueError(f"closest must be 'before' or 'after', got {closest!r}")
+    return closest
+
+
+def _contract_creation_param(params: dict[str, Any], public: str) -> Any:
+    """First address of the public comma-separated list (NodeReal takes one)."""
+    addresses = str(params[public]).split(',')
+    if len(addresses) > 1:
+        raise ValueError(
+            'NodeReal supports one contract address per '
+            f'CONTRACT_CREATION call, got {len(addresses)}'
+        )
+    return addresses[0]
+
+
+def _page_hex_param(params: dict[str, Any], public: str) -> Any:
+    """1-based holdings page → hex quantity."""
+    return hex(max(_parse_hex_int(params.get(public), 1), 1))
+
+
+def _page_size_hex_param(params: dict[str, Any], public: str) -> Any:
+    """Holder-family page size, clamped to the wire's 100 cap, → hex quantity.
+
+    One clamp rule for every ``PageSize`` the wire takes: the holdings
+    methods declare it as ``page_size``, the holder list/top-N as
+    ``offset``/``top_n`` — the same documented "should be less equal than
+    100" cap behind all of them.
+    """
+    size = min(_parse_hex_int(params.get(public), _HOLDINGS_PAGE_SIZE), _HOLDINGS_PAGE_SIZE)
+    return hex(max(size, 1))
+
+
+def _empty_page_key_param(params: dict[str, Any], public: str) -> Any:
+    """The wire's PageKey placeholder for a single-shot call: always ``''``."""
+    return ''
+
+
+def _page_key_param(params: dict[str, Any], public: str) -> Any:
+    """Opaque PageKey cursor as a string; ``''`` when absent (the first page)."""
+    return str(params.get(public) or '')
+
+
+def _token_type_param(params: dict[str, Any], public: str) -> Any:
+    """NFT holdings token type, lowercased, ``'erc721'`` when absent."""
+    return str(_param(params, public, default='erc721')).lower()
+
+
+#: Value encoders for ``rpc-positional`` specs, keyed by public name (each
+#: name carries one dialect rule, reused across methods). Names not listed
+#: are required scalars passed through unchanged.
+_PositionalEncoder = Callable[[dict[str, Any], str], Any]
+_POSITIONAL_ENCODERS: dict[str, _PositionalEncoder] = {
+    'tag': _tag_param,
+    'block_number': _block_number_param,
+    'timestamp': _timestamp_param,
+    'closest': _closest_param,
+    'contract_addresses': _contract_creation_param,
+    'page': _page_hex_param,
+    'page_size': _page_size_hex_param,
+    'offset': _page_size_hex_param,  # holder list: offset IS the PageSize
+    'top_n': _page_size_hex_param,  # top-N: same 100-capped size as PageSize
+    'page_key': _empty_page_key_param,
+    'pageKey': _page_key_param,
+    'token_type': _token_type_param,
+}
+
+
 def _build_transfer_filter(
-    params: dict[str, Any],
+    spec: EndpointSpec,
     category: list[str],
+    params: dict[str, Any],
     *,
     window: tuple[int, int] | None,
     page_key: str,
@@ -322,26 +431,27 @@ def _build_transfer_filter(
 ) -> dict[str, Any]:
     """Build the ``nr_getTransactionByAddress`` filter object.
 
-    ``window`` is ``(start, end)`` inclusive; when ``None`` the most recent
-    window ending at ``end_block`` is used (single-page "latest activity"
-    semantics, matching the API's own ``toBlock − 1000`` default).
+    All names come from ``spec.param_map``; ``window`` is ``(start, end)``
+    inclusive, or ``None`` for the most recent window ending at ``end_block``
+    (single-page "latest activity" semantics, matching the API's own
+    ``toBlock − 1000`` default).
     """
     if window is None:
         window = (max(end_block - _TRANSFER_WINDOW + 1, 0), end_block)
-    address = _param(params, 'address')
+    address = _param(params, *_declared_sources(spec, 'address'))
     if not address:
         raise ValueError('address is required')
     filter_: dict[str, Any] = {
         'category': category,
         'address': address,
-        'fromBlock': _int_to_hex_quantity(window[0]),
-        'toBlock': _int_to_hex_quantity(window[1]),
+        'fromBlock': hex(window[0]),
+        'toBlock': hex(window[1]),
     }
-    order = _param(params, 'sort', 'order')
+    order = _param(params, *_declared_sources(spec, 'order'))
     filter_['order'] = str(order).lower() if order else 'desc'
-    offset = _param(params, 'offset')
+    offset = _param(params, *_declared_sources(spec, 'maxCount'))
     max_count = _parse_hex_int(offset, _TRANSFER_MAX_COUNT)
-    filter_['maxCount'] = _int_to_hex_quantity(max(1, min(max_count, _TRANSFER_MAX_COUNT)))
+    filter_['maxCount'] = hex(max(1, min(max_count, _TRANSFER_MAX_COUNT)))
     if page_key:
         filter_['pageKey'] = page_key
     return filter_
@@ -433,23 +543,33 @@ class NodeRealScanner(Scanner):
         Method.PROXY_GET_BALANCE: 'eth_getBalance',
     }
 
+    # The public→wire mapping, declared once and executed by the builders
+    # below. ``param_style`` selects the wire shape; ``param_map`` declares
+    # every accepted public name (alternate input spellings included — first
+    # declared wins) and, for ``rpc-positional`` methods, the positional wire
+    # order. URLs are built by the dialect hooks (_rpc_url / _rest_contract),
+    # so no spec declares a decorative path. Block-range capability
+    # (``supports_block_range``) is read from these same maps.
     SPECS: dict[Method, EndpointSpec] = {
         Method.ACCOUNT_BALANCE: EndpointSpec(
             http_method='POST',
-            path='/v1/{api_key}',
+            param_style='rpc-positional',
             param_map={'address': 'address', 'tag': 'tag'},
             parser=_parse_balance,
         ),
         Method.ACCOUNT_TRANSACTIONS: EndpointSpec(
             http_method='POST',
-            path='/v1/{api_key}',
+            param_style='rpc-object',
             param_map={
                 'address': 'address',
                 'start_block': 'fromBlock',
                 'end_block': 'toBlock',
+                # Tolerated Etherscan-style input spellings (window resolver
+                # and filter builder read their sources from this map).
                 'startblock': 'fromBlock',
                 'endblock': 'toBlock',
                 'sort': 'order',
+                'order': 'order',
                 'offset': 'maxCount',
                 'page': 'page',  # accepted for mixin parity; pageKey cursors supersede it
             },
@@ -457,176 +577,208 @@ class NodeRealScanner(Scanner):
         ),
         Method.ACCOUNT_INTERNAL_TXS: EndpointSpec(
             http_method='POST',
-            path='/v1/{api_key}',
+            param_style='rpc-object',
             param_map={
                 'address': 'address',
                 'start_block': 'fromBlock',
                 'end_block': 'toBlock',
+                'startblock': 'fromBlock',
+                'endblock': 'toBlock',
                 'page': 'page',
                 'offset': 'maxCount',
                 'sort': 'order',
+                'order': 'order',
             },
             parser=_parse_transfer_items,
         ),
         Method.ACCOUNT_ERC20_TRANSFERS: EndpointSpec(
             http_method='POST',
-            path='/v1/{api_key}',
+            param_style='rpc-object',
             param_map={
                 'address': 'address',
                 'start_block': 'fromBlock',
                 'end_block': 'toBlock',
-                # Accepted by the public API and enforced client-side.
+                'startblock': 'fromBlock',
+                'endblock': 'toBlock',
+                # Accepted by the public API and enforced client-side
+                # (`_filter_transfer_items` reads its sources from this map;
+                # the Etherscan-style spelling is a tolerated alias).
                 'contract_address': 'contract_address',
+                'contractaddress': 'contract_address',
                 'page': 'page',
                 'offset': 'maxCount',
                 'sort': 'order',
+                'order': 'order',
             },
             parser=_parse_transfer_items,
         ),
         Method.ACCOUNT_ERC721_TRANSFERS: EndpointSpec(
             http_method='POST',
-            path='/v1/{api_key}',
+            param_style='rpc-object',
             param_map={
                 'address': 'address',
                 'start_block': 'fromBlock',
                 'end_block': 'toBlock',
-                # Accepted by the public API and enforced client-side.
+                'startblock': 'fromBlock',
+                'endblock': 'toBlock',
+                # Accepted by the public API and enforced client-side
+                # (`_filter_transfer_items` reads its sources from this map;
+                # the Etherscan-style spelling is a tolerated alias).
                 'contract_address': 'contract_address',
+                'contractaddress': 'contract_address',
                 'page': 'page',
                 'offset': 'maxCount',
                 'sort': 'order',
+                'order': 'order',
             },
             parser=_parse_transfer_items,
         ),
         Method.ACCOUNT_ERC1155_TRANSFERS: EndpointSpec(
             http_method='POST',
-            path='/v1/{api_key}',
+            param_style='rpc-object',
             param_map={
                 'address': 'address',
                 'start_block': 'fromBlock',
                 'end_block': 'toBlock',
-                # Accepted by the public API and enforced client-side.
+                'startblock': 'fromBlock',
+                'endblock': 'toBlock',
+                # Accepted by the public API and enforced client-side
+                # (`_filter_transfer_items` reads its sources from this map;
+                # the Etherscan-style spelling is a tolerated alias).
                 'contract_address': 'contract_address',
+                'contractaddress': 'contract_address',
                 'page': 'page',
                 'offset': 'maxCount',
                 'sort': 'order',
+                'order': 'order',
             },
             parser=_parse_transfer_items,
         ),
         Method.ACCOUNT_TOKEN_PORTFOLIO: EndpointSpec(
             http_method='POST',
-            path='/v1/{api_key}',
+            param_style='rpc-positional',
             param_map={'address': 'address', 'page': 'page', 'page_size': 'pageSize'},
             parser=_parse_holdings,
         ),
         Method.ACCOUNT_NFT_PORTFOLIO: EndpointSpec(
             http_method='POST',
-            path='/v1/{api_key}',
+            param_style='rpc-positional',
             param_map={
                 'address': 'address',
+                'token_type': 'tokenType',
                 'page': 'page',
                 'page_size': 'pageSize',
-                'token_type': 'tokenType',
             },
             parser=_parse_holdings,
         ),
         Method.TX_BY_HASH: EndpointSpec(
             http_method='POST',
-            path='/v1/{api_key}',
+            param_style='rpc-positional',
             param_map={'txhash': 'txhash'},
         ),
         Method.TX_RECEIPT_STATUS: EndpointSpec(
             http_method='POST',
-            path='/v1/{api_key}',
+            param_style='rpc-positional',
             param_map={'txhash': 'txhash'},
         ),
         Method.TX_STATUS_CHECK: EndpointSpec(
             http_method='POST',
-            path='/v1/{api_key}',
+            param_style='rpc-positional',
             param_map={'txhash': 'txhash'},
             parser=_parse_status_check,
         ),
         Method.BLOCK_BY_NUMBER: EndpointSpec(
             http_method='POST',
-            path='/v1/{api_key}',
+            param_style='rpc-positional',
             param_map={'block_number': 'block_number'},
+            # The wire's second positional: full-tx-objects flag, always False.
+            query={'include_full_tx_objects': False},
         ),
         Method.BLOCK_NUMBER_BY_TIMESTAMP: EndpointSpec(
             http_method='POST',
-            path='/v1/{api_key}',
+            param_style='rpc-positional',
             param_map={'timestamp': 'timestamp', 'closest': 'closest'},
             parser=_parse_block_number_by_timestamp,
         ),
         Method.CONTRACT_CREATION: EndpointSpec(
             http_method='POST',
-            path='/v1/{api_key}',
+            param_style='rpc-positional',
             param_map={'contract_addresses': 'contractAddress'},
             parser=_parse_contract_creation,
         ),
         Method.TOKEN_BALANCE: EndpointSpec(
             http_method='POST',
-            path='/v1/{api_key}',
-            param_map={
-                'address': 'address',
-                'contract_address': 'contractAddress',
-                'tag': 'tag',
-            },
+            param_style='rpc-positional',
+            param_map={'contract_address': 'contractAddress', 'address': 'address', 'tag': 'tag'},
             parser=_parse_token_balance,
         ),
         Method.TOKEN_SUPPLY: EndpointSpec(
             http_method='POST',
-            path='/v1/{api_key}',
+            param_style='rpc-positional',
             param_map={'contract_address': 'contractAddress'},
+            # The wire takes a trailing block tag; no public param carries it.
+            query={'tag': 'latest'},
             parser=_parse_token_balance,
         ),
         Method.TOKEN_INFO: EndpointSpec(
             http_method='POST',
-            path='/v1/{api_key}',
+            param_style='rpc-positional',
             param_map={'contract_address': 'contractAddress'},
             parser=_parse_token_meta,
         ),
         Method.TOKEN_HOLDERS: EndpointSpec(
             http_method='POST',
-            path='/v1/{api_key}',
+            param_style='rpc-positional',
             param_map={
                 'contract_address': 'contract_address',
+                # The wire's PageSize (hex, clamped to the documented 100 cap).
                 'offset': 'PageSize',
-                # Accepted for mixin parity; PageKey cursors supersede it —
-                # nr_getTokenHolders has no page number (see fetch_page).
-                'page': 'page',
+                # Opaque PageKey cursor; '' opens the first page.
+                'pageKey': 'pageKey',
+                # Accepted for mixin parity, carries no positional — this
+                # endpoint has no page number; the PageKey cursor supersedes
+                # it (wire name '' = declared-inert input).
+                'page': '',
             },
             parser=_parse_token_holders,
         ),
         Method.TOKEN_TOP_HOLDERS: EndpointSpec(
             http_method='POST',
-            path='/v1/{api_key}',
-            param_map={'contract_address': 'contract_address', 'offset': 'topN'},
+            param_style='rpc-positional',
+            param_map={
+                'contract_address': 'contract_address',
+                'offset': 'PageSize',
+                # Single non-paginated call: the wire's PageKey placeholder is
+                # always the empty string, and topN repeats the clamped PageSize.
+                'page_key': 'PageKey',
+                'top_n': 'topN',
+            },
             parser=_parse_token_holders,
         ),
         Method.TOKEN_HOLDER_COUNT: EndpointSpec(
             http_method='POST',
-            path='/v1/{api_key}',
+            param_style='rpc-positional',
             param_map={'contract_address': 'contract_address'},
             parser=_parse_token_holder_count,
         ),
         Method.CONTRACT_ABI: EndpointSpec(
             http_method='GET',
-            path='/contract/',
             param_map={'address': 'address'},
             parser=_parse_contract_abi,
         ),
         Method.CONTRACT_SOURCE: EndpointSpec(
             http_method='GET',
-            path='/contract/',
             param_map={'address': 'address'},
         ),
         Method.EVENT_LOGS: EndpointSpec(
             http_method='POST',
-            path='/v1/{api_key}',
+            param_style='rpc-object',
             param_map={
                 'address': 'address',
                 'from_block': 'fromBlock',
                 'to_block': 'toBlock',
+                'fromBlock': 'fromBlock',
+                'toBlock': 'toBlock',
                 'topic0': 'topic0',
                 'topic1': 'topic1',
                 'topic2': 'topic2',
@@ -636,12 +788,14 @@ class NodeRealScanner(Scanner):
         ),
         Method.PROXY_ETH_CALL: EndpointSpec(
             http_method='POST',
-            path='/v1/{api_key}',
+            param_style='rpc-object',
+            # 'to'/'data' assemble eth_call's single call object; 'tag' is the
+            # trailing block tag positional.
             param_map={'to': 'to', 'data': 'data', 'tag': 'tag'},
         ),
         Method.PROXY_GET_BALANCE: EndpointSpec(
             http_method='POST',
-            path='/v1/{api_key}',
+            param_style='rpc-positional',
             param_map={'address': 'address', 'tag': 'tag'},
         ),
     }
@@ -729,132 +883,93 @@ class NodeRealScanner(Scanner):
         )
 
     # ------------------------------------------------------------------
-    # Wire parameter builders
+    # Wire parameter builders (driven by the SPECS declarations)
     # ------------------------------------------------------------------
 
     def _build_rpc_params(self, method: Method, params: dict[str, Any]) -> list[Any]:
-        """Translate public call params into positional JSON-RPC params."""
+        """Translate public call params into positional JSON-RPC params.
+
+        The method's spec declares the shape (``param_style``) and every
+        public→wire name (``param_map``); this builder only executes them.
+        """
+        spec = self._spec_for(method)
+        if spec.param_style == 'rpc-positional':
+            return self._build_positional_params(spec, params)
+        if spec.param_style == 'rpc-object':
+            return self._build_object_params(spec, method, params)
+        # 'query' style on NodeReal is the contract-REST dialect, dispatched
+        # by _perform_request before any RPC params are built.
+        raise ValueError(f'Method {method} has no NodeReal wire mapping')  # pragma: no cover
+
+    def _build_positional_params(self, spec: EndpointSpec, params: dict[str, Any]) -> list[Any]:
+        """Public params → the positional JSON-RPC list the spec declares.
+
+        ``param_map`` declaration order IS the positional wire order; each
+        declared public name is fetched and encoded by
+        ``_POSITIONAL_ENCODERS`` (required scalars pass through unchanged).
+        Static values declared in ``spec.query`` ride as trailing positional
+        constants (e.g. ``eth_getBlockByNumber``'s full-objects flag). A
+        name declared with the empty wire name is accepted-but-inert
+        (mixin-parity inputs the wire takes no positional for) and is
+        skipped.
+        """
+        encoded = [
+            _POSITIONAL_ENCODERS.get(public, _take)(params, public)
+            for public, wire_name in spec.param_map.items()
+            if wire_name
+        ]
+        return [*encoded, *spec.query.values()]
+
+    def _build_object_params(
+        self, spec: EndpointSpec, method: Method, params: dict[str, Any]
+    ) -> list[Any]:
+        """Object-argument methods: the filter/call object from declared sources."""
         if method in self._TRANSFER_METHODS:
             window = params.get(_WINDOW_CURSOR)
             window_tuple = (int(window[0]), int(window[1])) if window else None
             page_key = str(params.get('pageKey') or '')
             end_block = _parse_hex_int(params.get(_TIP_CURSOR), 0)
-            filter_ = _build_transfer_filter(
-                params,
-                self.TRANSFER_CATEGORIES[method],
-                window=window_tuple,
-                page_key=page_key,
-                end_block=end_block,
-            )
-            return [filter_]
-        if method == Method.ACCOUNT_TOKEN_PORTFOLIO:
-            page = _parse_hex_int(params.get('page'), 1)
-            size = min(
-                _parse_hex_int(params.get('page_size'), _HOLDINGS_PAGE_SIZE), _HOLDINGS_PAGE_SIZE
-            )
             return [
-                params['address'],
-                _int_to_hex_quantity(max(page, 1)),
-                _int_to_hex_quantity(max(size, 1)),
-            ]
-        if method == Method.ACCOUNT_NFT_PORTFOLIO:
-            page = _parse_hex_int(params.get('page'), 1)
-            size = min(
-                _parse_hex_int(params.get('page_size'), _HOLDINGS_PAGE_SIZE), _HOLDINGS_PAGE_SIZE
-            )
-            token_type = str(_param(params, 'token_type', default='erc721')).lower()
-            return [
-                params['address'],
-                token_type,
-                _int_to_hex_quantity(max(page, 1)),
-                _int_to_hex_quantity(max(size, 1)),
-            ]
-        if method == Method.ACCOUNT_BALANCE:
-            return [params['address'], str(_param(params, 'tag', default='latest'))]
-        if method in (Method.TX_BY_HASH, Method.TX_RECEIPT_STATUS, Method.TX_STATUS_CHECK):
-            return [params['txhash']]
-        if method == Method.BLOCK_BY_NUMBER:
-            return [hex_block_tag(params['block_number']), False]
-        if method == Method.BLOCK_NUMBER_BY_TIMESTAMP:
-            closest = str(_param(params, 'closest', default='before')).upper()
-            if closest not in ('BEFORE', 'AFTER'):
-                raise ValueError(f"closest must be 'before' or 'after', got {closest!r}")
-            return [int(_param(params, 'timestamp')), closest]
-        if method == Method.CONTRACT_CREATION:
-            addresses = str(params['contract_addresses']).split(',')
-            if len(addresses) > 1:
-                raise ValueError(
-                    'NodeReal supports one contract address per '
-                    f'CONTRACT_CREATION call, got {len(addresses)}'
+                _build_transfer_filter(
+                    spec,
+                    self.TRANSFER_CATEGORIES[method],
+                    params,
+                    window=window_tuple,
+                    page_key=page_key,
+                    end_block=end_block,
                 )
-            return [addresses[0]]
-        if method == Method.TOKEN_BALANCE:
-            return [
-                params['contract_address'],
-                params['address'],
-                str(_param(params, 'tag', default='latest')),
             ]
-        if method == Method.TOKEN_SUPPLY:
-            return [params['contract_address'], 'latest']
-        if method == Method.TOKEN_INFO:
-            return [params['contract_address']]
-        if method == Method.TOKEN_HOLDERS:
-            size = min(
-                _parse_hex_int(params.get('offset'), _HOLDINGS_PAGE_SIZE), _HOLDINGS_PAGE_SIZE
-            )
-            page_key = str(params.get('pageKey') or '')
-            return [
-                params['contract_address'],
-                _int_to_hex_quantity(max(size, 1)),
-                page_key,
-            ]
-        if method == Method.TOKEN_TOP_HOLDERS:
-            # get_top_token_holders() is a single non-paginated call (unlike
-            # TOKEN_HOLDERS, which streams via PageKey). NodeReal documents no
-            # cap on topN itself, but PageSize is capped at 100
-            # ("should be less equal than 100") and this call fetches exactly
-            # one page, so a requested limit above 100 is honestly capped to
-            # what a single response can carry — matching every other
-            # page-size clamp in this file rather than silently returning
-            # fewer than requested with no signal.
-            size = min(
-                _parse_hex_int(params.get('offset'), _HOLDINGS_PAGE_SIZE), _HOLDINGS_PAGE_SIZE
-            )
-            size = max(size, 1)
-            return [
-                params['contract_address'],
-                _int_to_hex_quantity(size),
-                '',
-                _int_to_hex_quantity(size),
-            ]
-        if method == Method.TOKEN_HOLDER_COUNT:
-            return [params['contract_address']]
         if method == Method.EVENT_LOGS:
             return [self._build_log_filter(params)]
         if method == Method.PROXY_ETH_CALL:
-            return [
-                {'to': params['to'], 'data': params['data']},
-                str(_param(params, 'tag', default='latest')),
-            ]
-        if method == Method.PROXY_GET_BALANCE:
-            return [params['address'], str(_param(params, 'tag', default='latest'))]
-        raise ValueError(f'Method {method} has no NodeReal wire mapping')  # pragma: no cover
+            call_object: dict[str, Any] = {}
+            tag: Any = 'latest'
+            for public, wire in spec.param_map.items():
+                if wire == 'tag':
+                    tag = _POSITIONAL_ENCODERS['tag'](params, public)
+                else:  # 'to' / 'data': members of eth_call's single call object
+                    call_object[wire] = params[public]
+            return [call_object, tag]
+        raise ValueError(
+            f'Method {method} has no NodeReal object-param mapping'
+        )  # pragma: no cover
 
-    @staticmethod
-    def _build_log_filter(params: dict[str, Any]) -> dict[str, Any]:
-        from_block = _param(params, 'from_block', 'fromBlock', default=0)
-        from_block_hex = (
-            from_block if isinstance(from_block, str) else _int_to_hex_quantity(int(from_block))
-        )
-        to_block = _param(params, 'to_block', 'toBlock', default='latest')
-        to_block_hex = (
-            to_block if isinstance(to_block, str) else _int_to_hex_quantity(int(to_block))
-        )
+    def _build_log_filter(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Build the ``eth_getLogs`` filter object from the EVENT_LOGS declaration."""
+        spec = self._spec_for(Method.EVENT_LOGS)
+        from_block = _param(params, *_declared_sources(spec, 'fromBlock'), default=0)
+        from_block_hex = from_block if isinstance(from_block, str) else hex(int(from_block))
+        to_block = _param(params, *_declared_sources(spec, 'toBlock'), default='latest')
+        to_block_hex = to_block if isinstance(to_block, str) else hex(int(to_block))
         log_filter: dict[str, Any] = {'fromBlock': from_block_hex, 'toBlock': to_block_hex}
-        address = params.get('address')
+        address = _param(params, *_declared_sources(spec, 'address'))
         if address:
             log_filter['address'] = address
-        topics = [params.get(topic) for topic in ('topic0', 'topic1', 'topic2', 'topic3')]
+        topics = [
+            _param(params, *_declared_sources(spec, wire_name))
+            for wire_name in ('topic0', 'topic1', 'topic2', 'topic3')
+            if _declared_sources(spec, wire_name)
+        ]
         while topics and topics[-1] is None:
             topics.pop()
         if topics:
@@ -876,22 +991,23 @@ class NodeRealScanner(Scanner):
     ) -> Any:
         """Provider dialect: JSON-RPC envelopes and the contract REST.
 
-        NodeReal's wire format (positional JSON-RPC params, ``nr_*`` enhanced
-        methods, API key in the URL path) is not expressible as an
-        ``EndpointSpec``, so this override replaces the SPECS-driven default;
+        The public→wire param mapping IS declared in ``SPECS`` (``param_style``
+        + ``param_map``, executed by the builders below); what no spec can
+        express is the transport — JSON-RPC envelopes with the API key in the
+        URL path. This override replaces the default transport dispatch while
         the error ladder and the missing-client guard stay on the base
         :meth:`Scanner.call`. The spec parser still applies to the raw
         JSON-RPC/REST payload.
         """
         if method in self._REST_METHODS:
-            address = str(params['address'])
+            address = str(params[_declared_sources(spec, 'address')[0]])
             action = 'getabi' if method == Method.CONTRACT_ABI else 'getsourcecode'
             raw_response = await self._rest_contract(action, address)
         else:
             if method in self._TRANSFER_METHODS:
                 # Single-page semantics: without explicit bounds, serve the
                 # most recent window; with start_block, the window at start.
-                tip, window = await self._resolve_window(params)
+                tip, window = await self._resolve_window(spec, params)
                 params = dict(params)
                 params[_TIP_CURSOR] = tip
                 if window is not None and params.get(_WINDOW_CURSOR) is None:
@@ -904,7 +1020,7 @@ class NodeRealScanner(Scanner):
         """Execute a logical method against NodeReal (JSON-RPC or contract REST)."""
         result = await super().call(method, **params)
         if method in self._TRANSFER_METHODS and isinstance(result, list):
-            return _filter_transfer_items(result, params)
+            return _filter_transfer_items(self._spec_for(method), result, params)
         return result
 
     async def fetch_page(
@@ -948,6 +1064,7 @@ class NodeRealScanner(Scanner):
 
     async def _resolve_window(
         self,
+        spec: EndpointSpec,
         params: dict[str, Any],
     ) -> tuple[int, tuple[int, int] | None]:
         """Resolve the chain tip and the current transfer window.
@@ -962,16 +1079,16 @@ class NodeRealScanner(Scanner):
            resolved tip riding along);
         2. a window cursor without its tip (defensive: every cursor carries
            the tip — resolve it again if it was lost);
-        3. an explicit bounded ``end_block``/``endblock``
-           (``MAX_BLOCK_NUMBER`` is the streaming iterators' "unbounded"
-           sentinel, so only a *bounded* end wins);
+        3. an explicit bounded end (the public names declared to feed the
+           wire's ``toBlock``; ``MAX_BLOCK_NUMBER`` is the streaming
+           iterators' "unbounded" sentinel, so only a *bounded* end wins);
         4. the live chain tip via ``eth_blockNumber``.
 
         Window: the ``__nr_window`` cursor parsed to ints, else the window
-        rooted at ``start_block``/``startblock`` — or ``None`` when no start
-        is known (the caller decides what that means: ``call()`` leaves the
-        wire filter on most-recent-window semantics, ``_fetch_transfer_page``
-        roots the walk at block 0).
+        rooted at the declared ``fromBlock`` sources — or ``None`` when no
+        start is known (the caller decides what that means: ``call()`` leaves
+        the wire filter on most-recent-window semantics,
+        ``_fetch_transfer_page`` roots the walk at block 0).
         """
         raw_tip = params.get(_TIP_CURSOR)
         window = params.get(_WINDOW_CURSOR)
@@ -981,7 +1098,7 @@ class NodeRealScanner(Scanner):
         elif window is not None:
             tip = await self._resolve_tip()
         else:
-            requested_end = _param(params, 'end_block', 'endblock')
+            requested_end = _param(params, *_declared_sources(spec, 'toBlock'))
             if isinstance(requested_end, int) and requested_end < MAX_BLOCK_NUMBER:
                 tip = requested_end
             else:
@@ -989,7 +1106,7 @@ class NodeRealScanner(Scanner):
 
         if window is not None:
             return tip, (int(window[0]), int(window[1]))
-        start = _param(params, 'start_block', 'startblock')
+        start = _param(params, *_declared_sources(spec, 'fromBlock'))
         if start is None:
             return tip, None
         start_int = _parse_hex_int(start, 0)
@@ -1000,8 +1117,9 @@ class NodeRealScanner(Scanner):
         method: Method,
         params: dict[str, Any],
     ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+        spec = self._spec_for(method)
         page_key = str(params.get('pageKey') or '')
-        tip, window = await self._resolve_window(params)
+        tip, window = await self._resolve_window(spec, params)
         if window is None:
             # No start block known: root the walk at block 0.
             window = (0, min(_TRANSFER_WINDOW - 1, tip))
@@ -1010,18 +1128,19 @@ class NodeRealScanner(Scanner):
         # Call the wire method directly (window bounds live in the cursor,
         # not in wire params, so call()'s builder defaults don't apply).
         filter_ = _build_transfer_filter(
-            params,
+            spec,
             self.TRANSFER_CATEGORIES[method],
+            params,
             window=(window_start, window_end),
             page_key=page_key,
             end_block=tip,
         )
-        raw = await self._rpc('nr_getTransactionByAddress', [filter_])
+        raw = await self._rpc(self._WIRE_METHODS[method], [filter_])
         if not isinstance(raw, dict):
             return [], None
 
         next_page_key = str(raw.get('pageKey') or '')
-        items = _filter_transfer_items(_parse_transfer_items(raw), params)
+        items = _filter_transfer_items(spec, _parse_transfer_items(raw), params)
 
         if next_page_key:
             cursor: dict[str, Any] = {
