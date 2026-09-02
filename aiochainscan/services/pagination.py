@@ -29,12 +29,18 @@ import json
 import logging
 from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable
+from dataclasses import dataclass
+from enum import Enum
 from typing import Any, NamedTuple, Protocol, runtime_checkable
 
 from ..constants import MAX_BLOCK_NUMBER
 from ..core.types import JSONDict
 from ..domain.method import Method
-from ..exceptions import ChainscanDataError, PaginationDataLossError
+from ..exceptions import (
+    ChainscanDataError,
+    CompletenessUnavailableError,
+    PaginationDataLossError,
+)
 from ..ports.progress import ProgressCallback
 
 logger = logging.getLogger(__name__)
@@ -42,6 +48,7 @@ logger = logging.getLogger(__name__)
 __all__ = [
     'BlockRange',
     'Cursor',
+    'PaginationContext',
     'ItemDecode',
     'PageFetch',
     'collect_all',
@@ -139,6 +146,7 @@ async def iter_pages(
     operation: str = 'fetch',
     guarantee_complete: bool = False,
     result_window: int | None = None,
+    context: PaginationContext | None = None,
 ) -> AsyncIterator[list[JSONDict]]:
     """Iterate over all pages, yielding one batch per non-empty page.
 
@@ -164,14 +172,17 @@ async def iter_pages(
             ``result_window``; without one there is nothing to detect, and the
             plain loop runs (see ``Scanner.result_window``).
         result_window: The provider's ``page * offset`` cap, if it declares one.
+        context: Forwarded to :func:`iter_pages_complete` for error messages.
 
     Yields:
         Batches (lists) of item dictionaries.
 
     Raises:
         Any exception raised by ``fetch`` propagates unchanged.
-        PaginationDataLossError: Only in guaranteed mode, when a window over
-            the cap cannot be narrowed further.
+        PaginationDataLossError: Only in guaranteed mode, when a block range
+            over the cap cannot be narrowed further.
+        CompletenessUnavailableError: Only in guaranteed mode, when the request
+            has no block range to narrow.
     """
     # ``isinstance`` rather than ``is not None``: a scanner double may expose a
     # non-numeric attribute, and the guaranteed path must never engage on one.
@@ -182,6 +193,7 @@ async def iter_pages(
             result_window=result_window,
             on_progress=on_progress,
             operation=operation,
+            context=context,
         ):
             yield guaranteed_batch
         return
@@ -228,6 +240,7 @@ async def iter_items(
     decode: ItemDecode | None = None,
     guarantee_complete: bool = False,
     result_window: int | None = None,
+    context: PaginationContext | None = None,
 ) -> AsyncIterator[JSONDict]:
     """Iterate over all items one by one (flattened batches).
 
@@ -242,6 +255,7 @@ async def iter_items(
             item and must return the item to yield.
         guarantee_complete: Forwarded to :func:`iter_pages`.
         result_window: Forwarded to :func:`iter_pages`.
+        context: Forwarded to :func:`iter_pages`.
 
     Yields:
         Item dictionaries (decoded when ``decode`` is given).
@@ -251,6 +265,7 @@ async def iter_items(
         params,
         guarantee_complete=guarantee_complete,
         result_window=result_window,
+        context=context,
     ):
         for item in batch:
             yield decode(item) if decode is not None else item
@@ -398,26 +413,65 @@ def _chunked(items: list[JSONDict], size: int) -> list[list[JSONDict]]:
     return [items[i : i + size] for i in range(0, len(items), size)]
 
 
+class _Overflow(Enum):
+    """How a window ended relative to the provider's result window."""
+
+    NONE = 'none'
+    """Ended below the cap on the provider's own terms — complete."""
+
+    CONFIRMED = 'confirmed'
+    """Hit the cap with more records still offered — records are being lost."""
+
+    AT_CAP = 'at_cap'
+    """Ended exactly at the cap with no continuation — completeness unprovable."""
+
+
+@dataclass(frozen=True, slots=True)
+class PaginationContext:
+    """Who is being paginated, so an incompleteness error can name names.
+
+    The engine cannot reach the scanner registry (services must not import
+    scanners), so the caller computes ``alternatives`` and passes it in.
+
+    Attributes:
+        method: Logical method name being paginated.
+        provider: Label of the provider serving it.
+        alternatives: Provider labels that can serve ``method`` completely.
+    """
+
+    method: str
+    provider: str
+    alternatives: tuple[str, ...] = ()
+
+
 async def _fetch_window(
     fetch: PageFetch,
     params: dict[str, Any],
     *,
     result_window: int,
-) -> tuple[list[JSONDict], bool]:
+) -> tuple[list[JSONDict], _Overflow]:
     """Walk every page of one window; report whether it reached the result cap.
 
     Overflow signal, deliberately the weakest one that cannot be fooled:
     ``result_window`` records have been walked. Nothing stronger is available.
     A page/offset explorer that has hit its cap answers a *partial or empty*
     page — byte-identical to genuinely reaching the end of the data — and the
-    cap need not fall on a page boundary, so "the last page was full" and "a
-    next cursor was offered" both miss real truncations.
+    cap need not fall on a page boundary, so neither "the last page was full"
+    nor "a next cursor was offered" catches every real truncation.
 
-    The cost of that choice is a false positive: a window holding exactly
-    ``result_window`` records is reported as overflowing, because completeness
-    there is unprovable without a request the provider would refuse. In a
-    splittable range that costs extra requests; in a rangeless one it surfaces
-    as :class:`PaginationDataLossError`. Both are loud, which is the point.
+    Reaching the cap is therefore always treated as overflow, but the two ways
+    of reaching it are not equally certain, and :class:`_Overflow` keeps them
+    apart so the error message can be honest:
+
+    - :attr:`_Overflow.CONFIRMED` — the provider offered a next cursor at the
+      cap, i.e. it says more records exist. Data is definitely being cut off.
+    - :attr:`_Overflow.AT_CAP` — the window came back exactly full with no
+      continuation. Possibly complete, possibly truncated; unprovable either
+      way. No probe can settle it: the ambiguous case is precisely the one
+      where the provider handed back no cursor, and cursors are opaque (see
+      the module docstring), so there is nothing to request the next page
+      with. Splitting resolves it for a ranged query; a rangeless one can only
+      be reported as unproven.
     """
     collected: list[JSONDict] = []
     current = dict(params)
@@ -431,9 +485,9 @@ async def _fetch_window(
         items, cursor = await fetch(current)
         collected.extend(items)
         if len(collected) >= result_window:
-            return collected, True
+            return collected, _Overflow.CONFIRMED if cursor is not None else _Overflow.AT_CAP
         if cursor is None:
-            return collected, False
+            return collected, _Overflow.NONE
         next_params = {**current, **cursor}
         if next_params == current:
             raise ChainscanDataError('Pagination cursor does not advance request parameters.')
@@ -447,6 +501,7 @@ async def iter_pages_complete(
     result_window: int,
     on_progress: ProgressCallback | None = None,
     operation: str = 'fetch',
+    context: PaginationContext | None = None,
 ) -> AsyncIterator[list[JSONDict]]:
     """Iterate pages with **no silent truncation**, splitting ranges as needed.
 
@@ -465,14 +520,17 @@ async def iter_pages_complete(
         result_window: The provider's ``page * offset`` cap (``Scanner.result_window``).
         on_progress: Optional callback, invoked per yielded batch.
         operation: Operation label forwarded to ``on_progress``.
+        context: Method/provider identity used to name a working alternative
+            when completeness is unattainable.
 
     Yields:
         Batches of item dictionaries, sized like the requested ``offset``.
 
     Raises:
-        PaginationDataLossError: A window hit the cap and cannot be narrowed
-            further — a single block over the cap, or a request with no block
-            range to narrow. Carries the range and the observed cap.
+        PaginationDataLossError: A single block still exceeds the cap, so the
+            range cannot be narrowed further. Carries the range and the cap.
+        CompletenessUnavailableError: The request has no block range to narrow,
+            so splitting cannot apply on this provider at all.
         ChainscanDataError: Cursor state does not advance (as in :func:`iter_pages`).
     """
     detected = detect_block_range(params)
@@ -493,20 +551,29 @@ async def iter_pages_complete(
         if 'page' in attempt:
             attempt['page'] = 1
 
-        items, overflowed = await _fetch_window(fetch, attempt, result_window=result_window)
+        items, overflow = await _fetch_window(fetch, attempt, result_window=result_window)
 
-        if overflowed:
-            halves = split_window(window, items) if window is not None else None
-            if halves is None:
-                block = (
-                    window[0] if window is not None else PaginationDataLossError.UNBOUNDED_QUERY
-                )
-                raise PaginationDataLossError(
-                    block_number=block,
+        if overflow is not _Overflow.NONE:
+            if window is None:
+                # No splittable dimension: narrowing cannot help here, and
+                # another provider is the only real remedy.
+                raise CompletenessUnavailableError(
+                    method=context.method if context is not None else 'this request',
+                    provider=context.provider if context is not None else 'the provider',
                     items_fetched=len(items),
                     api_limit=result_window,
-                    start_block=window[0] if window is not None else None,
-                    end_block=window[1] if window is not None else None,
+                    alternatives=context.alternatives if context is not None else (),
+                    confirmed=overflow is _Overflow.CONFIRMED,
+                )
+            halves = split_window(window, items)
+            if halves is None:
+                raise PaginationDataLossError(
+                    block_number=window[0],
+                    items_fetched=len(items),
+                    api_limit=result_window,
+                    start_block=window[0],
+                    end_block=window[1],
+                    confirmed=overflow is _Overflow.CONFIRMED,
                 )
             windows.extendleft(reversed(halves))
             continue
