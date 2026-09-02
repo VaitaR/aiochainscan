@@ -260,3 +260,14 @@ class TestClientConvenienceThroughSeam:
         params = _wire_params(fake)
         assert params['action'] == 'eth_getBalance'
         assert params['tag'] == 'latest'
+
+    async def test_unknown_tx_hash_reads_as_none_not_a_transient_error(self) -> None:
+        # The transport unwraps a JSON-RPC ``result: null`` before the scanner
+        # sees it, so the spec parser is handed a bare ``None``. Membership-
+        # testing it raised TypeError, which the scanner ladder masked as a
+        # TRANSIENT ChainscanNetworkError — a pool would fail over and cool a
+        # healthy provider over a transaction that simply does not exist.
+        fake = FakeNetwork(None)
+        client = _client_with_fake_network(fake)
+        result = await client.call(Method.TX_BY_HASH, txhash='0x' + 'ab' * 32)
+        assert result is None
