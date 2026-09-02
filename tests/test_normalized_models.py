@@ -7,7 +7,9 @@ network access, no assertion that any current dict-returning method changed.
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 
@@ -26,6 +28,15 @@ from aiochainscan.domain.normalized import (
     TokenTransfer,
     Transaction,
 )
+
+FIXTURES_DIR = Path(__file__).parent / 'fixtures' / 'blockscout_v2'
+
+
+def load_fixture(name: str) -> dict:
+    """Load a real response recorded live from the keyless BlockScout V2 API
+    (see aiochainscan/domain/normalize.py module docstring for endpoints)."""
+    return json.loads((FIXTURES_DIR / name).read_text())
+
 
 ETHERSCAN_TX = {
     'hash': '0xetherscan',
@@ -175,16 +186,84 @@ def test_normalize_log_matches_contract_iter_events_aliases():
     assert log2.transaction_hash == '0x' + '2' * 64
 
 
-def test_normalize_block_only_number_is_mapped():
-    block = normalize_block({'number': '0x2a', 'hash': '0xdeadbeef', 'timestamp': '0x1'})
+def test_normalize_block_jsonrpc_shape():
+    block = normalize_block(
+        {
+            'number': '0x2a',
+            'hash': '0xdeadbeef',
+            'timestamp': '0x1',
+            'gasUsed': '0x5208',
+            'gasLimit': '0x1c9c380',
+            'miner': '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045',
+            'difficulty': '0x0',
+        }
+    )
     assert isinstance(block, Block)
     assert block.number == 42
-    # No repo precedent for these fields on either provider: always None.
-    assert block.hash is None
-    assert block.timestamp is None
-    assert block.gas_used is None
-    assert block.gas_limit is None
-    assert block.miner is None
+    assert block.hash == '0xdeadbeef'
+    assert block.timestamp == datetime(1970, 1, 1, 0, 0, 1, tzinfo=UTC)
+    assert block.gas_used == 21000
+    assert block.gas_limit == 30000000
+    assert block.miner == '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045'
+    assert block.difficulty == 0
+
+
+def test_normalize_block_native_v2_fixture():
+    block = normalize_block(load_fixture('block.json'))
+    assert block.number == 19_500_000
+    assert block.hash == '0x52345c9721dcf84f8e659f8bda44b93d4e9b003bbd0693bb1bca601bbde3bb26'
+    assert block.timestamp == datetime(2024, 3, 23, 21, 34, 59, tzinfo=UTC)
+    assert block.gas_used == 29_971_151
+    assert block.gas_limit == 30_000_000
+    assert block.miner == '0x6d2e03b7EfFEae98BD302A9F836D0d6Ab0002766'
+    assert block.difficulty == 0
+
+
+def test_normalize_block_jsonrpc_fixture_matches_etherscan_like_shape():
+    block = normalize_block(load_fixture('block_jsonrpc.json'))
+    assert block.number is not None
+    assert block.gas_used is not None
+    assert block.gas_limit is not None
+    assert block.miner is not None
+    assert block.timestamp is not None
+
+
+def test_normalize_transaction_blockscout_v2_native_fixture():
+    tx = normalize_transaction(load_fixture('transaction.json'))
+    assert tx.nonce is not None  # fixture-confirmed present, was wrongly flagged unmapped
+    assert tx.is_error is False  # status == "ok" -> not an error
+    assert tx.gas is not None
+    assert tx.gas_used is not None
+    assert tx.gas_price_wei is not None
+    assert tx.timestamp is not None
+    assert tx.from_address is not None
+    assert tx.to_address is not None
+
+
+def test_normalize_token_transfer_blockscout_v2_native_fixture():
+    xfer = normalize_token_transfer(load_fixture('token_transfer.json'))
+    assert xfer.transaction_hash is not None
+    assert xfer.transaction_hash != ''
+    assert xfer.contract_address is not None
+    assert xfer.token_symbol == 'SOS'
+    assert xfer.token_decimals == 0
+    assert xfer.value_raw == 1
+    assert xfer.block_number is not None
+    assert xfer.timestamp is not None
+
+
+def test_normalize_internal_transaction_blockscout_v2_native_fixture():
+    itx = normalize_internal_transaction(load_fixture('internal_transaction.json'))
+    # Fixture-confirmed absent, not merely unmapped: no per-call hash key exists.
+    assert itx.hash is None
+    assert itx.transaction_hash is not None
+    assert itx.call_index is not None
+    assert itx.gas is not None
+    # Fixture-confirmed absent: the schema has no gas_used/gasUsed key.
+    assert itx.gas_used is None
+    assert itx.is_error is False  # success: true
+    assert itx.block_number is not None
+    assert itx.timestamp is not None
 
 
 def test_provider_data_never_loses_unknown_fields():
