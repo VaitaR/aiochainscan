@@ -696,9 +696,10 @@ transaction inputs, event logs, `SmartContract.iter_events` and the MCP
   (`validate_sequence` in `lib.rs`) before `Function::decode_input`; it works
   on byte slices only, no bignum. Do not implement this by re-encoding and
   comparing — that is *over*-strict (it rejects non-minimal but legal offsets).
-- **Cost of strictness: +12% end-to-end on the pure floor**
-  (`decode_transaction_input`, ERC-20 `transfer`; `-m benchmark` in
-  `tests/test_abi_pure.py`), **+2% single / +25% bulk on the Rust tier**
+- **Cost of strictness: +14% end-to-end on the pure floor**
+  (`decode_transaction_input`, ERC-20 `transfer`; +48% on the raw two-word
+  `decode_values`, where nothing else is left to amortize it; `-m benchmark`
+  in `tests/test_abi_pure.py`), **+2% single / +25% bulk on the Rust tier**
   (0.516→0.526 us/call, 1.045→1.311 ms per 1000). Keep `validate_sequence`
   generic over the parameter iterator: materializing a `Vec<ParamType>` per
   call instead cost +99% single / +143% bulk, which is what the pass looked
@@ -716,6 +717,14 @@ transaction inputs, event logs, `SmartContract.iter_events` and the MCP
   rather than an error, which would silently give `[fastabi]` users *less*
   than a base install. `_decode_transaction_input_fast` therefore retries on
   the pure floor whenever the Rust result is empty.
+- **The floor's hot path is the glue, not the ABI walk.** Decoding an ERC-20
+  `transfer` spends ~40% in `abi_pure` and the rest in `decode.py`, so the
+  conventions are applied in ONE traversal (`_to_rust_convention`) and the hot
+  functions avoid `typing.cast`, which is a real call at runtime. Arrays get
+  `_decode_array` rather than `_decode_sequence([elem] * count, ...)`: no list
+  of N references, and the head size is a multiplication instead of a sum
+  over N. Splitting the traversal per rule or reintroducing the casts costs
+  ~30% end-to-end, which is what this shape was measured against.
 - **The ABI index is cached** (`_abi_index`): identity fast path, then a
   content digest, holding the function/event maps plus each selector's
   compiled decode plan — hashing an ABI costs more than decoding against it.
