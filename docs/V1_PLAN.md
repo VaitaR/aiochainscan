@@ -139,3 +139,48 @@ Ordered by leverage, all of it dependent on a published package and a real API s
    registry replacing the hard-coded `Literal`s.
 
 MCP stays an extra, not a product. MCP Registry submission comes after SDK adoption.
+
+---
+
+## Status (2026-09-02)
+
+Merged into `main`, `make validate` green (`1089 passed, 13 skipped`, mypy --strict over 72 files):
+
+- **Track A** done (`6ed72cb`). `build-backend = "hatchling.build"`; `aiochainscan-fastabi` is a
+  separate maturin distribution; `arrow`/`pyo3-arrow` moved behind an off-by-default cargo
+  feature after benchmarking (0.132 s vs 0.298 s over 150k rows, against 0.5-1.3 s per
+  explorer page — the win does not survive contact with network latency). Pure-Python
+  Keccak-256 (`aiochainscan/_keccak.py`) is the last link of the keccak chain, so a bare
+  `pip install aiochainscan` can checksum addresses with zero extras. Base runtime deps
+  unchanged at four.
+- **Track D** done (`d8da6b2`). Five frozen slotted dataclasses, `provider_data` preserved,
+  new `chain=`/`provider=` constructor. Recorded BlockScout fixtures under
+  `tests/fixtures/blockscout_v2/` corrected four field mappings that had been extrapolated
+  from convention (`transaction_hash` not `hash`, `total.value` not `value`, `raw_input` not
+  `input`, and `nonce` is present on both providers).
+- **Track C** done. Overflow detection is scanner-declared (`Scanner.result_window`), never a
+  heuristic. `guarantee_complete=True` by default. Two distinct failure types:
+  `PaginationDataLossError` (a real range could not be narrowed further) and
+  `CompletenessUnavailableError` (no splittable dimension on this provider — names the
+  method, the provider, and alternatives computed from the scanner registry). A probe to
+  resolve the exactly-at-cap ambiguity is not merely unimplemented but unreachable: the
+  ambiguous case is defined by the absence of a cursor, and cursors are opaque by contract,
+  so the signal is split into `CONFIRMED` vs `AT_CAP` instead.
+
+### Open items found after merging
+
+1. **The two headline features do not compose.** Normalized access is single-page only; there
+   is no `get_all_*_normalized` / `iter_*_normalized`. The product thesis is "complete history
+   → normalized → ETL", so completeness and normalization must be available together. Blocks
+   the thesis, not just convenience.
+2. **`ChainscanPool` does not classify `CompletenessUnavailableError`.** The error names a
+   provider that *can* serve the method completely, which is precisely a fallback-eligible
+   condition, but `classify_failure` has no case for it. Needs a decision, not just a patch.
+3. `scanners_serving_completely` reports capability from `SPECS` + `result_window` alone, so a
+   suggested alternative may need a different network or key, or be chain-restricted
+   (`nodereal` is BSC-only). The suggestion can name a provider the caller cannot use.
+4. No live-API verification of any provider's cap behaviour; BlockScout V1's 10_000 window
+   remains a documented conservative assumption. Etherscan's 10_000 comes from a repo comment.
+5. A bare base install cannot decode ABI/calldata (needs `[fallback]` or `[fastabi]`). Must be
+   stated next to the install instructions in `README.md`, or the first `iter_events` call
+   fails with an opaque dependency error.
