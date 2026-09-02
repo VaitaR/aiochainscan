@@ -82,8 +82,8 @@ class TestScannerAttributes:
             assert network in NodeRealScanner.RPC_BASE_URLS
 
     def test_declared_method_count(self) -> None:
-        # Subset of the 30 Method values; exact count guards accidental drift.
-        assert len(NodeRealScanner.SPECS) == 22
+        # Subset of the 33 Method values; exact count guards accidental drift.
+        assert len(NodeRealScanner.SPECS) == 25
 
 
 # ============================================================================
