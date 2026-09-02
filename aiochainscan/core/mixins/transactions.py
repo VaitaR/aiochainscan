@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from typing import Any, Protocol, cast
 
+from ...domain.method import Method
 from ...domain.models import TxHash
 from ...exceptions import ChainscanClientApiError, ChainscanRateLimitError
-from ..method import Method
 from ..types import JSONDict
 from ._waiting import poll_until_final
 

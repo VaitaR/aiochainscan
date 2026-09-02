@@ -6,9 +6,9 @@ import json
 from typing import Any, Protocol, cast
 
 from ...domain.contract import SmartContract
+from ...domain.method import Method
 from ...domain.models import Address
 from ...exceptions import ChainscanClientApiError, ChainscanRateLimitError
-from ..method import Method
 from ..types import JSONDict, JSONList
 from ._waiting import api_error_text, poll_until_final
 

@@ -27,7 +27,7 @@ import pytest
 
 from aiochainscan.config import get_config_manager
 from aiochainscan.core.client import ChainscanClient
-from aiochainscan.core.method import Method
+from aiochainscan.domain.method import Method
 from aiochainscan.exceptions import ChainscanClientApiError
 
 # Well-known EOA with activity on Ethereum mainnet (may be zero elsewhere)

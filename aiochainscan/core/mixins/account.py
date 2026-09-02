@@ -6,6 +6,7 @@ import logging
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any, Protocol
 
+from ...domain.method import Method
 from ...domain.models import Address
 from ...domain.normalize import (
     normalize_internal_transaction,
@@ -14,7 +15,6 @@ from ...domain.normalize import (
 )
 from ...domain.normalized import InternalTransaction, TokenTransfer, Transaction
 from ...services.pagination import collect_all, normalize_items
-from ..method import Method
 from ..types import JSONList
 
 if TYPE_CHECKING:

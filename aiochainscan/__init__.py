@@ -10,9 +10,9 @@ from aiochainscan.convert import (
     wei_to_ether,
 )
 from aiochainscan.core.client import ChainscanClient
-from aiochainscan.core.method import Method
 from aiochainscan.core.pool import ChainscanPool, FailureKind, classify_failure
 from aiochainscan.domain.contract import DecodedEvent, DecodedTransaction, SmartContract
+from aiochainscan.domain.method import Method
 from aiochainscan.exceptions import (
     BlockRangeNotSupportedError,
     ChainscanClientApiError,

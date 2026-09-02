@@ -2,7 +2,7 @@
 Tests for new API methods: token/NFT portfolio and contract verification.
 """
 
-from aiochainscan.core.method import Method
+from aiochainscan.domain.method import Method
 from aiochainscan.scanners._etherscan_like import EtherscanLikeScanner
 from aiochainscan.scanners.etherscan_v2 import EtherscanV2
 

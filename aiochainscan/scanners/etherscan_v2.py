@@ -16,7 +16,7 @@ from dataclasses import replace
 from typing import Any
 
 from ..core.endpoint import EndpointSpec, etherscan_parser
-from ..core.method import Method
+from ..domain.method import Method
 from . import register_scanner
 from ._etherscan_like import EtherscanLikeScanner
 from .base import checksummed_holder_address

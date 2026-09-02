@@ -14,7 +14,7 @@ from datetime import datetime
 from pathlib import Path
 
 from aiochainscan.core.client import ChainscanClient
-from aiochainscan.core.method import Method
+from aiochainscan.domain.method import Method
 
 
 async def fetch_transactions(client: ChainscanClient, address: str, limit: int = 100):

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
-from ..method import Method
+from ...domain.method import Method
 from ..types import JSONDict
 
 

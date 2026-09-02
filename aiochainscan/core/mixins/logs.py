@@ -6,11 +6,11 @@ import logging
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any, Protocol
 
+from ...domain.method import Method
 from ...domain.models import Address
 from ...domain.normalize import normalize_log
 from ...domain.normalized import Log
 from ...services.pagination import collect_all
-from ..method import Method
 from ..types import JSONList
 
 if TYPE_CHECKING:

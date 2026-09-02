@@ -11,8 +11,8 @@ from collections.abc import AsyncIterator
 from typing import Any, Protocol
 
 from ..decode import canonical_abi_type, decode_log_data, decode_transaction_input
+from ..domain.method import Method
 from ..exceptions import ChainscanClientError
-from .method import Method
 
 
 def _string_field(value: Any) -> str:

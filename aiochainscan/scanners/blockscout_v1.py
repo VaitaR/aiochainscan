@@ -14,8 +14,8 @@ Supports multiple blockchain networks through different BlockScout instances:
 from typing import TYPE_CHECKING, Any
 
 from ..core.endpoint import EndpointSpec
-from ..core.method import Method
 from ..core.url_builder import UrlBuilder
+from ..domain.method import Method
 from . import register_scanner
 from ._etherscan_like import EtherscanLikeScanner
 from .base import hex_block_tag, translate_unexpected_errors

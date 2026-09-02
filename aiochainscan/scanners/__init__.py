@@ -5,7 +5,7 @@ This module provides a unified interface for different blockchain scanner APIs
 through the Scanner base class and registry system.
 """
 
-from ..core.method import Method
+from ..domain.method import Method
 from .base import Scanner, spec_declares_block_range
 
 # Global scanner registry: (name, version) -> Scanner class

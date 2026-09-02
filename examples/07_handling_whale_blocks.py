@@ -8,7 +8,7 @@ blocks with more transactions than the API's pagination limit.
 import asyncio
 
 from aiochainscan import ChainscanClient
-from aiochainscan.core.method import Method
+from aiochainscan.domain.method import Method
 from aiochainscan.exceptions import PaginationDataLossError
 
 

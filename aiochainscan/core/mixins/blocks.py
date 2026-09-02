@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Protocol, cast
 
+from ...domain.method import Method
 from ...domain.normalize import normalize_block
 from ...domain.normalized import Block
 from ...exceptions import (
@@ -13,7 +14,6 @@ from ...exceptions import (
     ChainscanNetworkError,
     ChainscanRateLimitError,
 )
-from ..method import Method
 from ..types import JSONDict
 from ._waiting import api_error_text, poll_until_final
 

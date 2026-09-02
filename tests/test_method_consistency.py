@@ -34,7 +34,6 @@ import pytest
 
 from aiochainscan.constants import MAX_BLOCK_NUMBER
 from aiochainscan.core.client import ChainscanClient
-from aiochainscan.core.method import Method
 from aiochainscan.core.mixins import (
     AccountMixin,
     BlockMixin,
@@ -46,6 +45,7 @@ from aiochainscan.core.mixins import (
     TransactionMixin,
 )
 from aiochainscan.core.url_builder import UrlBuilder
+from aiochainscan.domain.method import Method
 from aiochainscan.exceptions import BlockRangeNotSupportedError
 from aiochainscan.scanners._etherscan_like import EtherscanLikeScanner
 from aiochainscan.scanners.base import BLOCK_RANGE_PARAM_KEYS

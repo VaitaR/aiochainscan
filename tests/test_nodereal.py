@@ -17,7 +17,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from aiochainscan.constants import MAX_BLOCK_NUMBER
-from aiochainscan.core.method import Method
+from aiochainscan.domain.method import Method
 from aiochainscan.exceptions import ChainscanClientProxyError, ChainscanRateLimitError
 from aiochainscan.scanners import SCANNER_REGISTRY, get_scanner_class
 from aiochainscan.scanners.nodereal import (

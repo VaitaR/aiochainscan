@@ -5,14 +5,8 @@ from typing import Any
 import pytest
 
 from aiochainscan import Method
-from aiochainscan.core.method import Method as CoreMethod
-from aiochainscan.domain.method import Method as DomainMethod
 from aiochainscan.services.ens_resolver import ENSResolver
 from aiochainscan.services.pagination import PageProvider, page_fetcher
-
-
-def test_method_compatibility_imports_preserve_identity() -> None:
-    assert Method is CoreMethod is DomainMethod
 
 
 class FakeCache:

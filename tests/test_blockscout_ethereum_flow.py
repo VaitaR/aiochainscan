@@ -23,8 +23,8 @@ pytest.importorskip(
 )
 
 from aiochainscan.core.client import ChainscanClient  # noqa: E402
-from aiochainscan.core.method import Method  # noqa: E402
 from aiochainscan.decode import decode_log_data, decode_transaction_input  # noqa: E402
+from aiochainscan.domain.method import Method  # noqa: E402
 from aiochainscan.exceptions import ChainscanClientApiError  # noqa: E402
 
 # Removed old fetch_all functions - using new unified interface

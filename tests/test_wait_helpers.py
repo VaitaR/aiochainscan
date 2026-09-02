@@ -19,7 +19,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 
 from aiochainscan.core.client import ChainscanClient
-from aiochainscan.core.method import Method
+from aiochainscan.domain.method import Method
 from aiochainscan.domain.models import TxHash
 from aiochainscan.exceptions import (
     ChainscanClientApiError,

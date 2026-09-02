@@ -20,7 +20,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from aiochainscan.core.method import Method
+from aiochainscan.domain.method import Method
 from aiochainscan.exceptions import ChainscanClientProxyError
 from aiochainscan.scanners.blockscout_v1 import BlockScoutV1
 

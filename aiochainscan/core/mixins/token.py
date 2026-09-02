@@ -5,9 +5,9 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any, Protocol
 
+from ...domain.method import Method
 from ...domain.models import Address
 from ...services.pagination import collect_all
-from ..method import Method
 from ..types import JSONDict, JSONList
 
 if TYPE_CHECKING:

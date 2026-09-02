@@ -2,7 +2,7 @@
 Core components for the unified scanner architecture.
 """
 
+from ..domain.method import Method
 from .endpoint import EndpointSpec
-from .method import Method
 
 __all__ = ['Method', 'EndpointSpec']

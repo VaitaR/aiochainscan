@@ -10,8 +10,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from aiochainscan.core.method import Method
 from aiochainscan.core.url_builder import UrlBuilder
+from aiochainscan.domain.method import Method
 from aiochainscan.domain.models import Address
 from aiochainscan.scanners.blockscout_v2 import BlockScoutV2Scanner
 from aiochainscan.scanners.etherscan_v2 import EtherscanV2
