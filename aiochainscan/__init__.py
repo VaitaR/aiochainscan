@@ -14,6 +14,7 @@ from aiochainscan.core.method import Method
 from aiochainscan.core.pool import ChainscanPool, FailureKind, classify_failure
 from aiochainscan.domain.contract import DecodedEvent, DecodedTransaction, SmartContract
 from aiochainscan.exceptions import (
+    BlockRangeNotSupportedError,
     ChainscanClientApiError,
     ChainscanClientError,
     ChainscanDataError,
@@ -34,6 +35,7 @@ __version__ = '0.6.0'
 __all__ = [
     'ChainInfo',
     'ChainscanClient',
+    'BlockRangeNotSupportedError',
     'ChainscanDataError',
     'ChainscanClientApiError',
     'ChainscanClientError',

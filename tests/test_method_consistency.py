@@ -13,6 +13,11 @@ mapping rot fails in CI instead of at a user's call site. It guards against:
    spec's ``path``.
 4. ``EtherscanV2`` silently drifting out of sync with the shared
    Etherscan-like spec surface.
+5. Streaming/paginated client methods drifting away from the ONE public param
+   dialect: the params they hand to ``fetch_page`` must be declared by the
+   serving scanner's spec ``param_map`` (barring the documented inert page
+   controls), and a BOUNDED block range on a rangeless spec must raise
+   ``BlockRangeNotSupportedError`` instead of being silently dropped.
 
 The sweep is data-driven: a recording client invokes every convenience method
 on each mixin, captures the ``(Method, params)`` pairs it hands to ``call()``,
@@ -27,6 +32,8 @@ from typing import Any
 
 import pytest
 
+from aiochainscan.constants import MAX_BLOCK_NUMBER
+from aiochainscan.core.client import ChainscanClient
 from aiochainscan.core.method import Method
 from aiochainscan.core.mixins import (
     AccountMixin,
@@ -38,7 +45,11 @@ from aiochainscan.core.mixins import (
     TokenMixin,
     TransactionMixin,
 )
+from aiochainscan.core.url_builder import UrlBuilder
+from aiochainscan.exceptions import BlockRangeNotSupportedError
 from aiochainscan.scanners._etherscan_like import EtherscanLikeScanner
+from aiochainscan.scanners.base import BLOCK_RANGE_PARAM_KEYS
+from aiochainscan.scanners.blockscout_v1 import BlockScoutV1
 from aiochainscan.scanners.blockscout_v2 import BlockScoutV2Scanner
 from aiochainscan.scanners.etherscan_v2 import EtherscanV2
 from aiochainscan.scanners.nodereal import NodeRealScanner
@@ -327,3 +338,270 @@ def test_invocation_table_has_no_stale_entries() -> None:
     known = {name for mixin in MIXINS for name in _public_convenience_methods(mixin)}
     for name in INVOCATIONS:
         assert name in known, f'INVOCATIONS entry {name!r} matches no mixin convenience method'
+
+
+# ---------------------------------------------------------------------------
+# 5. Streaming dialect: one public param dialect through fetch_page
+# ---------------------------------------------------------------------------
+
+#: Page-walking controls the streaming methods always emit. Page/offset
+#: scanners declare them; cursor scanners (BlockScout V2, NodeReal transfers)
+#: ignore them — an inert drop, unlike a silently dropped block RANGE.
+_PAGE_CONTROL_KEYS: frozenset[str] = frozenset({'page', 'offset', 'sort'})
+
+#: The unbounded sentinels the client emits for "no block bound".
+_UNBOUNDED_ENDS: frozenset[Any] = frozenset({MAX_BLOCK_NUMBER, 'latest'})
+
+#: Every streaming/paginated client method and the Method it paginates. The
+#: kwargs are the UNBOUNDED invocation; the bounded phase adds
+#: ``from_block=100, to_block=200`` to the same call.
+STREAMING_INVOCATIONS: dict[str, tuple[Method, dict[str, Any], bool]] = {
+    'iter_transactions': (Method.ACCOUNT_TRANSACTIONS, {'address': CHECKSUM_ADDRESS}, True),
+    'iter_transactions_streaming': (
+        Method.ACCOUNT_TRANSACTIONS,
+        {'address': CHECKSUM_ADDRESS},
+        True,
+    ),
+    'iter_internal_transactions_streaming': (
+        Method.ACCOUNT_INTERNAL_TXS,
+        {'address': CHECKSUM_ADDRESS},
+        True,
+    ),
+    'iter_token_transfers_streaming': (
+        Method.ACCOUNT_ERC20_TRANSFERS,
+        {'address': CHECKSUM_ADDRESS, 'contract_address': CONTRACT_ADDRESS},
+        True,
+    ),
+    'iter_logs_streaming': (Method.EVENT_LOGS, {'address': CONTRACT_ADDRESS}, True),
+    'iter_logs': (Method.EVENT_LOGS, {'address': CONTRACT_ADDRESS}, True),
+    # Holder lists have no block range: only the unbounded phase applies.
+    'iter_token_holders_streaming': (
+        Method.TOKEN_HOLDERS,
+        {'contract_address': CONTRACT_ADDRESS},
+        False,
+    ),
+}
+
+#: get_all_* mixin aggregators funnel through iter_*_streaming — one bounded
+#: representative each proves the guard covers the funnel, not just streams.
+AGGREGATE_FUNNELS: dict[str, tuple[Method, dict[str, Any]]] = {
+    'get_all_transactions': (Method.ACCOUNT_TRANSACTIONS, {'address': CHECKSUM_ADDRESS}),
+    'get_all_token_transfers': (
+        Method.ACCOUNT_ERC20_TRANSFERS,
+        {'address': CHECKSUM_ADDRESS, 'contract_address': CONTRACT_ADDRESS},
+    ),
+    'get_all_internal_transactions': (Method.ACCOUNT_INTERNAL_TXS, {'address': CHECKSUM_ADDRESS}),
+    'get_all_logs': (Method.EVENT_LOGS, {'address': CONTRACT_ADDRESS}),
+}
+
+
+class _RecordingPage:
+    """Real scanner instance whose ``fetch_page`` records params, answers empty."""
+
+    def __init__(self, scanner: Any) -> None:
+        self._scanner = scanner
+        self.records: list[tuple[Method, dict[str, Any]]] = []
+
+        async def recording_fetch_page(
+            method: Method, params: dict[str, Any]
+        ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+            self.records.append((method, dict(params)))
+            return [], None
+
+        scanner.fetch_page = recording_fetch_page  # type: ignore[method-assign]
+
+    @property
+    def specs(self) -> dict[Method, Any]:
+        return self._scanner.SPECS
+
+    @property
+    def label(self) -> str:
+        return f'{self._scanner.name}/{self._scanner.version}'
+
+
+def _streaming_stub(family_label: str) -> _RecordingPage:
+    """A recording page stub over the real scanner class of one family."""
+    url_builder = UrlBuilder('test_key', 'eth', 'main')
+    scanners: dict[str, Any] = {
+        'etherscan-like (etherscan base, blockscout v1)': BlockScoutV1(
+            '', 'eth', url_builder, network_client=None
+        ),
+        'etherscan v2': EtherscanV2('test_key', 'main', url_builder, network_client=None),
+        'blockscout v2': BlockScoutV2Scanner(
+            '', 'ethereum', UrlBuilder('', 'eth', 'ethereum'), network_client=None
+        ),
+        'nodereal v1': NodeRealScanner('test_key', 'bsc', url_builder, network_client=None),
+    }
+    return _RecordingPage(scanners[family_label])
+
+
+def _streaming_client(stub: _RecordingPage) -> ChainscanClient:
+    """A ChainscanClient shell around a recording scanner stub."""
+    client = ChainscanClient.__new__(ChainscanClient)
+    client.scanner_name = stub._scanner.name
+    client.scanner_version = stub._scanner.version
+    client.api_kind = 'test'
+    client.network = 'main'
+    client.api_key = ''
+    client._scanner = stub._scanner
+    return client
+
+
+def _is_unbounded_range(params: dict[str, Any]) -> bool:
+    """True when every emitted range key carries an unbounded sentinel."""
+    ranged = [key for key in params if key in BLOCK_RANGE_PARAM_KEYS]
+    if not ranged:
+        return True  # no range emitted at all
+    start = {params[key] for key in ranged if key in ('start_block', 'from_block')}
+    end = {params[key] for key in ranged if key in ('end_block', 'to_block')}
+    return start <= {0} and bool(end) and end <= _UNBOUNDED_ENDS
+
+
+def _undeclared_emitted_keys(spec: Any, params: dict[str, Any]) -> list[str]:
+    """Emitted keys the spec neither declares nor may inertly ignore.
+
+    Inert exemptions (documented scanner behavior, never a silent data bug):
+    - ``page``/``offset``/``sort`` page controls — cursor scanners ignore
+      them (see ``iter_token_holders_streaming`` in AGENTS.md).
+    - Range keys — tolerated ONLY when the values are the unbounded
+      sentinels; a bounded range on a rangeless spec must never reach the
+      wire (the guard raises instead, which the bounded sweep phase proves).
+    """
+    undeclared = [
+        key
+        for key in params
+        if not _param_is_declared(spec, key) and key not in _PAGE_CONTROL_KEYS
+    ]
+    if _is_unbounded_range(params):
+        undeclared = [key for key in undeclared if key not in BLOCK_RANGE_PARAM_KEYS]
+    return undeclared
+
+
+@pytest.mark.parametrize('family_label', sorted(SPEC_FAMILIES))
+async def test_streaming_methods_emit_declared_public_params(family_label: str) -> None:
+    """fetch_page params must be declared by the serving spec (one dialect).
+
+    The regression net for the BlockScout V2 silent-drop bug: the client used
+    to hand-build Etherscan WIRE names, which a spec-filtering scanner drops
+    without notice — including block bounds. Everything now flows in public
+    names that ``param_map`` either translates or (documentedly, inertly)
+    ignores.
+    """
+    stub = _streaming_stub(family_label)
+    client = _streaming_client(stub)
+    specs = stub.specs
+
+    for name, (method, kwargs, _ranged) in sorted(STREAMING_INVOCATIONS.items()):
+        if method not in specs:
+            continue  # family does not declare the method (its own error covers it)
+        stub.records.clear()
+        agen = getattr(client, name)(**kwargs)
+        async for _batch in agen:
+            pass
+        assert stub.records, f'{name}() never reached fetch_page on {stub.label}'
+        served_method, params = stub.records[0]
+        assert served_method is method
+        undeclared = _undeclared_emitted_keys(specs[method], params)
+        assert not undeclared, (
+            f'{stub.label} {name}() emits parameter(s) {undeclared} that its {method.name} '
+            f'spec does not declare and may not inertly ignore. Emitted: {sorted(params)}; '
+            f'declared param_map keys: {sorted(specs[method].param_map)}; '
+            f'path placeholders: {specs[method].path}'
+        )
+
+
+@pytest.mark.parametrize('family_label', sorted(SPEC_FAMILIES))
+async def test_bounded_range_on_rangeless_spec_raises_honestly(family_label: str) -> None:
+    """A bounded range a spec cannot carry must raise, not silently drop.
+
+    Bounded means ``from_block > 0`` or a concrete ``to_block``. Families
+    whose spec declares range params serve the call and carry the bounds in
+    the public dialect; the others must raise
+    ``BlockRangeNotSupportedError`` naming the provider.
+    """
+    stub = _streaming_stub(family_label)
+    client = _streaming_client(stub)
+    specs = stub.specs
+
+    for name, (method, kwargs, ranged) in sorted(STREAMING_INVOCATIONS.items()):
+        if method not in specs or not ranged:
+            continue
+        spec_supports_range = any(key in specs[method].param_map for key in BLOCK_RANGE_PARAM_KEYS)
+        bounded_kwargs = {**kwargs, 'from_block': 100, 'to_block': 200}
+        agen = getattr(client, name)(**bounded_kwargs)
+        if spec_supports_range:
+            async for _batch in agen:
+                pass
+            # The range actually reached fetch_page in the public dialect.
+            served = stub.records[-1][1]
+            assert served.get('from_block', served.get('start_block')) == 100
+            continue
+        with pytest.raises(BlockRangeNotSupportedError) as excinfo:
+            async for _batch in agen:
+                pass
+        assert stub.label in str(
+            excinfo.value
+        ), f'{name}() bounded-range error must name the provider ({stub.label})'
+        assert 'from_block=100' in str(excinfo.value)
+
+
+@pytest.mark.parametrize('family_label', sorted(SPEC_FAMILIES))
+async def test_get_all_aggregators_inherit_the_range_guard(family_label: str) -> None:
+    """get_all_* funnels through iter_*_streaming, so the guard covers it too."""
+    stub = _streaming_stub(family_label)
+    client = _streaming_client(stub)
+    specs = stub.specs
+
+    for name, (method, kwargs) in sorted(AGGREGATE_FUNNELS.items()):
+        if method not in specs:
+            continue
+        spec_supports_range = any(key in specs[method].param_map for key in BLOCK_RANGE_PARAM_KEYS)
+        coro = getattr(client, name)(**kwargs, from_block=100, to_block=200)
+        if spec_supports_range:
+            await coro
+            continue
+        with pytest.raises(BlockRangeNotSupportedError):
+            await coro
+
+
+@pytest.mark.asyncio
+async def test_unbounded_stream_on_rangeless_scanner_still_works() -> None:
+    """End to end: BlockScout V2 serves an unbounded stream, wire untouched.
+
+    The guard must only refuse BOUNDED ranges. An unbounded call goes
+    through the real scanner over a fake Network: the uniform public params
+    the client now emits are filtered by the spec exactly as before, and the
+    endpoint sees just the path address.
+    """
+
+    class FakeNetwork:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, Any]] = []
+
+        async def request(self, **kwargs: Any) -> Any:
+            self.calls.append(kwargs)
+            return {'items': [{'hash': '0x1'}], 'next_page_params': None}
+
+    net = FakeNetwork()
+    scanner = BlockScoutV2Scanner(
+        api_key='',
+        network='ethereum',
+        url_builder=UrlBuilder('', 'eth', 'ethereum'),
+        network_client=net,  # type: ignore[arg-type]
+    )
+    client = ChainscanClient.__new__(ChainscanClient)
+    client.scanner_name = scanner.name
+    client.scanner_version = scanner.version
+    client.api_kind = 'test'
+    client.network = 'ethereum'
+    client.api_key = ''
+    client._scanner = scanner
+
+    batches = [batch async for batch in client.iter_transactions_streaming('0xabc')]
+
+    assert batches == [[{'hash': '0x1'}]]
+    assert len(net.calls) == 1
+    # The spec filtered every inert page control/range key: the wire request
+    # is path-only, byte-identical to the pre-dialect-unification behaviour.
+    assert net.calls[0]['params'] is None
+    assert net.calls[0]['url'].endswith('/api/v2/addresses/0xabc/transactions')

@@ -253,6 +253,11 @@ class EtherscanLikeScanner(Scanner):
                 'topic1': 'topic1',
                 'topic2': 'topic2',
                 'topic3': 'topic3',
+                # Topic-pair operators (and/or between adjacent topics) —
+                # emitted by ``iter_logs(topic_operators=...)``.
+                'topic0_1_opr': 'topic0_1_opr',
+                'topic1_2_opr': 'topic1_2_opr',
+                'topic2_3_opr': 'topic2_3_opr',
             },
             parser=etherscan_parser,
         ),
