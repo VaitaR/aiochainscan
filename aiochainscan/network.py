@@ -10,20 +10,42 @@ v0.4.1: Disabled HTTP/2 by default and added comprehensive retry exceptions.
 HTTP/2 multiplexing triggers Cloudflare WAF blocks on rate-limited APIs (Etherscan,
 BlockScout). Added httpx.NetworkError and httpx.RemoteProtocolError to retry on
 connection resets and protocol errors.
+
+Every request — UrlBuilder endpoint or custom URL — is admitted through ONE
+path (:meth:`Network._send`): guard → rate-limit acquire → start → dispatch →
+debug-log → handle → finish, wrapped by the retry policy. Transient failures
+share one vocabulary, ``aiochainscan.exceptions.TRANSIENT_EXCEPTIONS``; the
+response-envelope dialects live behind the ``ResponseDialect`` seam below.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-import re
-import urllib.parse
 from collections.abc import Awaitable, Callable
-from typing import Any, cast
+from typing import Any, Protocol, cast
 
 import httpx
 import orjson
 
+from aiochainscan._redaction import (
+    SENSITIVE_HEADERS as SENSITIVE_HEADERS,
+)
+from aiochainscan._redaction import (
+    SENSITIVE_PATH_SEGMENT as SENSITIVE_PATH_SEGMENT,
+)
+from aiochainscan._redaction import (
+    SENSITIVE_QUERY_PARAMS as SENSITIVE_QUERY_PARAMS,
+)
+from aiochainscan._redaction import (
+    _redact_headers as _redact_headers,
+)
+from aiochainscan._redaction import (
+    _redact_payload as _redact_payload,
+)
+from aiochainscan._redaction import (
+    _redact_url as _redact_url,
+)
 from aiochainscan.constants import (
     NETWORK_DEFAULT_TIMEOUT,
     NETWORK_ERROR_EXCERPT_BYTES,
@@ -38,6 +60,7 @@ from aiochainscan.constants import (
 )
 from aiochainscan.core.url_builder import UrlBuilder
 from aiochainscan.exceptions import (
+    TRANSIENT_EXCEPTIONS,
     ChainscanClientApiError,
     ChainscanClientContentTypeError,
     ChainscanClientError,
@@ -46,125 +69,9 @@ from aiochainscan.exceptions import (
     ChainscanRateLimitError,
     ChainscanResponseTooLargeError,
     FailureKind,
+    api_error_failure_kind,
 )
 from aiochainscan.ports.rate_limiter import RateLimiter, RetryPolicy
-
-# Transient failure classes for the first-request guard: a probe that hit one
-# of these (429 / 5xx / DNS / timeout) must not permanently brick the client —
-# the guard stays armed and the next request re-probes. Mirrors the transport
-# retry policy's ``retry_exceptions`` list.
-GUARD_TRANSIENT_EXCEPTIONS: tuple[type[BaseException], ...] = (
-    ChainscanRateLimitError,
-    ChainscanNetworkError,
-    httpx.TimeoutException,
-    httpx.NetworkError,
-    httpx.RemoteProtocolError,
-)
-
-# Sensitive headers that should be redacted in logs
-SENSITIVE_HEADERS = {
-    'authorization',
-    'cookie',
-    'proxy-authorization',
-    'x-api-key',
-    'x-apikey',
-    'apikey',
-    'api-key',
-    'token',
-    'x-token',
-    'access-token',
-    'x-access-token',
-    'auth-token',
-    'x-auth-token',
-}
-SENSITIVE_QUERY_PARAMS = {
-    'apikey',
-    'api_key',
-    'api-key',
-    'key',
-    'token',
-    'access_token',
-    'access-token',
-    'auth_token',
-    'auth-token',
-    'authorization',
-    'auth',
-    'access_key',
-    'client_secret',
-    'password',
-    'secret',
-}
-_NORMALIZED_SENSITIVE_QUERY_PARAMS = {param.replace('-', '_') for param in SENSITIVE_QUERY_PARAMS}
-
-
-def _is_sensitive_header(name: str) -> bool:
-    normalized = name.lower()
-    compact = normalized.replace('-', '').replace('_', '')
-    return (
-        normalized in SENSITIVE_HEADERS
-        or 'authorization' in normalized
-        or 'apikey' in compact
-        or 'token' in compact
-    )
-
-
-def _is_sensitive_query_name(name: str) -> bool:
-    normalized = name.lower().replace('-', '_')
-    return (
-        normalized in _NORMALIZED_SENSITIVE_QUERY_PARAMS
-        or normalized.endswith('_key')
-        or normalized.endswith('_token')
-    )
-
-
-# Key-shaped path segments (e.g. NodeReal rides the API key in the URL path:
-# /v1/{key}, open-platform.nodereal.io/{key}/bsc-mainnet/...). Exactly 32 hex
-# chars so real path resources (0x-prefixed tx hashes, 40-char addresses)
-# never match.
-SENSITIVE_PATH_SEGMENT = re.compile(r'(?<=/)[0-9a-fA-F]{32}(?=/|$)')
-
-
-def _redact_headers(headers: dict[str, str] | None) -> dict[str, str] | None:
-    """Redact sensitive headers for safe logging."""
-    if headers is None:
-        return None
-    return {k: ('***REDACTED***' if _is_sensitive_header(k) else v) for k, v in headers.items()}
-
-
-def _redact_url(url: str | httpx.URL) -> str:
-    """Redact sensitive query parameters and key-shaped path segments for logging."""
-    parsed = urllib.parse.urlparse(str(url))
-    query_pairs = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
-
-    redacted_pairs = [
-        (k, '***REDACTED***' if _is_sensitive_query_name(k) else v) for k, v in query_pairs
-    ]
-    redacted_query = urllib.parse.urlencode(redacted_pairs, doseq=True)
-    redacted_path = SENSITIVE_PATH_SEGMENT.sub('***REDACTED***', parsed.path)
-    netloc = parsed.netloc
-    if '@' in netloc:
-        netloc = f'***REDACTED***@{netloc.rsplit("@", 1)[1]}'
-    return urllib.parse.urlunparse(
-        parsed._replace(netloc=netloc, path=redacted_path, query=redacted_query)
-    )
-
-
-def _redact_payload(payload: dict[str, Any] | None) -> dict[str, Any] | None:
-    """Redact sensitive values in request payload/query dictionaries."""
-    if payload is None:
-        return None
-
-    def redact_value(value: Any) -> Any:
-        if isinstance(value, dict):
-            return {
-                k: ('***REDACTED***' if _is_sensitive_query_name(k) else redact_value(v))
-                for k, v in value.items()
-            }
-        if isinstance(value, list):
-            return [redact_value(item) for item in value]
-        return value
-
-    return cast(dict[str, Any], redact_value(payload))
 
 
 def _excerpt(value: Any, limit: int = NETWORK_ERROR_EXCERPT_BYTES) -> Any:
@@ -178,53 +85,143 @@ def _excerpt(value: Any, limit: int = NETWORK_ERROR_EXCERPT_BYTES) -> Any:
     return value
 
 
-# Etherscan-style API error texts (message+result) that mean "bad credential".
-# Relocated from ``core/pool.py``: the failure kind is decided where the
-# failure is detected — at the raise site in ``Network._raise_if_error`` —
-# and the pool's fallback ladder for kind-less ``ChainscanClientApiError``
-# instances calls the same helper, so raise-site and fallback classification
-# can never drift.
-_AUTH_PATTERNS: tuple[re.Pattern[str], ...] = (
-    re.compile(r'invalid api[- ]key', re.IGNORECASE),
-    re.compile(r'missing[ /]+api[- ]key', re.IGNORECASE),
-    re.compile(r'api[- ]key.{0,24}(invalid|missing|required)', re.IGNORECASE),
-    re.compile(r'no api[- ]key', re.IGNORECASE),
-)
+class ResponseDialect(Protocol):
+    """Internal transport seam: one provider response-envelope dialect.
 
-# Error texts meaning "the plan does not cover this chain/endpoint".
-_PLAN_PATTERNS: tuple[re.Pattern[str], ...] = (
-    re.compile(r'free api', re.IGNORECASE),
-    re.compile(r'upgrade (?:your )?api plan', re.IGNORECASE),
-    re.compile(r'api pro endpoint', re.IGNORECASE),
-    re.compile(r'not supported for this chain', re.IGNORECASE),
-)
-
-
-def api_error_failure_kind(message: str | None, result: Any) -> FailureKind:
-    """Classify an Etherscan-style API error envelope by its text.
-
-    Used at the raise site in :meth:`Network._raise_if_error` so the
-    exception carries its :class:`~aiochainscan.exceptions.FailureKind`
-    from the moment it is raised; the pool's classification fallback calls
-    the same helper for ``ChainscanClientApiError`` instances constructed
-    without an explicit kind.
-
-    Args:
-        message: The envelope's ``message`` field (``None`` tolerated).
-        result: The envelope's ``result`` field (any type; non-strings
-            simply contribute nothing matchable beyond their repr).
-
-    Returns:
-        :attr:`FailureKind.AUTH` for bad-credential texts,
-        :attr:`FailureKind.PLAN_RESTRICTED` for plan-coverage texts,
-        :attr:`FailureKind.FATAL` otherwise.
+    A dialect knows (a) how to detect an error in a parsed JSON payload and
+    raise the matching transport exception and (b) how to extract the
+    caller-facing payload from a success envelope. Adapters are stateless;
+    the transport composes them per request path (see
+    :class:`CompositeResponseDialect`).
     """
-    text = f'{message or ""} {result or ""}'
-    if any(pattern.search(text) for pattern in _AUTH_PATTERNS):
-        return FailureKind.AUTH
-    if any(pattern.search(text) for pattern in _PLAN_PATTERNS):
-        return FailureKind.PLAN_RESTRICTED
-    return FailureKind.FATAL
+
+    def raise_if_error(self, response_json: Any) -> None:
+        """Raise the dialect's transport error if the payload is an error envelope."""
+        ...
+
+    def extract(self, response_json: Any) -> Any:
+        """Extract the caller-facing payload from a success envelope."""
+        ...
+
+
+def _raise_if_etherscan_error(response_json: Any) -> None:
+    """Etherscan status-envelope check (``{"status", "message", "result"}``).
+
+    ``status`` outside the success set raises. Rate-limit TEXT inside an
+    HTTP 200 becomes :class:`ChainscanRateLimitError` (its class default
+    carries ``FailureKind.RATE_LIMIT``, so the raise site needs no explicit
+    kind):
+
+    ``{"status":"0","message":"NOTOK","result":"Max rate limit reached"}``
+
+    Any other failing status raises :class:`ChainscanClientApiError` with
+    the kind computed by :func:`aiochainscan.exceptions.api_error_failure_kind`
+    — decided here, where the failure is detected, so the pool classifies
+    by lookup instead of re-parsing the text.
+    """
+    if not isinstance(response_json, dict):
+        return
+
+    status = response_json.get('status')
+    if status not in (None, '1', 1, 'OK', 'ok', 'Success', 'success'):
+        message = _excerpt(response_json.get('message'))
+        result = _excerpt(response_json.get('result'))
+
+        if isinstance(result, str) and (
+            'rate limit' in result.lower()
+            or 'limit reached' in result.lower()
+            or 'too many requests' in result.lower()
+        ):
+            raise ChainscanRateLimitError(message, result)
+
+        raise ChainscanClientApiError(
+            message, result, failure_kind=api_error_failure_kind(message, result)
+        )
+
+
+def _raise_if_jsonrpc_error(response_json: Any) -> None:
+    """JSON-RPC 2.0 error-object check (``{"jsonrpc", "id", "result"|"error"}``)."""
+    if not isinstance(response_json, dict):
+        return
+    if 'error' in response_json:
+        err = response_json['error']
+        if isinstance(err, dict):
+            code, message = err.get('code'), _excerpt(err.get('message'))
+        else:
+            code, message = None, _excerpt(err)
+        raise ChainscanClientProxyError(code, message)
+
+
+def _extract_envelope_payload(response_json: Any) -> Any:
+    """Unwrap the caller-facing payload: ``result`` first, then ``data``.
+
+    Covers the Etherscan envelope, the JSON-RPC envelope (whose success
+    member is ``result``) and envelope-less payloads (returned as-is, e.g.
+    BlockScout V2 ``{"items": [...], "next_page_params": {...}}``).
+    """
+    if isinstance(response_json, dict):
+        if 'result' in response_json:
+            return response_json['result']
+        if 'data' in response_json:
+            return response_json['data']
+        return response_json
+    return response_json
+
+
+class EtherscanEnvelope:
+    """Etherscan-style envelope: ``status`` values, hidden rate-limit text."""
+
+    def raise_if_error(self, response_json: Any) -> None:
+        _raise_if_etherscan_error(response_json)
+
+    def extract(self, response_json: Any) -> Any:
+        return _extract_envelope_payload(response_json)
+
+
+class JsonRpcEnvelope:
+    """JSON-RPC 2.0 envelope: the ``error`` object becomes a proxy error."""
+
+    def raise_if_error(self, response_json: Any) -> None:
+        _raise_if_jsonrpc_error(response_json)
+
+    def extract(self, response_json: Any) -> Any:
+        return _extract_envelope_payload(response_json)
+
+
+class CompositeResponseDialect:
+    """Several dialects applied in order; extraction follows the last one.
+
+    The transport default composes the Etherscan and JSON-RPC checks because
+    every current request path serves both dialects: the custom-URL path
+    (``request``) carries Etherscan-compat ``/api`` traffic AND JSON-RPC
+    probes (BlockScout ``/api/eth-rpc``, NodeReal ``nr_*``), and the
+    pre-seam transport applied both checks to every response. Composing the
+    same checks in the same order keeps every path byte-identical to that
+    behaviour; a dialect-only path can select a single adapter instead.
+    """
+
+    def __init__(self, *dialects: ResponseDialect) -> None:
+        if not dialects:
+            raise ValueError('CompositeResponseDialect needs at least one dialect')
+        self._dialects = dialects
+
+    def raise_if_error(self, response_json: Any) -> None:
+        for dialect in self._dialects:
+            dialect.raise_if_error(response_json)
+
+    def extract(self, response_json: Any) -> Any:
+        return self._dialects[-1].extract(response_json)
+
+
+_ETHERSCAN_ENVELOPE = EtherscanEnvelope()
+_JSONRPC_ENVELOPE = JsonRpcEnvelope()
+
+# The dialect every current request path is served with (see
+# :class:`CompositeResponseDialect` for why it is the composition).
+_DEFAULT_DIALECT: ResponseDialect = CompositeResponseDialect(
+    _ETHERSCAN_ENVELOPE,
+    _JSONRPC_ENVELOPE,
+)
 
 
 class Network:
@@ -305,6 +302,8 @@ class Network:
         # NetworkError covers ConnectError, ReadError, WriteError, CloseError
         # RemoteProtocolError covers HTTP/2 protocol errors (GOAWAY, RST_STREAM)
         # ChainscanNetworkError is our domain exception for retryable network errors
+        # TRANSIENT_EXCEPTIONS is the one shared vocabulary — the first-request
+        # guard below reads the same constant, so guard and retry cannot drift.
         if retry_policy is not None:
             self._retry_policy: RetryPolicy = retry_policy
         else:
@@ -314,13 +313,7 @@ class Network:
                 max_attempts=RETRY_MAX_ATTEMPTS,
                 min_wait=RETRY_MIN_WAIT,
                 max_wait=RETRY_MAX_WAIT,
-                retry_exceptions=(
-                    ChainscanRateLimitError,
-                    ChainscanNetworkError,
-                    httpx.TimeoutException,
-                    httpx.NetworkError,
-                    httpx.RemoteProtocolError,
-                ),
+                retry_exceptions=TRANSIENT_EXCEPTIONS,
             )
 
         self._client: httpx.AsyncClient | None = None
@@ -350,7 +343,7 @@ class Network:
         reach the transport.
 
         Failure memory: only configuration errors (anything outside
-        ``GUARD_TRANSIENT_EXCEPTIONS``) are cached as fatal — every later
+        ``TRANSIENT_EXCEPTIONS``) are cached as fatal — every later
         request fails fast with the remembered error. Transient probe
         failures are re-raised but NOT remembered: the guard stays armed and
         the next request probes again, so one unlucky 429/DNS blip cannot
@@ -376,7 +369,7 @@ class Network:
             try:
                 await self._first_request_guard()
             except BaseException as e:
-                if not isinstance(e, GUARD_TRANSIENT_EXCEPTIONS):
+                if not isinstance(e, TRANSIENT_EXCEPTIONS):
                     self._guard_error = e
                     self._guard_done = True
                 # Transient: nothing remembered — the guard re-runs on the
@@ -508,6 +501,61 @@ class Network:
         Returns:
             Parsed response data (JSON decoded).
         """
+        return await self._send(
+            method=method,
+            url=url,
+            params=params,
+            data=data,
+            json_data=json_data,
+            headers=headers,
+            dialect=_DEFAULT_DIALECT,
+            log_format='[%s %s] url=%r params=%r headers=%r',
+            log_payload=params,
+        )
+
+    async def _request(
+        self,
+        method: str,
+        data: dict[str, Any] | None = None,
+        params: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> dict[str, Any] | list[Any] | str:
+        """Execute HTTP request with rate limiting and retry logic."""
+        return await self._send(
+            method=method,
+            url=self._url_builder.API_URL,
+            params=params,
+            data=data,
+            json_data=None,
+            headers=headers,
+            dialect=_DEFAULT_DIALECT,
+            log_format='[%s %s] url=%r data=%r headers=%r',
+            log_payload=data,
+        )
+
+    async def _send(
+        self,
+        *,
+        method: str,
+        url: str,
+        params: dict[str, Any] | None,
+        data: dict[str, Any] | None,
+        json_data: dict[str, Any] | None,
+        headers: dict[str, str] | None,
+        dialect: ResponseDialect,
+        log_format: str,
+        log_payload: dict[str, Any] | None,
+    ) -> dict[str, Any] | list[Any] | str:
+        """The ONE admission path for every Network request.
+
+        ``request`` (custom URLs) and ``_request`` (the UrlBuilder endpoint)
+        are thin specializations over this method; the admission order —
+        guard → rate-limit acquire → start → dispatch → debug-log → handle
+        → finish, wrapped by the retry policy — is written exactly once,
+        here. ``dialect`` selects the response-envelope handling per request
+        path; ``log_format``/``log_payload`` preserve each entry point's
+        debug-log shape ('params=' vs 'data=').
+        """
         # Fail-fast config checks (e.g. expected chain validation) run before
         # the retry policy so a validation error is never retried.
         await self._run_first_request_guard()
@@ -529,73 +577,33 @@ class Network:
                     raise ValueError(f'Unsupported HTTP method: {method}')
 
                 self._logger.debug(
-                    '[%s %s] url=%r params=%r headers=%r',
+                    log_format,
                     method,
                     response.status_code,
                     _redact_url(response.url),
-                    _redact_payload(params),
+                    _redact_payload(log_payload),
                     _redact_headers(headers),
                 )
 
-                return self._handle_response(response)
+                return self._handle_response(response, dialect)
             finally:
                 await self._finish_request()
 
         # Use retry policy to handle transient errors
         return await self._retry_policy.run(do_request)
 
-    async def _request(
+    def _handle_response(
         self,
-        method: str,
-        data: dict[str, Any] | None = None,
-        params: dict[str, Any] | None = None,
-        headers: dict[str, str] | None = None,
+        response: httpx.Response,
+        dialect: ResponseDialect = _DEFAULT_DIALECT,
     ) -> dict[str, Any] | list[Any] | str:
-        """Execute HTTP request with rate limiting and retry logic."""
-        # Fail-fast config checks (e.g. expected chain validation) run before
-        # the retry policy so a validation error is never retried.
-        await self._run_first_request_guard()
-
-        async def do_request() -> dict[str, Any] | list[Any] | str:
-            # Acquire rate limit token before making request
-            await self._rate_limiter.acquire('network:request')
-
-            client = await self._start_request()
-            try:
-                if method == 'GET':
-                    response = await client.get(
-                        self._url_builder.API_URL,
-                        params=params,
-                        headers=headers,
-                    )
-                else:  # POST
-                    response = await client.post(
-                        self._url_builder.API_URL,
-                        data=data,
-                        headers=headers,
-                    )
-
-                self._logger.debug(
-                    '[%s %s] url=%r data=%r headers=%r',
-                    method,
-                    response.status_code,
-                    _redact_url(response.url),
-                    _redact_payload(data),
-                    _redact_headers(headers),
-                )
-
-                return self._handle_response(response)
-            finally:
-                await self._finish_request()
-
-        # Use retry policy to handle transient errors
-        return await self._retry_policy.run(do_request)
-
-    def _handle_response(self, response: httpx.Response) -> dict[str, Any] | list[Any] | str:
         """Process HTTP response and extract payload.
 
         Args:
             response: httpx Response object.
+            dialect: Response-envelope handling (checks + payload extraction);
+                defaults to the composite Etherscan + JSON-RPC dialect every
+                request path is served with.
 
         Returns:
             Parsed response data.
@@ -656,55 +664,8 @@ class Network:
 
         self._logger.debug('Response parsed as %s', type(response_json).__name__)
 
-        # Check for API-level errors
-        self._raise_if_error(response_json)
+        # Check for API-level errors (per the selected envelope dialect) …
+        dialect.raise_if_error(response_json)
 
-        # Extract payload from response
-        payload: Any
-        if isinstance(response_json, dict):
-            if 'result' in response_json:
-                payload = response_json['result']
-            elif 'data' in response_json:
-                payload = response_json['data']
-            else:
-                payload = response_json
-        else:
-            payload = response_json
-
-        return cast(dict[str, Any] | list[Any] | str, payload)
-
-    @staticmethod
-    def _raise_if_error(response_json: Any) -> None:
-        """Check response for API errors and raise appropriate exceptions."""
-        if not isinstance(response_json, dict):
-            return
-
-        status = response_json.get('status')
-        if status not in (None, '1', 1, 'OK', 'ok', 'Success', 'success'):
-            message = _excerpt(response_json.get('message'))
-            result = _excerpt(response_json.get('result'))
-
-            # Detect hidden rate limit errors (HTTP 200 with rate limit message)
-            # Etherscan returns: {"status":"0","message":"NOTOK","result":"Max rate limit reached"}
-            # ChainscanRateLimitError carries failure_kind=RATE_LIMIT as its
-            # class default, so the raise site needs no explicit kind here.
-            if isinstance(result, str) and (
-                'rate limit' in result.lower()
-                or 'limit reached' in result.lower()
-                or 'too many requests' in result.lower()
-            ):
-                raise ChainscanRateLimitError(message, result)
-
-            # The kind is decided here — where the failure is detected — so
-            # the pool classifies by lookup instead of re-parsing the text.
-            raise ChainscanClientApiError(
-                message, result, failure_kind=api_error_failure_kind(message, result)
-            )
-
-        if 'error' in response_json:
-            err = response_json['error']
-            if isinstance(err, dict):
-                code, message = err.get('code'), _excerpt(err.get('message'))
-            else:
-                code, message = None, _excerpt(err)
-            raise ChainscanClientProxyError(code, message)
+        # … then extract the caller-facing payload.
+        return cast(dict[str, Any] | list[Any] | str, dialect.extract(response_json))

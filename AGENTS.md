@@ -692,8 +692,10 @@ Agent adapter over `ChainscanClient` — **run**: `python -m aiochainscan.mcp_se
 
 ### Modifying HTTP Behavior
 - Rate limiting: `adapters/aiolimiter_adapter.py` (burst=1 for APIs)
-- Retry logic: `network.py` - includes NetworkError, RemoteProtocolError
+- Retry logic: `network.py` — one admission path (`Network._send`: guard → rate-limit → dispatch → handle → finish → retry, written once) retrying `exceptions.TRANSIENT_EXCEPTIONS`, the single transient vocabulary shared with the first-request guard and `TenacityRetryAdapter.DEFAULT_RETRY_EXCEPTIONS`
+- Response envelopes: dialect seam in `network.py` (`ResponseDialect` protocol; `EtherscanEnvelope` + `JsonRpcEnvelope`, composed as the default since every path serves both dialects)
 - JSON parsing: Always use `orjson.loads(response.content)` not `response.json()`
+- Credential redaction helpers live in `aiochainscan/_redaction.py` (re-exported from `network.py`)
 
 ---
 
