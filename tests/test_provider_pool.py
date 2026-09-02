@@ -35,6 +35,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 import httpx
 import pytest
 
+from aiochainscan.chain_registry import resolve_scanner_target
 from aiochainscan.core.client import ChainscanClient
 from aiochainscan.core.pool import (
     ChainscanPool,
@@ -81,11 +82,11 @@ class FakeClock:
 
 
 def make_etherscan_client() -> ChainscanClient:
-    return ChainscanClient('etherscan', 'v2', 'eth', 'ethereum', 'test_key')
+    return ChainscanClient(resolve_scanner_target('etherscan', 'ethereum', api_key='test_key'))
 
 
 def make_blockscout_client() -> ChainscanClient:
-    return ChainscanClient('blockscout', 'v2', 'blockscout_eth', 'ethereum', '')
+    return ChainscanClient(resolve_scanner_target('blockscout_v2', 'ethereum'))
 
 
 def stub_client(client: ChainscanClient, result: Any = 'ok') -> AsyncMock:

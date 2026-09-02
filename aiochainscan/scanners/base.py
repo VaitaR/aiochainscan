@@ -173,6 +173,12 @@ class Scanner(ABC):
         self.network = network
         self.url_builder = url_builder
         self.base_url = base_url
+        # Chain-id resolution ownership: ``resolve_scanner_target`` (via
+        # ``ScannerTarget.chain_id``) owns it on the ``ChainscanClient`` path
+        # and always hands a resolved id here — this scanner trusts it and
+        # never re-resolves. The ``resolve_chain_id`` fallback below serves
+        # direct scanner construction only (tests, standalone use), where no
+        # client resolved a target first.
         if chain_id is not None:
             self.chain_id = chain_id
         elif base_url is not None:

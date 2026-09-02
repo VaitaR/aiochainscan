@@ -14,6 +14,7 @@ from unittest.mock import patch
 
 import pytest
 
+from aiochainscan.chain_registry import resolve_scanner_target
 from aiochainscan.constants import API_MAX_OFFSET_ETHERSCAN
 from aiochainscan.core.client import ChainscanClient
 from aiochainscan.exceptions import (
@@ -541,7 +542,7 @@ class _StubScanner:
 def stub_client() -> tuple[ChainscanClient, TruncatingExplorer]:
     explorer = TruncatingExplorer(spread(range(0, 26), per_block=5))
     with patch('aiochainscan.core.client.get_scanner_class'):
-        client = ChainscanClient('etherscan', 'v2', 'eth', 'ethereum', 'key')
+        client = ChainscanClient(resolve_scanner_target('etherscan', 'ethereum', api_key='key'))
     client._scanner = _StubScanner(explorer)  # type: ignore[assignment]
     return client, explorer
 
@@ -589,7 +590,7 @@ async def test_client_get_all_token_holders_names_a_working_provider() -> None:
     """The documented break: Etherscan holders now fails with a real remedy."""
     explorer = TruncatingExplorer({1: WINDOW + 20})
     with patch('aiochainscan.core.client.get_scanner_class'):
-        client = ChainscanClient('etherscan', 'v2', 'eth', 'ethereum', 'key')
+        client = ChainscanClient(resolve_scanner_target('etherscan', 'ethereum', api_key='key'))
     client._scanner = _HoldersStubScanner(explorer)  # type: ignore[assignment]
 
     with pytest.raises(CompletenessUnavailableError) as excinfo:
@@ -607,7 +608,7 @@ async def test_client_token_holders_opt_out_still_truncates() -> None:
     """Opting out is the deliberate way to accept a truncated holder list."""
     explorer = TruncatingExplorer({1: WINDOW + 20})
     with patch('aiochainscan.core.client.get_scanner_class'):
-        client = ChainscanClient('etherscan', 'v2', 'eth', 'ethereum', 'key')
+        client = ChainscanClient(resolve_scanner_target('etherscan', 'ethereum', api_key='key'))
     client._scanner = _HoldersStubScanner(explorer)  # type: ignore[assignment]
 
     holders = await client.get_all_token_holders('0x' + 'ab' * 20, guarantee_complete=False)

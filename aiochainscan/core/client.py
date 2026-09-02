@@ -3,7 +3,7 @@ Unified client for blockchain scanner APIs.
 """
 
 from collections.abc import AsyncIterator, Callable
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
@@ -14,9 +14,8 @@ if TYPE_CHECKING:
     from ..services.ens_resolver import ENSResolver
 
 from ..chain_registry import (
-    get_chain_info,
+    ScannerTarget,
     get_scanner_network_name,
-    resolve_chain_id,
     resolve_scanner_target,
 )
 from ..constants import MAX_BLOCK_NUMBER
@@ -55,25 +54,6 @@ from .mixins import (
 )
 from .types import JSONDict
 from .url_builder import UrlBuilder
-
-# Strict type aliases for scanner and network names (defined after imports)
-ScannerName = Literal['etherscan', 'blockscout', 'blockscout_v2', 'nodereal']
-NetworkName = Literal[
-    'ethereum',
-    'mainnet',
-    'goerli',
-    'sepolia',
-    'polygon',
-    'arbitrum',
-    'optimism',
-    'base',
-    'bsc',
-    'gnosis',
-    'zksync',
-    'scroll',
-    'linea',
-    'celo',
-]
 
 
 def _resolve_end_block_int(to_block: int | str | None) -> int:
@@ -136,65 +116,69 @@ class ChainscanClient(
 
     def __init__(
         self,
-        scanner_name: str | None = None,
-        scanner_version: str | None = None,
-        api_kind: str | None = None,
-        network: str | None = None,
+        target: ScannerTarget | None = None,
+        *,
+        chain: str | int | None = None,
+        provider: str | None = None,
         api_key: str | None = None,
-        chain_id: int | None = None,
+        scanner_version: str | None = None,
+        expected_chain_id: int | None = None,
+        allow_http: bool = False,
         timeout: float | httpx.Timeout | None = 10.0,
         proxy: str | None = None,
         rate_limiter: RateLimiter | None = None,
         retry_policy: RetryPolicy | None = None,
-        base_url: str | None = None,
-        expected_chain_id: int | None = None,
-        *,
-        chain: str | int | None = None,
-        provider: str | None = None,
-        allow_http: bool = False,
     ):
         """
-        Initialize the unified client.
+        Initialize the unified client from a resolved :class:`ScannerTarget`.
+
+        ``ScannerTarget`` is the single internal construction currency: chain
+        id, UrlBuilder network name and credentials are resolved exactly once
+        — by :func:`aiochainscan.chain_registry.resolve_scanner_target` — and
+        this constructor trusts the result (no re-derivation). Build one via
+        ``from_config``, the ``chain``/``provider`` keyword form, or
+        ``resolve_scanner_target`` directly.
 
         Args:
-            scanner_name: Scanner implementation name (e.g., 'etherscan', 'blockscout')
-            scanner_version: Scanner version (e.g., 'v1', 'v2')
-            api_kind: API kind for URL building (e.g., 'eth', 'base')
-            network: Network name (e.g., 'main', 'test')
-            api_key: API key for authentication
-            chain_id: Chain ID for the network (optional, auto-resolved from
-                network; stays ``None`` for custom base URLs without one)
+            target: Resolved construction target (see
+                :class:`~aiochainscan.chain_registry.ScannerTarget`). When
+                ``None``, the ``chain``/``provider`` keyword pair resolves one
+                first through the same single resolution point as
+                ``from_config``.
+            chain: Keyword-only honest-constructor form: a chain id or alias
+                ('ethereum', 8453, a self-hosted base URL). Required together
+                with ``provider`` when ``target`` is not given; mutually
+                exclusive with a given ``target``.
+            provider: Keyword-only honest-constructor form of the scanner
+                name (e.g. 'etherscan', 'blockscout', 'blockscout_v2').
+            api_key: Explicit API key for the ``chain``/``provider`` form
+                (default: resolved from the configuration manager).
+            scanner_version: Explicit scanner version override for the
+                ``chain``/``provider`` form (default: registry default).
+            expected_chain_id: Chain id the instance must serve for the
+                ``chain``/``provider`` form. When set, it is validated before
+                the first request and a mismatch raises
+                ``ChainscanDataError`` (see ``validate_chain``).
+            allow_http: Permit cleartext ``http://`` base URLs for the
+                ``chain``/``provider`` form (see ``from_config``).
             timeout: Request timeout in seconds or httpx.Timeout instance
             proxy: Proxy URL
             rate_limiter: Rate limiter implementation (default: AioLimiterAdapter)
             retry_policy: Retry policy implementation (default: TenacityRetryAdapter)
-            base_url: Custom instance root URL (self-hosted BlockScout,
-                Etherscan v2 proxy). Overrides the registry URL mappings; see
-                ``from_config`` for the URL-vs-alias heuristic.
-            expected_chain_id: Chain id the instance must serve. When set, it
-                is validated before the first request and a mismatch raises
-                ``ChainscanDataError`` (see ``validate_chain``).
-            chain: Keyword-only honest-constructor form: a chain id or alias
-                ('ethereum', 8453, a self-hosted base URL), resolved through
-                the same registry as ``from_config``. Mutually exclusive with
-                the positional ``scanner_name``/``scanner_version``/
-                ``api_kind``/``network`` quadruple — pass ``chain``/
-                ``provider`` together, or the positional group, never both.
-            provider: Keyword-only honest-constructor form of ``scanner_name``
-                (e.g. 'etherscan', 'blockscout', 'blockscout_v2'). Required
-                together with ``chain``.
-            allow_http: Forwarded to chain resolution when using
-                ``chain``/``provider`` (see ``from_config``).
+
+        Raises:
+            TypeError: Neither a ``target`` nor the ``chain``/``provider``
+                pair was given; a ``target`` was accompanied by resolution
+                kwargs; or the removed pre-1.0 positional
+                ``(scanner_name, scanner_version, api_kind, network,
+                api_key)`` form was used.
         """
-        if chain is not None or provider is not None:
-            if scanner_name is not None or network is not None:
+        if target is None:
+            if chain is None or provider is None:
                 raise TypeError(
-                    "ChainscanClient: pass either ('chain', 'provider') or the "
-                    'positional (scanner_name, scanner_version, api_kind, network) '
-                    'quadruple, never both.'
+                    'ChainscanClient: pass a resolved ScannerTarget, or the '
+                    "('chain', 'provider') keyword pair — never neither."
                 )
-            if provider is None or chain is None:
-                raise TypeError("ChainscanClient: 'chain' and 'provider' must be given together.")
             target = resolve_scanner_target(
                 provider,
                 chain,
@@ -203,57 +187,43 @@ class ChainscanClient(
                 expected_chain_id=expected_chain_id,
                 allow_http=allow_http,
             )
-            scanner_name = target.scanner_name
-            scanner_version = target.scanner_version
-            api_kind = target.api_kind
-            network = target.network
-            api_key = target.api_key
-            chain_id = target.chain_id
-            base_url = target.base_url
+        elif not isinstance(target, ScannerTarget):
+            raise TypeError(
+                'ChainscanClient: the first argument must be a ScannerTarget — the '
+                'pre-1.0 positional (scanner_name, scanner_version, api_kind, network, '
+                'api_key) constructor was removed. Use from_config, the '
+                "('chain', 'provider') keyword form, or build a target via "
+                'aiochainscan.chain_registry.resolve_scanner_target.'
+            )
         elif (
-            scanner_name is None
-            or scanner_version is None
-            or api_kind is None
-            or network is None
-            or api_key is None
+            chain is not None
+            or provider is not None
+            or api_key is not None
+            or scanner_version is not None
+            or expected_chain_id is not None
+            or allow_http
         ):
             raise TypeError(
-                'ChainscanClient: pass (scanner_name, scanner_version, api_kind, network, '
-                "api_key) or ('chain', 'provider', api_key=...)."
+                'ChainscanClient: a ScannerTarget is already resolved — resolution '
+                "kwargs ('chain', 'provider', 'api_key', 'scanner_version', "
+                "'expected_chain_id', 'allow_http') cannot accompany it."
             )
 
-        assert (
-            scanner_name is not None
-            and scanner_version is not None
-            and api_kind is not None
-            and network is not None
-            and api_key is not None
+        self._target = target
+        self.scanner_name = target.scanner_name
+        self.scanner_version = target.scanner_version
+        self.api_kind = target.api_kind
+        self.network = target.network
+        self.api_key = target.api_key
+        self.base_url = target.base_url
+        self.chain_id: int | None = target.chain_id
+        self._expected_chain_id = target.expected_chain_id
+
+        # UrlBuilder network name resolved exactly once, by the registry
+        # (ScannerTarget.url_network owns it) — never re-derived here.
+        self._url_builder = UrlBuilder(
+            target.api_key, target.api_kind, target.url_network, api_url=target.base_url
         )
-        self.scanner_name = scanner_name
-        self.scanner_version = scanner_version
-        self.api_kind = api_kind
-        self.network = network
-        self.api_key = api_key
-        self.base_url = base_url
-        self._expected_chain_id = expected_chain_id
-
-        # Map network to appropriate network parameter for UrlBuilder.
-        # Custom base URLs bypass the chain registry entirely: the chain may
-        # be private (not in STANDARD_CHAINS) and unknown until probed.
-        if base_url is not None:
-            self.chain_id: int | None = chain_id
-            network_for_urlbuilder = network
-        else:
-            self.chain_id = chain_id or resolve_chain_id(network)
-            # UrlBuilder expects 'main' for Ethereum mainnet, not 'ethereum'
-            chain_info = get_chain_info(self.chain_id)
-            network_for_urlbuilder = (
-                chain_info['name'] if chain_info['name'] != 'ethereum' else 'main'
-            )
-
-        # Build URL builder (reusing existing infrastructure); a custom
-        # api_url override redirects every registry-routed request.
-        self._url_builder = UrlBuilder(api_key, api_kind, network_for_urlbuilder, api_url=base_url)
 
         # Store additional config
         self._timeout = timeout
@@ -273,21 +243,27 @@ class ChainscanClient(
             rate_limiter=rate_limiter,
             retry_policy=retry_policy,
             first_request_guard=(
-                self._validate_expected_chain_once if expected_chain_id is not None else None
+                self._validate_expected_chain_once
+                if target.expected_chain_id is not None
+                else None
             ),
         )
 
-        # Get scanner class and create instance with shared network client
-        scanner_class = get_scanner_class(scanner_name, scanner_version)
+        # Get scanner class and create instance with shared network client.
+        # The scanner receives the already-resolved chain_id and trusts it
+        # (resolution ownership: resolve_scanner_target — see ScannerTarget).
+        scanner_class = get_scanner_class(target.scanner_name, target.scanner_version)
         # Use chain_id to resolve the correct network name for this scanner
-        scanner_network = get_scanner_network_name(scanner_name, scanner_version, network)
+        scanner_network = get_scanner_network_name(
+            target.scanner_name, target.scanner_version, target.network
+        )
         self._scanner = scanner_class(
-            api_key,
+            target.api_key,
             scanner_network,
             self._url_builder,
-            chain_id,
+            target.chain_id,
             network_client=self._network,
-            base_url=base_url,
+            base_url=target.base_url,
         )
 
         # Lazy-initialized ENS resolver
@@ -296,8 +272,8 @@ class ChainscanClient(
     @classmethod
     def from_config(
         cls,
-        scanner_name: ScannerName | str,
-        network: NetworkName | str | int,
+        scanner_name: str,
+        network: str | int,
         scanner_version: str | None = None,
         timeout: float | httpx.Timeout | None = 10.0,
         proxy: str | None = None,
@@ -310,10 +286,13 @@ class ChainscanClient(
         """
         Create client using unified chain-based configuration.
 
-        Thin factory: resolves the (scanner, network, api_kind, api_key)
-        target via ``aiochainscan.chain_registry.resolve_scanner_target``
-        and constructs the client. Configuration is loaded lazily at call
-        time; nothing is resolved at import time.
+        Thin factory: resolves the construction target via
+        ``aiochainscan.chain_registry.resolve_scanner_target`` and hands it to
+        the constructor — one resolution point, one wiring path. Scanner and
+        network names are plain strings validated at runtime by the registry
+        (unknown names fail fast with the supported list; see
+        ``chain_registry.STANDARD_CHAINS``). Configuration is loaded lazily at
+        call time; nothing is resolved at import time.
 
         URL-vs-alias heuristic: a string ``network`` containing a
         ``scheme://`` prefix is treated as a custom base URL — a self-hosted
@@ -372,27 +351,19 @@ class ChainscanClient(
             )
             ```
         """
-        target = resolve_scanner_target(
-            scanner_name,
-            network,
-            api_key=api_key,
-            scanner_version=scanner_version,
-            expected_chain_id=expected_chain_id,
-            allow_http=allow_http,
-        )
         return cls(
-            scanner_name=target.scanner_name,
-            scanner_version=target.scanner_version,
-            api_kind=target.api_kind,
-            network=target.network,
-            api_key=target.api_key,
-            chain_id=target.chain_id,
+            resolve_scanner_target(
+                scanner_name,
+                network,
+                api_key=api_key,
+                scanner_version=scanner_version,
+                expected_chain_id=expected_chain_id,
+                allow_http=allow_http,
+            ),
             timeout=timeout,
             proxy=proxy,
             rate_limiter=rate_limiter,
             retry_policy=retry_policy,
-            base_url=target.base_url,
-            expected_chain_id=expected_chain_id,
         )
 
     async def call(self, method: Method, **params: Any) -> Any:
