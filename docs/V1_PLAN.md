@@ -184,3 +184,42 @@ Merged into `main`, `make validate` green (`1089 passed, 13 skipped`, mypy --str
 5. A bare base install cannot decode ABI/calldata (needs `[fallback]` or `[fastabi]`). Must be
    stated next to the install instructions in `README.md`, or the first `iter_events` call
    fails with an opaque dependency error.
+
+### Update — open items 1 and 2 closed
+
+`main` @ 63ffafc, `make validate` green (`1103 passed, 13 skipped`, mypy --strict over 72 files).
+
+- **Item 1 closed.** Eight new entry points compose completeness with normalization:
+  `iter_{transactions,token_transfers,internal_transactions,logs}_normalized` and the matching
+  `get_all_*_normalized`. Each wraps the existing `iter_*_streaming` and applies
+  `domain/normalize.py` per batch as it arrives, so `guarantee_complete` keeps Track C's
+  semantics and nothing accumulates before normalizing. Blocks are deliberately excluded —
+  they are fetched singly and have no pagination concept.
+- **Item 2 closed by routing, not failover.** `CompletenessUnavailableError` is deliberately NOT
+  fallback-eligible: it fires at the END of pagination, so reacting to it would discard the whole
+  fetched window and re-run on the next provider, doubling the request budget on a rate-limited
+  API, and it would break the documented rule that pagination pins to one provider per call.
+  Instead the pool now selects a member whose scanner declares the method with
+  `result_window is None` BEFORE issuing any request, and raises immediately when none qualifies.
+  Routing decides before paying; failover reacts after.
+- **Item 3 resolved in the pool's favour.** A bare registry suggestion cannot know that an
+  alternative needs another network or key, or is chain-restricted; pool members are
+  already-constructed clients for the caller's chain, so among them the suggestion is reliable.
+
+### New finding — dev environments silently lost the Rust extension
+
+A side effect of the Track A split: the base package builds with hatchling, so `uv sync --extra dev`
+no longer triggers maturin and a fresh worktree has no accelerator. Three defects followed, all
+fixed in 63ffafc:
+
+1. `scripts/agent/preflight.sh` probed `import aiochainscan.fastabi` — the crate SOURCE directory,
+   which imports as an empty namespace package whether or not the extension exists, so the check
+   reported "built" unconditionally. It now imports the compiled module by name and requires a real
+   symbol. Verified discriminating: exit 0 where the extension is present, exit 1 where it is not.
+2. `make fastabi` and `scripts/agent/new-worktree.sh` both invoked `uv run --extra fast`, and no
+   `fast` extra exists in `pyproject.toml` — so `AIO_BUILD_FASTABI=1` could never have worked.
+3. `AGENTS.md` still claimed `uv sync --extra dev` compiles the extension automatically.
+
+Without the extension `tests/test_crypto.py` skips 12 tests, which is why a fresh worktree reports
+more skips than the root checkout. Treat a skip count above 13 as a signal that the accelerator is
+missing, not as noise.
