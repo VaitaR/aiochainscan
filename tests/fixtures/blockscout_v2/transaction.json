@@ -1,0 +1,94 @@
+{
+  "authorization_list": [],
+  "base_fee_per_gas": "15578805264",
+  "block_number": 19500000,
+  "confirmation_duration": [
+    0,
+    12121.0
+  ],
+  "confirmations": 6388760,
+  "created_contract": null,
+  "decoded_input": null,
+  "exchange_rate": "2380.28",
+  "fee": {
+    "type": "actual",
+    "value": "3158661398776624"
+  },
+  "fhe_operations_count": 0,
+  "from": {
+    "ens_domain_name": null,
+    "hash": "0xAf7d66767f77F8c268Ad31E938a5f3BE88888888",
+    "implementations": [],
+    "is_contract": false,
+    "is_scam": false,
+    "is_verified": null,
+    "metadata": null,
+    "name": null,
+    "private_tags": [],
+    "proxy_type": null,
+    "public_tags": [],
+    "reputation": "ok",
+    "watchlist_names": []
+  },
+  "gas_limit": "857750",
+  "gas_price": "20578805264",
+  "gas_used": "153491",
+  "has_error_in_internal_transactions": false,
+  "hash": "0xe47d33575d75693f90bc2d0f7976d578fb70f71be4ea3b4d92b526de2c0f0660",
+  "historic_exchange_rate": "3320.12",
+  "is_pending_update": false,
+  "max_fee_per_gas": "29000000000",
+  "max_priority_fee_per_gas": "5000000000",
+  "method": "0xac9650d8",
+  "nonce": 1005,
+  "position": 0,
+  "priority_fee": "767455000000000",
+  "raw_input": "0xac9650d800000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000003000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000001c0000000000000000000000000000000000000000000000000000000000000022000000000000000000000000000000000000000000000000000000000000001241fbcd5e10000000000000000000000005c69bee701ef814a2b6a3edd4b1652cb9cc5aa6f00000000000000000000000000000000000000000000000000000000000026f200000000000000000000000000000000000000000000000000000000000000c00000000000000000000000000000000000000000007c3f7c7a7beb0357e6dc17000000000000000000000000000000000000000000000000184d2d8bc5dc8aa0000000000000000000000000af7d66767f77f8c268ad31e938a5f3be888888880000000000000000000000000000000000000000000000000000000000000002000000000000000000000000594daad7d77592a2b97b725a7ad59d7e188b5bfa000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002432bdd10d0000000000000000000000000000000000000000000000000027147114878000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000024d29d3520000000000000000000000000af7d66767f77f8c268ad31e938a5f3be8888888800000000000000000000000000000000000000000000000000000000",
+  "result": "success",
+  "revert_reason": null,
+  "status": "ok",
+  "timestamp": "2024-03-23T21:34:59.000000Z",
+  "to": {
+    "ens_domain_name": null,
+    "hash": "0x42183725DF3be80Bcefb3D12528417698C0C8a8c",
+    "implementations": [],
+    "is_contract": true,
+    "is_scam": false,
+    "is_verified": false,
+    "metadata": {
+      "tags": [
+        {
+          "meta": {},
+          "name": "MEV Bot: 0x421...a8c",
+          "ordinal": 10,
+          "slug": "mev-bot-0x421a8c",
+          "tagType": "name"
+        },
+        {
+          "meta": {},
+          "name": "MEV Bot",
+          "ordinal": 0,
+          "slug": "mev-bot",
+          "tagType": "protocol"
+        }
+      ]
+    },
+    "name": null,
+    "private_tags": [],
+    "proxy_type": null,
+    "public_tags": [],
+    "reputation": "ok",
+    "watchlist_names": []
+  },
+  "token_transfers": null,
+  "token_transfers_overflow": null,
+  "transaction_burnt_fee": "2391206398776624",
+  "transaction_tag": null,
+  "transaction_types": [
+    "coin_transfer",
+    "contract_call",
+    "token_transfer"
+  ],
+  "type": 2,
+  "value": "11000000000000000"
+}
