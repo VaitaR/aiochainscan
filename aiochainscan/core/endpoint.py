@@ -72,7 +72,6 @@ class EndpointSpec:
         return raw_response
 
 
-# Common parsers for different response formats
 def etherscan_parser(response: dict[str, Any]) -> Any:
     """Standard Etherscan API response parser."""
     if 'result' in response:
@@ -80,14 +79,21 @@ def etherscan_parser(response: dict[str, Any]) -> Any:
     return response
 
 
-# Pre-defined parsers for common use cases
+def coerce_response_items(response: Any) -> list[dict[str, Any]]:
+    """Coerce a parsed API response into a list of item dicts.
 
+    Canonical implementation of the response→items coercion shared by
+    ``Scanner._coerce_items`` (scanners layer) and
+    ``services.pagination.normalize_items`` (services layer) — one coercion
+    contract, maintained once. Core is imported by both layers, so it is the
+    only legal shared home (services must not import scanners).
 
-def raw_parser(response: dict[str, Any]) -> Any:
-    return response
-
-
-PARSERS: dict[str, Callable[[dict[str, Any]], Any]] = {
-    'etherscan': etherscan_parser,
-    'raw': raw_parser,
-}
+    Accepts the shapes explorers actually return: a plain list, an envelope
+    dict with an ``'items'`` key, or anything else (treated as no data).
+    """
+    if isinstance(response, list):
+        return list(response)
+    if isinstance(response, dict):
+        items = response.get('items')
+        return list(items) if items else []
+    return []

@@ -44,15 +44,12 @@ from ..core.endpoint import EndpointSpec
 from ..core.method import Method
 from ..core.url_builder import UrlBuilder
 from ..exceptions import (
-    ChainscanClientApiError,
     ChainscanClientError,
     ChainscanClientProxyError,
-    ChainscanNetworkError,
     ChainscanRateLimitError,
-    MethodNotDeclaredError,
 )
 from . import register_scanner
-from .base import Scanner
+from .base import Scanner, hex_block_tag, translate_unexpected_errors
 
 if TYPE_CHECKING:
     from ..network import Network
@@ -111,7 +108,12 @@ def _parse_hex_int(value: Any, default: int = 0) -> int:
 
 
 def _parse_balance(result: Any) -> str:
-    """``eth_getBalance`` hex Wei → decimal Wei string."""
+    """``eth_getBalance`` hex Wei → decimal Wei string.
+
+    Deliberately NOT shared with ``blockscout_v2._parse_balance``: this one
+    normalizes a bare JSON-RPC hex quantity, while BlockScout V2 reads a dict
+    envelope whose ``coin_balance`` is already a decimal Wei string.
+    """
     return str(_parse_hex_int(result))
 
 
@@ -597,41 +599,29 @@ class NodeRealScanner(Scanner):
             )
         return f'{self.rpc_base_url}/{self.api_key}'
 
-    def _require_network_client(self) -> Network:
-        """Return the injected Network or raise the standard RuntimeError."""
-        if self._network_client is None:
-            raise RuntimeError(
-                f'{self.name} v{self.version}: network_client is required. '
-                'Create scanner via ChainscanClient.from_config() which injects it automatically.'
-            )
-        return self._network_client
-
     async def _rpc(self, wire_method: str, rpc_params: list[Any]) -> Any:
         """POST a JSON-RPC 2.0 request; return the unwrapped ``result``.
 
         ``Network._handle_response`` unwraps the JSON-RPC ``result`` and maps
         ``error`` objects to :class:`ChainscanClientProxyError`; the -32005
         usage-limit code is re-raised as a retryable rate-limit error.
+        Unexpected failures are masked by the shared error-translation
+        ladder (``translate_unexpected_errors``).
         """
         envelope = {'jsonrpc': '2.0', 'method': wire_method, 'params': rpc_params, 'id': 1}
         network = self._require_network_client()
-        try:
-            return await network.request(
-                method='POST',
-                url=self._rpc_url(),
-                json_data=envelope,
-                headers={'Content-Type': 'application/json', 'Accept': 'application/json'},
-            )
-        except ChainscanClientProxyError as exc:
-            if exc.code == _RATE_LIMIT_JSONRPC_CODE:
-                raise ChainscanRateLimitError(exc.message, 'usage limit reached') from exc
-            raise
-        except (ChainscanClientApiError, ChainscanNetworkError):
-            raise
-        except Exception as e:
-            raise ChainscanNetworkError(
-                f'NodeReal unexpected error for {self.rpc_base_url}: {e}', retryable=False
-            ) from e
+        with translate_unexpected_errors(f'NodeReal unexpected error for {self.rpc_base_url}'):
+            try:
+                return await network.request(
+                    method='POST',
+                    url=self._rpc_url(),
+                    json_data=envelope,
+                    headers={'Content-Type': 'application/json', 'Accept': 'application/json'},
+                )
+            except ChainscanClientProxyError as exc:
+                if exc.code == _RATE_LIMIT_JSONRPC_CODE:
+                    raise ChainscanRateLimitError(exc.message, 'usage limit reached') from exc
+                raise
 
     async def _rest_contract(self, action: str, address: str) -> Any:
         """GET a BscScan-compatible verified-contract endpoint."""
@@ -690,10 +680,7 @@ class NodeRealScanner(Scanner):
         if method in (Method.TX_BY_HASH, Method.TX_RECEIPT_STATUS, Method.TX_STATUS_CHECK):
             return [params['txhash']]
         if method == Method.BLOCK_BY_NUMBER:
-            block = params['block_number']
-            if isinstance(block, int) or (isinstance(block, str) and block.isdigit()):
-                block = _int_to_hex_quantity(int(block))
-            return [block, False]
+            return [hex_block_tag(params['block_number']), False]
         if method == Method.BLOCK_NUMBER_BY_TIMESTAMP:
             closest = str(_param(params, 'closest', default='before')).upper()
             if closest not in ('BEFORE', 'AFTER'):
@@ -755,20 +742,10 @@ class NodeRealScanner(Scanner):
 
     async def call(self, method: Method, **params: Any) -> Any:
         """Execute a logical method against NodeReal (JSON-RPC or contract REST)."""
-        if method not in self.SPECS:
-            available = [str(m) for m in self.SPECS]
-            raise MethodNotDeclaredError(
-                f'Method {method} not supported by {self.name} v{self.version}. '
-                f'Available: {", ".join(available)}'
-            )
-        if self._network_client is None:
-            raise RuntimeError(
-                f'{self.name} v{self.version}: network_client is required. '
-                'Create scanner via ChainscanClient.from_config() which injects it automatically.'
-            )
+        spec = self._spec_for(method)
+        self._require_network_client()
 
-        spec = self.SPECS[method]
-        try:
+        with translate_unexpected_errors(f'NodeReal unexpected error for {method.name}'):
             if method in self._REST_METHODS:
                 address = str(params['address'])
                 action = 'getabi' if method == Method.CONTRACT_ABI else 'getsourcecode'
@@ -777,40 +754,17 @@ class NodeRealScanner(Scanner):
                 if method in self._TRANSFER_METHODS:
                     # Single-page semantics: without explicit bounds, serve the
                     # most recent window; with start_block, the window at start.
+                    tip, window = await self._resolve_window(params)
                     params = dict(params)
-                    tip = params.get(_TIP_CURSOR)
-                    if tip is None:
-                        requested_end = _param(params, 'end_block', 'endblock')
-                        if isinstance(requested_end, int) and requested_end < MAX_BLOCK_NUMBER:
-                            tip = requested_end
-                        else:
-                            tip = await self._resolve_tip()
-                    params[_TIP_CURSOR] = int(tip)
-                    start = _param(params, 'start_block', 'startblock')
-                    if params.get(_WINDOW_CURSOR) is None and start is not None:
-                        start = _parse_hex_int(start, 0)
-                        params[_WINDOW_CURSOR] = [
-                            start,
-                            min(start + _TRANSFER_WINDOW - 1, int(tip)),
-                        ]
+                    params[_TIP_CURSOR] = tip
+                    if window is not None and params.get(_WINDOW_CURSOR) is None:
+                        params[_WINDOW_CURSOR] = [window[0], window[1]]
                 rpc_params = self._build_rpc_params(method, params)
                 raw_response = await self._rpc(self._WIRE_METHODS[method], rpc_params)
             parsed_response = spec.parse_response(raw_response)
             if method in self._TRANSFER_METHODS and isinstance(parsed_response, list):
                 return _filter_transfer_items(parsed_response, params)
             return parsed_response
-        except ChainscanClientApiError:
-            raise
-        except ChainscanNetworkError:
-            raise
-        except (ChainscanClientProxyError, ChainscanRateLimitError):
-            raise
-        except ChainscanClientError:
-            raise
-        except Exception as e:
-            raise ChainscanNetworkError(
-                f'NodeReal unexpected error for {method.name}: {e}', retryable=False
-            ) from e
 
     async def fetch_page(
         self,
@@ -829,17 +783,8 @@ class NodeRealScanner(Scanner):
           ``page * page_size >= totalCount``.
         - everything else: single page, ``None``.
         """
-        if method not in self.SPECS:
-            available = [str(m) for m in self.SPECS]
-            raise MethodNotDeclaredError(
-                f'Method {method} not supported by {self.name} v{self.version}. '
-                f'Available: {", ".join(available)}'
-            )
-        if self._network_client is None:
-            raise RuntimeError(
-                f'{self.name} v{self.version}: network_client is required. '
-                'Create scanner via ChainscanClient.from_config() which injects it automatically.'
-            )
+        self._spec_for(method)
+        self._require_network_client()
 
         if method in self._TRANSFER_METHODS:
             return await self._fetch_transfer_page(method, params)
@@ -852,34 +797,66 @@ class NodeRealScanner(Scanner):
         """Current chain tip via ``eth_blockNumber`` (hex → int)."""
         return _parse_hex_int(await self._rpc('eth_blockNumber', []))
 
-    async def _fetch_transfer_page(
+    async def _resolve_window(
         self,
-        method: Method,
         params: dict[str, Any],
-    ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
-        window = params.get(_WINDOW_CURSOR)
-        page_key = str(params.get('pageKey') or '')
+    ) -> tuple[int, tuple[int, int] | None]:
+        """Resolve the chain tip and the current transfer window.
+
+        Shared by :meth:`call` (single-page semantics) and
+        :meth:`_fetch_transfer_page` (window-walking pagination); both used
+        to carry their own copy of this resolution.
+
+        Tip precedence:
+
+        1. an ``int`` ``__nr_tip`` already in params (a previous page's
+           resolved tip riding along);
+        2. a window cursor without its tip (defensive: every cursor carries
+           the tip — resolve it again if it was lost);
+        3. an explicit bounded ``end_block``/``endblock``
+           (``MAX_BLOCK_NUMBER`` is the streaming iterators' "unbounded"
+           sentinel, so only a *bounded* end wins);
+        4. the live chain tip via ``eth_blockNumber``.
+
+        Window: the ``__nr_window`` cursor parsed to ints, else the window
+        rooted at ``start_block``/``startblock`` — or ``None`` when no start
+        is known (the caller decides what that means: ``call()`` leaves the
+        wire filter on most-recent-window semantics, ``_fetch_transfer_page``
+        roots the walk at block 0).
+        """
         raw_tip = params.get(_TIP_CURSOR)
+        window = params.get(_WINDOW_CURSOR)
         tip: int
         if isinstance(raw_tip, int):
             tip = raw_tip
         elif window is not None:
-            # Every cursor carries the resolved tip; resolve defensively if lost.
             tip = await self._resolve_tip()
         else:
             requested_end = _param(params, 'end_block', 'endblock')
-            # The streaming iterators pass MAX_BLOCK_NUMBER as an "unbounded"
-            # sentinel; resolve the real chain tip for it.
             if isinstance(requested_end, int) and requested_end < MAX_BLOCK_NUMBER:
                 tip = requested_end
             else:
                 tip = await self._resolve_tip()
 
         if window is not None:
-            window_start, window_end = int(window[0]), int(window[1])
-        else:
-            start = _parse_hex_int(_param(params, 'start_block', 'startblock'), 0)
-            window_start, window_end = start, min(start + _TRANSFER_WINDOW - 1, tip)
+            return tip, (int(window[0]), int(window[1]))
+        start = _param(params, 'start_block', 'startblock')
+        if start is None:
+            return tip, None
+        start_int = _parse_hex_int(start, 0)
+        return tip, (start_int, min(start_int + _TRANSFER_WINDOW - 1, tip))
+
+    async def _fetch_transfer_page(
+        self,
+        method: Method,
+        params: dict[str, Any],
+    ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+        page_key = str(params.get('pageKey') or '')
+        tip, window = await self._resolve_window(params)
+        if window is None:
+            # No start block known: root the walk at block 0.
+            window = (0, min(_TRANSFER_WINDOW - 1, tip))
+        window_start, window_end = window
 
         # Call the wire method directly (window bounds live in the cursor,
         # not in wire params, so call()'s builder defaults don't apply).

@@ -34,6 +34,7 @@ from enum import Enum
 from typing import Any, NamedTuple, Protocol, runtime_checkable
 
 from ..constants import MAX_BLOCK_NUMBER
+from ..core.endpoint import coerce_response_items
 from ..core.types import JSONDict
 from ..domain.method import Method
 from ..exceptions import (
@@ -109,12 +110,10 @@ def normalize_items(response: Any) -> list[JSONDict]:
     Returns:
         List of item dictionaries (possibly empty; never ``None``).
     """
-    if isinstance(response, list):
-        return list(response)
-    if isinstance(response, dict):
-        items = response.get('items')
-        return list(items) if items else []
-    return []
+    # Canonical implementation lives in core (importing scanners here would
+    # break the layering this module documents); Scanner._coerce_items and
+    # this wrapper are the same coercion, maintained once.
+    return coerce_response_items(response)
 
 
 def page_fetcher(provider: PageProvider, method: Method) -> PageFetch:
