@@ -663,7 +663,7 @@ Or in one shot: `make ci-local` (mirrors the disabled GitHub CI). Agents: run `m
 
 ## Rust FFI Notes (fastabi/)
 
-- **Build**: `uv sync --extra dev` (compiles via maturin automatically), or `cd aiochainscan/fastabi && maturin develop --release`
+- **Build**: NOT automatic. Since the distribution split the base package builds with hatchling, so `uv sync --extra dev` installs no Rust extension — build it explicitly with `cd aiochainscan/fastabi && uv run --with maturin maturin develop --release`, or pass `AIO_BUILD_FASTABI=1` to `make wt-new`. Without it `tests/test_crypto.py` skips 12 tests and `decode()` uses the Python fallback; `scripts/agent/preflight.sh` reports which module (if any) is live.
 - **Cache**: LRU with 1000 entries max (~50MB)
 - **GIL**: Released during computation AND serialization
 - **Return format**: JSON string → parsed by orjson in Python; `keccak256` returns bytes
@@ -684,7 +684,7 @@ Or in one shot: `make ci-local` (mirrors the disabled GitHub CI). Agents: run `m
 ## Environment Setup
 
 ```bash
-uv sync --extra dev        # deps + fastabi build via maturin
+uv sync --extra dev        # deps only — the Rust extension is a separate package now
 uv run pytest tests/ -q    # run tests
 export ETHERSCAN_KEY="your_key"  # Optional
 ```
