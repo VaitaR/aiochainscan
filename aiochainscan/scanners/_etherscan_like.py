@@ -4,9 +4,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..constants import API_MAX_OFFSET_ETHERSCAN
+from ..constants import (
+    API_MAX_CONTRACT_CREATION_ADDRESSES,
+    API_MAX_OFFSET_ETHERSCAN,
+    API_MAX_TOP_HOLDERS,
+)
 from ..core.endpoint import EndpointSpec, etherscan_parser
 from ..domain.method import Method
+from ..exceptions import InputLimitExceededError
 from .base import Scanner
 
 
@@ -86,6 +91,50 @@ class EtherscanLikeScanner(Scanner):
         if spec is None:
             return False
         return 'page' in spec.param_map or 'offset' in spec.param_map
+
+    async def _perform_raw_request(
+        self,
+        spec: EndpointSpec,
+        method: Method,
+        params: dict[str, Any],
+    ) -> Any:
+        """Refuse doc-declared oversized inputs before the request is built.
+
+        Keyed on the logical ``Method`` (this seam receives it, unlike
+        ``_build_request``) rather than a ``spec.query['action']`` string
+        match. The two calls with a documented ceiling of this shape:
+        ``CONTRACT_CREATION`` (up to 5 addresses) and ``TOKEN_TOP_HOLDERS``
+        (``offset`` up to 1000 — declared only by ``EtherscanV2``, but the
+        check lives here regardless since it is keyed on the method, not on
+        which subclass owns the spec). See
+        ``constants.API_MAX_CONTRACT_CREATION_ADDRESSES`` /
+        ``API_MAX_TOP_HOLDERS`` for the doc citations (dated 2026-09-02, NOT
+        live-verified).
+
+        Overriding this seam rather than ``call`` or ``_build_request`` means
+        the check also covers ``BlockScoutV1``: its ``_perform_request``
+        override still calls ``super()._perform_request(...)`` for every
+        method it does not route through JSON-RPC, which reaches
+        ``Scanner._perform_request`` -> ``self._perform_raw_request(...)`` ->
+        this override, via MRO — no forbidden file touched.
+        """
+        if method is Method.CONTRACT_CREATION:
+            addresses = params.get('contract_addresses')
+            if addresses is not None:
+                count = (
+                    len([a for a in addresses.split(',') if a])
+                    if isinstance(addresses, str)
+                    else len(addresses)
+                )
+                if count > API_MAX_CONTRACT_CREATION_ADDRESSES:
+                    raise InputLimitExceededError(
+                        'contract addresses', API_MAX_CONTRACT_CREATION_ADDRESSES, count
+                    )
+        elif method is Method.TOKEN_TOP_HOLDERS:
+            offset = params.get('offset')
+            if isinstance(offset, int) and offset > API_MAX_TOP_HOLDERS:
+                raise InputLimitExceededError('top holders', API_MAX_TOP_HOLDERS, offset)
+        return await super()._perform_raw_request(spec, method, params)
 
     SPECS = {
         Method.ACCOUNT_BALANCE: EndpointSpec(
@@ -340,6 +389,22 @@ class EtherscanLikeScanner(Scanner):
             },
             parser=etherscan_parser,
         ),
+        # Wire param spellings realigned to the documented body params at
+        # https://docs.etherscan.io/api-reference/endpoint/verifysourcecode
+        # (fetched 2026-09-02): ``constructorArguments`` (not the historical
+        # ``constructorArguements`` typo) and ``evmVersion`` (not lowercase
+        # ``evmversion``), plus the newly-added ``licenseType``. This was NOT
+        # live-verified — that needs a real contract-verification POST, an
+        # outward-facing side effect this change did not perform. No
+        # in-repo or web evidence was found either way on whether Etherscan
+        # still accepts the legacy ``constructorArguements`` spelling; the
+        # docs page names only the current spelling, which is what is sent.
+        # ``libraryname``/``libraryaddress`` are not listed on the current
+        # docs page (checked 2026-09-02) but that is inconclusive on whether
+        # the live API still accepts them, so they are KEPT per the
+        # "unverified stays, drop only with evidence of removal" rule — an
+        # extra ignored param is not a regression, but dropping a working one
+        # would be.
         Method.CONTRACT_VERIFY: EndpointSpec(
             http_method='POST',
             path='/api',
@@ -352,8 +417,9 @@ class EtherscanLikeScanner(Scanner):
                 'compiler_version': 'compilerversion',
                 'optimization_used': 'optimizationUsed',
                 'runs': 'runs',
-                'constructor_arguments': 'constructorArguements',
-                'evm_version': 'evmversion',
+                'constructor_arguments': 'constructorArguments',
+                'evm_version': 'evmVersion',
+                'license_type': 'licenseType',
                 'library_name': 'libraryname',
                 'library_address': 'libraryaddress',
             },

@@ -34,6 +34,19 @@ API_MAX_PAGE_SIZE_ETHERSCAN: int = 1_000
 #: ``BlockScoutV1.RESULT_WINDOW_OVERRIDES``).
 API_MAX_OFFSET_LOGS: int = 1_000
 
+#: Maximum contract addresses accepted per ``getcontractcreation`` call.
+#: Doc-sourced, NOT live-verified (unlike ``API_MAX_OFFSET_ETHERSCAN``, which
+#: is): "Up to 5 contract addresses, separated by commas." —
+#: https://docs.etherscan.io/api-reference/endpoint/getcontractcreation
+#: (fetched 2026-09-02).
+API_MAX_CONTRACT_CREATION_ADDRESSES: int = 5
+
+#: Maximum top holders returned by ``topholders``. Doc-sourced, NOT
+#: live-verified: "Number of top holders to return, up to 1000." —
+#: https://docs.etherscan.io/api-reference/endpoint/topholders
+#: (fetched 2026-09-02).
+API_MAX_TOP_HOLDERS: int = 1_000
+
 #: Default chunk size for block range chunking (large contract queries)
 API_CHUNK_SIZE_BLOCKS: int = 100_000
 
