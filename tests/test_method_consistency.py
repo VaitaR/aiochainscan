@@ -18,10 +18,17 @@ mapping rot fails in CI instead of at a user's call site. It guards against:
    serving scanner's spec ``param_map`` (barring the documented inert page
    controls), and a BOUNDED block range on a rangeless spec must raise
    ``BlockRangeNotSupportedError`` instead of being silently dropped.
+6. The streaming surface drifting from its declaration: every client
+   ``iter_*`` generator must have a row in ``core.streaming.STREAMING_SPECS``
+   (and vice versa), and every pool forward must mirror the client's exact
+   signature (the ``guarantee_complete`` drift class).
 
 The sweep is data-driven: a recording client invokes every convenience method
 on each mixin, captures the ``(Method, params)`` pairs it hands to ``call()``,
 and validates them against each scanner spec family that declares the method.
+The streaming entries derive from the declaration source
+(``aiochainscan.core.streaming``) — only the per-method unbounded kwargs stay
+in this file, guarded bidirectionally against the registry.
 """
 
 from __future__ import annotations
@@ -44,6 +51,8 @@ from aiochainscan.core.mixins import (
     TokenMixin,
     TransactionMixin,
 )
+from aiochainscan.core.pool import ChainscanPool
+from aiochainscan.core.streaming import STREAMING_SPECS
 from aiochainscan.core.url_builder import UrlBuilder
 from aiochainscan.domain.method import Method
 from aiochainscan.exceptions import BlockRangeNotSupportedError
@@ -78,7 +87,12 @@ SPECS_BY_SCANNER_NAME: dict[str, list[str]] = {
 # Every convenience method that reaches scanner specs directly via ``call()``.
 # get_all_* aggregations are included to prove they stay callable; their
 # params flow through the iter_*_streaming paths, not ``call()``.
-INVOCATIONS: dict[str, tuple[tuple[Any, ...], dict[str, Any]]] = {
+#
+# The five get_all_* DICT aggregators are NOT hand-listed: they join from the
+# streaming declaration (spec.aggregate) below, so adding a streaming method
+# with its aggregator cannot forget this table. The *_normalized aggregators
+# stay hand-listed (they are mixin surface without a registry row).
+_HAND_INVOCATIONS: dict[str, tuple[tuple[Any, ...], dict[str, Any]]] = {
     # Account
     'get_balance': ((CHECKSUM_ADDRESS,), {}),
     'get_transactions': ((CHECKSUM_ADDRESS,), {'start_block': 5, 'end_block': 10}),
@@ -94,11 +108,8 @@ INVOCATIONS: dict[str, tuple[tuple[Any, ...], dict[str, Any]]] = {
     'get_erc721_transfers': ((CHECKSUM_ADDRESS,), {'contract_address': CONTRACT_ADDRESS}),
     'get_erc1155_transfers': ((CHECKSUM_ADDRESS,), {'contract_address': CONTRACT_ADDRESS}),
     'get_nft_portfolio': ((CHECKSUM_ADDRESS,), {}),
-    'get_all_transactions': ((CHECKSUM_ADDRESS,), {}),
     'get_all_transactions_normalized': ((CHECKSUM_ADDRESS,), {}),
-    'get_all_token_transfers': ((CHECKSUM_ADDRESS,), {}),
     'get_all_token_transfers_normalized': ((CHECKSUM_ADDRESS,), {}),
-    'get_all_internal_transactions': ((CHECKSUM_ADDRESS,), {}),
     'get_all_internal_transactions_normalized': ((CHECKSUM_ADDRESS,), {}),
     # Transactions
     'get_transaction': ((TX_HASH,), {}),
@@ -123,7 +134,6 @@ INVOCATIONS: dict[str, tuple[tuple[Any, ...], dict[str, Any]]] = {
     'get_token_info': ((CONTRACT_ADDRESS,), {}),
     'get_token_supply': ((CONTRACT_ADDRESS,), {}),
     'get_token_holders': ((CONTRACT_ADDRESS,), {'page': 1, 'offset': 100}),
-    'get_all_token_holders': ((CONTRACT_ADDRESS,), {}),
     'get_top_token_holders': ((CONTRACT_ADDRESS,), {'limit': 10}),
     'get_token_holder_count': ((CONTRACT_ADDRESS,), {}),
     # Stats
@@ -136,7 +146,6 @@ INVOCATIONS: dict[str, tuple[tuple[Any, ...], dict[str, Any]]] = {
         (CONTRACT_ADDRESS,),
         {'from_block': 100, 'to_block': 200, 'topic0': TRANSFER_TOPIC0},
     ),
-    'get_all_logs': ((CONTRACT_ADDRESS,), {}),
     'get_all_logs_normalized': ((CONTRACT_ADDRESS,), {}),
     'get_logs_normalized': (
         (CONTRACT_ADDRESS,),
@@ -145,6 +154,25 @@ INVOCATIONS: dict[str, tuple[tuple[Any, ...], dict[str, Any]]] = {
     # Proxy
     'eth_call': ((CONTRACT_ADDRESS, '0x70a08231'), {}),
     'eth_get_balance': ((CHECKSUM_ADDRESS,), {}),
+}
+
+# Positional invocation args per registry-declared aggregator (the unbounded
+# sweep call). Guarded bidirectionally against the registry below.
+_AGGREGATE_ARGS: dict[str, tuple[Any, ...]] = {
+    'get_all_transactions': (CHECKSUM_ADDRESS,),
+    'get_all_token_transfers': (CHECKSUM_ADDRESS,),
+    'get_all_internal_transactions': (CHECKSUM_ADDRESS,),
+    'get_all_logs': (CONTRACT_ADDRESS,),
+    'get_all_token_holders': (CONTRACT_ADDRESS,),
+}
+
+INVOCATIONS: dict[str, tuple[tuple[Any, ...], dict[str, Any]]] = {
+    **_HAND_INVOCATIONS,
+    **{
+        aggregate: (_AGGREGATE_ARGS[aggregate], {})
+        for aggregate in (spec.aggregate for spec in STREAMING_SPECS)
+        if aggregate is not None
+    },
 }
 
 # Mixins whose public async methods must all appear in INVOCATIONS.
@@ -341,6 +369,100 @@ def test_invocation_table_has_no_stale_entries() -> None:
 
 
 # ---------------------------------------------------------------------------
+# 4b. Declaration coverage: the streaming registry IS the streaming surface
+# ---------------------------------------------------------------------------
+
+
+def test_streaming_registry_declares_every_client_stream() -> None:
+    """A client streaming method without a registry row fails here.
+
+    The ``iter_*_normalized`` twins are exempt: they are typed compositions
+    over declared streams (they never touch ``fetch_page`` themselves).
+    """
+    declared = {spec.name for spec in STREAMING_SPECS}
+    on_client = {
+        name
+        for name, member in vars(ChainscanClient).items()
+        if inspect.isasyncgenfunction(member) and not name.endswith('_normalized')
+    }
+    undeclared = on_client - declared
+    stale = declared - on_client
+    assert not undeclared, (
+        f'ChainscanClient streaming method(s) {sorted(undeclared)} have no row in '
+        f'aiochainscan.core.streaming.STREAMING_SPECS — declare them there so the '
+        f'pool forward and this sweep derive from one source.'
+    )
+    assert not stale, f'STREAMING_SPECS row(s) {sorted(stale)} match no client method.'
+
+
+def test_stream_sweep_kwargs_cover_exactly_the_registry() -> None:
+    """The kwargs table must track the registry exactly (both directions)."""
+    declared = {spec.name for spec in STREAMING_SPECS}
+    assert set(_STREAM_SWEEP_KWARGS) == declared, (
+        f'_STREAM_SWEEP_KWARGS drifted from STREAMING_SPECS: missing '
+        f'{sorted(declared - set(_STREAM_SWEEP_KWARGS))}, stale '
+        f'{sorted(set(_STREAM_SWEEP_KWARGS) - declared)}'
+    )
+
+
+def test_aggregate_args_cover_exactly_the_registry_aggregates() -> None:
+    """Every declared get_all_* aggregator must have sweep args (and vice versa)."""
+    declared = {spec.aggregate for spec in STREAMING_SPECS if spec.aggregate is not None}
+    assert set(_AGGREGATE_ARGS) == declared, (
+        f'_AGGREGATE_ARGS drifted from the registry aggregates: missing '
+        f'{sorted(declared - set(_AGGREGATE_ARGS))}, stale '
+        f'{sorted(set(_AGGREGATE_ARGS) - declared)}'
+    )
+
+
+def _normalize_annotation(annotation: str) -> str:
+    """Render an annotation string identically for both declaration styles.
+
+    ``client.py`` has real objects (``"<class 'str'>"``) while ``pool.py``
+    uses ``from __future__ import annotations`` (``"str"``); strip the
+    rendering difference so only the TYPES are compared.
+    """
+    if annotation.startswith("<class '") and annotation.endswith("'>"):
+        annotation = annotation[len("<class '") : -len("'>")]
+    return annotation.replace('typing.', '')
+
+
+def _signature_params(func: Any) -> list[tuple[str, str, str]]:
+    """(name, annotation, default) per non-self parameter of a method."""
+    return [
+        (name, _normalize_annotation(str(param.annotation)), repr(param.default))
+        for name, param in inspect.signature(func).parameters.items()
+        if name != 'self'
+    ]
+
+
+def test_pool_stream_forwards_mirror_client_signatures() -> None:
+    """The pool surface cannot drift: every declared stream forwards the
+    client's exact signature — the historical drift being pool
+    ``iter_transactions``/``iter_logs`` silently lacking ``guarantee_complete``.
+    """
+    for spec in STREAMING_SPECS:
+        assert callable(
+            getattr(ChainscanClient, spec.name, None)
+        ), f'{spec.name}: declared in STREAMING_SPECS but missing on ChainscanClient'
+        pool_forward = getattr(ChainscanPool, spec.name, None)
+        assert callable(pool_forward), (
+            f'{spec.name}: declared in STREAMING_SPECS but ChainscanPool does not '
+            f'expose a same-named forward'
+        )
+        client_params = _signature_params(getattr(ChainscanClient, spec.name))
+        pool_params = _signature_params(pool_forward)
+        assert client_params == pool_params, (
+            f"{spec.name}: pool forward signature drifted from the client's\n"
+            f'  client: {client_params}\n'
+            f'  pool:   {pool_params}'
+        )
+        assert 'guarantee_complete' in {
+            name for name, _annotation, _default in pool_params
+        }, f'{spec.name}: pool forward must accept (and forward) guarantee_complete'
+
+
+# ---------------------------------------------------------------------------
 # 5. Streaming dialect: one public param dialect through fetch_page
 # ---------------------------------------------------------------------------
 
@@ -352,46 +474,39 @@ _PAGE_CONTROL_KEYS: frozenset[str] = frozenset({'page', 'offset', 'sort'})
 #: The unbounded sentinels the client emits for "no block bound".
 _UNBOUNDED_ENDS: frozenset[Any] = frozenset({MAX_BLOCK_NUMBER, 'latest'})
 
-#: Every streaming/paginated client method and the Method it paginates. The
-#: kwargs are the UNBOUNDED invocation; the bounded phase adds
-#: ``from_block=100, to_block=200`` to the same call.
-STREAMING_INVOCATIONS: dict[str, tuple[Method, dict[str, Any], bool]] = {
-    'iter_transactions': (Method.ACCOUNT_TRANSACTIONS, {'address': CHECKSUM_ADDRESS}, True),
-    'iter_transactions_streaming': (
-        Method.ACCOUNT_TRANSACTIONS,
-        {'address': CHECKSUM_ADDRESS},
-        True,
-    ),
-    'iter_internal_transactions_streaming': (
-        Method.ACCOUNT_INTERNAL_TXS,
-        {'address': CHECKSUM_ADDRESS},
-        True,
-    ),
-    'iter_token_transfers_streaming': (
-        Method.ACCOUNT_ERC20_TRANSFERS,
-        {'address': CHECKSUM_ADDRESS, 'contract_address': CONTRACT_ADDRESS},
-        True,
-    ),
-    'iter_logs_streaming': (Method.EVENT_LOGS, {'address': CONTRACT_ADDRESS}, True),
-    'iter_logs': (Method.EVENT_LOGS, {'address': CONTRACT_ADDRESS}, True),
+#: Unbounded-phase invocation kwargs per DECLARED streaming method (the
+#: bounded phase adds ``from_block=100, to_block=200`` to the same call).
+#: Names, Method targets and ranged flags come from the declaration source;
+#: only these kwargs live here, guarded bidirectionally against the registry.
+_STREAM_SWEEP_KWARGS: dict[str, dict[str, Any]] = {
+    'iter_transactions': {'address': CHECKSUM_ADDRESS},
+    'iter_transactions_streaming': {'address': CHECKSUM_ADDRESS},
+    'iter_internal_transactions_streaming': {'address': CHECKSUM_ADDRESS},
+    'iter_token_transfers_streaming': {
+        'address': CHECKSUM_ADDRESS,
+        'contract_address': CONTRACT_ADDRESS,
+    },
+    'iter_logs_streaming': {'address': CONTRACT_ADDRESS},
+    'iter_logs': {'address': CONTRACT_ADDRESS},
     # Holder lists have no block range: only the unbounded phase applies.
-    'iter_token_holders_streaming': (
-        Method.TOKEN_HOLDERS,
-        {'contract_address': CONTRACT_ADDRESS},
-        False,
-    ),
+    'iter_token_holders_streaming': {'contract_address': CONTRACT_ADDRESS},
+}
+
+#: Every streaming/paginated client method and the Method it paginates,
+#: DERIVED from ``core.streaming.STREAMING_SPECS`` (name, Method, ranged).
+STREAMING_INVOCATIONS: dict[str, tuple[Method, dict[str, Any], bool]] = {
+    spec.name: (spec.method, _STREAM_SWEEP_KWARGS[spec.name], spec.ranged)
+    for spec in STREAMING_SPECS
 }
 
 #: get_all_* mixin aggregators funnel through iter_*_streaming — one bounded
 #: representative each proves the guard covers the funnel, not just streams.
+#: DERIVED from the registry (every RANGED row that declares an aggregate;
+#: holder lists have no range to bound). The kwargs mirror the stream's.
 AGGREGATE_FUNNELS: dict[str, tuple[Method, dict[str, Any]]] = {
-    'get_all_transactions': (Method.ACCOUNT_TRANSACTIONS, {'address': CHECKSUM_ADDRESS}),
-    'get_all_token_transfers': (
-        Method.ACCOUNT_ERC20_TRANSFERS,
-        {'address': CHECKSUM_ADDRESS, 'contract_address': CONTRACT_ADDRESS},
-    ),
-    'get_all_internal_transactions': (Method.ACCOUNT_INTERNAL_TXS, {'address': CHECKSUM_ADDRESS}),
-    'get_all_logs': (Method.EVENT_LOGS, {'address': CONTRACT_ADDRESS}),
+    spec.aggregate: (spec.method, _STREAM_SWEEP_KWARGS[spec.name])
+    for spec in STREAMING_SPECS
+    if spec.aggregate is not None and spec.ranged
 }
 
 

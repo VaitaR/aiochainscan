@@ -16,6 +16,7 @@ import pytest
 
 from aiochainscan.chain_registry import resolve_scanner_target
 from aiochainscan.core.client import ChainscanClient
+from aiochainscan.core.streaming import STREAMING_SPECS
 from aiochainscan.domain.method import Method
 from aiochainscan.domain.models import Address, TxHash
 
@@ -471,9 +472,11 @@ class TestPaginatedConvenienceMethods:
     async def test_get_all_transactions_warns_on_large_aggregation(
         self, client: ChainscanClient, monkeypatch, caplog
     ) -> None:
-        from aiochainscan.core.mixins import account as account_mixin
+        # The threshold lives once (services.constants) and is read by the
+        # shared collect_stream helper — patch it where the helper reads it.
+        from aiochainscan.core import streaming as streaming_decl
 
-        monkeypatch.setattr(account_mixin, 'AGGREGATION_WARNING_THRESHOLD', 4)
+        monkeypatch.setattr(streaming_decl, 'AGGREGATION_WARNING_THRESHOLD', 4)
 
         async def fake_stream(*args: Any, **kwargs: Any) -> AsyncIterator[list[dict[str, Any]]]:
             yield [{'hash': '0x1'}, {'hash': '0x2'}]
@@ -689,12 +692,9 @@ class TestMethodCoverage:
         # Map: Method -> convenience method name(s)
         method_map: dict[Method, list[str]] = {
             Method.ACCOUNT_BALANCE: ['get_balance'],
-            Method.ACCOUNT_TRANSACTIONS: ['get_transactions', 'get_all_transactions'],
-            Method.ACCOUNT_INTERNAL_TXS: [
-                'get_internal_transactions',
-                'get_all_internal_transactions',
-            ],
-            Method.ACCOUNT_ERC20_TRANSFERS: ['get_token_transfers', 'get_all_token_transfers'],
+            Method.ACCOUNT_TRANSACTIONS: ['get_transactions'],
+            Method.ACCOUNT_INTERNAL_TXS: ['get_internal_transactions'],
+            Method.ACCOUNT_ERC20_TRANSFERS: ['get_token_transfers'],
             Method.ACCOUNT_ERC721_TRANSFERS: ['get_erc721_transfers'],
             Method.ACCOUNT_ERC1155_TRANSFERS: ['get_erc1155_transfers'],
             Method.ACCOUNT_TOKEN_PORTFOLIO: ['get_token_portfolio'],
@@ -712,17 +712,28 @@ class TestMethodCoverage:
             Method.TOKEN_BALANCE: ['get_token_balance'],
             Method.TOKEN_SUPPLY: ['get_token_supply'],
             Method.TOKEN_INFO: ['get_token_info'],
-            Method.TOKEN_HOLDERS: ['get_token_holders', 'get_all_token_holders'],
+            Method.TOKEN_HOLDERS: ['get_token_holders'],
             Method.TOKEN_TOP_HOLDERS: ['get_top_token_holders'],
             Method.TOKEN_HOLDER_COUNT: ['get_token_holder_count'],
             Method.GAS_ESTIMATE: ['get_gas_estimate'],
             Method.GAS_ORACLE: ['get_gas_oracle'],
-            Method.EVENT_LOGS: ['get_logs', 'get_all_logs'],
+            Method.EVENT_LOGS: ['get_logs'],
             Method.ETH_SUPPLY: ['get_eth_supply'],
             Method.ETH_PRICE: ['get_eth_price'],
             Method.PROXY_ETH_CALL: ['eth_call'],
             Method.PROXY_GET_BALANCE: ['eth_get_balance'],
         }
+
+        # The streaming/aggregated surface is NOT hand-maintained here: every
+        # iter_* method and the get_all_* aggregator it feeds join the map
+        # straight from the declaration source in core/streaming.py, so this
+        # table cannot go stale when a streaming method is added.
+        for spec in STREAMING_SPECS:
+            method_map.setdefault(spec.method, []).append(spec.name)
+            if spec.aggregate is not None:
+                method_map[spec.method].append(spec.aggregate)
+        for method, names in method_map.items():
+            method_map[method] = list(dict.fromkeys(names))  # dedupe, keep order
 
         for method in Method:
             if method in self.EXCLUDED:
