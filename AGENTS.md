@@ -557,16 +557,32 @@ BscScan-compatible verified-contract REST on `open-platform.nodereal.io`. Networ
 
 - Declares 25 of the 33 `Method` values; honest `ValueError` for contract
   verify, gas oracle/estimate, price/supply stats, block reward/countdown.
+- The public→wire mapping is DECLARED in `SPECS` and executed:
+  `param_style` (`'rpc-positional'` / `'rpc-object'` / `'query'` for the
+  contract REST) picks the wire shape, `param_map` carries every accepted
+  public name (Etherscan-style input aliases included — first declared
+  wins) and, for positional methods, the wire order. `_build_rpc_params` /
+  `_build_transfer_filter` / `_resolve_window` / `_filter_transfer_items`
+  all read their param sources from that map, so `supports_block_range` and
+  the consistency sweep read the same declarations that run. Specs declare
+  no `path` — `_rpc_url()` / `_rest_contract()` own the URLs.
 - Token holders (`nr_getTokenHolders` / `nr_getTokenHolderCount`) page by an
   opaque `PageKey` — empty on the first request, non-empty while more pages
   exist — with a hex-encoded `PageSize` capped at 100 by the docs. Because
   `get_top_token_holders()` is a single non-paginated call, a `limit` above
-  100 is silently clamped to 100 there. Doc-only, never live-verified: see
-  the verification-status note under the support matrix.
+  100 is silently clamped to 100 there — and the clamped size rides the wire
+  twice, as `PageSize` and again as `topN`, so a `limit` BELOW 100 must reach
+  both or the call answers a full 100-holder page to a caller who asked for
+  five. See the verification-status note under the support matrix for what
+  the live probes settled.
 - `nr_getTransactionByAddress` serves ≤1000 blocks per request and **silently
   returns empty pages for wider ranges** — `fetch_page` therefore walks the
   requested range in 1000-block windows, so `get_all_*` / `iter_*_streaming`
   see complete history. An unbounded end block resolves the chain tip once.
+  The walk is deliberately NodeReal-local (the dialect's silent-empty-wide-
+  range behaviour has no engine equivalent; folding it below the pagination
+  seam would trade guarantee clarity for abstraction), but its block-range
+  inputs are the spec's declared `fromBlock`/`toBlock` sources.
 - Holdings methods (`nr_getTokenHoldings`, `nr_getNFTHoldings`) page at 100
   items with hex `totalCount` cursors.
 - JSON-RPC `-32005` (usage limit) is translated to `ChainscanRateLimitError`
@@ -651,6 +667,14 @@ Agent adapter over `ChainscanClient` — **run**: `python -m aiochainscan.mcp_se
 - Curation caps: ≤50 items/page (`clamp_page_size`), curated field sets per tool.
 - Pagination = one `client.fetch_page` call per response; `next_call.params`
   carries the new cursor — agents never parse cursors.
+- Cursor allow-lists are derived, never hand-listed: each Scanner declares the
+  cursor-key vocabulary it may emit per method (`Scanner.cursor_keys` for a
+  uniform dialect, `Scanner.CURSOR_KEYS` per `Method`, read via
+  `cursor_keys_for`), and `mcp/tools.py`'s `scanner_cursor_keys` unions those
+  declarations over the registered scanners serving the method. No
+  scanner-private cursor key names (`__nr_window`, `pageKey`, `address_hash`,
+  ...) appear as literals in `mcp/tools.py` — a new scanner's keys are
+  accepted by registering the scanner alone.
 - Unsupported scanner methods → envelope `notes` (with scanner hints), never a
   crash; primary-call failures still raise (clean MCP error).
 - Default scanner `blockscout` (keyless, v1); override per call (`scanner=`)
@@ -667,7 +691,11 @@ Agent adapter over `ChainscanClient` — **run**: `python -m aiochainscan.mcp_se
 2. Inherit from `Scanner` (or `EtherscanLikeScanner`) base class
 3. Define `SPECS` dict mapping `Method` → `EndpointSpec` (set
    `unknown_params='drop'` for strict query APIs; path placeholders in
-   `path` are excluded from the query automatically)
+   `path` are excluded from the query automatically; `path` itself is
+   optional — JSON-RPC dialect scanners whose `_perform_request` owns the
+   URL leave it empty and declare `param_style` (`'rpc-positional'` /
+   `'rpc-object'`) plus the full `param_map` so the builders, the
+   block-range capability and the consistency sweep read one declaration)
 4. The base owns the seams — do NOT override `call()` for transport:
    `Scanner.call()` applies the error ladder (`translate_unexpected_errors`)
    exactly once and dispatches through ONE mechanism (UrlBuilder endpoint

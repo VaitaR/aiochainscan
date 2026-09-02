@@ -12,6 +12,7 @@ Covers:
 
 from __future__ import annotations
 
+from dataclasses import replace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -20,8 +21,11 @@ from aiochainscan.constants import MAX_BLOCK_NUMBER
 from aiochainscan.domain.method import Method
 from aiochainscan.exceptions import ChainscanClientProxyError, ChainscanRateLimitError
 from aiochainscan.scanners import SCANNER_REGISTRY, get_scanner_class
+from aiochainscan.scanners.base import BLOCK_RANGE_PARAM_KEYS, spec_declares_block_range
 from aiochainscan.scanners.nodereal import (
     NodeRealScanner,
+    _declared_sources,
+    _filter_transfer_items,
     _hex_qty_to_decimal_str,
     _parse_contract_abi,
     _parse_contract_creation,
@@ -719,3 +723,90 @@ class TestMethodSupport:
             Method.PROXY_GET_BALANCE,
         ):
             assert expected in methods, expected
+
+
+# ============================================================================
+# Declaration ↔ execution agreement (block-range capability)
+# ============================================================================
+
+
+class TestBlockRangeDeclarations:
+    """``supports_block_range`` must read the declarations that execute.
+
+    The pre-refactor state had SPECS ``param_map``\\ s that nothing ran —
+    capability was derived from declarations while the builders hardcoded
+    their own param sources. The builders now read ``param_map`` too; these
+    tests pin that the two readers can never describe different realities.
+    """
+
+    def test_capability_matches_executed_range_consumption(self) -> None:
+        """Exactly the methods whose executed path consumes block bounds claim one.
+
+        Transfer methods consume them in ``_resolve_window``; EVENT_LOGS in
+        ``_build_log_filter``; every other NodeReal method has no range
+        parameter on its wire and must not claim one.
+        """
+        scanner = _make_scanner()
+        for method in NodeRealScanner.SPECS:
+            executed = method in scanner._TRANSFER_METHODS or method == Method.EVENT_LOGS
+            assert scanner.supports_block_range(method) is executed, method
+
+    def test_window_aliases_live_in_the_declaration(self) -> None:
+        """The tolerated input spellings ARE the declared sources — one fact, one place.
+
+        ``_resolve_window`` and ``_build_transfer_filter`` accept both the
+        pythonic and Etherscan-style names because both are declared in the
+        spec's ``param_map`` (first declared wins), not because a helper
+        hardcodes a second copy of the alias list.
+        """
+        for method in sorted(NodeRealScanner._TRANSFER_METHODS, key=str):
+            spec = NodeRealScanner.SPECS[method]
+            assert _declared_sources(spec, 'fromBlock') == ('start_block', 'startblock'), method
+            assert _declared_sources(spec, 'toBlock') == ('end_block', 'endblock'), method
+        log_spec = NodeRealScanner.SPECS[Method.EVENT_LOGS]
+        assert _declared_sources(log_spec, 'fromBlock') == ('from_block', 'fromBlock')
+        assert _declared_sources(log_spec, 'toBlock') == ('to_block', 'toBlock')
+
+    def test_capability_is_declaration_pure(self) -> None:
+        """Stripping the range keys from the map strips the capability.
+
+        Nothing scanner-specific hides behind the declaration: the answer is
+        a pure function of ``param_map``.
+        """
+        spec = NodeRealScanner.SPECS[Method.ACCOUNT_TRANSACTIONS]
+        bare = replace(
+            spec,
+            param_map={
+                public: wire
+                for public, wire in spec.param_map.items()
+                if public not in BLOCK_RANGE_PARAM_KEYS
+            },
+        )
+        assert spec_declares_block_range(spec)
+        assert not spec_declares_block_range(bare)
+
+    def test_client_side_contract_filter_reads_declaration(self) -> None:
+        """The token filter's accepted spellings come from the spec, not a literal.
+
+        Both the pythonic name and the Etherscan-style alias filter items;
+        a method whose spec declares no ``contract_address`` source (plain
+        transactions) filters nothing.
+        """
+        erc20_spec = NodeRealScanner.SPECS[Method.ACCOUNT_ERC20_TRANSFERS]
+        matching = {'contractAddress': CONTRACT.upper()}  # case-insensitive compare
+        foreign = {'contractAddress': '0x' + '01' * 20}
+        assert _filter_transfer_items(
+            erc20_spec,
+            [matching, foreign],
+            {'address': ADDRESS, 'contractaddress': CONTRACT},
+        ) == [matching]
+        assert _filter_transfer_items(
+            erc20_spec,
+            [matching, foreign],
+            {'address': ADDRESS, 'contract_address': CONTRACT},
+        ) == [matching]
+        # No declared source on the transactions spec: nothing to filter by.
+        tx_spec = NodeRealScanner.SPECS[Method.ACCOUNT_TRANSACTIONS]
+        assert _filter_transfer_items(tx_spec, [foreign], {'contractaddress': CONTRACT}) == [
+            foreign
+        ]
