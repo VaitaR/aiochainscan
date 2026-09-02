@@ -24,6 +24,16 @@ Pagination notes (verified against BSC mainnet):
   cursor instead.
 - ``nr_getTokenHoldings`` / ``nr_getNFTHoldings`` use page/pageSize (≤100
   items) with a hex ``totalCount``; the cursor advances the page number.
+- ``nr_getTokenHolders`` (``TOKEN_HOLDERS``) pages via an opaque ``PageKey``
+  (empty for the first page; an empty ``pageKey`` in the response ends
+  pagination) with a hex-encoded ``PageSize`` capped at 100 — the same cap
+  NodeReal documents for the holdings endpoints, reused rather than a new
+  page-numbered mechanism since this endpoint has no page number at all.
+  ``nr_getTokenHolderCount`` (``TOKEN_HOLDER_COUNT``) returns a hex-encoded
+  scalar. Both are documented "Supported on BSC and ETH mainnet only" —
+  narrower than this scanner's own ``supported_networks`` (BSC only); see
+  AGENTS.md for the discrepancy. NONE of this was verified against the live
+  API (no NodeReal API key available) — implemented from documentation only.
 - API exhaustion surfaces as JSON-RPC error ``-32005`` and is translated to
   :class:`~aiochainscan.exceptions.ChainscanRateLimitError` so the transport
   retry policy applies.
@@ -49,7 +59,7 @@ from ..exceptions import (
     ChainscanRateLimitError,
 )
 from . import register_scanner
-from .base import Scanner, hex_block_tag, translate_unexpected_errors
+from .base import Scanner, checksummed_holder_address, hex_block_tag, translate_unexpected_errors
 
 if TYPE_CHECKING:
     from ..network import Network
@@ -155,6 +165,42 @@ def _parse_holdings(result: Any) -> list[dict[str, Any]]:
         return []
     details = result.get('details') or []
     return [dict(item) for item in details]
+
+
+def _parse_token_holders(result: Any) -> list[dict[str, Any]]:
+    """``nr_getTokenHolders`` ``details`` → unified holder shape.
+
+    Doc-only (never verified live — see module docstring): each entry is
+    ``{'accountAddress': str, 'tokenBalance': hex str}``
+    (https://docs.nodereal.io/reference/nr_gettokenholders). Normalized to
+    the library-wide ``{'address': EIP-55 str, 'value': str}`` shape, matching
+    ``etherscan_v2._parse_token_holders`` / ``blockscout_v2._normalize_token_holder_entry``
+    exactly.
+    """
+    if not isinstance(result, dict):
+        return []
+    details = result.get('details') or []
+    items: list[dict[str, Any]] = []
+    for raw in details:
+        if not isinstance(raw, dict):
+            continue
+        items.append(
+            {
+                'address': checksummed_holder_address(raw.get('accountAddress')),
+                'value': str(_parse_hex_int(raw.get('tokenBalance'))),
+            }
+        )
+    return items
+
+
+def _parse_token_holder_count(result: Any) -> str:
+    """``nr_getTokenHolderCount`` hex-encoded ``count`` → decimal string.
+
+    Doc: "count - the hex-encoded number of token holders"
+    (https://docs.nodereal.io/reference/nr_gettokenholdercount). The JSON-RPC
+    ``result`` field itself IS the hex count (bare scalar, no envelope).
+    """
+    return str(_parse_hex_int(result))
 
 
 def _parse_token_meta(result: Any) -> dict[str, Any]:
@@ -332,6 +378,9 @@ class NodeRealScanner(Scanner):
     _HOLDINGS_METHODS: ClassVar[frozenset[Method]] = frozenset(
         {Method.ACCOUNT_TOKEN_PORTFOLIO, Method.ACCOUNT_NFT_PORTFOLIO}
     )
+    # nr_getTokenHolders pages by opaque PageKey (see fetch_page docstring) —
+    # distinct from _HOLDINGS_METHODS' page-numbered totalCount mechanism.
+    _HOLDER_METHODS: ClassVar[frozenset[Method]] = frozenset({Method.TOKEN_HOLDERS})
     _REST_METHODS: ClassVar[frozenset[Method]] = frozenset(
         {Method.CONTRACT_ABI, Method.CONTRACT_SOURCE}
     )
@@ -355,6 +404,9 @@ class NodeRealScanner(Scanner):
         Method.TOKEN_BALANCE: 'nr_getTokenBalance20',
         Method.TOKEN_SUPPLY: 'nr_getTotalSupply20',
         Method.TOKEN_INFO: 'nr_getTokenMeta',
+        Method.TOKEN_HOLDERS: 'nr_getTokenHolders',
+        Method.TOKEN_TOP_HOLDERS: 'nr_getTokenHolders',
+        Method.TOKEN_HOLDER_COUNT: 'nr_getTokenHolderCount',
         Method.EVENT_LOGS: 'eth_getLogs',
         Method.PROXY_ETH_CALL: 'eth_call',
         Method.PROXY_GET_BALANCE: 'eth_getBalance',
@@ -511,6 +563,30 @@ class NodeRealScanner(Scanner):
             path='/v1/{api_key}',
             param_map={'contract_address': 'contractAddress'},
             parser=_parse_token_meta,
+        ),
+        Method.TOKEN_HOLDERS: EndpointSpec(
+            http_method='POST',
+            path='/v1/{api_key}',
+            param_map={
+                'contract_address': 'contract_address',
+                'offset': 'PageSize',
+                # Accepted for mixin parity; PageKey cursors supersede it —
+                # nr_getTokenHolders has no page number (see fetch_page).
+                'page': 'page',
+            },
+            parser=_parse_token_holders,
+        ),
+        Method.TOKEN_TOP_HOLDERS: EndpointSpec(
+            http_method='POST',
+            path='/v1/{api_key}',
+            param_map={'contract_address': 'contract_address', 'offset': 'topN'},
+            parser=_parse_token_holders,
+        ),
+        Method.TOKEN_HOLDER_COUNT: EndpointSpec(
+            http_method='POST',
+            path='/v1/{api_key}',
+            param_map={'contract_address': 'contract_address'},
+            parser=_parse_token_holder_count,
         ),
         Method.CONTRACT_ABI: EndpointSpec(
             http_method='GET',
@@ -704,6 +780,37 @@ class NodeRealScanner(Scanner):
             return [params['contract_address'], 'latest']
         if method == Method.TOKEN_INFO:
             return [params['contract_address']]
+        if method == Method.TOKEN_HOLDERS:
+            size = min(
+                _parse_hex_int(params.get('offset'), _HOLDINGS_PAGE_SIZE), _HOLDINGS_PAGE_SIZE
+            )
+            page_key = str(params.get('pageKey') or '')
+            return [
+                params['contract_address'],
+                _int_to_hex_quantity(max(size, 1)),
+                page_key,
+            ]
+        if method == Method.TOKEN_TOP_HOLDERS:
+            # get_top_token_holders() is a single non-paginated call (unlike
+            # TOKEN_HOLDERS, which streams via PageKey). NodeReal documents no
+            # cap on topN itself, but PageSize is capped at 100
+            # ("should be less equal than 100") and this call fetches exactly
+            # one page, so a requested limit above 100 is honestly capped to
+            # what a single response can carry — matching every other
+            # page-size clamp in this file rather than silently returning
+            # fewer than requested with no signal.
+            size = min(
+                _parse_hex_int(params.get('offset'), _HOLDINGS_PAGE_SIZE), _HOLDINGS_PAGE_SIZE
+            )
+            size = max(size, 1)
+            return [
+                params['contract_address'],
+                _int_to_hex_quantity(size),
+                '',
+                _int_to_hex_quantity(size),
+            ]
+        if method == Method.TOKEN_HOLDER_COUNT:
+            return [params['contract_address']]
         if method == Method.EVENT_LOGS:
             return [self._build_log_filter(params)]
         if method == Method.PROXY_ETH_CALL:
@@ -781,6 +888,12 @@ class NodeRealScanner(Scanner):
           ``eth_blockNumber`` round-trip.
         - holdings methods: ``{'page': n, 'page_size': s}`` until
           ``page * page_size >= totalCount``.
+        - token holder list (``TOKEN_HOLDERS``): ``{'pageKey': str}`` while
+          the response carries a non-empty ``pageKey``; ``None`` ends
+          pagination. Opaque cursor, no page number and no block range —
+          ``page``/``offset``/``sort`` page controls are inertly ignored
+          except ``offset``, which is read once as the (100-capped) page
+          size and re-clamped identically on every page.
         - everything else: single page, ``None``.
         """
         self._spec_for(method)
@@ -790,6 +903,8 @@ class NodeRealScanner(Scanner):
             return await self._fetch_transfer_page(method, params)
         if method in self._HOLDINGS_METHODS:
             return await self._fetch_holdings_page(method, params)
+        if method in self._HOLDER_METHODS:
+            return await self._fetch_holder_page(params)
         result = await self.call(method, **params)
         return Scanner._coerce_items(result), None
 
@@ -912,6 +1027,29 @@ class NodeRealScanner(Scanner):
         if page * page_size >= total:
             return items, None
         return items, {'page': page + 1, 'page_size': page_size}
+
+    async def _fetch_holder_page(
+        self,
+        params: dict[str, Any],
+    ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+        """Walk ``nr_getTokenHolders`` by its opaque ``PageKey``.
+
+        Doc: "It should be empty for the first page. If more results are
+        available, a pageKey will be returned in the response."
+        (https://docs.nodereal.io/reference/nr_gettokenholders). Unlike
+        :meth:`_fetch_holdings_page` there is no ``totalCount``/page-number
+        arithmetic — an empty response ``pageKey`` is the only end signal.
+        """
+        page_key = str(params.get('pageKey') or '')
+        rpc_params = self._build_rpc_params(Method.TOKEN_HOLDERS, {**params, 'pageKey': page_key})
+        raw = await self._rpc(self._WIRE_METHODS[Method.TOKEN_HOLDERS], rpc_params)
+        if not isinstance(raw, dict):
+            return [], None
+        items = _parse_token_holders(raw)
+        next_page_key = str(raw.get('pageKey') or '')
+        if not next_page_key:
+            return items, None
+        return items, {'pageKey': next_page_key}
 
     def __str__(self) -> str:
         """String representation including endpoint info."""
