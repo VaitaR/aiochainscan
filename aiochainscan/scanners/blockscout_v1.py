@@ -16,9 +16,9 @@ from typing import TYPE_CHECKING, Any
 from ..core.endpoint import EndpointSpec
 from ..core.method import Method
 from ..core.url_builder import UrlBuilder
-from ..exceptions import ChainscanClientError, ChainscanNetworkError, MethodNotDeclaredError
 from . import register_scanner
 from ._etherscan_like import EtherscanLikeScanner
+from .base import hex_block_tag, translate_unexpected_errors
 
 if TYPE_CHECKING:
     from ..network import Network
@@ -162,14 +162,7 @@ class BlockScoutV1(EtherscanLikeScanner):
         if rpc_action is not None:
             return await self._call_json_rpc(rpc_action, params)
 
-        if method not in self.SPECS:
-            available = [str(m) for m in self.SPECS]
-            raise MethodNotDeclaredError(
-                f'Method {method} not supported by {self.name} v{self.version}. '
-                f'Available: {", ".join(available)}'
-            )
-
-        spec = self.SPECS[method]
+        spec = self._spec_for(method)
         request_data = self._build_request(spec, **params)
 
         # Build the complete BlockScout URL: custom self-hosted root or the
@@ -177,23 +170,24 @@ class BlockScoutV1(EtherscanLikeScanner):
         base_url = self.base_url or f'https://{self.instance_domain}'
         full_url = base_url + spec.path
 
-        # Use Network layer for proper connection pooling, rate limiting, and retries
-        if self._network_client is None:
-            raise RuntimeError(
-                f'{self.name} v{self.version}: network_client is required. '
-                'Create scanner via ChainscanClient.from_config() which injects it automatically.'
-            )
+        # Use Network layer for proper connection pooling, rate limiting, and
+        # retries. Missing-client guard sits before error translation: a
+        # missing Network is a programming error (RuntimeError), never a
+        # network failure.
+        network = self._require_network_client()
 
-        try:
+        with translate_unexpected_errors(
+            f'BlockScout unexpected error for {self.base_url or self.instance_domain}'
+        ):
             if spec.http_method == 'GET':
-                raw_response = await self._network_client.request(
+                raw_response = await network.request(
                     method='GET',
                     url=full_url,
                     params=request_data.get('params'),
                     headers=request_data.get('headers', {}),
                 )
             else:  # POST
-                raw_response = await self._network_client.request(
+                raw_response = await network.request(
                     method='POST',
                     url=full_url,
                     json_data=request_data.get('data'),
@@ -201,18 +195,6 @@ class BlockScoutV1(EtherscanLikeScanner):
                 )
 
             return spec.parse_response(raw_response)
-
-        except ChainscanClientError:
-            # Re-raise our own exceptions (transport, API and validation
-            # errors such as the expected-chain guard) unchanged — never
-            # mask them as opaque network failures.
-            raise
-        except Exception as e:
-            # Unexpected errors
-            raise ChainscanNetworkError(
-                f'BlockScout unexpected error for {self.base_url or self.instance_domain}: {e}',
-                retryable=False,
-            ) from e
 
     async def _call_json_rpc(self, rpc_method: str, params: dict[str, Any]) -> Any:
         """Execute a proxy method via ``POST {base_url}/api/eth-rpc``.
@@ -224,11 +206,7 @@ class BlockScoutV1(EtherscanLikeScanner):
         reverted ``eth_call``\\s; a ``null`` result (e.g. transaction not
         found) comes back as ``None``.
         """
-        if self._network_client is None:
-            raise RuntimeError(
-                f'{self.name} v{self.version}: network_client is required. '
-                'Create scanner via ChainscanClient.from_config() which injects it automatically.'
-            )
+        network = self._require_network_client()
 
         if rpc_method == 'eth_call':
             rpc_params: list[Any] = [
@@ -242,17 +220,12 @@ class BlockScoutV1(EtherscanLikeScanner):
             # JSON-RPC tag ('latest', '0x...'); numeric forms become hex
             # tags. Full transaction objects mirror the Etherscan-like
             # spec's static ``boolean=true``.
-            tag = params.get('block_number', 'latest')
-            if isinstance(tag, int):
-                tag = hex(tag)
-            elif isinstance(tag, str) and tag.isdigit():
-                tag = hex(int(tag))
-            rpc_params = [tag, True]
+            rpc_params = [hex_block_tag(params.get('block_number', 'latest')), True]
         else:  # eth_getTransactionByHash
             rpc_params = [params.get('txhash', '')]
 
         base_url = self.base_url or f'https://{self.instance_domain}'
-        return await self._network_client.request(
+        return await network.request(
             method='POST',
             url=f'{base_url}/api/eth-rpc',
             json_data={'jsonrpc': '2.0', 'method': rpc_method, 'params': rpc_params, 'id': 1},
