@@ -162,7 +162,9 @@ async with ChainscanClient.from_config('etherscan', 'ethereum') as client:
 > `(scanner, network)` clients for the SAME chain into one client with the full
 > `ChainscanClient` surface. Failure classification (`classify_failure` /
 > `FailureKind`) splits fallback-eligible errors (rate limit, network/5xx after
-> transport retries, missing key, plan restriction, method-not-declared) from
+> transport retries, missing key — including HTTP 401/403 from the transport
+> raise site, e.g. NodeReal's 401 on an invalid path key or a WAF/proxy 403 —
+> plan restriction, method-not-declared) from
 > fatal ones (arguments, not-found, data contract) — only the former switch
 > providers. Sticky routing + per-class cooldowns (`max(retry_after, default)`
 > for rate limits) + half-open retry after cooldown; pagination calls
