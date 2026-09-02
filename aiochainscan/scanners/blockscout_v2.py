@@ -420,6 +420,7 @@ class BlockScoutV2Scanner(Scanner):
             },
             parser=_parse_token_transfers,
             requires_api_key=False,
+            unknown_params='drop',
         ),
         Method.ACCOUNT_INTERNAL_TXS: EndpointSpec(
             http_method='GET',
@@ -435,6 +436,7 @@ class BlockScoutV2Scanner(Scanner):
             },
             parser=_parse_internal_transactions,
             requires_api_key=False,
+            unknown_params='drop',
         ),
         # Method.TX_BY_HASH deliberately NOT declared: BlockScout V2's native
         # transaction envelope carries its own top-level ``result`` field
@@ -457,6 +459,7 @@ class BlockScoutV2Scanner(Scanner):
             param_map={'address': 'address'},
             parser=_parse_raw,
             requires_api_key=False,
+            unknown_params='drop',
         ),
         Method.ACCOUNT_NFT_PORTFOLIO: EndpointSpec(
             http_method='GET',
@@ -472,6 +475,7 @@ class BlockScoutV2Scanner(Scanner):
             },
             parser=_parse_nft_portfolio,
             requires_api_key=False,
+            unknown_params='drop',
         ),
     }
 
