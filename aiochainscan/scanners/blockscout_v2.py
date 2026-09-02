@@ -21,7 +21,8 @@ from typing import TYPE_CHECKING, Any, ClassVar
 from ..core.endpoint import EndpointSpec
 from ..core.method import Method
 from ..core.url_builder import UrlBuilder
-from ..exceptions import ChainscanClientApiError, ChainscanNetworkError
+from ..crypto import to_checksum_address
+from ..exceptions import ChainscanClientError, ChainscanNetworkError, MethodNotDeclaredError
 from . import register_scanner
 from .base import Scanner
 
@@ -103,6 +104,69 @@ def _parse_contract_abi(response: dict[str, Any]) -> list[dict[str, Any]] | None
 def _parse_raw(response: dict[str, Any]) -> dict[str, Any]:
     """Return raw response without transformation."""
     return response
+
+
+def _checksummed_holder_address(value: Any) -> Any:
+    """Checksum a holder address, passing through values EIP-55 cannot digest."""
+    if isinstance(value, str):
+        try:
+            return to_checksum_address(value)
+        except ValueError:
+            return value
+    return value
+
+
+def _normalize_token_holder_entry(entry: dict[str, Any]) -> dict[str, Any]:
+    """Flatten one ``/tokens/{address}/holders`` entry to the unified shape.
+
+    BlockScout nests the holder address inside an ``address`` object (with
+    ``hash`` plus metadata); the unified item keeps only the checksummed
+    ``address`` and the raw-unit ``value`` string (Wei-like: never Int64).
+    """
+    holder = entry.get('address')
+    address = holder.get('hash') if isinstance(holder, dict) else holder
+    return {
+        'address': _checksummed_holder_address(address),
+        'value': str(entry.get('value') or '0'),
+    }
+
+
+def _parse_token_holders(response: dict[str, Any]) -> list[dict[str, Any]]:
+    """
+    Extract token holders from the V2 holders response.
+
+    Response format:
+    {
+        "items": [
+            {"address": {"hash": "0x...", ...}, "token_id": null, "value": "123"},
+            ...
+        ],
+        "next_page_params": {...}
+    }
+    """
+    items = response.get('items')
+    return [_normalize_token_holder_entry(entry) for entry in items] if items else []
+
+
+def _parse_token_holder_count(response: dict[str, Any]) -> int:
+    """
+    Extract the holder count from the V2 token info response.
+
+    Response format (abridged):
+    {
+        "address_hash": "0x...",
+        "holders_count": 30506,     # current field name
+        "holders": 30506,           # legacy field name on older instances
+        ...
+    }
+    """
+    count = response.get('holders_count')
+    if count is None:
+        count = response.get('holders')
+    try:
+        return int(count) if count is not None else 0
+    except (TypeError, ValueError):
+        return 0
 
 
 @register_scanner
@@ -216,6 +280,28 @@ class BlockScoutV2Scanner(Scanner):
             parser=_parse_raw,
             requires_api_key=False,
         ),
+        Method.TOKEN_HOLDERS: EndpointSpec(
+            http_method='GET',
+            path='/api/v2/tokens/{contract_address}/holders',
+            query={},
+            param_map={
+                'contract_address': 'contract_address',
+                # BlockScout returns these fields in next_page_params.
+                'value': 'value',
+                'address_hash': 'address_hash',
+                'items_count': 'items_count',
+            },
+            parser=_parse_token_holders,
+            requires_api_key=False,
+        ),
+        Method.TOKEN_HOLDER_COUNT: EndpointSpec(
+            http_method='GET',
+            path='/api/v2/tokens/{contract_address}',
+            query={},
+            param_map={'contract_address': 'contract_address'},
+            parser=_parse_token_holder_count,
+            requires_api_key=False,
+        ),
     }
 
     def __init__(
@@ -225,6 +311,7 @@ class BlockScoutV2Scanner(Scanner):
         url_builder: UrlBuilder,
         chain_id: int | None = None,
         network_client: Network | None = None,
+        base_url: str | None = None,
     ) -> None:
         """
         Initialize BlockScout V2 scanner with network-specific instance.
@@ -235,16 +322,21 @@ class BlockScoutV2Scanner(Scanner):
             url_builder: UrlBuilder instance (used for compatibility)
             chain_id: Chain ID (optional, will be resolved from network)
             network_client: Optional Network instance for connection pooling
+            base_url: Custom base URL for self-hosted BlockScout instances
+                (overrides the per-network instance mapping; no API key needed)
         """
-        super().__init__(api_key, network, url_builder, chain_id, network_client)
+        super().__init__(api_key, network, url_builder, chain_id, network_client, base_url)
 
-        # Get base URL for this network
-        self.base_url = self.BASE_URLS.get(network)
-        if not self.base_url:
-            available = ', '.join(sorted(self.BASE_URLS.keys()))
-            raise ValueError(
-                f"Network '{network}' not mapped to Blockscout V2 instance. Available: {available}"
-            )
+        # Resolve the instance root: explicit self-hosted URL or the
+        # per-network public instance mapping.
+        if base_url is None:
+            self.base_url = self.BASE_URLS.get(network)
+            if not self.base_url:
+                available = ', '.join(sorted(self.BASE_URLS.keys()))
+                raise ValueError(
+                    f"Network '{network}' not mapped to Blockscout V2 instance. "
+                    f'Available: {available}'
+                )
 
     def _build_url(self, spec: EndpointSpec, **params: Any) -> str:
         """
@@ -371,7 +463,7 @@ class BlockScoutV2Scanner(Scanner):
         """
         if method not in self.SPECS:
             available = [str(m) for m in self.SPECS]
-            raise ValueError(
+            raise MethodNotDeclaredError(
                 f'Method {method} not supported by {self.name} v{self.version}. '
                 f'Available: {", ".join(available)}'
             )
@@ -381,6 +473,10 @@ class BlockScoutV2Scanner(Scanner):
 
         if isinstance(raw_response, dict):
             items = raw_response.get('items', [])
+            # TOKEN_HOLDERS items are flattened to the unified holder shape so
+            # the pagination path (streaming/get_all) matches ``call()`` output.
+            if method is Method.TOKEN_HOLDERS:
+                items = [_normalize_token_holder_entry(entry) for entry in items]
             next_cursor = raw_response.get('next_page_params')
         elif isinstance(raw_response, list):
             # Fallback for list responses
@@ -422,7 +518,7 @@ class BlockScoutV2Scanner(Scanner):
         """
         if method not in self.SPECS:
             available = [str(m) for m in self.SPECS]
-            raise ValueError(
+            raise MethodNotDeclaredError(
                 f'Method {method} not supported by {self.name} v{self.version}. '
                 f'Available: {", ".join(available)}'
             )
@@ -440,11 +536,10 @@ class BlockScoutV2Scanner(Scanner):
 
             return spec.parse_response(raw_response)
 
-        except ChainscanClientApiError:
-            # Re-raise our own exceptions
-            raise
-        except ChainscanNetworkError:
-            # Re-raise our own exceptions
+        except ChainscanClientError:
+            # Re-raise our own exceptions (transport, API and validation
+            # errors such as the expected-chain guard) unchanged — never
+            # mask them as opaque network failures.
             raise
         except Exception as e:
             raise ChainscanNetworkError(

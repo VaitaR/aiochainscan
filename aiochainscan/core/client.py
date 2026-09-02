@@ -34,6 +34,7 @@ from .method import Method
 from .mixins import (
     AccountMixin,
     BlockMixin,
+    ChainMixin,
     ContractMixin,
     ENSMixin,
     LogsMixin,
@@ -101,6 +102,7 @@ class ChainscanClient(
     StatsMixin,
     ProxyMixin,
     ENSMixin,
+    ChainMixin,
 ):
     """
     Unified client for accessing different blockchain scanner APIs.
@@ -134,6 +136,8 @@ class ChainscanClient(
         proxy: str | None = None,
         rate_limiter: RateLimiter | None = None,
         retry_policy: RetryPolicy | None = None,
+        base_url: str | None = None,
+        expected_chain_id: int | None = None,
     ):
         """
         Initialize the unified client.
@@ -144,26 +148,44 @@ class ChainscanClient(
             api_kind: API kind for URL building (e.g., 'eth', 'base')
             network: Network name (e.g., 'main', 'test')
             api_key: API key for authentication
-            chain_id: Chain ID for the network (optional, auto-resolved from network)
+            chain_id: Chain ID for the network (optional, auto-resolved from
+                network; stays ``None`` for custom base URLs without one)
             timeout: Request timeout in seconds or httpx.Timeout instance
             proxy: Proxy URL
             rate_limiter: Rate limiter implementation (default: AioLimiterAdapter)
             retry_policy: Retry policy implementation (default: TenacityRetryAdapter)
+            base_url: Custom instance root URL (self-hosted BlockScout,
+                Etherscan v2 proxy). Overrides the registry URL mappings; see
+                ``from_config`` for the URL-vs-alias heuristic.
+            expected_chain_id: Chain id the instance must serve. When set, it
+                is validated before the first request and a mismatch raises
+                ``ChainscanDataError`` (see ``validate_chain``).
         """
         self.scanner_name = scanner_name
         self.scanner_version = scanner_version
         self.api_kind = api_kind
         self.network = network
         self.api_key = api_key
-        self.chain_id = chain_id or resolve_chain_id(network)
+        self.base_url = base_url
+        self._expected_chain_id = expected_chain_id
 
-        # Map network to appropriate network parameter for UrlBuilder
-        # UrlBuilder expects 'main' for Ethereum mainnet, not 'ethereum'
-        chain_info = get_chain_info(self.chain_id)
-        network_for_urlbuilder = chain_info['name'] if chain_info['name'] != 'ethereum' else 'main'
+        # Map network to appropriate network parameter for UrlBuilder.
+        # Custom base URLs bypass the chain registry entirely: the chain may
+        # be private (not in STANDARD_CHAINS) and unknown until probed.
+        if base_url is not None:
+            self.chain_id: int | None = chain_id
+            network_for_urlbuilder = network
+        else:
+            self.chain_id = chain_id or resolve_chain_id(network)
+            # UrlBuilder expects 'main' for Ethereum mainnet, not 'ethereum'
+            chain_info = get_chain_info(self.chain_id)
+            network_for_urlbuilder = (
+                chain_info['name'] if chain_info['name'] != 'ethereum' else 'main'
+            )
 
-        # Build URL builder (reusing existing infrastructure)
-        self._url_builder = UrlBuilder(api_key, api_kind, network_for_urlbuilder)
+        # Build URL builder (reusing existing infrastructure); a custom
+        # api_url override redirects every registry-routed request.
+        self._url_builder = UrlBuilder(api_key, api_kind, network_for_urlbuilder, api_url=base_url)
 
         # Store additional config
         self._timeout = timeout
@@ -171,7 +193,9 @@ class ChainscanClient(
         self._rate_limiter = rate_limiter
         self._retry_policy = retry_policy
 
-        # Create Network instance owned by this client for connection pooling
+        # Create Network instance owned by this client for connection pooling.
+        # With expected_chain_id the network runs a one-shot validation guard
+        # before the first admitted request (fail fast on chain mismatch).
         from ..network import Network
 
         self._network = Network(
@@ -180,6 +204,9 @@ class ChainscanClient(
             proxy=proxy,
             rate_limiter=rate_limiter,
             retry_policy=retry_policy,
+            first_request_guard=(
+                self._validate_expected_chain_once if expected_chain_id is not None else None
+            ),
         )
 
         # Get scanner class and create instance with shared network client
@@ -187,7 +214,12 @@ class ChainscanClient(
         # Use chain_id to resolve the correct network name for this scanner
         scanner_network = get_scanner_network_name(scanner_name, scanner_version, network)
         self._scanner = scanner_class(
-            api_key, scanner_network, self._url_builder, chain_id, network_client=self._network
+            api_key,
+            scanner_network,
+            self._url_builder,
+            chain_id,
+            network_client=self._network,
+            base_url=base_url,
         )
 
         # Lazy-initialized ENS resolver
@@ -204,6 +236,8 @@ class ChainscanClient(
         rate_limiter: RateLimiter | None = None,
         retry_policy: RetryPolicy | None = None,
         api_key: str | None = None,
+        expected_chain_id: int | None = None,
+        allow_http: bool = False,
     ) -> 'ChainscanClient':
         """
         Create client using unified chain-based configuration.
@@ -213,9 +247,18 @@ class ChainscanClient(
         and constructs the client. Configuration is loaded lazily at call
         time; nothing is resolved at import time.
 
+        URL-vs-alias heuristic: a string ``network`` containing a
+        ``scheme://`` prefix is treated as a custom base URL — a self-hosted
+        BlockScout instance or an Etherscan v2 proxy — while anything else
+        resolves through the chain registry as before (backward compatible;
+        chain aliases never contain ``://``). Custom instances are validated
+        (https by default, no credentials/query/``..`` in the URL — see
+        ``aiochainscan.base_url``).
+
         Args:
             scanner_name: Scanner implementation ('etherscan', 'blockscout')
-            network: Chain name/ID ('ethereum', 'base', 1, 8453)
+            network: Chain name/ID ('ethereum', 'base', 1, 8453) or a base
+                URL ('https://my-blockscout.internal')
             scanner_version: Scanner version ('v1', 'v2'). If None, uses default:
                 - 'v2' for etherscan (recommended)
                 - 'v1' for all other scanners
@@ -224,7 +267,13 @@ class ChainscanClient(
             rate_limiter: Rate limiter implementation
             retry_policy: Retry policy implementation
             api_key: Explicit API key. If None (default), the key is resolved
-                from the configuration manager (env vars / .env / config files)
+                from the configuration manager (env vars / .env / config files).
+                Never required for BlockScout scanners, including self-hosted.
+            expected_chain_id: Chain id the configured instance must serve.
+                Validated before the first request; a mismatch raises
+                ``ChainscanDataError``. Required for URL-shaped networks on
+                etherscan (V2 routes by chainid); optional elsewhere.
+            allow_http: Allow cleartext ``http://`` base URLs (default False).
 
         Returns:
             Configured ChainscanClient instance
@@ -242,10 +291,26 @@ class ChainscanClient(
 
             # Works with chain_id too
             client = ChainscanClient.from_config('etherscan', 8453)
+
+            # Self-hosted BlockScout — chain validated before first request
+            client = ChainscanClient.from_config(
+                'blockscout_v2', 'https://my-blockscout.internal', expected_chain_id=100
+            )
+
+            # Etherscan v2 behind a proxy (API key still required)
+            client = ChainscanClient.from_config(
+                'etherscan', 'https://eth-proxy.internal',
+                api_key='...', expected_chain_id=137,
+            )
             ```
         """
         target = resolve_scanner_target(
-            scanner_name, network, api_key=api_key, scanner_version=scanner_version
+            scanner_name,
+            network,
+            api_key=api_key,
+            scanner_version=scanner_version,
+            expected_chain_id=expected_chain_id,
+            allow_http=allow_http,
         )
         return cls(
             scanner_name=target.scanner_name,
@@ -258,6 +323,8 @@ class ChainscanClient(
             proxy=proxy,
             rate_limiter=rate_limiter,
             retry_policy=retry_policy,
+            base_url=target.base_url,
+            expected_chain_id=expected_chain_id,
         )
 
     async def call(self, method: Method, **params: Any) -> Any:
@@ -293,6 +360,32 @@ class ChainscanClient(
             ```
         """
         return await self._scanner.call(method, **params)
+
+    async def fetch_page(
+        self, method: Method, params: dict[str, Any]
+    ) -> tuple[list[JSONDict], dict[str, Any] | None]:
+        """Fetch a single page via the scanner's public cursor seam.
+
+        Thin passthrough to :meth:`aiochainscan.scanners.base.Scanner.fetch_page`
+        so cursor-driven consumers (e.g. the MCP tools) never reach into the
+        client's privates: returns ``(items, next_cursor)`` where a non-``None``
+        cursor merges into ``params`` (``{**params, **cursor}``) for the next
+        page and ``None`` terminates pagination.
+
+        Args:
+            method: Logical method to execute for every page.
+            params: Request parameters, including ``page``/``offset`` for
+                page-numbered APIs; merge the previous cursor on top for
+                subsequent pages.
+
+        Returns:
+            Tuple of ``(items, next_cursor)``.
+
+        Raises:
+            ValueError: If the method is not supported by the scanner.
+            Various network/API errors from the underlying transport.
+        """
+        return await self._scanner.fetch_page(method, params)
 
     def supports_method(self, method: Method) -> bool:
         """
@@ -628,6 +721,45 @@ class ChainscanClient(
             params,
             on_progress=on_progress,
             operation='logs',
+        ):
+            yield batch
+
+    async def iter_token_holders_streaming(
+        self,
+        contract_address: str,
+        batch_size: int = 1000,
+        on_progress: 'ProgressCallback | None' = None,
+    ) -> AsyncIterator[list[dict[str, Any]]]:
+        """
+        Stream token holders in batches for maximum memory efficiency.
+
+        Yields unified ``{'address': EIP-55 str, 'value': str}`` items (the
+        ``value`` is the raw-unit, Wei-like quantity — never Int64). Etherscan
+        walks page/offset; BlockScout V2 follows ``next_page_params`` cursors
+        (its ``page``/``offset`` request params are ignored by the scanner).
+
+        Args:
+            contract_address: ERC-20 token contract address
+            batch_size: Number of holders per batch (default: 1000; Etherscan
+                caps a page at 1000)
+            on_progress: Optional callback for progress updates
+
+        Yields:
+            Batches of token holder dictionaries
+        """
+        from ..domain.models import Address
+
+        validate_batch_size(batch_size)
+        params: dict[str, Any] = {
+            'contract_address': str(Address(contract_address)),
+            'page': 1,
+            'offset': batch_size,
+        }
+        async for batch in iter_pages(
+            page_fetcher(self._scanner, Method.TOKEN_HOLDERS),
+            params,
+            on_progress=on_progress,
+            operation='token_holders',
         ):
             yield batch
 

@@ -1,6 +1,7 @@
 """Tests for Network transport layer using httpx/tenacity/aiolimiter."""
 
 import logging
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -16,11 +17,17 @@ from aiochainscan.exceptions import (
     ChainscanClientContentTypeError,
     ChainscanClientError,
     ChainscanClientProxyError,
+    ChainscanDataError,
     ChainscanNetworkError,
     ChainscanRateLimitError,
     ChainscanResponseTooLargeError,
 )
 from aiochainscan.network import Network, _redact_headers, _redact_payload, _redact_url
+
+
+def _ok_handler(request: httpx.Request) -> httpx.Response:
+    """MockTransport handler answering a healthy Etherscan-style envelope."""
+    return httpx.Response(200, json={'status': '1', 'message': 'OK', 'result': 'ok'})
 
 
 @pytest_asyncio.fixture
@@ -481,3 +488,64 @@ def test_redact_url_query_case_insensitive() -> None:
     assert 'API_KEY=%2A%2A%2AREDACTED%2A%2A%2A' in redacted
     assert 'key=%2A%2A%2AREDACTED%2A%2A%2A' in redacted
     assert 'foo=bar' in redacted
+
+
+# ---------------------------------------------------------------------------
+# First-request guard: transient vs fatal failure memory
+# ---------------------------------------------------------------------------
+
+
+class TestFirstRequestGuardFailureMemory:
+    """A transient probe failure must not brick the client forever.
+
+    The guard runs outside the retry policy; before the fix, ANY guard error
+    (including one-off 429/5xx/DNS blips on the probe itself) was cached and
+    re-raised from every subsequent request for the client's lifetime.
+    """
+
+    @staticmethod
+    def _guarded_network(ub: UrlBuilder, guard: Any) -> Network:
+        network = Network(ub, timeout=10.0, first_request_guard=guard)
+        network._client = httpx.AsyncClient(transport=httpx.MockTransport(_ok_handler))
+        return network
+
+    @staticmethod
+    async def _close(network: Network) -> None:
+        # Drop the injected client so close() does not double-close it.
+        injected = network._client
+        network._client = None
+        await injected.aclose()
+        await network.close()
+
+    async def test_transient_guard_error_re_probes_on_next_request(self, ub: UrlBuilder) -> None:
+        guard_calls = 0
+
+        async def guard() -> None:
+            nonlocal guard_calls
+            guard_calls += 1
+            if guard_calls == 1:
+                raise ChainscanRateLimitError('HTTP 429', 'Too Many Requests')
+
+        network = self._guarded_network(ub, guard)
+        try:
+            with pytest.raises(ChainscanRateLimitError):
+                await network.get(params={'module': 'proxy', 'action': 'test'})
+            # The next request re-probes the guard and succeeds.
+            result = await network.get(params={'module': 'proxy', 'action': 'test'})
+            assert result == 'ok'
+            assert guard_calls == 2
+        finally:
+            await self._close(network)
+
+    async def test_config_guard_error_fails_fast_forever(self, ub: UrlBuilder) -> None:
+        async def guard() -> None:
+            raise ChainscanDataError('Chain mismatch: expected 137, instance serves 1')
+
+        network = self._guarded_network(ub, guard)
+        try:
+            for _ in range(2):
+                with pytest.raises(ChainscanDataError, match='Chain mismatch'):
+                    await network.get(params={'module': 'proxy', 'action': 'test'})
+            # The guard runs only once — the error is remembered, not re-probed.
+        finally:
+            await self._close(network)

@@ -414,7 +414,9 @@ class TestMethodSupport:
         assert Method.ACCOUNT_TRANSACTIONS in methods
         assert Method.CONTRACT_ABI in methods
         assert Method.BLOCK_BY_NUMBER in methods
-        assert len(methods) == 5
+        assert Method.TOKEN_HOLDERS in methods
+        assert Method.TOKEN_HOLDER_COUNT in methods
+        assert len(methods) == 7
 
 
 # ============================================================================
@@ -527,4 +529,4 @@ class TestStringRepresentation:
         assert 'BlockScoutV2Scanner' in result
         assert 'ethereum' in result
         assert 'eth.blockscout.com' in result
-        assert 'methods=5' in result
+        assert 'methods=7' in result

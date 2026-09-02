@@ -34,22 +34,29 @@ async with ChainscanClient.from_config('etherscan', 'ethereum') as client:
     tx     = await client.get_transaction('0xHASH...')            # by hash
     status = await client.get_transaction_status('0xHASH...')     # receipt status
     check  = await client.check_transaction_status('0xHASH...')   # execution status
+    final  = await client.wait_for_transaction('0xHASH...')       # poll until mined (120s/10s)
 
     # ── Blocks ───────────────────────────────────────────────
     block     = await client.get_block(12345678)                  # by number
     reward    = await client.get_block_reward(12345678)           # mining reward
     countdown = await client.get_block_countdown(99999999)        # ETA to block
     by_ts     = await client.get_block_by_timestamp(1609459200)   # nearest block
+    reached   = await client.wait_for_block(20_000_000)           # poll until reached (600s/10s)
 
     # ── Contracts ────────────────────────────────────────────
     abi     = await client.get_contract_abi('0x...')              # JSON ABI
     source  = await client.get_contract_source('0x...')           # verified source
     created = await client.get_contract_creation(['0x...'])       # creator + tx
+    verdict = await client.wait_for_verification(guid)            # poll Pass/Fail (300s/10s)
 
     # ── Tokens ───────────────────────────────────────────────
     bal     = await client.get_token_balance('0xWALLET', '0xTOKEN')  # raw units
     supply  = await client.get_token_supply('0xTOKEN')               # total supply
     info    = await client.get_token_info('0xTOKEN')                 # name/symbol/decimals
+    holders = await client.get_token_holders('0xTOKEN')              # single page
+    all_hld = await client.get_all_token_holders('0xTOKEN')          # ALL (streaming aggregation → list)
+    top_hld = await client.get_top_token_holders('0xTOKEN', limit=100)  # top-N by balance
+    count   = await client.get_token_holder_count('0xTOKEN')         # int
 
     # ── Gas & Stats ──────────────────────────────────────────
     price   = await client.get_eth_price()                        # USD/BTC
@@ -76,24 +83,104 @@ async with ChainscanClient.from_config('etherscan', 'ethereum') as client:
     # ── Streaming (large datasets, constant ~10MB RAM) ───────
     async for batch in client.iter_transactions_streaming('0x...', batch_size=1000):
         process(batch)
+    async for batch in client.iter_token_holders_streaming('0xTOKEN', batch_size=1000):
+        process(batch)
 
     # ── DataFrame export ─────────────────────────────────────
     df = await client.get_transactions_df('0x...')                 # Polars (ALL txs!)
     df = await client.get_token_portfolio_df('0x...')              # Polars
+
+    # ── Self-hosted / custom instances ───────────────────────
+    # A URL-shaped `network` targets any BlockScout instance (no API key):
+    async with ChainscanClient.from_config(
+        'blockscout_v2', 'https://my-blockscout.internal', expected_chain_id=100
+    ) as selfhosted:
+        info = await selfhosted.get_chain_info()    # ChainInfo (cached 1h)
+        ok = await selfhosted.validate_chain(100)   # ChainscanDataError on mismatch
+    # Etherscan v2 proxy: api_key still required + expected_chain_id mandatory:
+    client = ChainscanClient.from_config(
+        'etherscan', 'https://eth-proxy.internal', api_key='...', expected_chain_id=137
+    )
+
+    # ── Multi-provider failover pool ─────────────────────────
+    from aiochainscan import ChainscanPool
+
+    async with ChainscanPool.from_config(
+        [('etherscan', 'ethereum'), ('blockscout', 'ethereum')]  # priority order
+    ) as pool:
+        balance = await pool.get_balance('0x...')   # full ChainscanClient surface
+        pool.last_provider                          # 'etherscan/ethereum' (sticky)
+
+    # ── Value conversion helpers (module-level, float-free) ──
+    from aiochainscan import format_ether, hex_to_int, to_iso, to_decimal_amount, wei_to_ether
+
+    ether = wei_to_ether('1500000000000000000')      # Decimal('1.5') — exact, never float
+    nice  = format_ether('1500000000000000000')      # '1.500000' (half-up, any magnitude)
+    usdc  = to_decimal_amount('1500000', decimals=6) # Decimal('1.5') — any token precision
+    n     = hex_to_int('0x1a')                       # 26 — hex str | decimal str | int
+    iso   = to_iso('1609459200')                     # '2021-01-01T00:00:00+00:00'
 ```
 
-> **Scanner coverage:** the full surface above is declared by the Etherscan-like
-> scanners (`etherscan` v2, `blockscout` v1). `blockscout_v2` declares a subset —
-> see the Scanner Support Matrix. Convenience methods not declared by the
-> configured scanner raise `ValueError` at call time; the Method ↔ mixin ↔
-> SPECS mapping is enforced by `tests/test_method_consistency.py`.
+> **Custom base URL heuristic:** a `network` string containing `scheme://` is treated
+> as a base URL; anything else resolves through the chain registry as before (aliases
+> never contain `://` — fully backward compatible). URLs are validated in
+> `aiochainscan/base_url.py`: https only (`http` requires `allow_http=True`), no
+> credentials/query/`..` segments, trailing slash normalized away. `expected_chain_id`
+> is validated once before the first request (Network-layer guard → `ChainscanDataError`);
+> `get_chain_info()` probes BlockScout via `POST {base}/api/eth-rpc` `eth_chainId` and
+> resolves Etherscan chains through the keyless `GET /v2/chainlist` registry — both
+> cached 1h in a process-shared `chain:`-namespaced cache (chainlist downloaded once).
+> NodeReal rejects custom base URLs honestly (key rides in the URL path).
+
+> **Polling helpers:** `wait_for_transaction` / `wait_for_verification` / `wait_for_block`
+> are pure composition over existing `Method` calls (no new enum values). They poll with
+> `asyncio.sleep`, use a loop-clock deadline (`ChainscanWaitTimeoutError(what, waited, last_state)`
+> on expiry), return pending-vs-final states (revert / `Fail` verdicts are returned, not raised)
+> and require only the methods they build on.
+
+> **Value conversion helpers** (`convert.py`): module-level, stateless, stdlib-only
+> utilities for the string scalars every explorer API returns. Wei/token math is
+> `Decimal`-exact (`to_decimal_amount` / `wei_to_ether` — integer str/int only,
+> fractional base-unit strings are rejected as corrupted data; negatives valid;
+> 10^30+ wei exact), `format_ether` renders fixed-precision strings (half-up,
+> context precision sized to the value so 10^40 wei does not overflow),
+> `hex_to_int` accepts hex `'0x1a'` / decimal `'26'` / int (the proxy-vs-REST
+> dual mode; signed hex `-0x10` works; bare `'1a'` is ambiguous → `ValueError`),
+> `hex_to_str` decodes data fields (utf-8; `'0x'` → `''`), `to_datetime` /
+> `to_iso` convert unix seconds (hex tolerated) to tz-aware UTC datetime /
+> ISO-8601. All exported from the package root; enforced by `tests/test_convert.py`.
+
+> **Scanner coverage:** the full surface above is declared by `etherscan` v2.
+> `blockscout` v1 inherits the shared Etherscan-like SPECS but not the token
+> holders; `blockscout_v2` declares a subset — see the Scanner Support Matrix.
+> Convenience methods not declared by the configured scanner raise
+> `MethodNotDeclaredError` (a `ValueError` subclass) at call time; the
+> Method ↔ mixin ↔ SPECS mapping is enforced by
+> `tests/test_method_consistency.py`.
+
+> **Failover pool (`ChainscanPool`, `core/pool.py`):** composes several
+> `(scanner, network)` clients for the SAME chain into one client with the full
+> `ChainscanClient` surface. Failure classification (`classify_failure` /
+> `FailureKind`) splits fallback-eligible errors (rate limit, network/5xx after
+> transport retries, missing key, plan restriction, method-not-declared) from
+> fatal ones (arguments, not-found, data contract) — only the former switch
+> providers. Sticky routing + per-class cooldowns (`max(retry_after, default)`
+> for rate limits) + half-open retry after cooldown; pagination calls
+> (`get_all_*` / `iter_*_streaming`) are PINNED to one provider per call
+> (failover only if the first page fails — cursors are provider-specific).
+> Transparency: `last_provider`, `provider=<label>` stamp in progress
+> callbacks, `ChainscanProviderSwitchWarning` on switches,
+> `ProviderPoolExhaustedError.attempts = [(provider, exception), ...]`.
+> The pool never duplicates retries — it reacts only to exceptions that
+> survived each member client's tenacity `Network`.
 
 ### ⚠️ Key Gotchas
 - `get_transactions()` returns **one page** (~50-100 items). Use `get_all_transactions()` for complete data.
+- `get_token_holders()` returns **one page**. Use `get_all_token_holders()` / `iter_token_holders_streaming()` for complete data.
 - `get_logs()` returns **≤1000 logs**. Use `get_all_logs()` for complete data.
 - `get_all_*()` now uses **streaming aggregation** under the hood; for very large datasets prefer `iter_*_streaming()`.
 - `get_transactions_df()` auto-paginates (uses `iter_transactions` internally).
-- Balance/value/supply values are **Wei strings** — divide by `10**18` for ETH.
+- Balance/value/supply values are **Wei strings** — convert with `wei_to_ether()` / `to_decimal_amount()` (exact `Decimal`), never `int(wei) / 10**18` float division.
 
 > **Note:** Legacy `Client` class and `modules/` were removed in v0.3.0.
 > Legacy facade/context/url-builder public entrypoints and old pagination-engine usage were purged in modern API docs.
@@ -139,7 +226,7 @@ Re-enable when the budget allows: `gh workflow enable ci.yml test-install.yml wh
 
 ## Complete Method Reference
 
-Every `Method` enum value (30 total) maps to typed convenience methods on `ChainscanClient`:
+Every `Method` enum value (33 total) maps to typed convenience methods on `ChainscanClient`:
 
 | Method Enum | Convenience Method(s) | Returns |
 |---|---|---|
@@ -166,6 +253,9 @@ Every `Method` enum value (30 total) maps to typed convenience methods on `Chain
 | `TOKEN_BALANCE` | `get_token_balance(address, contract_address)` | `str` |
 | `TOKEN_SUPPLY` | `get_token_supply(contract_address)` | `str` |
 | `TOKEN_INFO` | `get_token_info(contract_address)` | `dict` |
+| `TOKEN_HOLDERS` | `get_token_holders(contract_address, page, offset)` / `get_all_token_holders(contract_address)` | `list[dict]` (`{'address', 'value'}`) |
+| `TOKEN_TOP_HOLDERS` | `get_top_token_holders(contract_address, limit)` | `list[dict]` (Etherscan PRO only) |
+| `TOKEN_HOLDER_COUNT` | `get_token_holder_count(contract_address)` | `int` |
 | `GAS_ESTIMATE` | `get_gas_estimate(gas_price)` | `str` |
 | `GAS_ORACLE` | `get_gas_oracle()` | `dict` |
 | `EVENT_LOGS` | `get_logs(address, ...)` / `get_all_logs(address, ...)` | `list[dict]` |
@@ -190,7 +280,8 @@ Every `Method` enum value (30 total) maps to typed convenience methods on `Chain
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                    CLIENT / DOMAIN LAYER                     │
-│  core/client.py (ChainscanClient) | domain/contract.py       │
+│  core/client.py (ChainscanClient) | core/pool.py (Pool)      │
+│  domain/contract.py                                          │
 └─────────────────────────┬───────────────────────────────────┘
                           │
 ┌─────────────────────────▼───────────────────────────────────┐
@@ -262,8 +353,9 @@ Every `Method` enum value (30 total) maps to typed convenience methods on `Chain
 ### Core (Source of Truth)
 | File | Purpose | Source of Truth For |
 |------|---------|---------------------|
-| `core/client.py` | **ChainscanClient** (~1800 lines) | All API interactions, 30+ convenience methods |
-| `core/method.py` | **Method** enum (30 values) | Supported operations |
+| `core/client.py` + `core/mixins/` | **ChainscanClient** (composition of per-domain mixins) | All API interactions, one convenience method per `Method` value plus `get_all_*`/`iter_*`/`wait_for_*` |
+| `core/pool.py` | **ChainscanPool** | Multi-provider failover: `classify_failure`, sticky routing, cooldowns, pinned pagination |
+| `domain/method.py` | **Method** enum (33 values; `core/method.py` is a compat shim) | Supported operations |
 | `domain/contract.py` | **SmartContract** | High-level contract API |
 | `domain/models.py` | **Address**, **TxHash** | Data validation, EIP-55 |
 | `config.py` | **ConfigurationManager** | Scanner configs (lazy-loaded) |
@@ -282,9 +374,11 @@ Every `Method` enum value (30 total) maps to typed convenience methods on `Chain
 | `network.py` | HTTP transport | ALL HTTP must go through here |
 | `adapters/memory_cache.py` | In-memory LRU | O(1) ops, asyncio.Lock |
 | `adapters/aiolimiter_adapter.py` | Rate limiting | Token bucket, burst=1 |
+| `convert.py` | Wei/hex/datetime conversion helpers | Exact `Decimal` math, hex-aware int parsing, tz-aware UTC |
 | `crypto.py` | Keccak-256, EIP-55 checksum | fastabi → eth-utils fallback chain |
 | `decode.py` | ABI decoding (Python) | Wraps Rust FFI, orjson parsing |
 | `fastabi/src/lib.rs` | ABI decoding (Rust) | Returns JSON, LRU cache |
+| `mcp/` | MCP server for AI agents | Adapter over `ChainscanClient` — see MCP Server section |
 
 ---
 
@@ -292,10 +386,15 @@ Every `Method` enum value (30 total) maps to typed convenience methods on `Chain
 
 | Scanner | Version | Free? | Key Env Var | Method coverage |
 |---------|---------|-------|-------------|-----------------|
-| BlockScout | v1 | ✅ Yes | - | Full Etherscan-like surface (inherits shared SPECS) |
-| BlockScout | **v2** | ✅ Yes | - | Subset: `ACCOUNT_BALANCE`, `ACCOUNT_TRANSACTIONS`, `ACCOUNT_TOKEN_PORTFOLIO`, `CONTRACT_ABI`, `BLOCK_BY_NUMBER` |
-| Etherscan | v2 | ❌ No | `ETHERSCAN_KEY` | Full Etherscan-like surface (all 30 `Method` values) |
+| BlockScout | v1 | ✅ Yes | - | Etherscan-like surface minus token holders (its Etherscan-compat layer answers "Unknown action" for the token module holder actions); `TX_BY_HASH`/`PROXY_*` served via the instance's `/api/eth-rpc` JSON-RPC (see below) |
+| BlockScout | **v2** | ✅ Yes | - | Subset: `ACCOUNT_BALANCE`, `ACCOUNT_TRANSACTIONS`, `ACCOUNT_TOKEN_PORTFOLIO`, `CONTRACT_ABI`, `BLOCK_BY_NUMBER`, `TOKEN_HOLDERS` (native `/api/v2/tokens/{addr}/holders`), `TOKEN_HOLDER_COUNT` (token info `holders_count`) |
+| Etherscan | v2 | ❌ No | `ETHERSCAN_KEY` | Full Etherscan-like surface + token holders (`tokenholderlist`/`topholders`/`tokenholdercount` are PRO endpoints) — all 33 `Method` values |
 | NodeReal | v1 | Free tier | `NODEREAL_KEY` | BSC-only subset (22 `Method` values) incl. the only `CONTRACT_ABI`/`CONTRACT_SOURCE`/`ACCOUNT_INTERNAL_TXS` alternative for keyless-free BSC analytics |
+
+> **Token holders notes:** the unified item shape is `{'address': EIP-55 str, 'value': str}`
+> (raw-unit quantity — never Int64). `TOKEN_TOP_HOLDERS` is Etherscan-only: BlockScout V2's
+> holders endpoint does not guarantee top-ordering, and NodeReal has no token-holders API
+> (`nr_getTokenHoldings` is *address* holdings) — both raise honest `ValueError`.
 
 ### NodeReal (MegaNode / BSCTrace backend) — BSC analytics
 
@@ -304,7 +403,7 @@ Every `Method` enum value (30 total) maps to typed convenience methods on `Chain
 BscScan-compatible verified-contract REST on `open-platform.nodereal.io`. Networks:
 `bsc` / `bnb` / `binance` (mainnet) and `bsc-testnet`.
 
-- Declares 22 of the 30 `Method` values; honest `ValueError` for contract
+- Declares 22 of the 33 `Method` values; honest `ValueError` for contract
   verify, gas oracle/estimate, price/supply stats, block reward/countdown.
 - `nr_getTransactionByAddress` serves ≤1000 blocks per request and **silently
   returns empty pages for wider ranges** — `fetch_page` therefore walks the
@@ -314,6 +413,50 @@ BscScan-compatible verified-contract REST on `open-platform.nodereal.io`. Networ
   items with hex `totalCount` cursors.
 - JSON-RPC `-32005` (usage limit) is translated to `ChainscanRateLimitError`
   so the transport retry policy applies.
+
+### BlockScout v1 proxy fallback (`/api/eth-rpc`)
+
+BlockScout's Etherscan-compat REST answers `"Unknown module"` for
+`module=proxy`, so `blockscout` v1 routes `TX_BY_HASH`, `PROXY_ETH_CALL` and
+`PROXY_GET_BALANCE` through the instance's JSON-RPC endpoint
+(`POST {base_url}/api/eth-rpc`) — the same keyless transport the chain-info
+probe uses. The Network layer unwraps the JSON-RPC envelope and raises
+`ChainscanClientProxyError` for reverts; a `null` result (unknown tx) comes
+back as `None`. Verified live against `eth.blockscout.com`.
+
+---
+
+## MCP Server (`aiochainscan/mcp/`)
+
+Agent adapter over `ChainscanClient` — **run**: `python -m aiochainscan.mcp_server`
+(requires `mcp` extra). Structure:
+
+| File | Purpose |
+|------|---------|
+| `mcp/envelope.py` | `ToolResponse{data, notes, instructions, pagination, content_text}` + truncation (`{value_sample, value_truncated}`, 512 chars) + `format_units` (lossless int math) |
+| `mcp/cursors.py` | Opaque Base64URL cursors wrapping `fetch_page` scanner cursors (`InvalidCursorError` with "start over" advice) |
+| `mcp/abi_codec.py` | Pure-Python ABI encode (calldata) / decode (eth_call outputs) — covers what fastabi doesn't (it decodes *inputs* only). Cross-checked against `eth_abi` in tests |
+| `mcp/tools.py` | 12 tools as plain `client -> ToolResponse` functions (**no mcp import** — offline-testable) + `ClientPool` (one client per `(scanner, chain)`, connection pooling across calls) |
+| `mcp/server.py` | FastMCP wiring: envelope → `CallToolResult` (text + structuredContent), tool registration |
+| `mcp_server.py` | Entry point (historical import path preserved) |
+
+**Tools**: `get_wallet_balance`, `get_address_overview`, `get_transactions`,
+`get_transaction_info` (fastabi-decoded input via auto-ABI),
+`get_token_portfolio`, `get_token_info`, `get_token_holders`,
+`get_top_token_holders`, `get_contract_abi` (signature summary),
+`read_contract` (auto-ABI + eth_call, outputs decoded), `resolve_ens`,
+`list_chains`.
+
+**Contract rules**:
+- Curation caps: ≤50 items/page (`clamp_page_size`), curated field sets per tool.
+- Pagination = one `client.fetch_page` call per response; `next_call.params`
+  carries the new cursor — agents never parse cursors.
+- Unsupported scanner methods → envelope `notes` (with scanner hints), never a
+  crash; primary-call failures still raise (clean MCP error).
+- Default scanner `blockscout` (keyless, v1); override per call (`scanner=`)
+  or via `AIOCHAINSCAN_MCP_SCANNER`.
+- Tests: `tests/test_mcp_server.py` (offline stubs; FastMCP registration
+  tests need `uv run --extra mcp pytest`), `tests/test_blockscout_v1_ethrpc.py`.
 
 ---
 
@@ -347,6 +490,10 @@ BscScan-compatible verified-contract REST on `open-platform.nodereal.io`. Networ
 async with ChainscanClient.from_config('blockscout_v2', 'ethereum') as client:
     await client.get_balance('0x...')
 
+# Self-hosted BlockScout: same lifecycle, URL instead of a chain alias
+async with ChainscanClient.from_config('blockscout_v2', 'https://my-blockscout.internal') as client:
+    await client.get_balance('0x...')  # no API key needed, chain_id unknown until probed
+
 # Option 2: manual close
 client = ChainscanClient.from_config('blockscout_v2', 'ethereum')
 try:
@@ -370,6 +517,7 @@ all_txs = await client.get_all_transactions(address)
 all_logs = await client.get_all_logs(address, from_block=0, topic0='0xddf252...')
 all_transfers = await client.get_all_token_transfers(address)
 all_internal = await client.get_all_internal_transactions(address)
+all_holders = await client.get_all_token_holders(token_contract)
 ```
 
 ### Progress Callbacks
@@ -382,6 +530,39 @@ txs = await client.get_all_transactions(
 )
 ```
 
+### Multi-Provider Failover Pool
+```python
+from aiochainscan import ChainscanPool
+
+# Priority order: etherscan preferred, blockscout rescues. Providers serve the
+# SAME chain; kwargs (timeout, proxy, rate_limiter, ...) forward to every member.
+async with ChainscanPool.from_config(
+    [('etherscan', 'ethereum'), ('blockscout', 'ethereum')]
+) as pool:
+    await pool.get_balance('0x...')          # routed with failover
+    async for batch in pool.iter_transactions_streaming('0x...'):
+        ...                                   # pinned to ONE provider per call
+
+    pool.last_provider                       # who answered last (sticky)
+    pool.provider_states()                   # {label: available/cooldown/...}
+    pool.reset_cooldowns()                   # operational escape hatch
+```
+
+Semantics:
+- **Sticky**: last successful provider keeps serving (no yo-yo when a
+  higher-priority provider leaves cooldown).
+- **Cooldown**: rate limit → `max(retry_after, 30s)`; transient → 10s;
+  auth → 600s; plan restriction → 3600s (all constructor-tunable). Cooling
+  providers are skipped without an HTTP attempt; after expiry they get one
+  half-open trial (failure re-enters cooldown).
+- **Pagination pinning**: `get_all_*` / `iter_*` / `iter_*_streaming` bind to
+  one provider per call; only a first-page failure may restart on the next
+  provider (cursor state is still empty then). Mid-pagination errors
+  propagate but still cool the provider.
+- **from_config** excludes unconstructible providers with a warning (missing
+  key etc.); raises only when NO provider could be built.
+- All state is per-pool-instance — nothing global.
+
 ### Error Handling
 ```python
 from aiochainscan.exceptions import (
@@ -389,6 +570,9 @@ from aiochainscan.exceptions import (
     ChainscanNetworkError,        # Retry (connection issues)
     PaginationDataLossError,      # Whale block - manual handling needed
     ChainscanDataError,           # Data contract violation
+    MethodNotDeclaredError,       # ValueError subclass: method not in SPECS
+    ProviderPoolExhaustedError,   # Pool: every provider failed (.attempts)
+    ChainscanProviderSwitchWarning,  # Pool: routed away from a provider
 )
 ```
 
@@ -397,7 +581,7 @@ from aiochainscan.exceptions import (
 ## Testing
 
 ```bash
-# Run all tests (520+ tests)
+# Run all tests (1000+ tests)
 pytest tests/ -q
 
 # Type checking (strict)
@@ -440,8 +624,8 @@ Everything else is an extra (`data`, `mcp`, `http2`, `fallback`).
 
 **Run BEFORE `git commit` — not after:**
 ```bash
-pytest tests/ -q                    # Verify all 520+ tests pass
-mypy aiochainscan --strict          # Type safety check (55 files)
+pytest tests/ -q                    # Verify all 1000+ tests pass
+mypy aiochainscan --strict          # Type safety check (69 source files)
 pre-commit run --all-files          # All linters (ruff, format, etc.)
 ```
 Only proceed to `git commit` when ALL three checks pass. Do NOT rely on post-commit hook to catch errors.

@@ -53,11 +53,14 @@ Major refactoring completed in v0.3.0:
 Major dependency upgrade to modern Python Web3 stack (2024-2025 best practices).
 
 ### 1. JSON Parsing & Data Validation (orjson + Pydantic V2)
-**Status:** ✅ COMPLETE
+**Status:** ⚠️ PARTIAL — orjson shipped and remains; the Pydantic DTO layer was
+**later removed** (`domain/dto_v2.py` no longer exists, `pydantic` is not a
+dependency). Typed responses are planned, not implemented — responses are
+plain `dict`s; use `aiochainscan.convert` helpers for exact value typing.
 
-- [x] Added `orjson>=3.10.0` and `pydantic>=2.7.0` to dependencies
-- [x] Created `domain/dto_v2.py` with Pydantic models for all API responses
-- [x] Exported V2 DTOs: `TransactionDTOv2`, `InternalTransactionDTOv2`, `TokenTransferDTOv2`, `LogEventDTOv2`, `BlockDTOv2`
+- [x] Added `orjson>=3.10.0` to dependencies *(still current)*
+- [~] Created `domain/dto_v2.py` with Pydantic models for all API responses — **removed in a later refactor (planned-not-implemented)**
+- [~] Exported V2 DTOs: `TransactionDTOv2`, `InternalTransactionDTOv2`, `TokenTransferDTOv2`, `LogEventDTOv2`, `BlockDTOv2` — **removed with the DTO layer**
 
 ### 2. Retry Mechanism (tenacity)
 **Status:** ✅ COMPLETE
@@ -90,7 +93,7 @@ dependencies = [
     "httpx[http2]>=0.27.0",    # Modern HTTP/2 client
     "aiolimiter>=1.1.0",       # Token Bucket rate limiter
     "tenacity>=8.2.0",         # Smart retries
-    "pydantic>=2.7.0",         # Data validation & DTOs
+    "pydantic>=2.7.0",         # Data validation & DTOs — later REMOVED
     "orjson>=3.10.0",          # Fast JSON parsing
     "eth-abi",
     "eth-utils>=2.0.0",        # Keccak & utilities
@@ -107,7 +110,7 @@ dependencies = [
 **New public exports:**
 - `HttpxClientAdapter` - Modern HTTP/2 client
 - `TenacityRetryAdapter` - Transport-agnostic retry mechanism
-- `TransactionDTOv2`, `InternalTransactionDTOv2`, `TokenTransferDTOv2`, `LogEventDTOv2`, `BlockDTOv2` - Pydantic V2 DTOs
+- `TransactionDTOv2`, `InternalTransactionDTOv2`, `TokenTransferDTOv2`, `LogEventDTOv2`, `BlockDTOv2` - Pydantic V2 DTOs *(later removed — planned-not-implemented)*
 
 **Removed example files:**
 - `examples/routscan_demo.py` - RoutScan scanner was removed
@@ -582,26 +585,39 @@ $ aiochainscan shell
 ### v0.4.0 (Released)
 - ✅ httpx with HTTP/2 (replaced aiohttp)
 - ✅ tenacity retry (replaced aiohttp-retry)
-- ✅ orjson + Pydantic V2 DTOs
+- ✅ orjson + Pydantic V2 DTOs *(DTO layer later removed — see §1 above)*
 - ✅ All critical security/performance fixes
 
-### v0.4.1 (Current Release)
+### v0.4.1 (Released)
 - ✅ Complete method coverage (30+ convenience methods)
 - ✅ Streaming API (iter_transactions_streaming, etc.)
 - ✅ DataFrame export fix (auto-pagination)
 - ✅ 100% mypy --strict (80 files)
 - ✅ 587+ tests passing
 
-### v0.5.0 (Next Release)
+### v0.5.0 (Released)
 - Rate limit retry enhancement
 - ClientContext Protocol
 - Scanner Registry completion
 - Documentation updates
 
-### v0.6.0
-- GraphQL expansion
-- Finality-aware caching
-- Multi-address batch queries
+### v0.6.0 (Current — competitive-backlog feature set)
+- ✅ Polling helpers: `wait_for_transaction` / `wait_for_verification` /
+  `wait_for_block` (+ `ChainscanWaitTimeoutError`)
+- ✅ Token holders: `TOKEN_HOLDERS` / `TOKEN_TOP_HOLDERS` /
+  `TOKEN_HOLDER_COUNT` (33 `Method` values total; Etherscan v2 PRO +
+  Blockscout v2 native)
+- ✅ Custom base URLs for self-hosted instances (`expected_chain_id`,
+  `allow_http`, `get_chain_info()`, `validate_chain()`)
+- ✅ MCP server revamp (`aiochainscan/mcp/`): response envelope, opaque
+  cursors with `next_call`, 12 read-only curated tools
+- ✅ Multi-provider failover pool (`ChainscanPool`): sticky routing,
+  cooldowns, capability routing, pinned pagination
+- ✅ Value conversion helpers (`aiochainscan/convert.py`, exported at root)
+- ✅ NodeReal scanner (BSC) and Blockscout v1 JSON-RPC proxy fallback
+- GraphQL expansion, finality-aware caching and multi-address batch queries
+  remain open (moved to the medium/long-term sections above)
+- 1000+ tests passing, mypy --strict clean
 
 ### v1.0.0
 - Real-time subscriptions

@@ -9,6 +9,50 @@ class ChainscanClientError(Exception):
     pass
 
 
+class MethodNotDeclaredError(ValueError):
+    """The scanner does not declare the requested method in its ``SPECS``.
+
+    Subclasses :class:`ValueError`, preserving the historical contract of
+    ``Scanner.call`` for undeclared methods, while giving the provider pool
+    a precise type to classify: a provider without the method is *routed
+    around* (failover to the next provider) instead of failing the call.
+    Deliberately not a :class:`ChainscanClientError` — existing
+    ``except ChainscanClientError`` handlers must not start catching
+    capability errors.
+    """
+
+
+class ProviderPoolExhaustedError(ChainscanClientError):
+    """Every provider in the pool failed (or is in cooldown) for a request.
+
+    Attributes:
+        operation: Description of the attempted operation (method or stream
+            name) for which all providers were tried.
+        attempts: Ordered ``(provider_label, exception)`` pairs — one per
+            provider that was tried, in pool priority order. Providers
+            skipped because of an active cooldown contribute the error that
+            put them into cooldown, so the list always covers the whole pool
+            when exhaustion is caused by failures.
+    """
+
+    def __init__(self, operation: str, attempts: list[tuple[str, Exception]]) -> None:
+        self.operation = operation
+        self.attempts = attempts
+        summary = '; '.join(f'{label}: {type(exc).__name__}: {exc}' for label, exc in attempts)
+        suffix = f': {summary}' if attempts else ''
+        super().__init__(f'All {len(attempts)} providers failed for {operation!r}{suffix}')
+
+
+class ChainscanProviderSwitchWarning(UserWarning):
+    """Emitted when the provider pool routes away from a provider.
+
+    Fired on failure-driven switches (rate limit, network errors, auth/plan
+    rejections) and on providers skipped at construction time. Capability
+    routing (a provider that never declared the method) is deterministic and
+    therefore silent.
+    """
+
+
 class ChainscanDependencyError(ChainscanClientError):
     """An optional dependency required for the requested operation is missing.
 
@@ -145,6 +189,35 @@ class ChainscanDataError(ChainscanClientError):
         if self.details:
             return f'{self.message} | Details: {self.details}'
         return self.message
+
+
+class ChainscanWaitTimeoutError(ChainscanClientError, TimeoutError):
+    """A ``wait_for_*`` polling helper exceeded its timeout before reaching a final state.
+
+    Raised by :meth:`~aiochainscan.core.client.ChainscanClient.wait_for_transaction`,
+    ``wait_for_verification`` and ``wait_for_block`` when the awaited condition
+    (mined transaction, terminal verification verdict, reached block) did not
+    materialize within the requested budget. Subclasses the builtin
+    ``TimeoutError`` so generic wait/timeout handling catches it too.
+
+    Attributes:
+        what: Human-readable description of the awaited condition.
+        waited: Seconds actually spent waiting before giving up.
+        last_state: Last non-final observation for diagnosis — the pending
+            API payload or the transient exception returned by the probe.
+    """
+
+    def __init__(self, what: str, waited: float, last_state: Any = None) -> None:
+        self.what = what
+        self.waited = waited
+        self.last_state = last_state
+        super().__init__(str(self))
+
+    def __str__(self) -> str:
+        return (
+            f'Timed out after {self.waited:.1f}s waiting for {self.what}. '
+            f'Last state: {self.last_state!r}'
+        )
 
 
 class PaginationDataLossError(ChainscanClientError):

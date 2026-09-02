@@ -9,6 +9,7 @@ from ..chain_registry import resolve_chain_id
 from ..core.endpoint import EndpointSpec
 from ..core.method import Method
 from ..core.url_builder import UrlBuilder
+from ..exceptions import MethodNotDeclaredError
 from ..network import Network
 
 
@@ -40,6 +41,9 @@ class Scanner(ABC):
     SPECS: dict[Method, EndpointSpec]
     """Mapping of logical methods to endpoint specifications"""
 
+    chain_id: int | None
+    """Numeric chain id; ``None`` for custom base URLs until probed/recorded."""
+
     def __init__(
         self,
         api_key: str,
@@ -47,23 +51,34 @@ class Scanner(ABC):
         url_builder: UrlBuilder,
         chain_id: int | None = None,
         network_client: Network | None = None,
+        base_url: str | None = None,
     ) -> None:
         """
         Initialize scanner instance.
 
         Args:
             api_key: API key for authentication
-            network: Network name (must be in supported_networks)
+            network: Network name (must be in supported_networks; arbitrary
+                when ``base_url`` is given — the registry is bypassed)
             url_builder: UrlBuilder instance for URL construction
             chain_id: Chain ID (optional, will be resolved from network)
             network_client: Network instance for connection pooling.
                 Scanner uses it for requests (client owns lifecycle).
                 Required at call time; raises RuntimeError if None when call() is invoked.
+            base_url: Custom base URL (self-hosted instance / proxy). When
+                set, the supported-networks check is skipped and the scanner
+                must build all request URLs from this value instead of the
+                registry mappings. ``chain_id`` stays ``None`` unless given
+                explicitly (the chain is unknown until probed — see
+                ``ChainscanClient.get_chain_info``).
 
         Raises:
             ValueError: If network is not supported
         """
-        if network not in self.supported_networks:
+        # A custom base URL bypasses the registry: the instance is not one of
+        # the built-in per-network deployments, so the supported-networks set
+        # does not apply. Scanners that cannot honor a base URL reject it.
+        if base_url is None and network not in self.supported_networks:
             available = ', '.join(sorted(self.supported_networks))
             raise ValueError(
                 f"Network '{network}' not supported by {self.name} v{self.version}. "
@@ -73,7 +88,14 @@ class Scanner(ABC):
         self.api_key = api_key
         self.network = network
         self.url_builder = url_builder
-        self.chain_id = chain_id or resolve_chain_id(network)
+        self.base_url = base_url
+        if chain_id is not None:
+            self.chain_id = chain_id
+        elif base_url is not None:
+            # Custom instance: the served chain is unknown until probed.
+            self.chain_id = None
+        else:
+            self.chain_id = resolve_chain_id(network)
         self._network_client = network_client
         self._owns_network = False  # Scanner doesn't own injected client
 
@@ -146,7 +168,7 @@ class Scanner(ABC):
         """
         if method not in self.SPECS:
             available = [str(m) for m in self.SPECS]
-            raise ValueError(
+            raise MethodNotDeclaredError(
                 f'Method {method} not supported by {self.name} v{self.version}. '
                 f'Available: {", ".join(available)}'
             )
