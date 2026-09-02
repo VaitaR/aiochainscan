@@ -15,21 +15,11 @@ inheriting them would falsely widen BlockScout v1's declared surface.
 from dataclasses import replace
 from typing import Any
 
-from ..core.endpoint import PARSERS, EndpointSpec
+from ..core.endpoint import EndpointSpec, etherscan_parser
 from ..core.method import Method
-from ..crypto import to_checksum_address
 from . import register_scanner
 from ._etherscan_like import EtherscanLikeScanner
-
-
-def _checksummed_holder_address(value: Any) -> Any:
-    """Checksum a holder address, passing through values EIP-55 cannot digest."""
-    if isinstance(value, str):
-        try:
-            return to_checksum_address(value)
-        except ValueError:
-            return value
-    return value
+from .base import checksummed_holder_address
 
 
 def _parse_token_holders(response: Any) -> list[dict[str, Any]]:
@@ -58,7 +48,7 @@ def _parse_token_holders(response: Any) -> list[dict[str, Any]]:
         if not isinstance(raw, dict):
             continue
         item: dict[str, Any] = {
-            'address': _checksummed_holder_address(raw.get('TokenHolderAddress')),
+            'address': checksummed_holder_address(raw.get('TokenHolderAddress')),
             'value': str(raw.get('TokenHolderQuantity') or '0'),
         }
         address_type = raw.get('TokenHolderAddressType')
@@ -164,6 +154,6 @@ class EtherscanV2(EtherscanLikeScanner):
                 'chainid': '{chain_id}',
             },
             param_map={'contract_address': 'contractaddress'},
-            parser=PARSERS['etherscan'],
+            parser=etherscan_parser,
         ),
     }
