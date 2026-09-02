@@ -410,5 +410,3 @@ All paging strategies supported:
 ## See Also
 
 - [Progress Callbacks](PROGRESS_CALLBACKS.md)
-- [Streaming Decoder](STREAMING_DECODER.md)
-- [Whale Block Handling](WHALE_BLOCK_FIX_SUMMARY.md)
