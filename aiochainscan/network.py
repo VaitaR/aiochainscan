@@ -45,6 +45,7 @@ from aiochainscan.exceptions import (
     ChainscanNetworkError,
     ChainscanRateLimitError,
     ChainscanResponseTooLargeError,
+    FailureKind,
 )
 from aiochainscan.ports.rate_limiter import RateLimiter, RetryPolicy
 
@@ -175,6 +176,55 @@ def _excerpt(value: Any, limit: int = NETWORK_ERROR_EXCERPT_BYTES) -> Any:
     if isinstance(value, dict | list):
         return f'<{type(value).__name__} with {len(value)} items>'
     return value
+
+
+# Etherscan-style API error texts (message+result) that mean "bad credential".
+# Relocated from ``core/pool.py``: the failure kind is decided where the
+# failure is detected — at the raise site in ``Network._raise_if_error`` —
+# and the pool's fallback ladder for kind-less ``ChainscanClientApiError``
+# instances calls the same helper, so raise-site and fallback classification
+# can never drift.
+_AUTH_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r'invalid api[- ]key', re.IGNORECASE),
+    re.compile(r'missing[ /]+api[- ]key', re.IGNORECASE),
+    re.compile(r'api[- ]key.{0,24}(invalid|missing|required)', re.IGNORECASE),
+    re.compile(r'no api[- ]key', re.IGNORECASE),
+)
+
+# Error texts meaning "the plan does not cover this chain/endpoint".
+_PLAN_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r'free api', re.IGNORECASE),
+    re.compile(r'upgrade (?:your )?api plan', re.IGNORECASE),
+    re.compile(r'api pro endpoint', re.IGNORECASE),
+    re.compile(r'not supported for this chain', re.IGNORECASE),
+)
+
+
+def api_error_failure_kind(message: str | None, result: Any) -> FailureKind:
+    """Classify an Etherscan-style API error envelope by its text.
+
+    Used at the raise site in :meth:`Network._raise_if_error` so the
+    exception carries its :class:`~aiochainscan.exceptions.FailureKind`
+    from the moment it is raised; the pool's classification fallback calls
+    the same helper for ``ChainscanClientApiError`` instances constructed
+    without an explicit kind.
+
+    Args:
+        message: The envelope's ``message`` field (``None`` tolerated).
+        result: The envelope's ``result`` field (any type; non-strings
+            simply contribute nothing matchable beyond their repr).
+
+    Returns:
+        :attr:`FailureKind.AUTH` for bad-credential texts,
+        :attr:`FailureKind.PLAN_RESTRICTED` for plan-coverage texts,
+        :attr:`FailureKind.FATAL` otherwise.
+    """
+    text = f'{message or ""} {result or ""}'
+    if any(pattern.search(text) for pattern in _AUTH_PATTERNS):
+        return FailureKind.AUTH
+    if any(pattern.search(text) for pattern in _PLAN_PATTERNS):
+        return FailureKind.PLAN_RESTRICTED
+    return FailureKind.FATAL
 
 
 class Network:
@@ -623,6 +673,8 @@ class Network:
 
             # Detect hidden rate limit errors (HTTP 200 with rate limit message)
             # Etherscan returns: {"status":"0","message":"NOTOK","result":"Max rate limit reached"}
+            # ChainscanRateLimitError carries failure_kind=RATE_LIMIT as its
+            # class default, so the raise site needs no explicit kind here.
             if isinstance(result, str) and (
                 'rate limit' in result.lower()
                 or 'limit reached' in result.lower()
@@ -630,7 +682,11 @@ class Network:
             ):
                 raise ChainscanRateLimitError(message, result)
 
-            raise ChainscanClientApiError(message, result)
+            # The kind is decided here — where the failure is detected — so
+            # the pool classifies by lookup instead of re-parsing the text.
+            raise ChainscanClientApiError(
+                message, result, failure_kind=api_error_failure_kind(message, result)
+            )
 
         if 'error' in response_json:
             err = response_json['error']
