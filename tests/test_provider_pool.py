@@ -28,6 +28,7 @@ Covered semantics (mirrors the P0.1 backlog item):
 from __future__ import annotations
 
 import asyncio
+import inspect
 from collections.abc import AsyncIterator
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
@@ -41,6 +42,7 @@ from aiochainscan.core.pool import (
     FailureKind,
     classify_failure,
 )
+from aiochainscan.core.streaming import STREAMING_SPECS
 from aiochainscan.domain.method import Method
 from aiochainscan.exceptions import (
     ChainscanClientApiError,
@@ -978,6 +980,82 @@ class TestTransparency:
 
         assert txs == [{'hash': '0x1'}]
         assert events == [{'fetched': 1}]
+
+
+# ---------------------------------------------------------------------------
+# Declared forwarding surface: every accepted param actually reaches the member
+# ---------------------------------------------------------------------------
+
+
+class TestStreamForwardSurface:
+    """The pool's one-line stream forwards must forward EVERYTHING they accept.
+
+    Companion to ``test_method_consistency``'s signature-mirror guard (which
+    pins WHAT the pool accepts): this drives the real forwarding path — every
+    parameter of every declared stream reaches the member client verbatim,
+    ``guarantee_complete`` included (the historical drift: the pool's
+    ``iter_transactions``/``iter_logs`` accepted neither, and a hand-copied
+    body could silently drop a param again).
+    """
+
+    @staticmethod
+    def _sentinel(name: str, param: inspect.Parameter) -> Any:
+        """A distinctive value for one signature parameter (member is stubbed)."""
+        if name == 'on_progress':
+
+            async def accepts_anything(**_kwargs: Any) -> None:
+                return None
+
+            return accepts_anything
+        if isinstance(param.default, bool):
+            return not param.default  # False for default-True guarantee_complete
+        if isinstance(param.default, int):
+            return param.default + 1  # never the default itself
+        return f'<sentinel:{name}>'  # str / None / list defaults
+
+    async def test_every_declared_stream_forwards_all_params(self) -> None:
+        for spec in STREAMING_SPECS:
+            member = make_etherscan_client()
+            forwarded: dict[str, Any] = {}
+            setattr(member, spec.name, self._recorder(forwarded))
+            pool = ChainscanPool([member])
+
+            sentinels = {
+                name: self._sentinel(name, param)
+                for name, param in inspect.signature(
+                    getattr(ChainscanPool, spec.name)
+                ).parameters.items()
+                if name != 'self'
+            }
+            assert sentinels, f'{spec.name}: no parameters found to forward'
+
+            batches = [b async for b in getattr(pool, spec.name)(**sentinels)]
+
+            assert batches == [[{'ok': True}]], f'{spec.name}: stream did not flow'
+            for name, value in sentinels.items():
+                if name == 'on_progress':
+                    # Batch streams stamp provider= by wrapping the callback;
+                    # item-level streams have no callback parameter at all.
+                    assert 'on_progress' in forwarded, f'{spec.name} dropped on_progress'
+                    assert (
+                        forwarded['on_progress'] is not value
+                    ), f'{spec.name} forwarded the callback unwrapped (no provider stamp)'
+                else:
+                    assert forwarded.get(name) == value, (
+                        f'{spec.name} accepted {name}={value!r} but forwarded '
+                        f'{name}={forwarded.get(name)!r} — pool forward drift'
+                    )
+            await pool.close()
+
+    @staticmethod
+    def _recorder(target: dict[str, Any]) -> Any:
+        """Member-client stand-in capturing the kwargs it was called with."""
+
+        async def recorder(**kwargs: Any) -> AsyncIterator[list[dict[str, Any]]]:
+            target.update(kwargs)
+            yield [{'ok': True}]
+
+        return recorder
 
     def test_provider_states_snapshot(self, pool: ChainscanPool) -> None:
         states = pool.provider_states()

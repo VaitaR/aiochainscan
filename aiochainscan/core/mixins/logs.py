@@ -3,54 +3,23 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any, Protocol
 
 from ...domain.method import Method
 from ...domain.models import Address
 from ...domain.normalize import normalize_log
 from ...domain.normalized import Log
-from ...services.pagination import collect_all
+from ..streaming import SupportsStreaming, collect_stream
 from ..types import JSONList
 
 if TYPE_CHECKING:
     from ...ports.progress import ProgressCallback
 
-
 logger = logging.getLogger(__name__)
-AGGREGATION_WARNING_THRESHOLD = 100_000
 
 
-class _LogsClientProtocol(Protocol):
+class _LogsClientProtocol(SupportsStreaming, Protocol):
     async def call(self, method: Method, **params: Any) -> Any: ...
-
-    def iter_logs_streaming(
-        self,
-        address: str | None,
-        from_block: int = 0,
-        to_block: int | str | None = 'latest',
-        topic0: str | None = None,
-        topic1: str | None = None,
-        topic2: str | None = None,
-        topic3: str | None = None,
-        batch_size: int = 1000,
-        on_progress: ProgressCallback | None = None,
-        guarantee_complete: bool = True,
-    ) -> Any: ...
-
-    def iter_logs_normalized(
-        self,
-        address: str | None,
-        from_block: int = 0,
-        to_block: int | str | None = 'latest',
-        topic0: str | None = None,
-        topic1: str | None = None,
-        topic2: str | None = None,
-        topic3: str | None = None,
-        batch_size: int = 1000,
-        on_progress: ProgressCallback | None = None,
-        guarantee_complete: bool = True,
-    ) -> AsyncIterator[list[Log]]: ...
 
 
 class LogsMixin:
@@ -111,7 +80,7 @@ class LogsMixin:
         on_progress: ProgressCallback | None = None,
         guarantee_complete: bool = True,
     ) -> JSONList:
-        return await collect_all(
+        return await collect_stream(
             self.iter_logs_streaming(
                 address=address,
                 from_block=from_block,
@@ -124,9 +93,8 @@ class LogsMixin:
                 on_progress=on_progress,
                 guarantee_complete=guarantee_complete,
             ),
-            threshold=AGGREGATION_WARNING_THRESHOLD,
-            warning='Aggregating >100k logs in memory. '
-            'Consider using iter_logs_streaming() to avoid OOM.',
+            stream_name='iter_logs_streaming',
+            noun='logs',
             logger=logger,
         )
 
@@ -150,23 +118,20 @@ class LogsMixin:
         ``iter_logs_streaming`` (see core/client.py) and normalizes each
         batch as it arrives, never after collecting the raw list.
         """
-        items: list[Log] = []
-        async for batch in self.iter_logs_normalized(
-            address,
-            from_block=from_block,
-            to_block=to_block,
-            topic0=topic0,
-            topic1=topic1,
-            topic2=topic2,
-            topic3=topic3,
-            batch_size=1000,
-            on_progress=on_progress,
-            guarantee_complete=guarantee_complete,
-        ):
-            items.extend(batch)
-            if len(items) == AGGREGATION_WARNING_THRESHOLD:
-                logger.warning(
-                    'Aggregating >100k normalized logs in memory. '
-                    'Consider using iter_logs_normalized() to avoid OOM.'
-                )
-        return items
+        return await collect_stream(
+            self.iter_logs_normalized(
+                address,
+                from_block=from_block,
+                to_block=to_block,
+                topic0=topic0,
+                topic1=topic1,
+                topic2=topic2,
+                topic3=topic3,
+                batch_size=1000,
+                on_progress=on_progress,
+                guarantee_complete=guarantee_complete,
+            ),
+            stream_name='iter_logs_normalized',
+            noun='normalized logs',
+            logger=logger,
+        )

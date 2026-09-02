@@ -81,6 +81,7 @@ from .mixins import (
     TokenMixin,
     TransactionMixin,
 )
+from .streaming import STREAMING_SPECS_BY_NAME, StreamSpec
 from .types import JSONDict
 
 if TYPE_CHECKING:
@@ -729,6 +730,52 @@ class ChainscanPool(
         return [method for method in Method if self.supports_method(method)]
 
     # -- public API: pagination (provider-pinned) ----------------------------
+    #
+    # Every ``iter_*`` forward below is a one-line declaration over
+    # :meth:`_forward_stream`, whose semantics are read from the streaming
+    # declaration source (``core/streaming.py``): pinning, progress stamping,
+    # ``guarantee_complete`` forwarding and completeness routing cannot drift
+    # per method, because no method re-codes them.
+
+    def _forward_stream(
+        self,
+        spec: StreamSpec,
+        /,
+        **kwargs: Any,
+    ) -> AsyncIterator[Any]:
+        """ONE pinned forward for every declared streaming method.
+
+        The declaration row decides the semantics, so the pool surface can
+        never drift from the client's again (the historical drift:
+        ``iter_transactions``/``iter_logs`` silently dropped
+        ``guarantee_complete``):
+
+        - the stream is pinned via :meth:`_pinned_stream` — provider chosen
+          at generator start, failover only on a first-page failure,
+          mid-pagination errors cool the provider and propagate;
+        - every kwarg (``guarantee_complete`` included) is forwarded verbatim
+          to the member client's same-named method;
+        - batch-level streams (``not spec.item_level``) get the
+          ``provider=<label>`` progress stamp via
+          :func:`_inject_provider_progress`;
+        - ``spec.completeness_routed`` streams (token holders: no splittable
+          dimension) route through :meth:`_guaranteed_pinned_stream` when
+          ``guarantee_complete`` is set.
+        """
+        guarantee = kwargs.get('guarantee_complete', True)
+
+        def factory(state: _ProviderState) -> AsyncIterator[Any]:
+            call_kwargs = dict(kwargs)
+            if not spec.item_level:
+                callback = call_kwargs.get('on_progress')
+                if callback is not None:
+                    call_kwargs['on_progress'] = _inject_provider_progress(state.label, callback)
+            stream: AsyncIterator[Any] = getattr(state.client, spec.name)(**call_kwargs)
+            return stream
+
+        if spec.completeness_routed and guarantee:
+            return self._guaranteed_pinned_stream(spec.name, spec.method, factory)
+        return self._pinned_stream(spec.name, factory)
 
     def iter_transactions(
         self,
@@ -737,19 +784,22 @@ class ChainscanPool(
         from_block: int = 0,
         to_block: int | str | None = 'latest',
         batch_size: int = 1000,
+        guarantee_complete: bool = True,
     ) -> AsyncIterator[dict[str, Any]]:
-        """Stream transactions one by one, pinned to one provider per call."""
+        """Stream transactions one by one, pinned to one provider per call.
 
-        def factory(state: _ProviderState) -> AsyncIterator[dict[str, Any]]:
-            return state.client.iter_transactions(
-                address=address,
-                abi=abi,
-                from_block=from_block,
-                to_block=to_block,
-                batch_size=batch_size,
-            )
-
-        return self._pinned_stream('iter_transactions', factory)
+        ``guarantee_complete`` forwards to the member client (default
+        ``True``) — see :meth:`ChainscanClient.iter_transactions`.
+        """
+        return self._forward_stream(
+            STREAMING_SPECS_BY_NAME['iter_transactions'],
+            address=address,
+            abi=abi,
+            from_block=from_block,
+            to_block=to_block,
+            batch_size=batch_size,
+            guarantee_complete=guarantee_complete,
+        )
 
     def iter_logs(
         self,
@@ -760,21 +810,24 @@ class ChainscanPool(
         batch_size: int = 1000,
         topics: list[str] | None = None,
         topic_operators: list[str] | None = None,
+        guarantee_complete: bool = True,
     ) -> AsyncIterator[dict[str, Any]]:
-        """Stream event logs one by one, pinned to one provider per call."""
+        """Stream event logs one by one, pinned to one provider per call.
 
-        def factory(state: _ProviderState) -> AsyncIterator[dict[str, Any]]:
-            return state.client.iter_logs(
-                address=address,
-                abi=abi,
-                from_block=from_block,
-                to_block=to_block,
-                batch_size=batch_size,
-                topics=topics,
-                topic_operators=topic_operators,
-            )
-
-        return self._pinned_stream('iter_logs', factory)
+        ``guarantee_complete`` forwards to the member client (default
+        ``True``) — see :meth:`ChainscanClient.iter_logs`.
+        """
+        return self._forward_stream(
+            STREAMING_SPECS_BY_NAME['iter_logs'],
+            address=address,
+            abi=abi,
+            from_block=from_block,
+            to_block=to_block,
+            batch_size=batch_size,
+            topics=topics,
+            topic_operators=topic_operators,
+            guarantee_complete=guarantee_complete,
+        )
 
     def iter_transactions_streaming(
         self,
@@ -791,23 +844,15 @@ class ChainscanPool(
         stream is bound to its provider (see ``_pinned_stream``). Progress
         callbacks that accept it additionally receive ``provider=<label>``.
         """
-
-        def factory(state: _ProviderState) -> AsyncIterator[list[dict[str, Any]]]:
-            progress = (
-                _inject_provider_progress(state.label, on_progress)
-                if on_progress is not None
-                else None
-            )
-            return state.client.iter_transactions_streaming(
-                address=address,
-                from_block=from_block,
-                to_block=to_block,
-                batch_size=batch_size,
-                on_progress=progress,
-                guarantee_complete=guarantee_complete,
-            )
-
-        return self._pinned_stream('iter_transactions_streaming', factory)
+        return self._forward_stream(
+            STREAMING_SPECS_BY_NAME['iter_transactions_streaming'],
+            address=address,
+            from_block=from_block,
+            to_block=to_block,
+            batch_size=batch_size,
+            on_progress=on_progress,
+            guarantee_complete=guarantee_complete,
+        )
 
     def iter_internal_transactions_streaming(
         self,
@@ -819,23 +864,15 @@ class ChainscanPool(
         guarantee_complete: bool = True,
     ) -> AsyncIterator[list[dict[str, Any]]]:
         """Stream internal-transaction batches, pinned per call."""
-
-        def factory(state: _ProviderState) -> AsyncIterator[list[dict[str, Any]]]:
-            progress = (
-                _inject_provider_progress(state.label, on_progress)
-                if on_progress is not None
-                else None
-            )
-            return state.client.iter_internal_transactions_streaming(
-                address=address,
-                from_block=from_block,
-                to_block=to_block,
-                batch_size=batch_size,
-                on_progress=progress,
-                guarantee_complete=guarantee_complete,
-            )
-
-        return self._pinned_stream('iter_internal_transactions_streaming', factory)
+        return self._forward_stream(
+            STREAMING_SPECS_BY_NAME['iter_internal_transactions_streaming'],
+            address=address,
+            from_block=from_block,
+            to_block=to_block,
+            batch_size=batch_size,
+            on_progress=on_progress,
+            guarantee_complete=guarantee_complete,
+        )
 
     def iter_token_transfers_streaming(
         self,
@@ -848,24 +885,16 @@ class ChainscanPool(
         guarantee_complete: bool = True,
     ) -> AsyncIterator[list[dict[str, Any]]]:
         """Stream ERC-20 transfer batches, pinned per call."""
-
-        def factory(state: _ProviderState) -> AsyncIterator[list[dict[str, Any]]]:
-            progress = (
-                _inject_provider_progress(state.label, on_progress)
-                if on_progress is not None
-                else None
-            )
-            return state.client.iter_token_transfers_streaming(
-                address=address,
-                from_block=from_block,
-                to_block=to_block,
-                contract_address=contract_address,
-                batch_size=batch_size,
-                on_progress=progress,
-                guarantee_complete=guarantee_complete,
-            )
-
-        return self._pinned_stream('iter_token_transfers_streaming', factory)
+        return self._forward_stream(
+            STREAMING_SPECS_BY_NAME['iter_token_transfers_streaming'],
+            address=address,
+            from_block=from_block,
+            to_block=to_block,
+            contract_address=contract_address,
+            batch_size=batch_size,
+            on_progress=on_progress,
+            guarantee_complete=guarantee_complete,
+        )
 
     def iter_logs_streaming(
         self,
@@ -881,27 +910,19 @@ class ChainscanPool(
         guarantee_complete: bool = True,
     ) -> AsyncIterator[list[dict[str, Any]]]:
         """Stream event-log batches, pinned per call."""
-
-        def factory(state: _ProviderState) -> AsyncIterator[list[dict[str, Any]]]:
-            progress = (
-                _inject_provider_progress(state.label, on_progress)
-                if on_progress is not None
-                else None
-            )
-            return state.client.iter_logs_streaming(
-                address=address,
-                from_block=from_block,
-                to_block=to_block,
-                topic0=topic0,
-                topic1=topic1,
-                topic2=topic2,
-                topic3=topic3,
-                batch_size=batch_size,
-                on_progress=progress,
-                guarantee_complete=guarantee_complete,
-            )
-
-        return self._pinned_stream('iter_logs_streaming', factory)
+        return self._forward_stream(
+            STREAMING_SPECS_BY_NAME['iter_logs_streaming'],
+            address=address,
+            from_block=from_block,
+            to_block=to_block,
+            topic0=topic0,
+            topic1=topic1,
+            topic2=topic2,
+            topic3=topic3,
+            batch_size=batch_size,
+            on_progress=on_progress,
+            guarantee_complete=guarantee_complete,
+        )
 
     def iter_token_holders_streaming(
         self,
@@ -920,25 +941,13 @@ class ChainscanPool(
         :meth:`_guaranteed_pinned_stream`. ``guarantee_complete=False``
         restores the plain pinned-stream behaviour verbatim.
         """
-
-        def factory(state: _ProviderState) -> AsyncIterator[list[dict[str, Any]]]:
-            progress = (
-                _inject_provider_progress(state.label, on_progress)
-                if on_progress is not None
-                else None
-            )
-            return state.client.iter_token_holders_streaming(
-                contract_address=contract_address,
-                batch_size=batch_size,
-                on_progress=progress,
-                guarantee_complete=guarantee_complete,
-            )
-
-        if guarantee_complete:
-            return self._guaranteed_pinned_stream(
-                'iter_token_holders_streaming', Method.TOKEN_HOLDERS, factory
-            )
-        return self._pinned_stream('iter_token_holders_streaming', factory)
+        return self._forward_stream(
+            STREAMING_SPECS_BY_NAME['iter_token_holders_streaming'],
+            contract_address=contract_address,
+            batch_size=batch_size,
+            on_progress=on_progress,
+            guarantee_complete=guarantee_complete,
+        )
 
     # -- public API: DataFrame helpers ---------------------------------------
 
