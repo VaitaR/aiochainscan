@@ -116,8 +116,8 @@ class ChainscanClient(
         # Using configuration system (version defaults to 'v2' for etherscan)
         client = ChainscanClient.from_config('etherscan', network='ethereum')
 
-        # Direct instantiation
-        client = ChainscanClient('etherscan', 'v2', 'eth', 'ethereum', 'your_api_key')
+        # Direct instantiation — honest constructor (chain id or alias, provider name)
+        client = ChainscanClient(chain='ethereum', provider='etherscan', api_key='your_api_key')
 
         # Make unified API calls
         balance = await client.call(Method.ACCOUNT_BALANCE, address='0x...')
@@ -126,11 +126,11 @@ class ChainscanClient(
 
     def __init__(
         self,
-        scanner_name: str,
-        scanner_version: str,
-        api_kind: str,
-        network: str,
-        api_key: str,
+        scanner_name: str | None = None,
+        scanner_version: str | None = None,
+        api_kind: str | None = None,
+        network: str | None = None,
+        api_key: str | None = None,
         chain_id: int | None = None,
         timeout: float | httpx.Timeout | None = 10.0,
         proxy: str | None = None,
@@ -138,6 +138,10 @@ class ChainscanClient(
         retry_policy: RetryPolicy | None = None,
         base_url: str | None = None,
         expected_chain_id: int | None = None,
+        *,
+        chain: str | int | None = None,
+        provider: str | None = None,
+        allow_http: bool = False,
     ):
         """
         Initialize the unified client.
@@ -160,7 +164,61 @@ class ChainscanClient(
             expected_chain_id: Chain id the instance must serve. When set, it
                 is validated before the first request and a mismatch raises
                 ``ChainscanDataError`` (see ``validate_chain``).
+            chain: Keyword-only honest-constructor form: a chain id or alias
+                ('ethereum', 8453, a self-hosted base URL), resolved through
+                the same registry as ``from_config``. Mutually exclusive with
+                the positional ``scanner_name``/``scanner_version``/
+                ``api_kind``/``network`` quadruple — pass ``chain``/
+                ``provider`` together, or the positional group, never both.
+            provider: Keyword-only honest-constructor form of ``scanner_name``
+                (e.g. 'etherscan', 'blockscout', 'blockscout_v2'). Required
+                together with ``chain``.
+            allow_http: Forwarded to chain resolution when using
+                ``chain``/``provider`` (see ``from_config``).
         """
+        if chain is not None or provider is not None:
+            if scanner_name is not None or network is not None:
+                raise TypeError(
+                    "ChainscanClient: pass either ('chain', 'provider') or the "
+                    'positional (scanner_name, scanner_version, api_kind, network) '
+                    'quadruple, never both.'
+                )
+            if provider is None or chain is None:
+                raise TypeError("ChainscanClient: 'chain' and 'provider' must be given together.")
+            target = resolve_scanner_target(
+                provider,
+                chain,
+                api_key=api_key,
+                scanner_version=scanner_version,
+                expected_chain_id=expected_chain_id,
+                allow_http=allow_http,
+            )
+            scanner_name = target.scanner_name
+            scanner_version = target.scanner_version
+            api_kind = target.api_kind
+            network = target.network
+            api_key = target.api_key
+            chain_id = target.chain_id
+            base_url = target.base_url
+        elif (
+            scanner_name is None
+            or scanner_version is None
+            or api_kind is None
+            or network is None
+            or api_key is None
+        ):
+            raise TypeError(
+                'ChainscanClient: pass (scanner_name, scanner_version, api_kind, network, '
+                "api_key) or ('chain', 'provider', api_key=...)."
+            )
+
+        assert (
+            scanner_name is not None
+            and scanner_version is not None
+            and api_kind is not None
+            and network is not None
+            and api_key is not None
+        )
         self.scanner_name = scanner_name
         self.scanner_version = scanner_version
         self.api_kind = api_kind
