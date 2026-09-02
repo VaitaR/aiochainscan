@@ -625,6 +625,19 @@ class Network:
                     f'HTTP {status_code} for {safe_url}: {response.reason_phrase}',
                     retryable=True,
                 )
+            if status_code in (401, 403):
+                # Credential/authorization refusal at the HTTP layer: NodeReal
+                # answers an invalid path key with 401; WAF/geo-blocks and
+                # role-restricted proxies answer 403. In every observed flavour
+                # the refusal is THIS provider's — the pool should fail over
+                # and cool the provider (AUTH), not treat it as the caller's
+                # problem. No repo provider signals plan restriction at the
+                # HTTP layer (Etherscan rides 200-envelopes, NodeReal JSON-RPC
+                # codes), so 403 is not split into PLAN_RESTRICTED.
+                raise ChainscanClientError(
+                    f'HTTP {status_code} for {safe_url}: {response.reason_phrase}',
+                    failure_kind=FailureKind.AUTH,
+                )
             raise ChainscanClientError(
                 f'HTTP {status_code} for {safe_url}: {response.reason_phrase}'
             )
