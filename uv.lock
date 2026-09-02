@@ -2,6 +2,12 @@ version = 1
 revision = 3
 requires-python = ">=3.12"
 
+[manifest]
+members = [
+    "aiochainscan",
+    "aiochainscan-fastabi",
+]
+
 [[package]]
 name = "aiochainscan"
 version = "0.6.0"
@@ -33,7 +39,11 @@ dev = [
 ]
 fallback = [
     { name = "eth-abi" },
+    { name = "eth-hash", extra = ["pycryptodome"] },
     { name = "eth-utils" },
+]
+fastabi = [
+    { name = "aiochainscan-fastabi" },
 ]
 http2 = [
     { name = "httpx", extra = ["http2"] },
@@ -44,11 +54,13 @@ mcp = [
 
 [package.metadata]
 requires-dist = [
+    { name = "aiochainscan-fastabi", marker = "extra == 'fastabi'", editable = "aiochainscan/fastabi" },
     { name = "aiolimiter", specifier = ">=1.1.0" },
     { name = "coveralls", marker = "extra == 'dev'", specifier = ">=3.3.1" },
     { name = "eth-abi", marker = "extra == 'dev'" },
     { name = "eth-abi", marker = "extra == 'fallback'" },
     { name = "eth-hash", extras = ["pycryptodome"], marker = "extra == 'dev'" },
+    { name = "eth-hash", extras = ["pycryptodome"], marker = "extra == 'fallback'" },
     { name = "eth-utils", marker = "extra == 'dev'", specifier = ">=2.0.0" },
     { name = "eth-utils", marker = "extra == 'fallback'", specifier = ">=2.0.0" },
     { name = "httpx", specifier = ">=0.27.0" },
@@ -66,7 +78,12 @@ requires-dist = [
     { name = "ruff", marker = "extra == 'dev'", specifier = "==0.4.7" },
     { name = "tenacity", specifier = ">=8.2.0" },
 ]
-provides-extras = ["dev", "fallback", "http2", "mcp", "data"]
+provides-extras = ["dev", "fallback", "http2", "mcp", "data", "fastabi"]
+
+[[package]]
+name = "aiochainscan-fastabi"
+version = "0.1.0"
+source = { editable = "aiochainscan/fastabi" }
 
 [[package]]
 name = "aiolimiter"

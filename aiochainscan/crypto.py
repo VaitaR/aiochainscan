@@ -4,11 +4,15 @@ Single source of truth for the Ethereum hash/address helpers used across
 layers (decoding selectors/topics, address validation, ENS namehash).
 
 Backend resolution at import time:
-1. fastabi Rust extension — always present in wheel/sdist builds (maturin)
-2. eth-utils — pure-Python fallback via the ``fallback`` extra
-3. neither — ``ChainscanDependencyError`` on first use
+1. fastabi Rust extension — the ``aiochainscan[fastabi]`` extra
+2. eth-utils — pure-Python, via the ``fallback`` extra
+3. ``aiochainscan._keccak`` — pure Python, stdlib only, always present. The
+   correctness floor: this is what a bare ``pip install aiochainscan`` (no
+   extras) runs on, so address construction never raises
+   ``ChainscanDependencyError``.
 
-Cross-checked against reference eth-utils vectors in ``tests/test_crypto.py``.
+Cross-checked byte-for-byte across all three backends against official
+Keccak-256 test vectors in ``tests/test_crypto.py``.
 """
 
 from __future__ import annotations
@@ -32,7 +36,10 @@ _KECCAK: _KeccakFn | None = None
 KECCAK_BACKEND = 'none'
 
 try:
-    from aiochainscan.aiochainscan_fastabi import keccak256 as _fastabi_keccak
+    try:
+        from aiochainscan_fastabi import keccak256 as _fastabi_keccak
+    except ImportError:
+        from aiochainscan.aiochainscan_fastabi import keccak256 as _fastabi_keccak
 
     _KECCAK = _fastabi_keccak
     KECCAK_BACKEND = 'fastabi'
@@ -43,7 +50,10 @@ except ImportError:  # pragma: no cover - exercised only without a Rust build
         _KECCAK = _eth_utils_keccak
         KECCAK_BACKEND = 'eth-utils'
     except ImportError:
-        pass
+        from aiochainscan._keccak import keccak256 as _python_keccak
+
+        _KECCAK = _python_keccak
+        KECCAK_BACKEND = 'python'
 
 _HEX_ADDRESS_RE = re.compile(r'\A(?:0x)?[0-9a-fA-F]{40}\Z')
 
@@ -53,11 +63,10 @@ def keccak256(data: bytes) -> bytes:
 
     Distinct from NIST SHA3-256: uses the original Keccak padding.
     """
-    if _KECCAK is None:
+    if _KECCAK is None:  # pragma: no cover - the pure-Python backend never leaves this None
         raise ChainscanDependencyError(
-            'keccak256 requires the fastabi Rust extension or eth-utils. '
-            'Reinstall from a prebuilt wheel or run: '
-            'pip install "aiochainscan[fallback]"'
+            'keccak256 has no available backend (fastabi, eth-utils, and the '
+            'built-in pure-Python implementation all failed to load).'
         )
     return _KECCAK(data)
 

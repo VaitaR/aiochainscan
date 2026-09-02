@@ -9,9 +9,13 @@ use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::{Arc, OnceLock};
 use thiserror::Error;
+#[cfg(feature = "arrow")]
 use arrow::array::{ArrayRef, StringArray};
+#[cfg(feature = "arrow")]
 use arrow::datatypes::{DataType, Field, Schema};
+#[cfg(feature = "arrow")]
 use arrow::record_batch::RecordBatch;
+#[cfg(feature = "arrow")]
 use pyo3_arrow::PyRecordBatch;
 
 const ABI_CACHE_CAPACITY: usize = 1000;  // Maximum number of ABIs to cache
@@ -732,6 +736,7 @@ fn convert_token_to_json(token: &Token, param_type: &ParamType) -> serde_json::V
 /// Zero-copy decode: returns Arrow RecordBatch directly to Python/Polars.
 /// Columns: "function_name" (Utf8) + one Utf8 column per ABI parameter.
 /// All values are stringified for uniform schema across heterogeneous calldata.
+#[cfg(feature = "arrow")]
 #[pyfunction]
 fn decode_many_to_arrow(
     py: Python<'_>,
@@ -863,6 +868,7 @@ fn aiochainscan_fastabi(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(decode_many_flat, m)?)?; // ULTIMATE flat lists
     m.add_function(wrap_pyfunction!(decode_many_hex, m)?)?;
     m.add_function(wrap_pyfunction!(decode_input, m)?)?; // Legacy
+    #[cfg(feature = "arrow")]
     m.add_function(wrap_pyfunction!(decode_many_to_arrow, m)?)?; // Zero-copy Arrow
     m.add_function(wrap_pyfunction!(keccak256_py, m)?)?; // Hash primitive for selectors/EIP-55
     Ok(())
