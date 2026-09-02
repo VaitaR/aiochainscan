@@ -538,6 +538,11 @@ async def test_rate_limit_in_http_200_carries_rate_limit_kind(ub) -> None:
     [
         (429, ChainscanRateLimitError, FailureKind.RATE_LIMIT),
         (503, ChainscanNetworkError, FailureKind.TRANSIENT),
+        # Credential/authorization refusals are the provider's, not the
+        # caller's: failover material (NodeReal invalid key → 401; WAF /
+        # geo-block / role-restricted proxy → 403).
+        (401, ChainscanClientError, FailureKind.AUTH),
+        (403, ChainscanClientError, FailureKind.AUTH),
         (400, ChainscanClientError, FailureKind.FATAL),
     ],
 )

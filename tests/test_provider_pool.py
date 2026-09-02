@@ -44,6 +44,7 @@ from aiochainscan.core.pool import (
     classify_failure,
 )
 from aiochainscan.core.streaming import STREAMING_SPECS
+from aiochainscan.core.url_builder import UrlBuilder
 from aiochainscan.domain.method import Method
 from aiochainscan.exceptions import (
     ChainscanClientApiError,
@@ -57,6 +58,7 @@ from aiochainscan.exceptions import (
     MethodNotDeclaredError,
     ProviderPoolExhaustedError,
 )
+from aiochainscan.network import Network
 from aiochainscan.scanners.blockscout_v1 import BlockScoutV1
 from aiochainscan.scanners.etherscan_v2 import EtherscanV2
 
@@ -420,6 +422,35 @@ class TestFailoverAndCooldown:
         await pool.call(Method.ACCOUNT_BALANCE, address=ADDR)
         remaining = pool.provider_states()['etherscan/ethereum']['cooldown_remaining']
         assert remaining > 599  # auth cooldown (600s) — key will not heal itself
+
+    async def test_http_401_from_the_wire_fails_over_with_auth_cooldown(
+        self, pool: ChainscanPool
+    ) -> None:
+        """HTTP 401/403 → AUTH, proven wire-to-pool: the exception produced
+        by the real Network raise site (NodeReal answers an invalid path key
+        with HTTP 401 + JSON-RPC ``Unauthorized``) fails over and applies the
+        auth cooldown — where the pre-change FATAL passthrough raised instead."""
+        network = Network(UrlBuilder('test_key', 'eth', 'main'))
+        try:
+            response = httpx.Response(
+                401,
+                request=httpx.Request('GET', 'https://bsc-mainnet.nodereal.io/v1/secret'),
+                text='{"error":{"code":-32000,"message":"Unauthorized"}}',
+            )
+            with pytest.raises(ChainscanClientError) as exc_info:
+                network._handle_response(response)
+        finally:
+            await network.close()
+
+        c1 = stub_client(pool._providers[0].client)
+        c1.side_effect = exc_info.value
+        stub_client(pool._providers[1].client, 'rescued')
+
+        result = await pool.call(Method.ACCOUNT_BALANCE, address=ADDR)
+
+        assert result == 'rescued'  # failed over instead of raising
+        remaining = pool.provider_states()['etherscan/ethereum']['cooldown_remaining']
+        assert remaining > 599  # auth cooldown — the refusing provider is skipped
 
     async def test_plan_restriction_cooldown(self, pool: ChainscanPool) -> None:
         c1 = stub_client(pool._providers[0].client)
