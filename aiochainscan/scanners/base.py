@@ -136,6 +136,25 @@ class Scanner(ABC):
     ``guarantee_complete`` — the engine has no way to detect its cap.
     """
 
+    max_page_size: int | None = None
+    """Largest page size (``offset``) the provider serves in one request.
+
+    Declared where the provider **silently clamps** a larger request instead of
+    refusing it: the short page then looks like the end of the data to any
+    "partial page means done" stop condition, and the rest of the range is lost
+    without an error. ``None`` means no known clamp (nothing to correct for).
+    """
+
+    RESULT_WINDOW_OVERRIDES: dict[Method, int | None] = {}
+    """Per-method windows for endpoints that do not share the scanner's cap.
+
+    One provider can bound different endpoints differently: BlockScout V1
+    honours ``page * offset <= 10_000`` on the account endpoints but answers at
+    most 1000 logs from ``getLogs`` regardless of paging. Declaring the smaller
+    window makes ``guarantee_complete`` split at the *real* boundary instead of
+    walking to a cap the endpoint will never reach.
+    """
+
     chain_id: int | None
     """Numeric chain id; ``None`` for custom base URLs until probed/recorded."""
 
@@ -522,6 +541,17 @@ class Scanner(ABC):
         specs: Any = getattr(self, 'SPECS', None)
         spec = specs.get(method) if isinstance(specs, dict) else None
         return spec is not None and spec_declares_block_range(spec)
+
+    def result_window_for(self, method: Method) -> int | None:
+        """The window that bounds THIS method, falling back to the scanner's.
+
+        Read by :func:`services.pagination.page_fetcher`, so every guaranteed
+        path sees the per-endpoint cap when one is declared.
+        """
+        overrides = self.RESULT_WINDOW_OVERRIDES
+        if method in overrides:
+            return overrides[method]
+        return self.result_window
 
     def get_supported_methods(self) -> list[Method]:
         """

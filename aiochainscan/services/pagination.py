@@ -181,7 +181,13 @@ def page_fetcher(
         A :class:`BoundPageFetch` callable taking params and returning
         ``(items, next_cursor)``.
     """
-    declared: Any = getattr(provider, 'result_window', None)
+    # ``result_window_for`` is the per-method window (a scanner may bound one
+    # endpoint tighter than the rest); the plain attribute is the fallback for
+    # page providers that predate it, e.g. test doubles.
+    per_method = getattr(provider, 'result_window_for', None)
+    declared: Any = (
+        per_method(method) if callable(per_method) else getattr(provider, 'result_window', None)
+    )
     result_window = declared if isinstance(declared, int) else None
 
     async def fetch(params: dict[str, Any]) -> tuple[list[JSONDict], Cursor]:

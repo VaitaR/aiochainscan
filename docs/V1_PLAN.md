@@ -181,9 +181,19 @@ Merged into `main`, `make validate` green (`1089 passed, 13 skipped`, mypy --str
    (`nodereal` is BSC-only). The suggestion can name a provider the caller cannot use.
 4. No live-API verification of any provider's cap behaviour; BlockScout V1's 10_000 window
    remains a documented conservative assumption. Etherscan's 10_000 comes from a repo comment.
+   **BlockScout V1 half closed** (2026-09-02, live against `eth.blockscout.com`): the account
+   endpoints enforce `page * offset <= 10_000` and say so (`status=0`, "Result window is too
+   large…"), an over-cap `offset` is clamped rather than refused, and `logs/getLogs` ignores
+   page/offset while capping at 1000 with `status=1` — a smaller window than the scanner
+   declared, now carried by `RESULT_WINDOW_OVERRIDES`. **Closed** the same day for Etherscan v2
+   (key-authenticated): `page * offset <= 10_000` is enforced with an error, and the per-page
+   limit is a separate silent clamp to 1000 items — `batch_size=5000` was losing 1009 of 2009
+   transactions with `guarantee_complete=True`, now fixed by `Scanner.max_page_size`. Both
+   providers return identical counts for the same ranges (1085 logs, 2009 txs).
 5. A bare base install cannot decode ABI/calldata (needs `[fallback]` or `[fastabi]`). Must be
    stated next to the install instructions in `README.md`, or the first `iter_events` call
-   fails with an opaque dependency error.
+   fails with an opaque dependency error. **Closed** by `aiochainscan/abi_pure.py`: the base
+   install now decodes the whole ABI spec with no extra.
 
 ### Update — open items 1 and 2 closed
 

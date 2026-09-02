@@ -30,12 +30,12 @@ from typing import TYPE_CHECKING, Any
 
 import orjson
 
+from ..abi_pure import canonical_signature, decode_arguments, encode_arguments, selector
 from ..chain_registry import list_supported_chains
 from ..decode import decode_transaction_input
 from ..domain.method import Method
 from ..domain.models import Address
 from ..exceptions import ChainscanClientError
-from .abi_codec import canonical_signature, decode_arguments, encode_arguments, selector
 from .cursors import decode_tool_cursor, encode_cursor
 from .envelope import (
     NextCall,
@@ -1046,8 +1046,12 @@ async def read_contract(
 
     outputs = function.get('outputs') or []
     result: dict[str, Any] | None
+    # An undecodable result is not an absent one: the summary line below must
+    # not report a successful call that returned data as reverted.
+    outcome = 'ok'
     if not isinstance(result_hex, str) or result_hex in ('', '0x'):
         result = None
+        outcome = 'empty'
         notes.append(
             'eth_call returned empty data — the call most likely reverted. '
             'Check arguments and the block tag.'
@@ -1060,6 +1064,7 @@ async def read_contract(
             result = decode_arguments(outputs, result_hex)
         except ValueError as exc:
             result = None
+            outcome = 'undecodable'
             notes.append(f'Could not decode outputs ({exc}); raw result kept.')
             notes.append(f'raw result: {result_hex}')
 
@@ -1080,7 +1085,13 @@ async def read_contract(
         content_text=(
             f'{function_name}({", ".join(str(a) for a in parsed_args)}) on '
             f'{contract} at block {block} -> '
-            + ('empty/reverted' if result is None else orjson.dumps(result).decode())
+            + (
+                'empty/reverted'
+                if outcome == 'empty'
+                else f'undecodable outputs, raw result {result_hex}'
+                if outcome == 'undecodable'
+                else orjson.dumps(result).decode()
+            )
             + '.'
         ),
     )

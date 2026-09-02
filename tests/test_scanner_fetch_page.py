@@ -18,12 +18,19 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from aiochainscan.constants import (
+    API_MAX_OFFSET_ETHERSCAN,
+    API_MAX_OFFSET_LOGS,
+    API_MAX_PAGE_SIZE_ETHERSCAN,
+)
 from aiochainscan.core.client import ChainscanClient
 from aiochainscan.domain.method import Method
 from aiochainscan.exceptions import ChainscanNetworkError
 from aiochainscan.scanners.base import Scanner
+from aiochainscan.scanners.blockscout_v1 import BlockScoutV1
 from aiochainscan.scanners.blockscout_v2 import BlockScoutV2Scanner
 from aiochainscan.scanners.etherscan_v2 import EtherscanV2
+from aiochainscan.services.pagination import page_fetcher
 
 
 class FakeNetwork:
@@ -437,6 +444,133 @@ class TestEtherscanLikeFetchPage:
         _, cursor = await scanner.fetch_page(Method.ACCOUNT_TRANSACTIONS, {'address': '0xabc'})
 
         assert cursor is None
+
+
+# ============================================================================
+# Provider caps: per-endpoint result windows and unpaginable specs
+# ============================================================================
+
+
+def _blockscout_v1_scanner(network_client: FakeNetwork) -> BlockScoutV1:
+    return BlockScoutV1(
+        api_key='',
+        network='eth',
+        url_builder=MagicMock(),
+        network_client=network_client,
+    )
+
+
+class TestUnpaginableSpecStopsAfterOnePage:
+    """A spec that maps neither page nor offset has exactly one page.
+
+    BlockScout V1's ``getLogs`` is that spec: the params never reach the wire,
+    so a "next page" repeats the first one verbatim (verified live against
+    eth.blockscout.com — the same 1000 logs on every page).
+    """
+
+    @pytest.mark.asyncio
+    async def test_full_log_page_yields_no_cursor(self) -> None:
+        net = FakeNetwork([{'status': '1', 'message': 'OK', 'result': [{'logIndex': '0x0'}] * 2}])
+        scanner = _blockscout_v1_scanner(net)
+
+        items, cursor = await scanner.fetch_page(
+            Method.EVENT_LOGS, {'address': '0xabc', 'page': 1, 'offset': 2}
+        )
+
+        assert len(items) == 2
+        assert cursor is None
+
+    @pytest.mark.asyncio
+    async def test_paginable_spec_still_advances(self) -> None:
+        net = FakeNetwork(
+            [{'status': '1', 'message': 'OK', 'result': [{'hash': '0x1'}, {'hash': '0x2'}]}]
+        )
+        scanner = _blockscout_v1_scanner(net)
+
+        _, cursor = await scanner.fetch_page(
+            Method.ACCOUNT_TRANSACTIONS, {'address': '0xabc', 'page': 1, 'offset': 2}
+        )
+
+        assert cursor == {'page': 2, 'offset': 2}
+
+
+class TestPageSizeClamp:
+    """An oversized page size must be clamped to what the provider serves.
+
+    Etherscan answers ``offset=5000`` with 1000 items and ``status=1``; taking
+    that at face value made the short page read as end-of-data and dropped the
+    rest of the range (live: 1000 of 2009 transactions with ``batch_size=5000``).
+    """
+
+    @pytest.mark.asyncio
+    async def test_oversized_offset_is_clamped_on_the_wire(self) -> None:
+        net = FakeNetwork(
+            [{'status': '1', 'message': 'OK', 'result': [{'hash': f'0x{i}'} for i in range(1000)]}]
+        )
+        scanner = _etherscan_scanner(net)
+
+        items, cursor = await scanner.fetch_page(
+            Method.ACCOUNT_TRANSACTIONS, {'address': '0xabc', 'page': 1, 'offset': 5000}
+        )
+
+        assert len(items) == 1000
+        assert net.calls[0]['params']['offset'] == API_MAX_PAGE_SIZE_ETHERSCAN
+        # A full clamped page continues; without the clamp this cursor was None.
+        assert cursor == {'page': 2, 'offset': API_MAX_PAGE_SIZE_ETHERSCAN}
+
+    @pytest.mark.asyncio
+    async def test_offset_within_the_page_cap_passes_through(self) -> None:
+        net = FakeNetwork([{'status': '1', 'message': 'OK', 'result': [{'hash': '0x1'}]}])
+        scanner = _etherscan_scanner(net)
+
+        _, cursor = await scanner.fetch_page(
+            Method.ACCOUNT_TRANSACTIONS, {'address': '0xabc', 'page': 1, 'offset': 500}
+        )
+
+        assert net.calls[0]['params']['offset'] == 500
+        assert cursor is None
+
+    @pytest.mark.asyncio
+    async def test_provider_with_a_larger_page_is_not_clamped_to_1000(self) -> None:
+        net = FakeNetwork(
+            [{'status': '1', 'message': 'OK', 'result': [{'hash': f'0x{i}'} for i in range(2000)]}]
+        )
+        scanner = _blockscout_v1_scanner(net)
+
+        _, cursor = await scanner.fetch_page(
+            Method.ACCOUNT_TRANSACTIONS, {'address': '0xabc', 'page': 1, 'offset': 2000}
+        )
+
+        assert net.calls[0]['params']['offset'] == 2000
+        assert cursor == {'page': 2, 'offset': 2000}
+
+
+class TestPerMethodResultWindow:
+    def test_blockscout_v1_logs_window_is_the_endpoint_limit(self) -> None:
+        scanner = _blockscout_v1_scanner(FakeNetwork([]))
+
+        assert scanner.result_window_for(Method.EVENT_LOGS) == API_MAX_OFFSET_LOGS
+        assert scanner.result_window_for(Method.ACCOUNT_TRANSACTIONS) == API_MAX_OFFSET_ETHERSCAN
+
+    def test_etherscan_keeps_one_window_for_every_method(self) -> None:
+        scanner = _etherscan_scanner(FakeNetwork([]))
+
+        assert scanner.result_window_for(Method.EVENT_LOGS) == API_MAX_OFFSET_ETHERSCAN
+        assert scanner.result_window_for(Method.ACCOUNT_TRANSACTIONS) == API_MAX_OFFSET_ETHERSCAN
+
+    def test_cursor_provider_declares_no_window(self) -> None:
+        scanner = _blockscout_scanner(FakeNetwork([]))
+
+        assert scanner.result_window_for(Method.ACCOUNT_TRANSACTIONS) is None
+
+    def test_binding_carries_the_per_method_window(self) -> None:
+        scanner = _blockscout_v1_scanner(FakeNetwork([]))
+
+        logs = page_fetcher(scanner, Method.EVENT_LOGS)
+        txs = page_fetcher(scanner, Method.ACCOUNT_TRANSACTIONS)
+
+        assert logs.result_window == API_MAX_OFFSET_LOGS
+        assert txs.result_window == API_MAX_OFFSET_ETHERSCAN
 
 
 # ============================================================================

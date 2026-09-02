@@ -189,12 +189,35 @@ async with ChainscanClient.from_config('etherscan', 'ethereum') as client:
 >   `next_page_params`, `nodereal` `pageKey`) — nothing to overflow, and the
 >   flag is inert. A third-party scanner that has a cap but leaves
 >   `result_window = None` cannot be protected.
+>   `Scanner.RESULT_WINDOW_OVERRIDES` declares a **per-method** window where one
+>   endpoint is bounded tighter than the rest, and `result_window_for(method)` is
+>   what the pagination binding reads.
 > - **The signal** is `collected >= result_window`, not an error string and not
 >   "the last page was full". A capped explorer answers a partial page that is
 >   indistinguishable from the end of the data, and the cap need not land on a
->   page boundary. BlockScout V1's cap is *assumed* equal to Etherscan's: it
->   could not be confirmed from this repo, and over-assuming only costs
->   requests while under-assuming loses data.
+>   page boundary.
+> - **BlockScout V1's caps are live-verified** (2026-09-02, `eth.blockscout.com`),
+>   no longer assumed. Account endpoints: `page * offset <= 10_000` exactly —
+>   `page=11&offset=1000` and `page=2&offset=10000` both answer `status=0`
+>   "Result window is too large, PageNo x Offset size must be less than or equal
+>   to 10000", while an over-cap `offset=10001` is silently clamped to 10_000
+>   items. `logs/getLogs` is different and **ignores page/offset entirely**,
+>   answering at most 1000 logs with `status=1` "OK" — so its window is
+>   `API_MAX_OFFSET_LOGS` = 1000 (declared in `RESULT_WINDOW_OVERRIDES`), and
+>   `EtherscanLikeScanner.fetch_page` issues no cursor for a spec that maps
+>   neither `page` nor `offset`, because "the next page" there is the first page
+>   again.
+> - **Etherscan v2's caps are live-verified too** (2026-09-02, key-authenticated).
+>   `page * offset <= 10_000` is enforced with an error, but the per-page size is
+>   a separate, *silent* limit: `offset=5000` or `offset=10000` answers **1000**
+>   items with `status=1` "OK". A short page like that reads as end-of-data, so
+>   `batch_size=5000` returned 1000 of 2009 transactions — silent loss under the
+>   default `guarantee_complete=True`, because 1000 never reaches the 10_000
+>   window. `Scanner.max_page_size` declares what a provider actually serves
+>   (Etherscan 1000, BlockScout V1 10_000, both measured) and `fetch_page`
+>   clamps `offset` to it, so the page-full test compares against a number the
+>   provider agreed to. Cross-check: Etherscan and BlockScout V1 now return
+>   byte-identical counts for the same range (1085 logs, 2009 txs).
 > - **Reaching the cap has two flavours** and the error says which. The
 >   provider offered a continuation at the cap → records are definitely being
 >   cut off (`confirmed=True`). The window came back exactly full with *no*
@@ -405,6 +428,8 @@ Every `Method` enum value (33 total) maps to typed convenience methods on `Chain
 | Report a rangeless capped endpoint as a whale block | Raise `CompletenessUnavailableError` naming a provider that can serve it | Holder lists have no range to split - "could not split" misdescribes it and offers no remedy |
 | Call complete data "lost" when the window came back exactly full | Say *possibly* truncated (`confirmed=False`) | A false error on correct data is not loud, it is wrong |
 | Trust a partial page to mean "end of data" | Treat `>= Scanner.result_window` records as overflow | A capped page/offset API truncates with a partial page and no error |
+| Assume the provider honoured the `offset` you sent | Clamp it to `Scanner.max_page_size` before comparing | Etherscan serves 1000 for `offset=5000` with `status=1` — the "partial" page is a full one |
+| Give every endpoint the scanner's one `result_window` | Declare the tighter ones in `RESULT_WINDOW_OVERRIDES` | BlockScout V1 `getLogs` caps at 1000 and ignores paging; walking to 10_000 re-fetches page 1 ten times |
 | Split a range in fixed-width windows | Bisect on the *observed* overflow boundary | Fixed windows cost requests where data is sparse and still truncate where it is dense |
 
 ### Network
@@ -444,7 +469,8 @@ Every `Method` enum value (33 total) maps to typed convenience methods on `Chain
 | `adapters/aiolimiter_adapter.py` | Rate limiting | Token bucket, burst=1 |
 | `convert.py` | Wei/hex/datetime conversion helpers | Exact `Decimal` math, hex-aware int parsing, tz-aware UTC |
 | `crypto.py` | Keccak-256, EIP-55 checksum | fastabi → eth-utils → pure-Python (`_keccak.py`) fallback chain — the base install always has a working backend |
-| `decode.py` | ABI decoding (Python) | Wraps Rust FFI, orjson parsing |
+| `decode.py` | ABI decoding (Python) | Backend chain fastabi → `abi_pure.py` (no third tier); orjson parsing; content+identity-cached ABI index |
+| `abi_pure.py` | Pure-Python ABI codec | The always-available decode floor AND the MCP calldata encoder — no dependencies beyond `crypto.py` |
 | `fastabi/src/lib.rs` | ABI decoding (Rust) | Returns JSON, LRU cache |
 | `mcp/` | MCP server for AI agents | Adapter over `ChainscanClient` — see MCP Server section |
 
@@ -503,7 +529,6 @@ Agent adapter over `ChainscanClient` — **run**: `python -m aiochainscan.mcp_se
 |------|---------|
 | `mcp/envelope.py` | `ToolResponse{data, notes, instructions, pagination, content_text}` + truncation (`{value_sample, value_truncated}`, 512 chars) + `format_units` (lossless int math) |
 | `mcp/cursors.py` | Opaque Base64URL cursors wrapping `fetch_page` scanner cursors (`InvalidCursorError` with "start over" advice) |
-| `mcp/abi_codec.py` | Pure-Python ABI encode (calldata) / decode (eth_call outputs) — covers what fastabi doesn't (it decodes *inputs* only). Cross-checked against `eth_abi` in tests |
 | `mcp/tools.py` | 12 tools as plain `client -> ToolResponse` functions (**no mcp import** — offline-testable) + `ClientPool` (one client per `(scanner, chain)`, connection pooling across calls) |
 | `mcp/server.py` | FastMCP wiring: envelope → `CallToolResult` (text + structuredContent), tool registration |
 | `mcp_server.py` | Entry point (historical import path preserved) |
@@ -546,7 +571,11 @@ Agent adapter over `ChainscanClient` — **run**: `python -m aiochainscan.mcp_se
    express — JSON-RPC envelopes), `_require_mapped_network` for the
    network→URL table lookup. **Never touch HTTP sessions** — every request
    goes through the injected Network client.
-5. Register in `scanners/__init__.py`
+5. Declare pagination caps where you measured them: `result_window`
+   (scanner-wide `page * offset` cap), `max_page_size` (silent per-page
+   clamp), and `RESULT_WINDOW_OVERRIDES` (per-method windows tighter than the
+   scanner's) — see the guarantee-complete notes above.
+6. Register in `scanners/__init__.py`
 
 ### Adding Bulk Fetch Support
 1. Extend `ChainscanClient` methods and scanner `SPECS` first
@@ -650,10 +679,13 @@ from aiochainscan.exceptions import (
     PaginationDataLossError,      # Whale block: a single block over the API's cap
     CompletenessUnavailableError, # Endpoint has no splittable dimension here (.alternatives)
     ChainscanDataError,           # Data contract violation
+    AbiTypeNotSupportedError,     # ValueError subclass: pure ABI codec has no rule for this Solidity type
     MethodNotDeclaredError,       # ValueError subclass: method not in SPECS
     BlockRangeNotSupportedError,  # MethodNotDeclaredError subclass: bounded block range the provider's spec cannot carry (raised at every seam: call/fetch_page/stream)
     ProviderPoolExhaustedError,   # Pool: every provider failed (.attempts)
     ChainscanProviderSwitchWarning,  # Pool: routed away from a provider
+    AbiTypeNotSupportedError,     # ValueError subclass: Solidity type no decode tier handles
+    PureAbiDecodeWarning,         # Bulk decode running without the [fastabi] Rust backend
 )
 ```
 
@@ -677,9 +709,101 @@ Or in one shot: `make ci-local` (mirrors the disabled GitHub CI). Agents: run `m
 
 ---
 
+## ABI Decode Backend Chain
+
+`decode.py` picks a backend per process: `fastabi` (Rust, `[fastabi]`) →
+`abi_pure.py` (always available). There is no third tier — `abi_pure.py`
+covers the whole ABI spec, so a bare `pip install aiochainscan` decodes
+transaction inputs, event logs, `SmartContract.iter_events` and the MCP
+`read_contract` / `get_transaction_info` tools with no extras installed.
+`eth-abi` is a **test oracle** in `[dev]`, never a runtime path.
+
+- **One output convention across both tiers** (the Rust one): ints above
+  `i64::MAX` as strings, `bytes`/`bytesN` as `0x` hex, arrays *and* tuples as
+  `list`. `tests/test_abi_pure.py::TestTierParity` pins it — a decoded value
+  must not change shape when a user adds or drops `[fastabi]`.
+- **Unsupported Solidity type → `AbiTypeNotSupportedError`**, never an empty
+  `decoded_data`: a gap in this library must not read as undecodable
+  calldata. Malformed/truncated calldata stays non-fatal (empty result), which
+  is what `_MALFORMED_CALLDATA_ERRORS` is for — a spam transaction whose
+  selector collides must not kill a decode loop.
+- **Both tiers are strict about padding**, and deliberately so: the spec says
+  the unused bits of a word are zero (or the sign extension, for `int<N>`), so
+  rejecting is more defensible than guessing. Dirty `address`/`bytesN`
+  padding, an out-of-range `uint<N>`/`int<N>`, a non-canonical `bool` and a
+  dynamic offset pointing into the head area all raise. So does non-zero
+  padding between a dynamic value and its 32-byte boundary — but only the
+  padding bytes actually present are checked: a payload whose final pad is
+  absent is a truncation the length checks already own, and rejecting it here
+  would reject data eth-abi accepts. `ethabi` is lenient
+  and has no strict mode, so the Rust tier gets a hand-written validation pass
+  (`validate_sequence` in `lib.rs`) before `Function::decode_input`; it works
+  on byte slices only, no bignum. That pass must also validate `string` as
+  UTF-8 itself: `ethabi` converts lossily, so without the check a non-UTF-8
+  byte sequence decodes to U+FFFD on Rust and raises on the floor — the same
+  calldata reading differently per tier. Do not implement any of this by
+  re-encoding and comparing — that is *over*-strict (it rejects non-minimal
+  but legal offsets).
+- **Cost of strictness: +14% end-to-end on the pure floor**
+  (`decode_transaction_input`, ERC-20 `transfer`; +48% on the raw two-word
+  `decode_values`, where nothing else is left to amortize it; `-m benchmark`
+  in `tests/test_abi_pure.py`), **+2% single / +25% bulk on the Rust tier**
+  (0.516→0.526 us/call, 1.045→1.311 ms per 1000). Keep `validate_sequence`
+  generic over the parameter iterator: materializing a `Vec<ParamType>` per
+  call instead cost +99% single / +143% bulk, which is what the pass looked
+  like before that one allocation was removed. Bulk work (`decode_many`, streaming, DataFrames)
+  still belongs on `[fastabi]`, and `decode_transaction_inputs_batch` says so
+  once per process (`PureAbiDecodeWarning`) for batches of 50+. Log decoding
+  never had a Rust path at all (fastabi decodes *inputs* only), so it warns
+  about nothing.
+- **`fixedMxN` / `ufixedMxN` decode to `Decimal`** (`raw / 10**N`, exact via
+  `scaleb`). They exist so `AbiTypeNotSupportedError` cannot fire where the
+  old eth-abi tier coped. Widths are validated at parse time: `int`/`uint`
+  a multiple of 8 in 8..256, `bytesN` 0<N≤32, fixed scale 0<N≤80.
+  Every `scaleb` must be passed `_FIXED_CONTEXT` explicitly: `scaleb` is a
+  *context* operation and the default context's `prec=28` silently rounds a
+  full-width value (int256 needs 78 significant digits) into a confident wrong
+  number. The `Decimal(str)` constructor itself is exact and context-free.
+- **The Rust tier falls through, not out**, when it recognises nothing:
+  `fastabi` answers an unimplemented type with an empty `function_name`
+  rather than an error, which would silently give `[fastabi]` users *less*
+  than a base install. `_decode_transaction_input_fast` therefore retries on
+  the pure floor whenever the Rust result is empty — and so does
+  `decode_transaction_inputs_batch`, which shares the same rule: a type that
+  falls back in a single decode must not come back empty in a batch of the
+  same call. Both retries are gated on `_declares_selector`: without it every
+  transaction whose selector this ABI does not declare would be re-decoded on
+  the floor to reach the same empty answer, which on the bulk path is the
+  whole cost of the bulk path.
+- **The floor's hot path is the glue, not the ABI walk.** Decoding an ERC-20
+  `transfer` spends ~40% in `abi_pure` and the rest in `decode.py`, so the
+  conventions are applied in ONE traversal (`_to_rust_convention`) and the hot
+  functions avoid `typing.cast`, which is a real call at runtime. Arrays get
+  `_decode_array` rather than `_decode_sequence([elem] * count, ...)`: no list
+  of N references, and the head size is a multiplication instead of a sum
+  over N. Splitting the traversal per rule or reintroducing the casts costs
+  ~30% end-to-end, which is what this shape was measured against.
+- **The ABI index is cached** (`_abi_index`): identity fast path, then a
+  content digest, holding the function/event maps plus each selector's
+  compiled decode plan — hashing an ABI costs more than decoding against it.
+  The index is built from a round-trip of the serialized ABI, so it shares no
+  mutable state with any caller: one index serves every equal ABI list, and
+  without the copy an in-place mutation of one list would change how every
+  other one decodes. Mutating a list in place still leaves *its own* cached
+  index stale (the identity path never rehashes) — build a new list instead.
+
+---
+
 ## Rust FFI Notes (fastabi/)
 
 - **Build**: NOT automatic. Since the distribution split the base package builds with hatchling, so `uv sync --extra dev` installs no Rust extension — build it explicitly with `cd aiochainscan/fastabi && uv run --with maturin maturin develop --release`, or pass `AIO_BUILD_FASTABI=1` to `make wt-new`. Without it `tests/test_crypto.py` skips 12 tests and `decode()` uses the Python fallback; `scripts/agent/preflight.sh` reports which module (if any) is live.
+- **Version floor**: the extension exports `__version__` from `CARGO_PKG_VERSION`, and
+  `decode.py` refuses anything below `_MIN_FASTABI_VERSION` (0.2.0) — the release that made
+  the Rust tier reject non-UTF-8 strings and dirty dynamic padding. A stale local build is
+  ignored with `PureAbiDecodeWarning` and decoding drops to the pure floor, because a tier
+  that decodes by the pre-strict rules is worse than no Rust tier. Bump both
+  `fastabi/Cargo.toml` and `fastabi/pyproject.toml` whenever decode semantics change, and
+  raise the floor with them.
 - **Cache**: LRU with 1000 entries max (~50MB)
 - **GIL**: Released during computation AND serialization
 - **Return format**: JSON string → parsed by orjson in Python; `keccak256` returns bytes
@@ -706,7 +830,9 @@ export ETHERSCAN_KEY="your_key"  # Optional
 ```
 
 Required runtime deps are just: `httpx`, `orjson`, `tenacity`, `aiolimiter`.
-Everything else is an extra (`data`, `mcp`, `http2`, `fallback`).
+Everything else is an extra (`data`, `mcp`, `http2`, `fallback`). `[fallback]`
+is native **keccak** only (`_keccak.py` is ~97× slower than `eth-hash`); ABI
+decoding needs no extra at all.
 
 ---
 

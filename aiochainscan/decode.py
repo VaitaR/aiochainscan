@@ -1,32 +1,54 @@
 from __future__ import annotations
 
+import warnings
 from collections.abc import Sequence
+from dataclasses import dataclass, field
+from hashlib import blake2b
 from typing import Any, cast
 
 import orjson
 
+from aiochainscan.abi_pure import TypeNode, compile_params, decode_values
 from aiochainscan.crypto import keccak_hex
-from aiochainscan.exceptions import ChainscanDependencyError
+from aiochainscan.exceptions import (
+    AbiTypeNotSupportedError,
+    ChainscanDependencyError,
+    PureAbiDecodeWarning,
+)
 
-_eth_abi_decode: Any
-try:
-    from eth_abi.abi import decode as _eth_abi_decode
+# Malformed calldata must stay non-fatal: a spam transaction whose selector
+# happens to collide must not crash a decode loop.
+_MALFORMED_CALLDATA_ERRORS: tuple[type[BaseException], ...] = (
+    ValueError,
+    TypeError,
+    KeyError,
+    IndexError,
+    AttributeError,
+)
 
-    ETH_ABI_AVAILABLE = True
-except ImportError:
-    _eth_abi_decode = None
-    ETH_ABI_AVAILABLE = False
 
+def _abi_decode_params(
+    params: list[dict[str, Any]],
+    data: bytes,
+    index: _AbiIndex | None = None,
+    plan_key: str | None = None,
+) -> Sequence[Any]:
+    """Decode an ABI parameter sequence on the pure-Python floor.
 
-def _abi_decode(types: list[str], data: bytes) -> tuple[Any, ...]:
-    """Pure-Python ABI decode fallback for environments without fastabi."""
-    if _eth_abi_decode is None:
-        raise ChainscanDependencyError(
-            'Pure-Python ABI decoding requires eth-abi. The fastabi Rust extension '
-            'covers decoding in all wheel installs; otherwise run: '
-            'pip install "aiochainscan[fallback]"'
-        )
-    return cast('tuple[Any, ...]', _eth_abi_decode(types, data))
+    Second and last tier of the decode chain — fastabi decodes whole calldata
+    upstream and never reaches here. Returns native Python values (``int``,
+    ``bytes``, …), normalised to the fastabi JSON convention by
+    :func:`_to_rust_convention`.
+
+    ``index`` + ``plan_key`` memoise the compiled decode plan across every
+    item decoded against the same ABI.
+    """
+    nodes = None if index is None or plan_key is None else index.nodes.get(plan_key)
+    if nodes is None:
+        nodes = compile_params(params)
+        if index is not None and plan_key is not None:
+            index.nodes[plan_key] = nodes
+    return decode_values(nodes, data)
 
 
 # orjson is a required dependency — always available
@@ -36,6 +58,49 @@ ORJSON_AVAILABLE = True
 def _parse_json(json_str: str) -> Any:
     """Parse JSON string using orjson."""
     return orjson.loads(json_str)
+
+
+# The Rust tier must agree with the pure-Python floor on decode semantics
+# (UTF-8 string validity, dynamic-value padding, full-width fixed point). Those
+# rules landed in the accelerator at 0.2.0, so an older locally built extension
+# would silently decode by the pre-strict rules while this module decodes by the
+# new ones. Refuse it and use the floor instead.
+_MIN_FASTABI_VERSION = (0, 2, 0)
+
+
+def _parse_extension_version(raw: object) -> tuple[int, ...] | None:
+    """Return an extension version as a comparable tuple, or None if unreadable."""
+    if not isinstance(raw, str):
+        return None
+    parts: list[int] = []
+    for chunk in raw.split('.')[:3]:
+        digits = ''
+        for char in chunk:
+            if not char.isdigit():
+                break
+            digits += char
+        if not digits:
+            return None
+        parts.append(int(digits))
+    return tuple(parts) or None
+
+
+def _require_strict_fastabi(module: Any) -> None:
+    """Raise ImportError when the loaded extension predates the strict semantics."""
+    version = _parse_extension_version(getattr(module, '__version__', None))
+    if version is not None and version >= _MIN_FASTABI_VERSION:
+        return
+    reported = getattr(module, '__version__', None) or 'unknown (pre-0.2.0)'
+    warnings.warn(
+        f'Ignoring the aiochainscan-fastabi extension at {module.__file__}: it reports '
+        f'version {reported}, but strict ABI decode semantics require '
+        f'{".".join(str(part) for part in _MIN_FASTABI_VERSION)} or newer. '
+        'Decoding falls back to the pure-Python backend. Rebuild with: '
+        'cd aiochainscan/fastabi && maturin develop --release',
+        PureAbiDecodeWarning,
+        stacklevel=2,
+    )
+    raise ImportError('aiochainscan-fastabi is older than the strict decode semantics')
 
 
 # Try to import fastabi Rust backend. The accelerator is now the top-level
@@ -53,6 +118,8 @@ try:
         # graph doesn't see decode.py depending on the whole `aiochainscan`
         # package (this branch never runs a real cross-layer import).
         _fastabi = importlib.import_module('aiochainscan.aiochainscan_fastabi')
+
+    _require_strict_fastabi(_fastabi)
 
     _fast_decode_input_json = _fastabi.decode_input
     _fast_decode_many_json = _fastabi.decode_many
@@ -164,10 +231,69 @@ def _abi_type_is_dynamic(param: dict[str, Any]) -> bool:
     return base in {'bytes', 'string'}
 
 
+@dataclass(slots=True)
+class _AbiIndex:
+    """Everything derived from one ABI list, derived once.
+
+    Building the maps keccak-hashes every function and event signature (~120 µs
+    for a 20-function ABI), which the batch and streaming paths would otherwise
+    repeat per item. ``nodes`` then memoises each parameter list's compiled
+    decode plan, keyed by selector / topic hash.
+    """
+
+    function_map: dict[str, dict[str, Any]]
+    event_map: dict[str, dict[str, Any]]
+    nodes: dict[str, tuple[TypeNode, ...]] = field(default_factory=dict)
+
+
+_ABI_INDEX_BY_DIGEST: dict[bytes, _AbiIndex] = {}
+_ABI_INDEX_BY_IDENTITY: dict[int, tuple[list[dict[str, Any]], _AbiIndex]] = {}
+_ABI_MAPS_CACHE_MAX = 64
+
+
+def _abi_index(abi: list[dict[str, Any]]) -> _AbiIndex:
+    """Return the cached index for ``abi``, building it on first sight.
+
+    Two levels, because hashing the ABI costs more than everything else on the
+    decode path for a large ABI: an identity lookup first (callers hand the
+    same list object to every item of a batch), then a content digest. The
+    identity level retains the list, so ``is`` can never match a recycled
+    address; it does go stale if a caller mutates an ABI list *in place*
+    between decodes, which no caller in this library does.
+
+    The index is built from a round-trip of the serialized ABI rather than
+    from ``abi`` itself, so it shares no mutable state with the caller. A
+    content digest means one index serves every equal ABI list, and without
+    the copy an in-place mutation of one list would change how every other
+    one decodes.
+    """
+    by_identity = _ABI_INDEX_BY_IDENTITY.get(id(abi))
+    if by_identity is not None and by_identity[0] is abi:
+        return by_identity[1]
+
+    payload = orjson.dumps(abi)
+    digest = blake2b(payload, digest_size=16).digest()
+    index = _ABI_INDEX_BY_DIGEST.get(digest)
+    if index is None:
+        index = _build_abi_index(cast('list[dict[str, Any]]', orjson.loads(payload)))
+        if len(_ABI_INDEX_BY_DIGEST) >= _ABI_MAPS_CACHE_MAX:
+            _ABI_INDEX_BY_DIGEST.clear()
+        _ABI_INDEX_BY_DIGEST[digest] = index
+    if len(_ABI_INDEX_BY_IDENTITY) >= _ABI_MAPS_CACHE_MAX:
+        _ABI_INDEX_BY_IDENTITY.clear()
+    _ABI_INDEX_BY_IDENTITY[id(abi)] = (abi, index)
+    return index
+
+
 def _preprocess_abi(
     abi: list[dict[str, Any]],
 ) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
-    """Pre-processes an ABI list into lookup maps for functions and events."""
+    """Pre-process an ABI list into lookup maps for functions and events."""
+    index = _abi_index(abi)
+    return index.function_map, index.event_map
+
+
+def _build_abi_index(abi: list[dict[str, Any]]) -> _AbiIndex:
     function_map: dict[str, dict[str, Any]] = {}
     event_map: dict[str, dict[str, Any]] = {}
 
@@ -191,39 +317,41 @@ def _preprocess_abi(
             if item.get('anonymous') is not True:
                 event_map[topic_hash.lower()] = item
 
-    return function_map, event_map
+    return _AbiIndex(function_map=function_map, event_map=event_map)
 
 
-def _convert_bytes_to_hex(data: Any) -> Any:
-    """Recursively traverses data structures and converts bytes to hex strings."""
+def _to_rust_convention(data: Any) -> Any:
+    """Normalise decoded values to what the Rust backend serializes.
+
+    ``bytes`` become ``0x`` hex, ints outside i64 become strings, and arrays
+    and tuples both become ``list`` (the pure floor returns Python tuples) --
+    so a decoded value does not change shape when a user adds or drops
+    ``[fastabi]``. One traversal, not one per rule: this runs on every
+    pure-floor decode.
+    """
     if isinstance(data, bytes):
         return '0x' + data.hex()
-    if isinstance(data, dict):
-        return {key: _convert_bytes_to_hex(value) for key, value in data.items()}
-    if isinstance(data, list | tuple):
-        return type(data)([_convert_bytes_to_hex(item) for item in cast(Sequence[Any], data)])
-    return data
-
-
-def _convert_large_ints_to_strings(data: Any) -> Any:
-    """Recursively converts large integers to strings for compatibility."""
     if isinstance(data, int):
-        # Convert integers larger than i64::MAX to strings for consistency with Rust
+        # bool is an int subclass and always falls inside the range, so it
+        # survives as a bool.
         if data > 9223372036854775807 or data < -9223372036854775808:
             return str(data)
         return data
     if isinstance(data, dict):
-        return {key: _convert_large_ints_to_strings(value) for key, value in data.items()}
+        return {key: _to_rust_convention(value) for key, value in data.items()}
     if isinstance(data, list | tuple):
-        return type(data)(
-            [_convert_large_ints_to_strings(item) for item in cast(Sequence[Any], data)]
-        )
+        return [_to_rust_convention(item) for item in data]
     return data
 
 
 # Function to generate Keccak hash of the input text
 def keccak_hash(text: str) -> str:
     return keccak_hex(text)
+
+
+def _declares_selector(abi: list[dict[str, Any]], raw_input: str) -> bool:
+    """Whether ``abi`` declares the function the calldata selects."""
+    return raw_input[:FUNCTION_SELECTOR_LENGTH] in _abi_index(abi).function_map
 
 
 def _decode_transaction_input_fast(
@@ -248,7 +376,14 @@ def _decode_transaction_input_fast(
         # Call Rust decoder - returns parsed dict via orjson
         result = _fast_decode_input(input_bytes, abi_json)
 
-        # Map Rust result format to Python format
+        # An empty function name means the Rust backend did not recognise the
+        # call -- including when it cannot build a signature for a type it does
+        # not implement (fixed-point). The Python tier covers the whole spec,
+        # so let it try, but only for a selector this ABI actually declares:
+        # an unknown selector decodes to nothing on either tier.
+        if not result['function_name'] and _declares_selector(abi, transaction['input']):
+            return _decode_transaction_input_python(transaction, abi)
+
         transaction['decoded_func'] = result['function_name']
         transaction['decoded_data'] = result['decoded_data']
 
@@ -262,46 +397,42 @@ def _decode_transaction_input_python(
     transaction: dict[str, Any], abi: list[dict[str, Any]]
 ) -> dict[str, Any]:
     """Python-based transaction input decoding (fallback)."""
-    function_map, _ = _preprocess_abi(abi)
+    index = _abi_index(abi)
+    function_map = index.function_map
 
     if not transaction.get('input') or len(transaction['input']) < FUNCTION_SELECTOR_LENGTH:
         transaction['decoded_func'] = ''
         transaction['decoded_data'] = {}
         return transaction
 
-    func_selector = cast(str, transaction['input'])[:FUNCTION_SELECTOR_LENGTH]
+    # typing.cast is a real call at runtime; annotated locals cost nothing.
+    raw_input: str = transaction['input']
+    func_selector = raw_input[:FUNCTION_SELECTOR_LENGTH]
     function = function_map.get(func_selector)
 
     if function:
-        # Decode input transaction
-        input_types = [
-            canonical_abi_type(param) for param in cast(list[dict[str, Any]], function['inputs'])
-        ]
-        input_data = cast(str, transaction['input'])[FUNCTION_SELECTOR_LENGTH:]
+        input_params: list[dict[str, Any]] = function['inputs']
+        input_data = raw_input[FUNCTION_SELECTOR_LENGTH:]
         try:
-            decoded_input = _abi_decode(input_types, bytes.fromhex(input_data))
+            decoded_input = _abi_decode_params(
+                input_params, bytes.fromhex(input_data), index, func_selector
+            )
 
             # Assign the function name directly to transaction
             transaction['decoded_func'] = function['name']
 
             # Create a new dictionary for decoded transaction
-            decoded_transaction: dict[str, Any] = dict(
+            transaction['decoded_data'] = dict(
                 zip(
-                    [
-                        cast(str, param['name'])
-                        for param in cast(list[dict[str, Any]], function['inputs'])
-                    ],
+                    [param['name'] for param in input_params],
                     decoded_input,
                     strict=False,
                 )
             )
-            transaction['decoded_data'] = decoded_transaction
-        except (ValueError, TypeError, KeyError, IndexError, AttributeError) as e:
-            # ValueError: invalid hex input data
-            # TypeError: ABI decoding type errors
-            # KeyError: missing dict keys during decode
-            # IndexError: tuple unpacking errors
-            # AttributeError: method call errors
+        except AbiTypeNotSupportedError:
+            # A gap in this library, not malformed calldata — never silenced.
+            raise
+        except _MALFORMED_CALLDATA_ERRORS as e:
             transaction['decoded_func'] = ''
             transaction['decoded_data'] = {}
             # Log at debug level to help with troubleshooting
@@ -316,9 +447,7 @@ def _decode_transaction_input_python(
         transaction['decoded_data'] = {}
 
     if transaction.get('decoded_data'):
-        transaction['decoded_data'] = _convert_bytes_to_hex(transaction['decoded_data'])
-        # Convert large integers to strings for compatibility with Rust implementation
-        transaction['decoded_data'] = _convert_large_ints_to_strings(transaction['decoded_data'])
+        transaction['decoded_data'] = _to_rust_convention(transaction['decoded_data'])
 
     return transaction
 
@@ -438,38 +567,53 @@ def decode_transaction_input_with_function_name(
 
 
 def _decode_event_candidate(
-    event: dict[str, Any], indexed_topics: list[str], data: str
+    event: dict[str, Any],
+    indexed_topics: list[str],
+    data: str,
+    index: _AbiIndex | None = None,
+    plan_key: str | None = None,
 ) -> dict[str, Any] | None:
     """Decode one event candidate, returning None when its payload is invalid."""
     try:
         decoded_log: dict[str, Any] = {'event': event['name']}
         inputs = cast(list[dict[str, Any]], event.get('inputs', []))
         indexed_params = [param for param in inputs if param.get('indexed') is True]
-        for param, topic in zip(indexed_params, indexed_topics, strict=True):
+        for position, (param, topic) in enumerate(
+            zip(indexed_params, indexed_topics, strict=True)
+        ):
             if _abi_type_is_dynamic(param):
                 value: Any = topic.lower()
             else:
                 topic_data = topic[2:] if topic[:2].lower() == '0x' else topic
-                value = _abi_decode([canonical_abi_type(param)], bytes.fromhex(topic_data))[0]
+                value = _abi_decode_params(
+                    [param],
+                    bytes.fromhex(topic_data),
+                    index,
+                    None if plan_key is None else f'{plan_key}#{position}',
+                )[0]
             decoded_log[cast(str, param.get('name', ''))] = value
 
         non_indexed_params = [param for param in inputs if param.get('indexed') is not True]
         if non_indexed_params:
             data_bytes = data[2:] if data[:2].lower() == '0x' else data
-            non_indexed_values = _abi_decode(
-                [canonical_abi_type(param) for param in non_indexed_params],
-                bytes.fromhex(data_bytes),
+            non_indexed_values = _abi_decode_params(
+                non_indexed_params, bytes.fromhex(data_bytes), index, plan_key
             )
             for param, value in zip(non_indexed_params, non_indexed_values, strict=True):
                 decoded_log[cast(str, param.get('name', ''))] = value
         return decoded_log
+    except AbiTypeNotSupportedError:
+        # Not "this candidate does not match" — the codec cannot express the
+        # type at all, and every candidate would fail the same way.
+        raise
     except Exception:
         return None
 
 
 # Function to decode transaction input and return updated log with decoded data
 def decode_log_data(log: dict[str, Any], abi: list[dict[str, Any]]) -> dict[str, Any]:
-    _, event_map = _preprocess_abi(abi)
+    index = _abi_index(abi)
+    event_map = index.event_map
 
     topics = cast(list[str], log.get('topics', []))
     event: dict[str, Any] | None = None
@@ -504,23 +648,51 @@ def decode_log_data(log: dict[str, Any], abi: list[dict[str, Any]]) -> dict[str,
         data = cast(str, log.get('data', '0x'))
         decoded_candidates = [
             decoded
-            for candidate in matching
-            if (decoded := _decode_event_candidate(candidate, topics, data)) is not None
+            for position, candidate in enumerate(matching)
+            if (
+                decoded := _decode_event_candidate(
+                    candidate, topics, data, index, f'anon:{len(topics)}:{position}'
+                )
+            )
+            is not None
         ]
         if len(decoded_candidates) == 1:
             log['decoded_data'] = decoded_candidates[0]
     elif (
-        decoded := _decode_event_candidate(event, indexed_topics, cast(str, log.get('data', '0x')))
+        decoded := _decode_event_candidate(
+            event, indexed_topics, cast(str, log.get('data', '0x')), index, topics[0].lower()
+        )
     ) is not None:
         log['decoded_data'] = decoded
     # If no matching event was found, 'decoded_data' will not be in log
     # which is the desired behavior.
 
     if log.get('decoded_data'):
-        log['decoded_data'] = _convert_bytes_to_hex(log['decoded_data'])
-        log['decoded_data'] = _convert_large_ints_to_strings(log['decoded_data'])
+        log['decoded_data'] = _to_rust_convention(log['decoded_data'])
 
     return log
+
+
+# Below this many items a bulk decode on the pure floor is not slow enough to be
+# worth a message; above it the Rust backend is the difference between
+# milliseconds and a visible pause.
+_BULK_WARNING_THRESHOLD = 50
+_bulk_warning_emitted = False
+
+
+def _warn_bulk_on_pure_floor(count: int) -> None:
+    """Warn once per process that a bulk decode is running without fastabi."""
+    global _bulk_warning_emitted
+    if _bulk_warning_emitted or FASTABI_AVAILABLE or count < _BULK_WARNING_THRESHOLD:
+        return
+    _bulk_warning_emitted = True
+    warnings.warn(
+        f'Decoding {count} inputs on the pure-Python backend. '
+        "Install 'aiochainscan[fastabi]' for the Rust decoder "
+        '(roughly an order of magnitude faster on bulk workloads).',
+        PureAbiDecodeWarning,
+        stacklevel=3,
+    )
 
 
 def decode_transaction_inputs_batch(
@@ -539,6 +711,7 @@ def decode_transaction_inputs_batch(
     """
     if not FASTABI_AVAILABLE or not transactions:
         # Fallback to individual Python decoding
+        _warn_bulk_on_pure_floor(len(transactions))
         return [decode_transaction_input(tx, abi) for tx in transactions]
 
     try:
@@ -576,9 +749,12 @@ def decode_transaction_inputs_batch(
             if valid_indices[i] != -1:
                 # Valid transaction with result
                 result = decoded_results[result_idx]
+                result_idx += 1
+                if not result['function_name'] and _declares_selector(abi, tx['input']):
+                    _decode_transaction_input_python(tx, abi)
+                    continue
                 tx['decoded_func'] = result['function_name']
                 tx['decoded_data'] = result['decoded_data']
-                result_idx += 1
             else:
                 # Invalid transaction
                 tx['decoded_func'] = ''

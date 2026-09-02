@@ -7,6 +7,7 @@ use pythonize::depythonize;
 use twox_hash::XxHash64;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
+use std::iter::repeat;
 use std::sync::{Arc, OnceLock};
 use thiserror::Error;
 #[cfg(feature = "arrow")]
@@ -161,6 +162,192 @@ fn get_abi_data_direct(py_abi: &Bound<'_, PyAny>) -> PyResult<Arc<AbiData>> {
 
 /// Decode a single transaction input (cached ABI)
 /// Returns JSON string to avoid GIL blocking during Python object creation
+// ---------------------------------------------------------------------------
+// Canonical-encoding validation
+//
+// ethabi decodes leniently: it ignores the padding bytes of a static value and
+// follows a dynamic offset that points back into the head area. The pure-Python
+// floor in aiochainscan/abi_pure.py rejects both, as the ABI spec requires, so
+// without this pass the same calldata would decode differently depending on
+// whether the Rust extension is installed. Checks are byte-slice comparisons on
+// the raw words -- no bignum, so the cost is a few memcmp per static leaf.
+// ---------------------------------------------------------------------------
+
+fn is_dynamic_type(param: &ParamType) -> bool {
+    match param {
+        ParamType::Bytes | ParamType::String | ParamType::Array(_) => true,
+        ParamType::FixedArray(inner, _) => is_dynamic_type(inner),
+        ParamType::Tuple(types) => types.iter().any(is_dynamic_type),
+        _ => false,
+    }
+}
+
+fn static_size_of(param: &ParamType) -> usize {
+    match param {
+        ParamType::FixedArray(inner, len) if !is_dynamic_type(inner) => {
+            static_size_of(inner) * len
+        }
+        ParamType::Tuple(types) if !is_dynamic_type(param) => {
+            types.iter().map(static_size_of).sum()
+        }
+        _ => 32,
+    }
+}
+
+fn head_size_of(param: &ParamType) -> usize {
+    if is_dynamic_type(param) {
+        32
+    } else {
+        static_size_of(param)
+    }
+}
+
+fn word_at(data: &[u8], offset: usize) -> Result<&[u8], String> {
+    data.get(offset..offset + 32)
+        .ok_or_else(|| format!("truncated at offset {}", offset))
+}
+
+fn read_offset(data: &[u8], offset: usize) -> Result<usize, String> {
+    let word = word_at(data, offset)?;
+    if word[..24].iter().any(|b| *b != 0) {
+        return Err(format!("offset word at {} exceeds addressable range", offset));
+    }
+    let mut buf = [0u8; 8];
+    buf.copy_from_slice(&word[24..32]);
+    Ok(u64::from_be_bytes(buf) as usize)
+}
+
+fn validate_leaf(param: &ParamType, data: &[u8], offset: usize) -> Result<(), String> {
+    let word = word_at(data, offset)?;
+    match param {
+        ParamType::Uint(bits) => {
+            let pad = 32 - bits / 8;
+            if word[..pad].iter().any(|b| *b != 0) {
+                return Err(format!("uint{}: padding is not zero", bits));
+            }
+        }
+        ParamType::Int(bits) => {
+            let pad = 32 - bits / 8;
+            if pad > 0 {
+                let fill = if word[pad] & 0x80 != 0 { 0xffu8 } else { 0x00u8 };
+                if word[..pad].iter().any(|b| *b != fill) {
+                    return Err(format!("int{}: padding is not the sign extension", bits));
+                }
+            }
+        }
+        ParamType::Bool => {
+            if word[..31].iter().any(|b| *b != 0) || word[31] > 1 {
+                return Err("bool: word is neither 0 nor 1".to_string());
+            }
+        }
+        ParamType::Address => {
+            if word[..12].iter().any(|b| *b != 0) {
+                return Err("address: padding is not zero".to_string());
+            }
+        }
+        ParamType::FixedBytes(len) => {
+            if word[*len..].iter().any(|b| *b != 0) {
+                return Err(format!("bytes{}: trailing padding is not zero", len));
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn validate_node(param: &ParamType, data: &[u8], offset: usize) -> Result<(), String> {
+    match param {
+        ParamType::Array(inner) => {
+            let count = read_offset(data, offset)?;
+            // Every element occupies at least head_size bytes, so a count the
+            // buffer cannot hold is a corrupted length word.
+            let span = count
+                .checked_mul(head_size_of(inner))
+                .and_then(|bytes| bytes.checked_add(offset + 32));
+            if span.map_or(true, |end| end > data.len()) {
+                return Err(format!("array declares {} items, more than the data holds", count));
+            }
+            validate_sequence(repeat(inner.as_ref()).take(count), data, offset + 32)
+        }
+        ParamType::FixedArray(inner, len) => {
+            validate_sequence(repeat(inner.as_ref()).take(*len), data, offset)
+        }
+        ParamType::Tuple(types) => validate_sequence(types.iter(), data, offset),
+        ParamType::Bytes => validate_dynamic_bytes(data, offset).map(|_| ()),
+        ParamType::String => {
+            let bytes = validate_dynamic_bytes(data, offset)?;
+            // ethabi converts lossily, so without this a byte sequence that is
+            // not UTF-8 decodes to U+FFFD here and is rejected on the pure
+            // floor -- the same calldata reading differently per tier.
+            std::str::from_utf8(bytes)
+                .map(|_| ())
+                .map_err(|error| format!("string: not valid UTF-8 ({})", error))
+        }
+        _ => validate_leaf(param, data, offset),
+    }
+}
+
+// Generic over the iterator so no call site has to materialize a Vec of cloned
+// ParamTypes: this pass runs on every decode, and one malloc per call is
+// measurable against a ~0.5 us decode.
+/// Bounds-check a dynamic byte sequence and reject non-zero bytes between its
+/// end and the 32-byte boundary. Only the padding actually present is checked:
+/// a missing final pad is a truncation the length check already owns.
+fn validate_dynamic_bytes(data: &[u8], offset: usize) -> Result<&[u8], String> {
+    let length = read_offset(data, offset)?;
+    let start = offset + 32;
+    let end = start
+        .checked_add(length)
+        .ok_or_else(|| format!("bytes length {} overflows the offset", length))?;
+    let bytes = data
+        .get(start..end)
+        .ok_or_else(|| format!("bytes declares {} bytes, more than the data holds", length))?;
+    let padding = (32 - end % 32) % 32;
+    if padding > 0 {
+        let stop = std::cmp::min(end + padding, data.len());
+        if data[end..stop].iter().any(|b| *b != 0) {
+            return Err("trailing padding of a dynamic value is not zero".to_string());
+        }
+    }
+    Ok(bytes)
+}
+
+fn validate_sequence<'a, I>(params: I, data: &[u8], base: usize) -> Result<(), String>
+where
+    I: Iterator<Item = &'a ParamType> + Clone,
+{
+    let head_size: usize = params.clone().map(head_size_of).sum();
+    let mut cursor = base;
+    for param in params {
+        if is_dynamic_type(param) {
+            let pointer = read_offset(data, cursor)?;
+            if pointer < head_size {
+                return Err(format!(
+                    "dynamic offset {} points inside the {}-byte head area",
+                    pointer, head_size
+                ));
+            }
+            validate_node(param, data, base + pointer)?;
+            cursor += 32;
+        } else {
+            validate_node(param, data, cursor)?;
+            cursor += static_size_of(param);
+        }
+    }
+    Ok(())
+}
+
+/// Decode a function's arguments, rejecting non-canonical encodings.
+fn decode_input_strict(
+    function: &Function,
+    calldata: &[u8],
+) -> Result<Vec<Token>, ethers::abi::Error> {
+    validate_sequence(function.inputs.iter().map(|p| &p.kind), calldata, 0)
+        .map_err(|message| ethers::abi::Error::Other(message.into()))?;
+    Function::decode_input(function, calldata)
+}
+
+
 #[pyfunction]
 fn decode_one(
     py: Python<'_>,
@@ -186,7 +373,7 @@ fn decode_one(
         let function = abi_data.selector_map.get(&selector_array)
             .ok_or(FastAbiError::UnknownSelector)?;
 
-        let tokens = function.decode_input(&calldata[4..])
+        let tokens = decode_input_strict(function, &calldata[4..])
             .map_err(|e| FastAbiError::DecodeError(e.to_string()))?;
 
         // Build decoded_data map
@@ -236,7 +423,7 @@ fn decode_many_raw(
                 Some(f) => f,
                 None => return serde_json::json!(["", []]),
             };
-            let tokens = match function.decode_input(&calldata[4..]) {
+            let tokens = match decode_input_strict(function, &calldata[4..]) {
                 Ok(t) => t,
                 Err(_) => return serde_json::json!(["", []]),
             };
@@ -288,7 +475,7 @@ fn decode_many_flat(
                     None => return serde_json::json!([""]),
                 };
 
-                let tokens = match function.decode_input(&calldata[4..]) {
+                let tokens = match decode_input_strict(function, &calldata[4..]) {
                     Ok(t) => t,
                     Err(_) => return serde_json::json!([""]),
                 };
@@ -337,7 +524,7 @@ fn decode_one_direct(
         let function = abi_data.selector_map.get(&selector_array)
             .ok_or(FastAbiError::UnknownSelector)?;
 
-        let tokens = function.decode_input(&calldata[4..])
+        let tokens = decode_input_strict(function, &calldata[4..])
             .map_err(|e| FastAbiError::DecodeError(e.to_string()))?;
 
         // Build decoded_data map
@@ -397,7 +584,7 @@ fn decode_many(
                     })),
                 };
 
-                let tokens = match function.decode_input(&calldata[4..]) {
+                let tokens = match decode_input_strict(function, &calldata[4..]) {
                     Ok(t) => t,
                     Err(_) => return Ok(serde_json::json!({
                         "function_name": "",
@@ -461,7 +648,7 @@ fn decode_many_direct(
                     "decoded_data": {}
                 }),
             };
-            let tokens = match function.decode_input(&calldata[4..]) {
+            let tokens = match decode_input_strict(function, &calldata[4..]) {
                 Ok(t) => t,
                 Err(_) => return serde_json::json!({
                     "function_name": "",
@@ -533,7 +720,7 @@ fn decode_many_hex(
                     "decoded_data": {}
                 }),
             };
-            let tokens = match function.decode_input(&calldata[4..]) {
+            let tokens = match decode_input_strict(function, &calldata[4..]) {
                 Ok(t) => t,
                 Err(_) => return serde_json::json!({
                     "function_name": "",
@@ -603,7 +790,7 @@ fn decode_input(input_data: &Bound<'_, PyBytes>, abi_json: &str) -> PyResult<Str
     if let Some(function) = abi_data.selector_map.get(&selector) {
         let calldata = &data[4..];
 
-        match function.decode_input(calldata) {
+        match decode_input_strict(function, calldata) {
             Ok(tokens) => {
                 let mut decoded_data = serde_json::Map::new();
 
@@ -786,7 +973,7 @@ fn decode_many_to_arrow(
                     Some(function) => {
                         func_names_col.push(Some(function.name.clone()));
 
-                        let tokens = match function.decode_input(&calldata[4..]) {
+                        let tokens = match decode_input_strict(function, &calldata[4..]) {
                             Ok(t) => t,
                             Err(_) => {
                                 for col in &mut param_cols {
@@ -871,5 +1058,9 @@ fn aiochainscan_fastabi(m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "arrow")]
     m.add_function(wrap_pyfunction!(decode_many_to_arrow, m)?)?; // Zero-copy Arrow
     m.add_function(wrap_pyfunction!(keccak256_py, m)?)?; // Hash primitive for selectors/EIP-55
+    // Decode semantics (string validity, padding strictness, fixed-point width)
+    // are versioned with the crate: decode.py refuses an extension older than
+    // its _MIN_FASTABI_VERSION rather than letting the two tiers disagree.
+    m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     Ok(())
 }

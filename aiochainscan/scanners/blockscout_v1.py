@@ -14,6 +14,7 @@ Supports multiple blockchain networks through different BlockScout instances:
 from typing import TYPE_CHECKING, Any
 
 from ..chain_registry import BLOCKSCOUT_INSTANCE_HOSTS
+from ..constants import API_MAX_OFFSET_ETHERSCAN, API_MAX_OFFSET_LOGS
 from ..core.endpoint import EndpointSpec
 from ..core.url_builder import UrlBuilder
 from ..domain.method import Method
@@ -73,6 +74,21 @@ class BlockScoutV1(EtherscanLikeScanner):
         'linea',  # Linea mainnet
         'bsc',  # BNB Smart Chain
     }
+
+    # Unlike Etherscan, BlockScout V1 does serve a 10_000-item page — but it
+    # clamps anything above that silently (``offset=10001`` → 10_000 items,
+    # ``status=1``), so the page size still has to be declared. Verified live
+    # 2026-09-02.
+    max_page_size = API_MAX_OFFSET_ETHERSCAN
+
+    # ``getLogs`` here is NOT a page/offset endpoint: it ignores both params and
+    # answers at most API_MAX_OFFSET_LOGS logs with ``status=1`` "OK", so its
+    # real window is 1000, not the account endpoints' 10_000. Verified live
+    # 2026-09-02 against eth.blockscout.com (a 60-block USDT Transfer range
+    # holding 1085 logs came back as 1000, identical on every page). Without
+    # this the guarantee layer walked to 10_000 by re-fetching the same first
+    # page ten times before splitting.
+    RESULT_WINDOW_OVERRIDES = {Method.EVENT_LOGS: API_MAX_OFFSET_LOGS}
 
     # Network to BlockScout instance mapping — the shared per-alias host
     # table from the chain registry (one table for BlockScout v1 and v2).

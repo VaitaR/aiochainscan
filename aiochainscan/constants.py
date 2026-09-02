@@ -22,7 +22,16 @@ from __future__ import annotations
 #: Maximum items per page for Etherscan-family APIs (page * offset <= 10,000)
 API_MAX_OFFSET_ETHERSCAN: int = 10_000
 
-#: Maximum items per page for logs endpoint (more conservative)
+#: Largest ``offset`` Etherscan v2 actually serves in one page. It does NOT
+#: reject a bigger one: ``offset=10000`` answers 1000 items with ``status=1``,
+#: which reads as "the data ended" to any partial-page stop condition. Verified
+#: live 2026-09-02 on ``api.etherscan.io/v2`` (txlist and logs alike).
+API_MAX_PAGE_SIZE_ETHERSCAN: int = 1_000
+
+#: Hard per-request log limit of the Etherscan-compatible ``logs/getLogs``
+#: endpoint. BlockScout V1 enforces it while ignoring page/offset entirely, so
+#: it is that endpoint's whole result window (see
+#: ``BlockScoutV1.RESULT_WINDOW_OVERRIDES``).
 API_MAX_OFFSET_LOGS: int = 1_000
 
 #: Default chunk size for block range chunking (large contract queries)

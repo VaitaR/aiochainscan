@@ -14,6 +14,7 @@ from aiochainscan.core.pool import ChainscanPool, FailureKind, classify_failure
 from aiochainscan.domain.contract import DecodedEvent, DecodedTransaction, SmartContract
 from aiochainscan.domain.method import Method
 from aiochainscan.exceptions import (
+    AbiTypeNotSupportedError,
     BlockRangeNotSupportedError,
     ChainscanClientApiError,
     ChainscanClientError,
@@ -26,6 +27,7 @@ from aiochainscan.exceptions import (
     MethodNotDeclaredError,
     PaginationDataLossError,
     ProviderPoolExhaustedError,
+    PureAbiDecodeWarning,
 )
 from aiochainscan.scanners import list_scanners, register_scanner
 from aiochainscan.services.chain_info import ChainInfo
@@ -33,6 +35,7 @@ from aiochainscan.services.chain_info import ChainInfo
 __version__ = '0.6.0'
 
 __all__ = [
+    'AbiTypeNotSupportedError',
     'ChainInfo',
     'ChainscanClient',
     'BlockRangeNotSupportedError',
@@ -52,6 +55,7 @@ __all__ = [
     'MethodNotDeclaredError',
     'PaginationDataLossError',
     'ProviderPoolExhaustedError',
+    'PureAbiDecodeWarning',
     'SmartContract',
     'classify_failure',
     'format_ether',

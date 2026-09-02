@@ -58,10 +58,18 @@ def _isolated_config():
 
 
 @pytest.fixture(autouse=True)
-def _no_provider_keys(monkeypatch: pytest.MonkeyPatch):
-    """Self-hosted BlockScout must never require provider API keys."""
+def _no_provider_keys(monkeypatch: pytest.MonkeyPatch, tmp_path):
+    """Self-hosted BlockScout must never require provider API keys.
+
+    Clearing the environment is not enough: keys also come from a ``.env`` file
+    in the config dir, so the manager is rooted at an empty directory — without
+    that, these tests pass or fail depending on whether the developer running
+    them happens to have a real key checked into their workspace.
+    """
     for var in ('ETHERSCAN_KEY', 'ETH_KEY', 'ETH_API_KEY'):
         monkeypatch.delenv(var, raising=False)
+    ConfigurationManager.reset_instance()
+    ConfigurationManager(tmp_path)
 
 
 # ============================================================================

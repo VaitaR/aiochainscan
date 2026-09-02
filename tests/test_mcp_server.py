@@ -13,15 +13,15 @@ from typing import Any
 
 import pytest
 
-from aiochainscan.domain.method import Method
-from aiochainscan.exceptions import ChainscanClientApiError
-from aiochainscan.mcp import tools as mcp_tools
-from aiochainscan.mcp.abi_codec import (
+from aiochainscan.abi_pure import (
     canonical_signature,
     decode_arguments,
     encode_arguments,
     selector,
 )
+from aiochainscan.domain.method import Method
+from aiochainscan.exceptions import ChainscanClientApiError
+from aiochainscan.mcp import tools as mcp_tools
 from aiochainscan.mcp.cursors import (
     InvalidCursorError,
     decode_cursor,
@@ -395,7 +395,7 @@ class TestAbiCodecDecode:
 
 
 class TestAbiCodecAgainstEthAbi:
-    """Cross-check the pure-Python codec against eth-abi (dev/fallback extra)."""
+    """Cross-check the pure-Python codec against eth-abi (a dev-only oracle)."""
 
     def test_encode_matches_eth_abi(self) -> None:
         eth_abi = pytest.importorskip('eth_abi')
@@ -870,6 +870,18 @@ class TestReadContract:
         response = await mcp_tools.read_contract(client, TOKEN, 'balanceOf', args=f'["{WALLET}"]')
         assert response.data is not None
         assert response.data['result'] is None
+
+    async def test_undecodable_outputs_are_not_reported_as_reverted(self) -> None:
+        """A call that returned data must never be summarised as empty/reverted."""
+        client = StubClient()
+        client.support(Method.CONTRACT_ABI, Method.PROXY_ETH_CALL)
+        client.get_contract_abi.value = json.dumps(BALANCE_OF_ABI)
+        client.eth_call.value = '0xdeadbeef'  # too short for a uint256 output
+        response = await mcp_tools.read_contract(client, TOKEN, 'balanceOf', args=f'["{WALLET}"]')
+        assert response.data is not None
+        assert response.data['result'] is None
+        assert 'empty/reverted' not in response.content_text
+        assert '0xdeadbeef' in response.content_text
         assert response.notes
 
 
