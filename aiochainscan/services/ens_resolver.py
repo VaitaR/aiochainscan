@@ -31,6 +31,7 @@ Example:
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable, Coroutine
 from typing import Any, Protocol, runtime_checkable
 
 from ..constants import BATCH_DEFAULT_CONCURRENCY, ENS_MAX_NAME_LENGTH
@@ -42,12 +43,6 @@ from ..ports.cache import Cache
 ENS_REGISTRY_ADDRESS = '0x00000000000C2E074eC69A0dFb2997BA6C7d2e1e'
 ENS_PUBLIC_RESOLVER = '0x4976fb03C32e5B8cfe2b6cCB31c09Ba78EBaBa41'
 
-# Common ENS names (pre-warm cache)
-COMMON_ENS_NAMES = {
-    'vitalik.eth': '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045',
-    'nick.eth': '0xb8c2C29ee19D8307cb7255e1Cd9CbDE883A267d5',
-}
-
 
 def _normalize_ens_name(value: Any) -> str | None:
     """Return a bounded ``.eth`` name, or ``None`` for untrusted input."""
@@ -57,6 +52,21 @@ def _normalize_ens_name(value: Any) -> str | None:
     if not name or len(name) > ENS_MAX_NAME_LENGTH or not name.endswith('.eth'):
         return None
     return name
+
+
+def _name_input_key(name: str) -> str:
+    """Dedup key for batch forward inputs (case/whitespace-insensitive)."""
+    return name.strip().lower() if isinstance(name, str) else str(name)
+
+
+def _address_input_key(address: str) -> str:
+    """Dedup key for batch reverse inputs (checksum-normalized address)."""
+    if isinstance(address, str):
+        try:
+            return str(Address(address)).lower()
+        except ValueError:
+            return address
+    return str(address)
 
 
 @runtime_checkable
@@ -127,34 +137,8 @@ class ENSResolver:
         self.enable_cache = enable_cache
         self._address_info_scanner = address_info_scanner
 
-        # Initialize cache
+        # Initialize cache (entries populate lazily on first live lookup)
         self._cache: Cache | None = cache if enable_cache else None
-        self._cache_prewarmed = False
-        self._prewarm_lock = asyncio.Lock()
-
-    async def _ensure_cache_prewarmed(self) -> None:
-        """Pre-warm the cache once, from an awaited public operation."""
-        if self._cache is None or self._cache_prewarmed:
-            return
-        async with self._prewarm_lock:
-            if not self._cache_prewarmed:
-                await self._prewarm_cache()
-                self._cache_prewarmed = True
-
-    async def _prewarm_cache(self) -> None:
-        """Pre-warm cache with common ENS names."""
-        if self._cache is None:
-            return
-
-        for name, address in COMMON_ENS_NAMES.items():
-            # Seed only missing entries: an injected cache may contain fresher or
-            # application-specific values that must not be overwritten.
-            name_key = f'name:{name}'
-            address_key = f'addr:{address.lower()}'
-            if await self._cache.get(name_key) is None:
-                await self._cache.set(name_key, address, ttl_seconds=self.cache_ttl)
-            if await self._cache.get(address_key) is None:
-                await self._cache.set(address_key, name, ttl_seconds=self.cache_ttl)
 
     def _is_ens_supported(self) -> bool:
         """Check if ENS is supported on the current network."""
@@ -191,16 +175,14 @@ class ENSResolver:
             return None
         name = normalized_name
 
-        await self._ensure_cache_prewarmed()
-
         # Check cache
         if self._cache is not None:
             cached = await self._cache.get(f'name:{name}')
             if cached:
                 return str(cached)
 
-        # Try scanner-specific resolution
-        address = await self._resolve_via_scanner(name)
+        # Resolve via direct ENS contract calls
+        address = await self._resolve_via_ens_contract(name)
 
         # Cache result if found
         if address and self._cache is not None:
@@ -244,8 +226,6 @@ class ENSResolver:
         address = str(normalized_address)
         address_key = address.lower()
 
-        await self._ensure_cache_prewarmed()
-
         # Check cache
         if self._cache is not None:
             cached = await self._cache.get(f'addr:{address_key}')
@@ -277,6 +257,40 @@ class ENSResolver:
         except Exception:  # noqa: BLE001
             return None
 
+    async def _resolve_batch(
+        self,
+        inputs: list[str],
+        *,
+        resolve_one: Callable[[str], Coroutine[Any, Any, str | None]],
+        input_key: Callable[[str], str],
+    ) -> dict[str, str]:
+        """Chunked TaskGroup fan-out shared by the batch methods.
+
+        Inputs sharing a normalized ``input_key`` collapse to one live
+        lookup (``resolve_one`` on the first spelling); a string result is
+        replicated to every spelling of that key, while failures (``None``)
+        are omitted from the result.
+        """
+        if not self._is_ens_supported():
+            return {}
+
+        resolved: dict[str, str] = {}
+        spellings_by_key: dict[str, list[str]] = {}
+        for value in inputs:
+            spellings_by_key.setdefault(input_key(value), []).append(value)
+
+        spellings = list(spellings_by_key.values())
+        for start in range(0, len(spellings), BATCH_DEFAULT_CONCURRENCY):
+            chunk = spellings[start : start + BATCH_DEFAULT_CONCURRENCY]
+            async with asyncio.TaskGroup() as tg:
+                tasks = [tg.create_task(resolve_one(group[0])) for group in chunk]
+            for aliases, task in zip(chunk, tasks, strict=True):
+                result = task.result()
+                if isinstance(result, str):
+                    for alias in aliases:
+                        resolved[alias] = result
+        return resolved
+
     async def resolve_names(self, names: list[str]) -> dict[str, str]:
         """
         Batch resolve multiple ENS names to addresses.
@@ -293,26 +307,9 @@ class ENSResolver:
             # {"vitalik.eth": "0xd8dA...", "uniswap.eth": "0x1f98..."}
             ```
         """
-        if not self._is_ens_supported():
-            return {}
-
-        resolved: dict[str, str] = {}
-        unique_names: dict[str, list[str]] = {}
-        for name in names:
-            key = name.strip().lower() if isinstance(name, str) else str(name)
-            unique_names.setdefault(key, []).append(name)
-
-        unique_values = list(unique_names.values())
-        for start in range(0, len(unique_values), BATCH_DEFAULT_CONCURRENCY):
-            chunk = unique_values[start : start + BATCH_DEFAULT_CONCURRENCY]
-            async with asyncio.TaskGroup() as tg:
-                tasks = [tg.create_task(self._safe_resolve(names[0])) for names in chunk]
-            for aliases, task in zip(chunk, tasks, strict=True):
-                result = task.result()
-                if isinstance(result, str):
-                    for name in aliases:
-                        resolved[name] = result
-        return resolved
+        return await self._resolve_batch(
+            names, resolve_one=self._safe_resolve, input_key=_name_input_key
+        )
 
     async def lookup_addresses(self, addresses: list[str]) -> dict[str, str]:
         """
@@ -333,46 +330,9 @@ class ENSResolver:
             # {"0xd8dA...": "vitalik.eth", "0x1f98...": "uniswap.eth"}
             ```
         """
-        if not self._is_ens_supported():
-            return {}
-
-        looked_up: dict[str, str] = {}
-        unique_addresses: dict[str, list[str]] = {}
-        for address in addresses:
-            if isinstance(address, str):
-                try:
-                    key = str(Address(address)).lower()
-                except ValueError:
-                    key = address
-            else:
-                key = str(address)
-            unique_addresses.setdefault(key, []).append(address)
-
-        unique_values = list(unique_addresses.values())
-        for start in range(0, len(unique_values), BATCH_DEFAULT_CONCURRENCY):
-            chunk = unique_values[start : start + BATCH_DEFAULT_CONCURRENCY]
-            async with asyncio.TaskGroup() as tg:
-                tasks = [tg.create_task(self._safe_lookup(addresses[0])) for addresses in chunk]
-            for aliases, task in zip(chunk, tasks, strict=True):
-                result = task.result()
-                if isinstance(result, str):
-                    for address in aliases:
-                        looked_up[address] = result
-        return looked_up
-
-    async def _resolve_via_scanner(self, name: str) -> str | None:
-        """
-        Resolve ENS name using scanner-specific methods.
-
-        Strategy:
-        1. BlockScout V2: Try to search for the address via API
-        2. Etherscan: Use ENS contract calls (fallback)
-        """
-        # For BlockScout V2, we can't directly resolve names to addresses
-        # but we can try the reverse: if we have a cached address, verify it
-        # For now, fall back to ENS contract calls
-
-        return await self._resolve_via_ens_contract(name)
+        return await self._resolve_batch(
+            addresses, resolve_one=self._safe_lookup, input_key=_address_input_key
+        )
 
     async def _reverse_lookup_via_scanner(self, address: str) -> str | None:
         """
@@ -398,6 +358,33 @@ class ENSResolver:
         # Fallback to ENS contract reverse lookup
         return await self._reverse_lookup_via_ens_contract(address)
 
+    async def _registry_resolver_address(self, node: str) -> str | None:
+        """Ask the ENS registry for the resolver of ``node``.
+
+        Shared first step of both contract paths: eth_call the registry's
+        ``resolver(bytes32)`` and return the resolver address, or ``None``
+        when the call fails to produce a word or the registry maps the node
+        to the zero address (no resolver set).
+        """
+        resolver_data = f'0x0178b8bf{node}'  # resolver(bytes32)
+
+        resolver_result = await self.client.call(
+            Method.PROXY_ETH_CALL,
+            to=ENS_REGISTRY_ADDRESS,
+            data=resolver_data,
+        )
+
+        if not resolver_result or resolver_result == '0x' or len(resolver_result) < 66:
+            return None
+
+        # Extract resolver address (last 40 chars of 64-char hex)
+        resolver_address = '0x' + str(resolver_result[-40:])
+
+        if resolver_address == '0x' + '0' * 40:
+            return None  # No resolver set
+
+        return resolver_address
+
     async def _resolve_via_ens_contract(self, name: str) -> str | None:
         """
         Resolve ENS name using direct ENS contract calls.
@@ -409,23 +396,9 @@ class ENSResolver:
             node = self._namehash(name)
 
             # Step 1: Get resolver address from ENS registry
-            # resolver(bytes32 node) returns address
-            resolver_data = f'0x0178b8bf{node}'  # resolver(bytes32)
-
-            resolver_result = await self.client.call(
-                Method.PROXY_ETH_CALL,
-                to=ENS_REGISTRY_ADDRESS,
-                data=resolver_data,
-            )
-
-            if not resolver_result or resolver_result == '0x' or len(resolver_result) < 66:
+            resolver_address = await self._registry_resolver_address(node)
+            if resolver_address is None:
                 return None
-
-            # Extract resolver address (last 40 chars of 64-char hex)
-            resolver_address = '0x' + resolver_result[-40:]
-
-            if resolver_address == '0x' + '0' * 40:
-                return None  # No resolver set
 
             # Step 2: Get address from resolver
             # addr(bytes32 node) returns address
@@ -468,20 +441,8 @@ class ENSResolver:
             node = self._namehash(reverse_name)
 
             # Step 1: Get resolver from ENS registry
-            resolver_data = f'0x0178b8bf{node}'  # resolver(bytes32)
-
-            resolver_result = await self.client.call(
-                Method.PROXY_ETH_CALL,
-                to=ENS_REGISTRY_ADDRESS,
-                data=resolver_data,
-            )
-
-            if not resolver_result or resolver_result == '0x' or len(resolver_result) < 66:
-                return None
-
-            resolver_address = '0x' + resolver_result[-40:]
-
-            if resolver_address == '0x' + '0' * 40:
+            resolver_address = await self._registry_resolver_address(node)
+            if resolver_address is None:
                 return None
 
             # Step 2: Get name from resolver
