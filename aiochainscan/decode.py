@@ -351,6 +351,20 @@ def _mark_empty(transaction: dict[str, Any]) -> dict[str, Any]:
     return transaction
 
 
+def _rejects_input(transaction: dict[str, Any]) -> bool:
+    """Whether ``transaction`` carries no decodable calldata.
+
+    THE input-rejection predicate, written once and only here: an input that
+    is missing, empty, or shorter than a function selector can select nothing
+    on any tier against any ABI. ``_decode_one``'s guard and every entry
+    point's pre-check ask this question — and the entry points must ask it
+    BEFORE building the ABI index, so a structurally malformed ABI cannot
+    raise for input that would never reach it (the pre-C6 order).
+    """
+    raw_input: str = transaction.get('input') or ''
+    return not raw_input or len(raw_input) < FUNCTION_SELECTOR_LENGTH
+
+
 def _decode_one(
     transaction: dict[str, Any],
     index: _AbiIndex,
@@ -370,12 +384,15 @@ def _decode_one(
     the batch path enters with ``fast_result`` directly, so an unexpected
     answer shape propagates and the whole-batch fallback owns it.
     """
-    # typing.cast is a real call at runtime; annotated locals cost nothing.
-    # ``or ''`` keeps the annotation honest: a missing input coalesces to the
-    # empty string the guard below already rejects.
-    raw_input: str = transaction.get('input') or ''
-    if not raw_input or len(raw_input) < FUNCTION_SELECTOR_LENGTH:
+    # The shared input-rejection predicate: missing/empty/too-short input can
+    # select nothing, on any tier, against any ABI.
+    if _rejects_input(transaction):
         return _mark_empty(transaction)
+
+    # typing.cast is a real call at runtime; annotated locals cost nothing.
+    # ``or ''`` keeps the annotation honest: the guard above already rejected
+    # missing and empty inputs, so this is a truthy string of selector length+.
+    raw_input: str = transaction.get('input') or ''
 
     if fast_result is not None:
         # An empty function name means the fast tier did not recognise the
@@ -452,6 +469,9 @@ def _decode_transaction_input_fast(
     transaction: dict[str, Any], abi: list[dict[str, Any]]
 ) -> dict[str, Any]:
     """Fast Rust-based transaction input decoding."""
+    # Guard before indexing: the ABI is never read for undecodable input.
+    if _rejects_input(transaction):
+        return _mark_empty(transaction)
     return _decode_one(transaction, _abi_index(abi), _fast_decode_input)
 
 
@@ -459,6 +479,9 @@ def _decode_transaction_input_python(
     transaction: dict[str, Any], abi: list[dict[str, Any]]
 ) -> dict[str, Any]:
     """Python-based transaction input decoding (fallback)."""
+    # Guard before indexing: the ABI is never read for undecodable input.
+    if _rejects_input(transaction):
+        return _mark_empty(transaction)
     return _decode_one(transaction, _abi_index(abi))
 
 
@@ -470,6 +493,9 @@ def decode_transaction_input(
     Decode transaction input and return updated transaction with decoded data.
     Uses fast Rust backend when available, falls back to Python implementation.
     """
+    # Guard before indexing: the ABI is never read for undecodable input.
+    if _rejects_input(transaction):
+        return _mark_empty(transaction)
     return _decode_one(
         transaction, _abi_index(abi), _fast_decode_input if FASTABI_AVAILABLE else None
     )
@@ -729,7 +755,7 @@ def decode_transaction_inputs_batch(
         valid_indices: list[int] = []
 
         for i, tx in enumerate(transactions):
-            if tx.get('input') and len(tx['input']) >= FUNCTION_SELECTOR_LENGTH:
+            if not _rejects_input(tx):
                 input_hex = tx['input']
                 if input_hex.startswith('0x'):
                     input_hex = input_hex[2:]

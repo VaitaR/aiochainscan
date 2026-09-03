@@ -7,6 +7,8 @@ import pytest
 from aiochainscan.decode import (
     _MIN_FASTABI_VERSION,
     FASTABI_AVAILABLE,
+    _decode_transaction_input_fast,
+    _decode_transaction_input_python,
     _parse_extension_version,
     _preprocess_abi,
     _require_strict_fastabi,
@@ -265,6 +267,67 @@ class TestDecodeTransactionInput:
         """Test transaction decoding with empty ABI."""
         transaction = self.transfer_transaction.copy()
         result = decode_transaction_input(transaction, [])
+
+        assert result['decoded_func'] == ''
+        assert result['decoded_data'] == {}
+
+
+_MISSING_INPUT = object()
+
+
+def _tx_with_input(raw_input):
+    """Build one transaction dict; the sentinel means no ``input`` key at all."""
+    if raw_input is _MISSING_INPUT:
+        return {'blockNumber': '12345'}
+    return {'input': raw_input, 'blockNumber': '12345'}
+
+
+class TestDecodeTransactionInputGuardBeforeAbiIndex:
+    """The input-length guard fires before any ABI-derived work.
+
+    An input that is missing, empty or shorter than a function selector can
+    select nothing on any tier against any ABI, so every entry point must
+    return the empty-marked transaction WITHOUT building the ABI index -- a
+    structurally malformed ABI must not raise for undecodable input. That was
+    the pre-C6 order (the guard sat at the top of each entry point, ahead of
+    every ABI touch); C6 moved index construction to the call sites and let it
+    run first. This pins the restored order at all three entry points.
+    """
+
+    @pytest.mark.parametrize(
+        'entry_point',
+        [
+            decode_transaction_input,
+            _decode_transaction_input_fast,
+            _decode_transaction_input_python,
+        ],
+        ids=['public', 'fast', 'pure'],
+    )
+    @pytest.mark.parametrize(
+        'abi',
+        [
+            pytest.param([None], id='abi-null-entry'),
+            pytest.param(
+                [{'type': 'function', 'name': 'f', 'inputs': 'x', 'outputs': []}],
+                id='abi-inputs-not-a-list',
+            ),
+        ],
+    )
+    @pytest.mark.parametrize(
+        'raw_input',
+        [
+            pytest.param('', id='input-empty'),
+            pytest.param('0x', id='input-bare-0x'),
+            pytest.param('0x1234', id='input-short'),
+            pytest.param(None, id='input-none'),
+            pytest.param(_MISSING_INPUT, id='input-missing'),
+        ],
+    )
+    def test_short_input_short_circuits_before_the_abi_index(self, entry_point, abi, raw_input):
+        """Empty/too-short input returns the empty mark; the ABI is never read."""
+        transaction = _tx_with_input(raw_input)
+
+        result = entry_point(transaction, abi)
 
         assert result['decoded_func'] == ''
         assert result['decoded_data'] == {}
