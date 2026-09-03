@@ -166,6 +166,33 @@ class TestTransactionsToDataframe:
         assert row['value_wei'] == '5000000000000000000'
 
     @pytest.mark.asyncio
+    async def test_blockscout_v2_zero_values_survive(self):
+        """A BlockScout-V2 row keeps int-zero block_number/gas_used and flattens
+        nested from/to address objects.
+
+        Zero is data, not absence: a genesis/first-block row must not lose its
+        block number to the alias lookup (red against the old ``or``-fallthrough,
+        which dropped the falsy ``0`` and yielded ``None``).
+        """
+        tx = {
+            'hash': '0xgenesis',
+            'block_number': 0,
+            'from': {'hash': '0xfrom_address'},
+            'to': {'hash': '0xto_address'},
+            'value': 123,
+            'gas_used': 0,
+            'timestamp': '1234567890',
+        }
+
+        df = await transactions_to_dataframe([tx])
+
+        row = df.row(0, named=True)
+        assert row['block_number'] == 0
+        assert row['gas_used'] == '0'
+        assert row['from_address'] == '0xfrom_address'
+        assert row['to_address'] == '0xto_address'
+
+    @pytest.mark.asyncio
     async def test_etherscan_format_camelCase(self):  # noqa: N802
         """Test handling of Etherscan camelCase format."""
         tx = {
