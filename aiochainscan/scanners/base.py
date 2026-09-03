@@ -180,6 +180,17 @@ class Scanner(ABC):
     chain_id: int | None
     """Numeric chain id; ``None`` for custom base URLs until probed/recorded."""
 
+    _instance_root: str | None = None
+    """Instance root this scanner serves, when it has one.
+
+    The base URL or host the scanner's requests target — a registry-mapped
+    public instance or a custom self-hosted URL. Each concrete scanner's
+    ``__init__`` sets it from the attribute it already resolves; ``None`` for
+    scanners with no per-instance identity (Etherscan's shared host). Consumed
+    only by the ``__str__``/``__repr__``/``_error_context`` defaults below, so
+    every scanner's messages carry the same facts without per-scanner overrides.
+    """
+
     def __init__(
         self,
         api_key: str,
@@ -462,8 +473,17 @@ class Scanner(ABC):
         return {}
 
     def _error_context(self, method: Method) -> str:
-        """Context string the error ladder stamps on unexpected failures."""
-        return f'{self.name} v{self.version} unexpected error for {method.name}'
+        """Context string the error ladder stamps on unexpected failures.
+
+        Names the scanner, its version, the failing method and — when the
+        scanner serves a per-instance deployment — the instance root, so one
+        default says everything the scanners used to say in divergent
+        overrides (two of which dropped the method name).
+        """
+        context = f'{self.name} v{self.version} unexpected error for {method.name}'
+        if self._instance_root is not None:
+            context += f' ({self._instance_root})'
+        return context
 
     def _require_mapped_network(self, mapping: dict[str, str], kind: str) -> str:
         """Resolve :attr:`network` through a per-scanner URL map.
@@ -609,11 +629,28 @@ class Scanner(ABC):
     def __str__(self) -> str:
         """String representation of the scanner."""
         networks = ', '.join(sorted(self.supported_networks))
-        return f'{self.name} v{self.version} (networks: {networks})'
+        root = f', instance: {self._instance_root}' if self._instance_root is not None else ''
+        return f'{self.name} v{self.version} (networks: {networks}{root})'
 
     def __repr__(self) -> str:
-        """Detailed string representation."""
-        return (
-            f"{self.__class__.__name__}(name='{self.name}', version='{self.version}', "
-            f"networks={self.supported_networks}, auth_mode='{self.auth_mode}')"
-        )
+        """Detailed string representation.
+
+        ``network`` and ``methods`` are read defensively (getattr/isinstance)
+        for the same reason ``supports_block_range`` is: init-skipping test
+        doubles must survive a repr.
+        """
+        parts = [
+            f"name='{self.name}'",
+            f"version='{self.version}'",
+            f'networks={self.supported_networks}',
+            f"auth_mode='{self.auth_mode}'",
+        ]
+        network = getattr(self, 'network', None)
+        if network is not None:
+            parts.append(f"network='{network}'")
+        if self._instance_root is not None:
+            parts.append(f"instance_root='{self._instance_root}'")
+        specs: Any = getattr(self, 'SPECS', None)
+        if isinstance(specs, dict):
+            parts.append(f'methods={len(specs)}')
+        return f"{self.__class__.__name__}({', '.join(parts)})"

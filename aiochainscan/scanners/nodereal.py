@@ -861,6 +861,7 @@ class NodeRealScanner(Scanner):
         # Shared unknown-network ValueError shape lives on the base.
         self.rpc_base_url = self._require_mapped_network(self.RPC_BASE_URLS, 'NodeReal endpoint')
         self.contract_path = self._require_mapped_network(self.CONTRACT_PATHS, 'NodeReal endpoint')
+        self._instance_root = self.rpc_base_url
 
     # ------------------------------------------------------------------
     # Transport
@@ -1007,9 +1008,6 @@ class NodeRealScanner(Scanner):
     # ------------------------------------------------------------------
     # Scanner port
     # ------------------------------------------------------------------
-
-    def _error_context(self, method: Method) -> str:
-        return f'NodeReal unexpected error for {method.name}'
 
     async def _perform_request(
         self,
@@ -1231,15 +1229,3 @@ class NodeRealScanner(Scanner):
         if not next_page_key:
             return items, None
         return items, {'pageKey': next_page_key}
-
-    def __str__(self) -> str:
-        """String representation including endpoint info."""
-        return f'NodeReal v{self.version} ({self.rpc_base_url})'
-
-    def __repr__(self) -> str:
-        """Detailed string representation."""
-        return (
-            f"NodeRealScanner(network='{self.network}', "
-            f"rpc_base_url='{self.rpc_base_url}', "
-            f'methods={len(self.SPECS)})'
-        )

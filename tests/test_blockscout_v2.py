@@ -535,7 +535,7 @@ class TestStringRepresentation:
     def test_str_representation(self, scanner: BlockScoutV2Scanner) -> None:
         """__str__ should return human-readable representation."""
         result = str(scanner)
-        assert 'BlockScout' in result
+        assert 'blockscout' in result
         assert 'v2' in result
         assert 'eth.blockscout.com' in result
 
