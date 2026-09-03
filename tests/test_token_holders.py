@@ -654,12 +654,14 @@ class TestNoderealHolderMethodsUseTheHoldersEndpoint:
             assert method in NodeRealScanner.SPECS
 
     def test_holder_methods_do_not_ride_the_holdings_endpoint(self) -> None:
-        wire = NodeRealScanner._WIRE_METHODS
-        assert wire[Method.TOKEN_HOLDERS] == 'nr_getTokenHolders'
-        assert wire[Method.TOKEN_TOP_HOLDERS] == 'nr_getTokenHolders'
-        assert wire[Method.TOKEN_HOLDER_COUNT] == 'nr_getTokenHolderCount'
+        def wire(method: Method) -> str | None:
+            return NodeRealScanner.SPECS[method].wire_method
+
+        assert wire(Method.TOKEN_HOLDERS) == 'nr_getTokenHolders'
+        assert wire(Method.TOKEN_TOP_HOLDERS) == 'nr_getTokenHolders'
+        assert wire(Method.TOKEN_HOLDER_COUNT) == 'nr_getTokenHolderCount'
         # The endpoint they must NOT be confused with, still serving portfolios.
-        assert wire[Method.ACCOUNT_TOKEN_PORTFOLIO] == 'nr_getTokenHoldings'
+        assert wire(Method.ACCOUNT_TOKEN_PORTFOLIO) == 'nr_getTokenHoldings'
 
 
 class TestBlockScoutV1HolderMethodCoverage:

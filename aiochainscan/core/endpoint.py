@@ -64,6 +64,17 @@ class EndpointSpec:
     the ``param_map`` sources.
     """
 
+    wire_method: str | None = None
+    """JSON-RPC wire method an rpc-dialect spec dispatches to.
+
+    ``'rpc-positional'`` / ``'rpc-object'`` specs declare the JSON-RPC method
+    name this logical method maps to (e.g. ``'nr_getTokenHolders'``), next to
+    the param shape and param names it rides with — one declaration per
+    endpoint, read by the scanner's transport instead of a parallel
+    method→wire-name table. ``None`` (the default) for ``'query'`` specs,
+    whose endpoint identity is :attr:`path`.
+    """
+
     parser: Callable[[Any], Any] | None = None
     """Optional function to transform raw API response to standardized format."""
 

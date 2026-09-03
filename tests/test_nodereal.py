@@ -18,8 +18,15 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from aiochainscan.constants import MAX_BLOCK_NUMBER
+from aiochainscan.core.pool import classify_failure
 from aiochainscan.domain.method import Method
-from aiochainscan.exceptions import ChainscanClientProxyError, ChainscanRateLimitError
+from aiochainscan.exceptions import (
+    ChainscanClientProxyError,
+    ChainscanNetworkError,
+    ChainscanRateLimitError,
+    FailureKind,
+    ScannerArgumentError,
+)
 from aiochainscan.scanners import SCANNER_REGISTRY, get_scanner_class
 from aiochainscan.scanners.base import BLOCK_RANGE_PARAM_KEYS, spec_declares_block_range
 from aiochainscan.scanners.nodereal import (
@@ -294,7 +301,7 @@ class TestWireBuilders:
 
     def test_transfer_requires_address(self) -> None:
         scanner = _make_scanner()
-        with pytest.raises(ValueError, match='address is required'):
+        with pytest.raises(ScannerArgumentError, match='address is required'):
             scanner._build_rpc_params(
                 Method.ACCOUNT_TRANSACTIONS, {'__nr_window': [0, 999], '__nr_tip': 1000}
             )
@@ -337,7 +344,7 @@ class TestWireBuilders:
 
     def test_block_by_timestamp_invalid_closest(self) -> None:
         scanner = _make_scanner()
-        with pytest.raises(ValueError, match='closest'):
+        with pytest.raises(ScannerArgumentError, match='closest'):
             scanner._build_rpc_params(
                 Method.BLOCK_NUMBER_BY_TIMESTAMP, {'timestamp': 1, 'closest': 'nearest'}
             )
@@ -350,7 +357,7 @@ class TestWireBuilders:
 
     def test_contract_creation_rejects_multiple(self) -> None:
         scanner = _make_scanner()
-        with pytest.raises(ValueError, match='one contract address'):
+        with pytest.raises(ScannerArgumentError, match='one contract address'):
             scanner._build_rpc_params(
                 Method.CONTRACT_CREATION,
                 {'contract_addresses': f'{CONTRACT},{CONTRACT}'},
@@ -810,3 +817,118 @@ class TestBlockRangeDeclarations:
         assert _filter_transfer_items(tx_spec, [foreign], {'contractaddress': CONTRACT}) == [
             foreign
         ]
+
+
+# ============================================================================
+# Base-seam contract: one exception identity, laddered fetch_page, declared
+# wire methods
+# ============================================================================
+
+
+class TestSeamContract:
+    """The scanner stays inside the base seams: no ``call()`` override, the
+    ladder on ``fetch_page``, and argument errors that keep one identity on
+    every path.
+
+    Before this contract held, the same caller mistake raised different
+    types per seam: the ``call()`` ladder masked the bare ``ValueError`` into
+    a TRANSIENT ``ChainscanNetworkError`` (which a provider pool reads as a
+    provider fault — failover plus a cooldown on a healthy provider over a
+    caller bug), while the ``fetch_page`` transfer path let the raw
+    ``ValueError`` escape.
+    """
+
+    @pytest.mark.asyncio
+    async def test_invalid_closest_same_type_from_call_and_fetch_page(self) -> None:
+        scanner = _make_scanner()
+        _mock_network(scanner, [])
+        with pytest.raises(ScannerArgumentError) as from_call:
+            await scanner.call(Method.BLOCK_NUMBER_BY_TIMESTAMP, timestamp=1, closest='nearest')
+        with pytest.raises(ScannerArgumentError) as from_fetch_page:
+            await scanner.fetch_page(
+                Method.BLOCK_NUMBER_BY_TIMESTAMP, {'timestamp': 1, 'closest': 'nearest'}
+            )
+        # Exactly the argument type on BOTH seams — not one path masked into a
+        # ChainscanNetworkError while the other escapes raw, the pre-fix split.
+        assert type(from_call.value) is ScannerArgumentError
+        assert type(from_fetch_page.value) is ScannerArgumentError
+
+    @pytest.mark.asyncio
+    async def test_missing_address_same_type_on_both_transfer_paths(self) -> None:
+        # The sharper half: ``fetch_page`` does NOT route transfers through
+        # call() (the window walk bypasses it), so the two assertions below
+        # pin the identity on genuinely distinct code paths.
+        call_scanner = _make_scanner()
+        _mock_network(call_scanner, ['0x64'])  # eth_blockNumber tip
+        with pytest.raises(ScannerArgumentError, match='address is required'):
+            await call_scanner.call(Method.ACCOUNT_TRANSACTIONS)
+
+        fetch_scanner = _make_scanner()
+        _mock_network(fetch_scanner, ['0x64'])  # eth_blockNumber tip
+        with pytest.raises(ScannerArgumentError, match='address is required'):
+            await fetch_scanner.fetch_page(Method.ACCOUNT_TRANSACTIONS, {})
+
+    def test_argument_errors_classify_fatal_for_the_pool(self) -> None:
+        assert classify_failure(ScannerArgumentError('address is required')) is FailureKind.FATAL
+
+    @pytest.mark.asyncio
+    async def test_fetch_page_applies_the_error_ladder(self) -> None:
+        # An unexpected parser failure (a non-dict transfers item) from the
+        # fetch_page seam is masked into a non-retryable ChainscanNetworkError
+        # — the ladder contract of Scanner.fetch_page — not a raw TypeError.
+        scanner = _make_scanner()
+        _mock_network(scanner, ['0x64', {'pageKey': '', 'transfers': [5]}])
+        with pytest.raises(ChainscanNetworkError) as excinfo:
+            await scanner.fetch_page(Method.ACCOUNT_TRANSACTIONS, {'address': ADDRESS})
+        assert excinfo.value.retryable is False
+
+    @pytest.mark.asyncio
+    async def test_fetch_page_keeps_chainscan_errors_unchanged(self) -> None:
+        # The ladder must NOT rewrite provider-dialect translations: the
+        # -32005 rate-limit translation from a fetch_page path stays a
+        # retryable rate-limit error.
+        scanner = _make_scanner()
+        _mock_network(
+            scanner,
+            [ChainscanClientProxyError(-32005, 'You have reached the maximum API usage limit')],
+        )
+        with pytest.raises(ChainscanRateLimitError):
+            await scanner.fetch_page(Method.TOKEN_HOLDER_COUNT, {'contract_address': CONTRACT})
+
+    def test_every_rpc_dialect_spec_declares_a_wire_method(self) -> None:
+        for method, spec in NodeRealScanner.SPECS.items():
+            if spec.param_style in ('rpc-positional', 'rpc-object'):
+                assert isinstance(spec.wire_method, str) and spec.wire_method, method
+            else:
+                # Query-style contract-REST specs: no JSON-RPC wire method.
+                assert spec.wire_method is None, method
+                assert method in NodeRealScanner._REST_METHODS, method
+
+    @pytest.mark.asyncio
+    async def test_call_filters_transfer_items_exactly_once(self) -> None:
+        # The deleted call() override used to post-filter; the filter now
+        # lives in _perform_request and must still apply exactly once.
+        scanner = _make_scanner()
+        other_contract = '0x0000000000000000000000000000000000000001'
+        _mock_network(
+            scanner,
+            [
+                {
+                    'pageKey': '',
+                    'transfers': [
+                        {'hash': '0x1', 'blockNum': '0x1', 'contractAddress': CONTRACT},
+                        {'hash': '0x2', 'blockNum': '0x2', 'contractAddress': other_contract},
+                    ],
+                }
+            ],
+        )
+
+        items = await scanner.fetch_page(
+            Method.ACCOUNT_ERC20_TRANSFERS,
+            {'address': ADDRESS, 'contract_address': CONTRACT, 'end_block': 500},
+        )
+
+        assert isinstance(items, tuple)
+        returned, cursor = items
+        assert [item['hash'] for item in returned] == ['0x1']
+        assert cursor is None  # window [0, 500] consumed: no phantom second pass
