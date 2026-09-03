@@ -9,7 +9,12 @@ base: 50d971e
 
 # One decode seam for the single and batch paths
 
-> **Done** — flash lane died to a provider rate limit mid-run; an in-session finishing agent salvaged the uncommitted work (verdict: coherent near-finish), completed two gaps, and committed `7a4df06`; merged to `main` (2026-09-03, no-ff). Gate: PASS-WITH-FINDINGS (LOW only; benchmark no-regression). The brief's repo-wide dead-name grep self-conflicts with its own `fastabi/` fence — resolved by scoping to decode.py.
+> **Done** — flash lane died to a provider rate limit mid-run; an in-session finishing agent salvaged the uncommitted work (verdict: coherent near-finish), completed two gaps, and committed `7a4df06`; merged to `main` (2026-09-03, no-ff). Gate: PASS-WITH-FINDINGS (LOW only; benchmark no-regression).
+> **Follow-up (2026-09-03, external codex gate):** finding F1 — `_abi_index` was built at the
+> call site before the input-length guard, so a structurally-malformed ABI raised for
+> empty/short inputs where pre-C6 returned empty fields — verified on main (fastabi live) and
+> fixed on `fix/c6-guard-order` (merged): one `_rejects_input` predicate, guard before
+> indexing at all three entry points, 30-case RED→GREEN, benchmark +1.1%. The brief's repo-wide dead-name grep self-conflicts with its own `fastabi/` fence — resolved by scoping to decode.py.
 
 ## Repo orientation
 
