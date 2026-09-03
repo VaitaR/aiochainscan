@@ -114,6 +114,10 @@ once with a scratch check if you can, else state it.
 - `grep -n "_WIRE_METHODS\|async def call" aiochainscan/scanners/nodereal.py` finds nothing.
 - One filter application site; ladder present on `fetch_page`; four sites raise
   `ScannerArgumentError`.
+  *(Delivered reality, recorded 2026-09-03 pass 2: two filter application sites —
+  `_perform_request` for the `call()` path (`nodereal.py:1049`) and the window walk's own
+  parse site (`nodereal.py:1191`), the fallback this brief's Open questions sanctioned.
+  Both are documented as deliberate in the code; the DoD line above was the aspiration.)*
 - All verification green; commit locally; no push, no PR. Note the exception-identity
   change in the commit message body (user-visible).
 
