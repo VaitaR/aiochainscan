@@ -13,6 +13,7 @@ Tests:
 
 import asyncio
 import warnings
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
@@ -20,7 +21,9 @@ import pytest
 from aiochainscan import ChainscanClient
 from aiochainscan.adapters.memory_cache import InMemoryCache
 from aiochainscan.constants import BATCH_DEFAULT_CONCURRENCY, ENS_MAX_NAME_LENGTH
-from aiochainscan.services.ens_resolver import ENSResolver
+from aiochainscan.crypto import to_checksum_address
+from aiochainscan.domain.method import Method
+from aiochainscan.services.ens_resolver import ENS_PUBLIC_RESOLVER, ENSResolver
 
 
 class UnitENSClient:
@@ -35,6 +38,24 @@ class UnitAddressInfoScanner:
     def __init__(self, metadata: object) -> None:
         self.metadata = metadata
         self.get_address_info = AsyncMock(return_value={'ens_domain_name': metadata})
+
+
+def stub_ens_contract_calls(client: UnitENSClient, *, resolved_address: str) -> None:
+    """Answer the forward-resolution eth_call dance with a fixed address.
+
+    A registry ``resolver(bytes32)`` call (selector ``0x0178b8bf``) answers
+    the public resolver; any other call — the resolver's ``addr(bytes32)`` —
+    answers ``resolved_address``.
+    """
+    zero_pad = '0' * 24
+
+    async def call(method: Method, **params: Any) -> str:
+        data = str(params.get('data', ''))
+        if data.startswith('0x0178b8bf'):
+            return f'0x{zero_pad}{ENS_PUBLIC_RESOLVER[2:].lower()}'
+        return f'0x{zero_pad}{resolved_address[2:].lower()}'
+
+    client.call = AsyncMock(side_effect=call)
 
 
 class TestENSResolver:
@@ -313,19 +334,38 @@ class TestENSResolver:
             warnings.simplefilter('always')
             resolver = ENSResolver(client, cache=InMemoryCache())
 
-        assert resolver._cache_prewarmed is False
+        assert resolver._cache is not None
         assert not [warning for warning in caught if issubclass(warning.category, RuntimeWarning)]
 
     @pytest.mark.asyncio
-    async def test_cache_prewarm_is_lazy_and_awaited(self):
+    async def test_cold_cache_resolve_name_uses_live_contract_calls(self):
+        """A completely cold cache resolves via live contract calls alone."""
+        stubbed = to_checksum_address('0x1111111111111111111111111111111111111111')
         client = UnitENSClient()
+        stub_ens_contract_calls(client, resolved_address=stubbed)
         resolver = ENSResolver(client, cache=InMemoryCache())
 
-        assert await resolver.resolve_name('vitalik.eth') == (
-            '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045'
-        )
-        assert resolver._cache_prewarmed is True
-        client.call.assert_not_awaited()
+        assert await resolver.resolve_name('vitalik.eth') == stubbed
+        # Exactly the two eth_calls the contract path makes: registry + resolver.
+        assert client.call.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_batch_resolves_case_variants_with_one_lookup_each(self):
+        """Case-variant spellings dedup to one live lookup; every spelling answered."""
+        stubbed = to_checksum_address('0x2222222222222222222222222222222222222222')
+        client = UnitENSClient()
+        stub_ens_contract_calls(client, resolved_address=stubbed)
+        resolver = ENSResolver(client, enable_cache=False)
+
+        result = await resolver.resolve_names(['vitalik.eth', 'VITALIK.eth', 'uniswap.eth'])
+
+        # Two unique names x (registry + resolver) eth_calls — one lookup per name.
+        assert client.call.await_count == 4
+        assert result == {
+            'vitalik.eth': stubbed,
+            'VITALIK.eth': stubbed,
+            'uniswap.eth': stubbed,
+        }
 
     @pytest.mark.asyncio
     async def test_batch_resolve_is_deduplicated_and_bounded(self, monkeypatch):
