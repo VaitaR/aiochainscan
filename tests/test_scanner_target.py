@@ -8,7 +8,6 @@ import pytest
 import aiochainscan.chain_registry as chain_registry
 from aiochainscan.chain_registry import (
     ScannerTarget,
-    get_scanner_network_name,
     resolve_scanner_target,
 )
 from aiochainscan.config import ConfigurationManager
@@ -358,20 +357,81 @@ class TestSingleResolutionSeam:
             await client.close()
 
 
-class TestScannerNetworkName:
-    """Scanner-specific network name mapping."""
+class TestScannerNetwork:
+    """Scanner-dialect network naming is resolved once by the registry and
+    carried on ``ScannerTarget.scanner_network`` — the client consumes the
+    field and never re-derives it."""
 
     @pytest.mark.parametrize(
-        ('scanner', 'version', 'network', 'expected'),
+        ('scanner', 'network', 'expected'),
         [
-            ('blockscout', 'v1', 'ethereum', 'eth'),
-            ('blockscout', 'v1', 'main', 'eth'),
-            ('blockscout', 'v1', 'polygon', 'polygon'),
-            ('blockscout', 'v2', 'main', 'ethereum'),
-            ('blockscout', 'v2', 'ethereum', 'ethereum'),
-            ('etherscan', 'v2', 'ethereum', 'main'),
-            ('etherscan', 'v2', 'polygon', 'polygon'),
+            ('blockscout', 'ethereum', 'eth'),
+            ('blockscout', 'main', 'eth'),
+            ('blockscout', 'polygon', 'polygon'),
+            ('blockscout_v2', 'main', 'ethereum'),
+            ('blockscout_v2', 'ethereum', 'ethereum'),
+            ('etherscan', 'ethereum', 'main'),
+            ('etherscan', 'polygon', 'polygon'),
         ],
     )
-    def test_mapping(self, scanner: str, version: str, network: str, expected: str) -> None:
-        assert get_scanner_network_name(scanner, version, network) == expected
+    def test_mapping(self, scanner: str, network: str, expected: str) -> None:
+        kwargs: dict[str, Any] = {'api_key': 'k'} if scanner == 'etherscan' else {}
+        target = resolve_scanner_target(scanner, network, **kwargs)
+        assert target.scanner_network == expected
+
+    def test_custom_base_url_carries_the_custom_label(self) -> None:
+        target = resolve_scanner_target('blockscout', 'https://bsc.example')
+        assert target.scanner_network == 'custom'
+        assert target.network == 'custom'
+
+
+class TestDerivedInstanceTopology:
+    """The BlockScout satellite tables derive from the one 'blockscout'
+    scanner record, and the silent failure modes of the hand-maintained era
+    stay impossible: no instance alias may vanish from ``BLOCKSCOUT_HOSTS``
+    without a declaration in ``DROPPED_INSTANCE_ALIASES``, and no derived
+    host id may lack a display name (the configuration manager would die on
+    a bare ``KeyError``). Mirrors chain_registry's import-time validation so
+    the contract is pinned by the suite as well, not only by module import.
+    """
+
+    def test_every_instance_alias_is_derived_or_declared_dropped(self) -> None:
+        hosts = chain_registry.BLOCKSCOUT_HOSTS
+        for alias, host in chain_registry.BLOCKSCOUT_INSTANCE_HOSTS.items():
+            # 'ethereum' reaches BLOCKSCOUT_HOSTS through its shared host
+            # (the 'eth' entry) — an alias is covered when its instance is
+            # reachable under its own key OR under another alias's key.
+            derived = f'blockscout_{alias}' in hosts or host in hosts.values()
+            assert derived or alias in chain_registry.DROPPED_INSTANCE_ALIASES, (
+                f'instance alias {alias!r} ({host}) is neither derived into '
+                f'BLOCKSCOUT_HOSTS nor declared in DROPPED_INSTANCE_ALIASES'
+            )
+
+    def test_dropped_aliases_are_real_and_still_dropped(self) -> None:
+        hosts = chain_registry.BLOCKSCOUT_HOSTS
+        instances = chain_registry.BLOCKSCOUT_INSTANCE_HOSTS
+        for alias in chain_registry.DROPPED_INSTANCE_ALIASES:
+            assert alias in instances, f'dropped alias {alias!r} is not an instance alias'
+            assert f'blockscout_{alias}' not in hosts, (
+                f'dropped alias {alias!r} derives its own host id — remove it '
+                f'from DROPPED_INSTANCE_ALIASES'
+            )
+            assert instances[alias] not in hosts.values(), (
+                f'dropped alias {alias!r} shares a derived host — remove it '
+                f'from DROPPED_INSTANCE_ALIASES'
+            )
+
+    def test_display_names_cover_exactly_the_derived_host_ids(self) -> None:
+        names = chain_registry.BLOCKSCOUT_DISPLAY_NAMES
+        for host_id in chain_registry.BLOCKSCOUT_HOSTS:
+            assert host_id in names, f'derived host id {host_id!r} has no display name'
+        assert not set(names) - set(chain_registry.BLOCKSCOUT_HOSTS), (
+            'display names declared for non-derived host ids: '
+            f'{sorted(set(names) - set(chain_registry.BLOCKSCOUT_HOSTS))}'
+        )
+
+    def test_zksync_stays_declared_dropped(self) -> None:
+        # Public-surface pin: today's drop keeps today's behaviour — declared,
+        # not resurrected and not silently extended.
+        assert frozenset({'zksync'}) == chain_registry.DROPPED_INSTANCE_ALIASES
+        assert 'blockscout_zksync' not in chain_registry.BLOCKSCOUT_HOSTS
