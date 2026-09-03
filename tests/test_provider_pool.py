@@ -46,6 +46,12 @@ from aiochainscan.core.pool import (
 from aiochainscan.core.streaming import STREAMING_SPECS
 from aiochainscan.core.url_builder import UrlBuilder
 from aiochainscan.domain.method import Method
+from aiochainscan.domain.normalized import (
+    InternalTransaction,
+    Log,
+    TokenTransfer,
+    Transaction,
+)
 from aiochainscan.exceptions import (
     ChainscanClientApiError,
     ChainscanClientError,
@@ -734,6 +740,75 @@ class TestPaginationBinding:
 
         assert items == [{'hash': '0xB1'}]
         assert cursor is None
+
+
+# ---------------------------------------------------------------------------
+# Regression: the get_all_*_normalized aggregators must work through the pool
+# ---------------------------------------------------------------------------
+
+
+#: One raw page carrying every key the four ``domain.normalize`` mappers read;
+#: a single shape exercises transactions, internal transactions, token
+#: transfers and logs alike (the mappers are alias-tolerant per family).
+_NORMALIZED_RAW_PAGE: list[dict[str, Any]] = [
+    {
+        'hash': '0x' + 'ab' * 32,
+        'transactionHash': '0x' + 'ab' * 32,
+        'blockNumber': '1',
+        'from': '0x0000000000000000000000000000000000000001',
+        'to': '0x0000000000000000000000000000000000000002',
+        'value': '5',
+        'timeStamp': '1700000000',
+        'topics': [],
+        'data': '0x',
+    }
+]
+
+
+class TestNormalizedAggregatorsOnPool:
+    """The four ``get_all_*_normalized`` aggregators must work on the pool.
+
+    Regression (deepening brief C1): the pool composes the same mixins as
+    ``ChainscanClient``, so the aggregators existed — but the
+    ``iter_*_normalized`` generators they call were defined on the client
+    only and never forwarded, so every aggregator crashed with
+    ``AttributeError: 'ChainscanPool' object has no attribute
+    'iter_transactions_normalized'``. The single member is a real (offline)
+    client over a replayed page, so the items it returns are genuinely
+    normalized domain models, not stub passthrough.
+    """
+
+    @pytest.mark.parametrize(
+        ['aggregator', 'model'],
+        [
+            ('get_all_transactions_normalized', Transaction),
+            ('get_all_internal_transactions_normalized', InternalTransaction),
+            ('get_all_token_transfers_normalized', TokenTransfer),
+            ('get_all_logs_normalized', Log),
+        ],
+    )
+    async def test_aggregator_returns_normalized_items(self, aggregator: str, model: Any) -> None:
+        member = _bare_client(
+            EtherscanV2(
+                api_key='test_key',
+                network='main',
+                url_builder=MagicMock(),
+                # One replayed payload = ONE PAGE (the items list, the shape
+                # Network hands the scanner post-unwrap — see the
+                # ``_ReplayNetwork`` replay of ``log_page`` below). Replaying
+                # the items as separate payloads would hand pagination a bare
+                # dict, which ``coerce_response_items`` reads as no data.
+                network_client=_ReplayNetwork([[dict(item) for item in _NORMALIZED_RAW_PAGE]]),
+            ),
+            'main',
+        )
+        pool = ChainscanPool([member])
+
+        items = await getattr(pool, aggregator)(ADDR)
+
+        assert len(items) == 1
+        assert isinstance(items[0], model)
+        assert pool.last_provider == 'etherscan/main'
 
 
 # ---------------------------------------------------------------------------

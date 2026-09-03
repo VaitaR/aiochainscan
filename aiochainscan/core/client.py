@@ -19,12 +19,6 @@ from ..chain_registry import (
     resolve_scanner_target,
 )
 from ..domain.method import Method
-from ..domain.normalize import (
-    normalize_internal_transaction,
-    normalize_log,
-    normalize_token_transfer,
-    normalize_transaction,
-)
 from ..domain.normalized import InternalTransaction, Log, TokenTransfer, Transaction
 from ..exceptions import BlockRangeNotSupportedError
 from ..ports.rate_limiter import RateLimiter, RetryPolicy
@@ -52,6 +46,7 @@ from .streaming import (
     STREAMING_SPECS_BY_NAME,
     stream_batches,
     stream_items,
+    stream_normalized_batches,
 )
 from .types import JSONDict
 from .url_builder import UrlBuilder
@@ -718,7 +713,9 @@ class ChainscanClient(
         never after the raw list is fully collected, so memory stays bounded
         by ``batch_size`` regardless of dataset size.
         """
-        async for batch in self.iter_transactions_streaming(
+        async for batch in stream_normalized_batches(
+            self,
+            STREAMING_SPECS_BY_NAME['iter_transactions_normalized'],
             address=address,
             from_block=from_block,
             to_block=to_block,
@@ -726,7 +723,7 @@ class ChainscanClient(
             on_progress=on_progress,
             guarantee_complete=guarantee_complete,
         ):
-            yield [normalize_transaction(item) for item in batch]
+            yield batch
 
     async def iter_internal_transactions_streaming(
         self,
@@ -785,7 +782,9 @@ class ChainscanClient(
         Wraps :meth:`iter_internal_transactions_streaming`; same params, same
         ``guarantee_complete`` semantics/default, per-batch normalization.
         """
-        async for batch in self.iter_internal_transactions_streaming(
+        async for batch in stream_normalized_batches(
+            self,
+            STREAMING_SPECS_BY_NAME['iter_internal_transactions_normalized'],
             address=address,
             from_block=from_block,
             to_block=to_block,
@@ -793,7 +792,7 @@ class ChainscanClient(
             on_progress=on_progress,
             guarantee_complete=guarantee_complete,
         ):
-            yield [normalize_internal_transaction(item) for item in batch]
+            yield batch
 
     async def iter_token_transfers_streaming(
         self,
@@ -856,7 +855,9 @@ class ChainscanClient(
         Wraps :meth:`iter_token_transfers_streaming`; same params, same
         ``guarantee_complete`` semantics/default, per-batch normalization.
         """
-        async for batch in self.iter_token_transfers_streaming(
+        async for batch in stream_normalized_batches(
+            self,
+            STREAMING_SPECS_BY_NAME['iter_token_transfers_normalized'],
             address=address,
             from_block=from_block,
             to_block=to_block,
@@ -865,7 +866,7 @@ class ChainscanClient(
             on_progress=on_progress,
             guarantee_complete=guarantee_complete,
         ):
-            yield [normalize_token_transfer(item) for item in batch]
+            yield batch
 
     async def iter_logs_streaming(
         self,
@@ -940,8 +941,10 @@ class ChainscanClient(
         Wraps :meth:`iter_logs_streaming`; same params, same
         ``guarantee_complete`` semantics/default, per-batch normalization.
         """
-        async for batch in self.iter_logs_streaming(
-            address,
+        async for batch in stream_normalized_batches(
+            self,
+            STREAMING_SPECS_BY_NAME['iter_logs_normalized'],
+            address=address,
             from_block=from_block,
             to_block=to_block,
             topic0=topic0,
@@ -952,7 +955,7 @@ class ChainscanClient(
             on_progress=on_progress,
             guarantee_complete=guarantee_complete,
         ):
-            yield [normalize_log(item) for item in batch]
+            yield batch
 
     async def iter_token_holders_streaming(
         self,
