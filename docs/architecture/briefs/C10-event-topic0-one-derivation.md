@@ -3,7 +3,7 @@ kind: deepening-brief
 id: C10
 slug: event-topic0-one-derivation
 source: ../2026-09-03-review.md
-status: accepted
+status: done             # merged to local main (2026-09-03); gate PASS-WITH-FINDINGS, MEDIUM closed in fix round (lane 10d31fb: one map _event_topic_map, one reader)
 base: 3b7c05e
 ---
 
