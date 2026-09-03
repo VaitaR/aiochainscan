@@ -26,12 +26,13 @@ import difflib
 import json
 import os
 from collections.abc import Callable
+from functools import partial
 from typing import TYPE_CHECKING, Any
 
 import orjson
 
 from ..abi_pure import canonical_signature, decode_arguments, encode_arguments, selector
-from ..chain_registry import list_supported_chains
+from ..chain_registry import get_chain_name, list_supported_chains, resolve_chain_id
 from ..decode import decode_transaction_input
 from ..domain.method import Method
 from ..domain.models import Address
@@ -104,12 +105,29 @@ def resolve_default_scanner() -> str:
 ClientFactory = Callable[[str, str], 'ChainscanClient']
 
 
+def _canonical_network(network: str) -> str:
+    """Registry-canonical network spelling for pool keying.
+
+    ``resolve_chain_id`` -> ``get_chain_name`` is the one alias resolution the
+    registry already owns ('eth' and 'ethereum' both land on 'ethereum').
+    URL-shaped instances and unknown names pass through unchanged — the
+    registry only knows chain aliases, and the client factory validates
+    everything else honestly.
+    """
+    try:
+        return get_chain_name(resolve_chain_id(network))
+    except ValueError:
+        return network
+
+
 class ClientPool:
-    """Cache of live clients keyed by ``(scanner, network)``.
+    """Cache of live clients keyed by ``(scanner, canonical network)``.
 
     Unlike per-call clients, the pool keeps one connection pool per target
     for the lifetime of the MCP server process (stdio servers are long
-    lived). ``aclose_all`` releases everything on shutdown and in tests.
+    lived). Networks are canonicalized through the chain registry before
+    keying, so 'eth', 'ethereum' and 8453-style aliases share one client per
+    scanner. ``aclose_all`` releases everything on shutdown and in tests.
     """
 
     def __init__(self, factory: ClientFactory | None = None) -> None:
@@ -126,9 +144,10 @@ class ClientPool:
     def get(self, scanner: str | None, network: str) -> ChainscanClient:
         """Return the cached client for the target, creating it on first use."""
         resolved = scanner or resolve_default_scanner()
-        key = (resolved, network)
+        canonical = _canonical_network(network)
+        key = (resolved, canonical)
         if key not in self._clients:
-            self._clients[key] = self._factory(resolved, network)
+            self._clients[key] = self._factory(resolved, canonical)
         return self._clients[key]
 
     async def aclose_all(self) -> None:
@@ -270,6 +289,18 @@ def _nft_collection(item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _holder_entry(item: dict[str, Any], decimals: int | None) -> dict[str, Any]:
+    """Curate one holder item (shared by the paginated and top-N holder tools)."""
+    raw = str(item.get('value') or '0')
+    entry: dict[str, Any] = {
+        'address': _checksum(_str_field(item.get('address'))),
+        'balance_raw': raw,
+    }
+    if decimals is not None:
+        entry['balance'] = format_units(raw, decimals)
+    return entry
+
+
 def _notes_from_exception(what: str, exc: BaseException) -> str:
     return f'Could not retrieve {what}: {type(exc).__name__}: {exc}'
 
@@ -282,6 +313,28 @@ def _unsupported_notes(scanner_name: str, method: Method) -> list[str]:
     ]
 
 
+def _unsupported_response(
+    client: ChainscanClient,
+    method: Method,
+    *,
+    what: str,
+    capability: str = 'method',
+    instructions: list[str] | None = None,
+) -> ToolResponse:
+    """The standard guard response for a method the scanner does not serve.
+
+    ``what`` completes the ``Cannot ...`` summary line; ``capability`` names
+    the missing endpoint when it is more specific than "the method"
+    (read_contract composes two of these guards — ABI and eth_call).
+    """
+    return build_tool_response(
+        data=None,
+        notes=_unsupported_notes(client.scanner_name, method),
+        instructions=instructions,
+        content_text=f'Cannot {what}: scanner lacks the {capability}.',
+    )
+
+
 def _next_call_params(
     tool_chain: str,
     scanner: str | None,
@@ -292,6 +345,28 @@ def _next_call_params(
     if scanner is not None:
         merged['scanner'] = scanner
     return merged
+
+
+async def _fetch_verified_abi(
+    client: ChainscanClient, contract: str
+) -> tuple[list[Any] | None, str | None]:
+    """Fetch and parse a verified ABI, degrading to ``(None, note)``.
+
+    ONE wording per failure for every ABI-consuming site (input decoding,
+    the ABI summary tool, read_contract): the same fetch failure must not
+    read three different ways. Callers append their own context suffix.
+    """
+    try:
+        abi_json = await client.get_contract_abi(contract)
+    except ChainscanClientError as exc:
+        return None, f'No verified ABI for {contract}: {exc}'
+    try:
+        abi = orjson.loads(abi_json) if isinstance(abi_json, str) else abi_json
+    except orjson.JSONDecodeError:
+        return None, f'No verified ABI for {contract}: response is not valid JSON'
+    if not isinstance(abi, list) or not abi:
+        return None, f'Contract {contract} has no verified ABI on this scanner'
+    return abi, None
 
 
 # Cursor allow-lists are DERIVED, not hand-listed: every scanner declares the
@@ -343,6 +418,30 @@ def _pagination(
         total=total,
         next_call=NextCall(tool=tool, params={**next_params, 'cursor': token}),
     )
+
+
+async def _fetch_curated_page(
+    client: ChainscanClient,
+    *,
+    method: Method,
+    tool: str,
+    cursor: str | None,
+    page_size: int,
+    first_page_params: dict[str, Any],
+    curate: Callable[[dict[str, Any]], dict[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+    """The shared paginated-tool skeleton, fetch half.
+
+    Merges the tool cursor into ``first_page_params`` (resource identity plus
+    the page-1 defaults a cursor may override), fetches one page and curates
+    at most ``page_size`` items. Returns the curated slice and the scanner
+    cursor for :func:`_pagination`.
+    """
+    params = dict(first_page_params)
+    if cursor is not None:
+        params.update(decode_tool_cursor(cursor, tool, scanner_cursor_keys(method)))
+    items, scanner_cursor = await client.fetch_page(method, params)
+    return [curate(item) for item in items[:page_size]], scanner_cursor
 
 
 # ---------------------------------------------------------------------------
@@ -462,24 +561,23 @@ async def get_transactions(
     """One curated page of an address's transactions with an opaque cursor."""
     wallet = str(Address(address))
     if not client.supports_method(Method.ACCOUNT_TRANSACTIONS):
-        return build_tool_response(
-            data=None,
-            notes=_unsupported_notes(client.scanner_name, Method.ACCOUNT_TRANSACTIONS),
+        return _unsupported_response(
+            client,
+            Method.ACCOUNT_TRANSACTIONS,
+            what=f'list transactions for {wallet}',
             instructions=['list_chains shows which chains the default scanner serves.'],
-            content_text=f'Cannot list transactions for {wallet}: scanner lacks the method.',
         )
 
     page_size = clamp_page_size(limit)
-    params: dict[str, Any] = {'address': wallet, 'page': 1, 'offset': page_size}
-    if cursor is not None:
-        params.update(
-            decode_tool_cursor(
-                cursor, 'get_transactions', scanner_cursor_keys(Method.ACCOUNT_TRANSACTIONS)
-            )
-        )
-
-    items, scanner_cursor = await client.fetch_page(Method.ACCOUNT_TRANSACTIONS, params)
-    transactions = [_curate_transaction(item, client.currency) for item in items[:page_size]]
+    transactions, scanner_cursor = await _fetch_curated_page(
+        client,
+        method=Method.ACCOUNT_TRANSACTIONS,
+        tool='get_transactions',
+        cursor=cursor,
+        page_size=page_size,
+        first_page_params={'address': wallet, 'page': 1, 'offset': page_size},
+        curate=lambda item: _curate_transaction(item, client.currency),
+    )
 
     pagination = _pagination(
         tool='get_transactions',
@@ -510,11 +608,7 @@ async def get_transactions(
 async def get_transaction_info(client: ChainscanClient, tx_hash: str) -> ToolResponse:
     """Transaction details with fastabi-decoded input when an ABI is available."""
     if not client.supports_method(Method.TX_BY_HASH):
-        return build_tool_response(
-            data=None,
-            notes=_unsupported_notes(client.scanner_name, Method.TX_BY_HASH),
-            content_text='Cannot fetch transaction: scanner lacks the method.',
-        )
+        return _unsupported_response(client, Method.TX_BY_HASH, what='fetch transaction')
 
     tx = await client.get_transaction(tx_hash)
     if not tx:
@@ -605,16 +699,9 @@ async def _decode_input_best_effort(
         return None, None
     if not client.supports_method(Method.CONTRACT_ABI):
         return None, 'Input decoding unavailable: scanner lacks the ABI endpoint.'
-    try:
-        abi_json = await client.get_contract_abi(contract)
-    except ChainscanClientError as exc:
-        return None, f'ABI not available ({exc}); raw input kept.'
-    try:
-        abi = orjson.loads(abi_json) if isinstance(abi_json, str) else abi_json
-    except orjson.JSONDecodeError:
-        return None, 'Contract ABI is not valid JSON; raw input kept.'
-    if not isinstance(abi, list) or not abi:
-        return None, 'Contract is not verified (no ABI); raw input kept.'
+    abi, fetch_note = await _fetch_verified_abi(client, contract)
+    if abi is None:
+        return None, f'{fetch_note}; raw input kept.'
     decoded = decode_transaction_input({'input': raw_input}, abi)
     name = decoded.get('decoded_func')
     if not isinstance(name, str) or not name:
@@ -635,25 +722,20 @@ async def get_token_portfolio(
     """One curated page of ERC-20 holdings with an opaque cursor."""
     wallet = str(Address(address))
     if not client.supports_method(Method.ACCOUNT_TOKEN_PORTFOLIO):
-        return build_tool_response(
-            data=None,
-            notes=_unsupported_notes(client.scanner_name, Method.ACCOUNT_TOKEN_PORTFOLIO),
-            content_text=f'Cannot list tokens for {wallet}: scanner lacks the method.',
+        return _unsupported_response(
+            client, Method.ACCOUNT_TOKEN_PORTFOLIO, what=f'list tokens for {wallet}'
         )
 
     page_size = clamp_page_size(limit)
-    params: dict[str, Any] = {'address': wallet, 'page': 1, 'offset': page_size}
-    if cursor is not None:
-        params.update(
-            decode_tool_cursor(
-                cursor,
-                'get_token_portfolio',
-                scanner_cursor_keys(Method.ACCOUNT_TOKEN_PORTFOLIO),
-            )
-        )
-
-    items, scanner_cursor = await client.fetch_page(Method.ACCOUNT_TOKEN_PORTFOLIO, params)
-    tokens = [_token_fields(item) for item in items[:page_size]]
+    tokens, scanner_cursor = await _fetch_curated_page(
+        client,
+        method=Method.ACCOUNT_TOKEN_PORTFOLIO,
+        tool='get_token_portfolio',
+        cursor=cursor,
+        page_size=page_size,
+        first_page_params={'address': wallet, 'page': 1, 'offset': page_size},
+        curate=_token_fields,
+    )
     pagination = _pagination(
         tool='get_token_portfolio',
         items_shown=len(tokens),
@@ -680,10 +762,8 @@ async def get_token_info(client: ChainscanClient, token_address: str) -> ToolRes
     """Token metadata: name/symbol/decimals, supply (raw + formatted), holders."""
     token = str(Address(token_address))
     if not client.supports_method(Method.TOKEN_INFO):
-        return build_tool_response(
-            data=None,
-            notes=_unsupported_notes(client.scanner_name, Method.TOKEN_INFO),
-            content_text=f'Cannot fetch token info for {token}: scanner lacks the method.',
+        return _unsupported_response(
+            client, Method.TOKEN_INFO, what=f'fetch token info for {token}'
         )
 
     info = await client.get_token_info(token)
@@ -747,11 +827,7 @@ async def get_token_holders(
     """One curated page of token holders with balance formatting and totals."""
     token = str(Address(token_address))
     if not client.supports_method(Method.TOKEN_HOLDERS):
-        return build_tool_response(
-            data=None,
-            notes=_unsupported_notes(client.scanner_name, Method.TOKEN_HOLDERS),
-            content_text=f'Cannot list holders of {token}: scanner lacks the method.',
-        )
+        return _unsupported_response(client, Method.TOKEN_HOLDERS, what=f'list holders of {token}')
 
     decimals, _ = await _token_decimals(client, token)
     total: int | None = None
@@ -762,25 +838,15 @@ async def get_token_holders(
             total = None
 
     page_size = clamp_page_size(limit)
-    params: dict[str, Any] = {'contract_address': token, 'page': 1, 'offset': page_size}
-    if cursor is not None:
-        params.update(
-            decode_tool_cursor(
-                cursor, 'get_token_holders', scanner_cursor_keys(Method.TOKEN_HOLDERS)
-            )
-        )
-    items, scanner_cursor = await client.fetch_page(Method.TOKEN_HOLDERS, params)
-
-    holders = []
-    for item in items[:page_size]:
-        raw = str(item.get('value') or '0')
-        entry: dict[str, Any] = {
-            'address': _checksum(_str_field(item.get('address'))),
-            'balance_raw': raw,
-        }
-        if decimals is not None:
-            entry['balance'] = format_units(raw, decimals)
-        holders.append(entry)
+    holders, scanner_cursor = await _fetch_curated_page(
+        client,
+        method=Method.TOKEN_HOLDERS,
+        tool='get_token_holders',
+        cursor=cursor,
+        page_size=page_size,
+        first_page_params={'contract_address': token, 'page': 1, 'offset': page_size},
+        curate=partial(_holder_entry, decimals=decimals),
+    )
 
     symbol: str | None = None
     if client.supports_method(Method.TOKEN_INFO):
@@ -834,26 +900,15 @@ async def get_top_token_holders(
     """Top-N holders by balance (Etherscan PRO endpoint)."""
     token = str(Address(token_address))
     if not client.supports_method(Method.TOKEN_TOP_HOLDERS):
-        return build_tool_response(
-            data=None,
-            notes=_unsupported_notes(client.scanner_name, Method.TOKEN_TOP_HOLDERS),
-            content_text=f'Cannot list top holders of {token}: scanner lacks the method.',
+        return _unsupported_response(
+            client, Method.TOKEN_TOP_HOLDERS, what=f'list top holders of {token}'
         )
     if limit < 1:
         raise ValueError(f'limit must be at least 1, got {limit}')
 
     items = await client.get_top_token_holders(token, limit=limit)
     decimals, _ = await _token_decimals(client, token)
-    holders = []
-    for item in items[:limit]:
-        raw = str(item.get('value') or '0')
-        entry: dict[str, Any] = {
-            'address': _checksum(_str_field(item.get('address'))),
-            'balance_raw': raw,
-        }
-        if decimals is not None:
-            entry['balance'] = format_units(raw, decimals)
-        holders.append(entry)
+    holders = [_holder_entry(item, decimals) for item in items[:limit]]
 
     return build_tool_response(
         data={
@@ -878,31 +933,15 @@ async def get_contract_abi(client: ChainscanClient, address: str) -> ToolRespons
     """
     contract = str(Address(address))
     if not client.supports_method(Method.CONTRACT_ABI):
-        return build_tool_response(
-            data=None,
-            notes=_unsupported_notes(client.scanner_name, Method.CONTRACT_ABI),
-            content_text=f'Cannot fetch ABI of {contract}: scanner lacks the method.',
-        )
+        return _unsupported_response(client, Method.CONTRACT_ABI, what=f'fetch ABI of {contract}')
 
-    try:
-        abi_json = await client.get_contract_abi(contract)
-    except ChainscanClientError as exc:
+    abi, abi_note = await _fetch_verified_abi(client, contract)
+    if abi is None:
+        # (None, note) is the only failure shape the helper returns.
+        assert abi_note is not None
         return build_tool_response(
             data=None,
-            notes=[
-                f'No ABI for {contract}: {exc}. The contract is likely not '
-                'verified on this explorer.'
-            ],
-            content_text=f'No verified ABI for {contract}.',
-        )
-    try:
-        abi = orjson.loads(abi_json) if isinstance(abi_json, str) else abi_json
-    except orjson.JSONDecodeError:
-        abi = None
-    if not isinstance(abi, list) or not abi:
-        return build_tool_response(
-            data=None,
-            notes=[f'Contract {contract} has no verified ABI on this scanner.'],
+            notes=[abi_note],
             content_text=f'No verified ABI for {contract}.',
         )
 
@@ -954,27 +993,15 @@ async def read_contract(
     parsed_args, args_note = _parse_json_args(args)
 
     if not client.supports_method(Method.CONTRACT_ABI):
-        return build_tool_response(
-            data=None,
-            notes=_unsupported_notes(client.scanner_name, Method.CONTRACT_ABI),
-            content_text=f'Cannot read {contract}: scanner lacks the ABI endpoint.',
+        return _unsupported_response(
+            client, Method.CONTRACT_ABI, what=f'read {contract}', capability='ABI endpoint'
         )
     abi_note: str | None = args_note
-    try:
-        abi_json = await client.get_contract_abi(contract)
-        abi = orjson.loads(abi_json) if isinstance(abi_json, str) else abi_json
-    except (ChainscanClientError, orjson.JSONDecodeError) as exc:
+    abi, fetch_note = await _fetch_verified_abi(client, contract)
+    if abi is None:
         return build_tool_response(
             data=None,
-            notes=[
-                f'No verified ABI for {contract} ({exc}); cannot auto-encode the call.',
-            ],
-            content_text=f'Cannot read {function_name} on {contract}: no verified ABI.',
-        )
-    if not isinstance(abi, list) or not abi:
-        return build_tool_response(
-            data=None,
-            notes=[f'Contract {contract} has no verified ABI; cannot encode the call.'],
+            notes=[f'{fetch_note}; cannot auto-encode the call.'],
             content_text=f'Cannot read {function_name} on {contract}: no verified ABI.',
         )
 
@@ -1026,10 +1053,8 @@ async def read_contract(
         raise ValueError(f'cannot encode arguments for {function_name}: {exc}') from exc
 
     if not client.supports_method(Method.PROXY_ETH_CALL):
-        return build_tool_response(
-            data=None,
-            notes=_unsupported_notes(client.scanner_name, Method.PROXY_ETH_CALL),
-            content_text=f'Cannot read {contract}: scanner lacks the eth_call endpoint.',
+        return _unsupported_response(
+            client, Method.PROXY_ETH_CALL, what=f'read {contract}', capability='eth_call endpoint'
         )
 
     notes: list[str] = []

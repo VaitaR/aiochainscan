@@ -1,0 +1,541 @@
+[
+ {
+  "annotations": null,
+  "description": "Get the native coin (ETH/BNB/MATIC...) balance of a wallet.\n\nReturns Wei (exact string) and a human-readable amount. For ERC-20 or\nNFT holdings use get_token_portfolio / get_address_overview instead.\n",
+  "execution": null,
+  "icons": null,
+  "inputSchema": {
+   "properties": {
+    "address": {
+     "title": "Address",
+     "type": "string"
+    },
+    "chain": {
+     "default": "ethereum",
+     "title": "Chain",
+     "type": "string"
+    },
+    "scanner": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Scanner"
+    }
+   },
+   "required": [
+    "address"
+   ],
+   "title": "get_wallet_balanceArguments",
+   "type": "object"
+  },
+  "meta": null,
+  "name": "get_wallet_balance",
+  "outputSchema": null,
+  "title": null
+ },
+ {
+  "annotations": null,
+  "description": "Composite address snapshot: balance, newest transactions, ERC-20 tokens and NFT collections.\n\nRuns all sub-queries concurrently; partial failures are reported in\n`notes` without failing the call.\n",
+  "execution": null,
+  "icons": null,
+  "inputSchema": {
+   "properties": {
+    "address": {
+     "title": "Address",
+     "type": "string"
+    },
+    "chain": {
+     "default": "ethereum",
+     "title": "Chain",
+     "type": "string"
+    },
+    "scanner": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Scanner"
+    }
+   },
+   "required": [
+    "address"
+   ],
+   "title": "get_address_overviewArguments",
+   "type": "object"
+  },
+  "meta": null,
+  "name": "get_address_overview",
+  "outputSchema": null,
+  "title": null
+ },
+ {
+  "annotations": null,
+  "description": "Get one page of an address's transactions (newest first), curated for context economy.\n\nUse pagination.next_call from the response to fetch subsequent pages.\n",
+  "execution": null,
+  "icons": null,
+  "inputSchema": {
+   "properties": {
+    "address": {
+     "title": "Address",
+     "type": "string"
+    },
+    "chain": {
+     "default": "ethereum",
+     "title": "Chain",
+     "type": "string"
+    },
+    "cursor": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Cursor"
+    },
+    "limit": {
+     "default": 50,
+     "title": "Limit",
+     "type": "integer"
+    },
+    "scanner": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Scanner"
+    }
+   },
+   "required": [
+    "address"
+   ],
+   "title": "get_transactionsArguments",
+   "type": "object"
+  },
+  "meta": null,
+  "name": "get_transactions",
+  "outputSchema": null,
+  "title": null
+ },
+ {
+  "annotations": null,
+  "description": "Get transaction details with the call input decoded via the contract ABI (fastabi).\n\nWhen the recipient contract is verified, decoded_input replaces the raw\ncalldata; otherwise raw_input is kept (truncated) with an honest note.\n",
+  "execution": null,
+  "icons": null,
+  "inputSchema": {
+   "properties": {
+    "chain": {
+     "default": "ethereum",
+     "title": "Chain",
+     "type": "string"
+    },
+    "scanner": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Scanner"
+    },
+    "tx_hash": {
+     "title": "Tx Hash",
+     "type": "string"
+    }
+   },
+   "required": [
+    "tx_hash"
+   ],
+   "title": "get_transaction_infoArguments",
+   "type": "object"
+  },
+  "meta": null,
+  "name": "get_transaction_info",
+  "outputSchema": null,
+  "title": null
+ },
+ {
+  "annotations": null,
+  "description": "Get ERC-20 token holdings of an address (one curated page, paginated).",
+  "execution": null,
+  "icons": null,
+  "inputSchema": {
+   "properties": {
+    "address": {
+     "title": "Address",
+     "type": "string"
+    },
+    "chain": {
+     "default": "ethereum",
+     "title": "Chain",
+     "type": "string"
+    },
+    "cursor": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Cursor"
+    },
+    "limit": {
+     "default": 20,
+     "title": "Limit",
+     "type": "integer"
+    },
+    "scanner": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Scanner"
+    }
+   },
+   "required": [
+    "address"
+   ],
+   "title": "get_token_portfolioArguments",
+   "type": "object"
+  },
+  "meta": null,
+  "name": "get_token_portfolio",
+  "outputSchema": null,
+  "title": null
+ },
+ {
+  "annotations": null,
+  "description": "Get token metadata: name, symbol, decimals, total supply (raw + formatted), holder count.",
+  "execution": null,
+  "icons": null,
+  "inputSchema": {
+   "properties": {
+    "chain": {
+     "default": "ethereum",
+     "title": "Chain",
+     "type": "string"
+    },
+    "scanner": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Scanner"
+    },
+    "token_address": {
+     "title": "Token Address",
+     "type": "string"
+    }
+   },
+   "required": [
+    "token_address"
+   ],
+   "title": "get_token_infoArguments",
+   "type": "object"
+  },
+  "meta": null,
+  "name": "get_token_info",
+  "outputSchema": null,
+  "title": null
+ },
+ {
+  "annotations": null,
+  "description": "Get token holders (one curated page) with human-readable balances and total counts.",
+  "execution": null,
+  "icons": null,
+  "inputSchema": {
+   "properties": {
+    "chain": {
+     "default": "ethereum",
+     "title": "Chain",
+     "type": "string"
+    },
+    "cursor": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Cursor"
+    },
+    "limit": {
+     "default": 50,
+     "title": "Limit",
+     "type": "integer"
+    },
+    "scanner": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Scanner"
+    },
+    "token_address": {
+     "title": "Token Address",
+     "type": "string"
+    }
+   },
+   "required": [
+    "token_address"
+   ],
+   "title": "get_token_holdersArguments",
+   "type": "object"
+  },
+  "meta": null,
+  "name": "get_token_holders",
+  "outputSchema": null,
+  "title": null
+ },
+ {
+  "annotations": null,
+  "description": "Get the top-N holders by balance (order guaranteed; Etherscan PRO — needs scanner \"etherscan\").",
+  "execution": null,
+  "icons": null,
+  "inputSchema": {
+   "properties": {
+    "chain": {
+     "default": "ethereum",
+     "title": "Chain",
+     "type": "string"
+    },
+    "limit": {
+     "default": 100,
+     "title": "Limit",
+     "type": "integer"
+    },
+    "scanner": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Scanner"
+    },
+    "token_address": {
+     "title": "Token Address",
+     "type": "string"
+    }
+   },
+   "required": [
+    "token_address"
+   ],
+   "title": "get_top_token_holdersArguments",
+   "type": "object"
+  },
+  "meta": null,
+  "name": "get_top_token_holders",
+  "outputSchema": null,
+  "title": null
+ },
+ {
+  "annotations": null,
+  "description": "Get a curated summary of a verified contract ABI: function/event signatures.\n\nread_contract fetches and applies the full ABI automatically — this\ntool is for discovery.\n",
+  "execution": null,
+  "icons": null,
+  "inputSchema": {
+   "properties": {
+    "address": {
+     "title": "Address",
+     "type": "string"
+    },
+    "chain": {
+     "default": "ethereum",
+     "title": "Chain",
+     "type": "string"
+    },
+    "scanner": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Scanner"
+    }
+   },
+   "required": [
+    "address"
+   ],
+   "title": "get_contract_abiArguments",
+   "type": "object"
+  },
+  "meta": null,
+  "name": "get_contract_abi",
+  "outputSchema": null,
+  "title": null
+ },
+ {
+  "annotations": null,
+  "description": "Call a view/pure contract function via auto-fetched ABI + eth_call, outputs decoded.\n\nNo manual ABI needed: the verified ABI is fetched, the function found\nby name, arguments encoded and outputs decoded automatically.\n`args` is a JSON array string, e.g. '[\"0xabc...\", 5]'; numeric strings\ncoerce to ints, 0x-hex strings pass through for bytes arguments.\n",
+  "execution": null,
+  "icons": null,
+  "inputSchema": {
+   "properties": {
+    "address": {
+     "title": "Address",
+     "type": "string"
+    },
+    "args": {
+     "default": "[]",
+     "title": "Args",
+     "type": "string"
+    },
+    "block": {
+     "default": "latest",
+     "title": "Block",
+     "type": "string"
+    },
+    "chain": {
+     "default": "ethereum",
+     "title": "Chain",
+     "type": "string"
+    },
+    "function_name": {
+     "title": "Function Name",
+     "type": "string"
+    },
+    "scanner": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Scanner"
+    }
+   },
+   "required": [
+    "address",
+    "function_name"
+   ],
+   "title": "read_contractArguments",
+   "type": "object"
+  },
+  "meta": null,
+  "name": "read_contract",
+  "outputSchema": null,
+  "title": null
+ },
+ {
+  "annotations": null,
+  "description": "Resolve ENS both directions: 'vitalik.eth' -> address, or address -> ENS name.",
+  "execution": null,
+  "icons": null,
+  "inputSchema": {
+   "properties": {
+    "chain": {
+     "default": "ethereum",
+     "title": "Chain",
+     "type": "string"
+    },
+    "name_or_address": {
+     "title": "Name Or Address",
+     "type": "string"
+    },
+    "scanner": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Scanner"
+    }
+   },
+   "required": [
+    "name_or_address"
+   ],
+   "title": "resolve_ensArguments",
+   "type": "object"
+  },
+  "meta": null,
+  "name": "resolve_ens",
+  "outputSchema": null,
+  "title": null
+ },
+ {
+  "annotations": null,
+  "description": "List chains served by these tools, filterable by name/alias/chain-ID substring.",
+  "execution": null,
+  "icons": null,
+  "inputSchema": {
+   "properties": {
+    "query": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Query"
+    }
+   },
+   "title": "list_chainsArguments",
+   "type": "object"
+  },
+  "meta": null,
+  "name": "list_chains",
+  "outputSchema": null,
+  "title": null
+ }
+]
