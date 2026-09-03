@@ -2,12 +2,12 @@
 
 Etherscan-style aliases (``blockNumber``, ``timeStamp``, ``gasUsed``,
 ``gasPrice``, ``isError``, ``tokenSymbol``/``tokenName``/``tokenDecimal``,
-``contractAddress``) come from existing dual-provider handling already in
-this repo: ``aiochainscan/mcp/tools.py`` (``_curate_transaction``,
-``_token_fields``, ``_flat_address``) and ``aiochainscan/domain/contract.py``
-(``iter_events``/``iter_transactions``). They are unchanged from the first
-Track D pass and are not re-verified here (no Etherscan API key was used —
-see ``docs/V1_PLAN.md`` Track D follow-up).
+``contractAddress``) were first recorded in the dual-provider handling of
+``aiochainscan/mcp/tools.py`` and ``aiochainscan/domain/contract.py``; this
+module is now the ONE owner of that accessor vocabulary (see the provider
+field dialect below), and those consumers import it from here. The aliases
+are unchanged from the first Track D pass and are not re-verified here (no
+Etherscan API key was used — see ``docs/V1_PLAN.md`` Track D follow-up).
 
 BlockScout-V2-native aliases were recorded live from the keyless public
 instance (``https://eth.blockscout.com`` — the same instance
@@ -67,7 +67,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import datetime
-from typing import Any
+from typing import Any, overload
 
 from ..convert import to_datetime
 from ..crypto import to_checksum_address
@@ -80,8 +80,51 @@ from .normalized import (
     freeze_provider_data,
 )
 
+__all__ = [
+    'BLOCK_NUMBER_KEYS',
+    'GAS_KEYS',
+    'GAS_PRICE_KEYS',
+    'GAS_USED_KEYS',
+    'LOG_INDEX_KEYS',
+    'LOG_TRANSACTION_HASH_KEYS',
+    'TIMESTAMP_KEYS',
+    'TRANSACTION_HASH_KEYS',
+    'first_field',
+    'flat_address',
+    'int_or_default',
+    'normalize_block',
+    'normalize_internal_transaction',
+    'normalize_log',
+    'normalize_token_transfer',
+    'normalize_transaction',
+]
 
-def _first(item: Mapping[str, Any], *keys: str) -> Any:
+# ---------------------------------------------------------------------------
+# The provider field dialect — CONTEXT.md's name for the accessor vocabulary
+# that reads provider-native item dicts. This module is its ONE owner: every
+# provider-dict reader (the mappers below, analytics DataFrame rows,
+# ``SmartContract`` field reads, MCP curation) imports these primitives and
+# alias key orders instead of re-deriving emptiness rules per call site.
+# ---------------------------------------------------------------------------
+
+BLOCK_NUMBER_KEYS: tuple[str, ...] = ('blockNumber', 'block_number')
+GAS_KEYS: tuple[str, ...] = ('gas', 'gas_limit')
+GAS_PRICE_KEYS: tuple[str, ...] = ('gasPrice', 'gas_price')
+GAS_USED_KEYS: tuple[str, ...] = ('gasUsed', 'gas_used')
+TIMESTAMP_KEYS: tuple[str, ...] = ('timeStamp', 'timestamp')
+#: How a log references its transaction (Etherscan ``transactionHash`` /
+#: BlockScout V2 ``transaction_hash``).
+LOG_TRANSACTION_HASH_KEYS: tuple[str, ...] = ('transactionHash', 'transaction_hash')
+#: The item's own transaction hash (generic ``hash`` / V2 ``transaction_hash``).
+TRANSACTION_HASH_KEYS: tuple[str, ...] = ('hash', 'transaction_hash')
+LOG_INDEX_KEYS: tuple[str, ...] = ('logIndex', 'log_index', 'index')
+
+
+def first_field(item: Mapping[str, Any], *keys: str) -> Any:
+    """Alias-first lookup: the first key whose value is not ``None``/``''``.
+
+    A falsy ``0`` is data and survives — a genesis row keeps its block number.
+    """
     for key in keys:
         value = item.get(key)
         if value is not None and value != '':
@@ -89,7 +132,7 @@ def _first(item: Mapping[str, Any], *keys: str) -> Any:
     return None
 
 
-def _flat_address(value: Any) -> str | None:
+def flat_address(value: Any) -> str | None:
     """Flatten a BlockScout-V2 nested address object or an Etherscan flat string."""
     if isinstance(value, dict):
         for key in ('hash', 'address_hash', 'address'):
@@ -101,7 +144,7 @@ def _flat_address(value: Any) -> str | None:
 
 
 def _checksum_or_none(value: Any) -> str | None:
-    flat = _flat_address(value)
+    flat = flat_address(value)
     if flat is None:
         return None
     try:
@@ -110,23 +153,34 @@ def _checksum_or_none(value: Any) -> str | None:
         return flat
 
 
-def _int_or_none(value: Any) -> int | None:
-    if value is None:
-        return None
+@overload
+def int_or_default(value: Any, default: int) -> int: ...
+
+
+@overload
+def int_or_default(value: Any, default: None = None) -> int | None: ...
+
+
+def int_or_default(value: Any, default: int | None = None) -> int | None:
+    """Hex-or-decimal int coercion with a caller-supplied default.
+
+    ``int`` passes, decimal strings and ``0x``-hex strings parse; ``bool``
+    (never ``True`` -> ``1``) and unparseable values yield ``default``.
+    """
     if isinstance(value, bool):
-        return None
+        return default
     if isinstance(value, int):
         return value
-    text = str(value)
-    try:
-        return int(text, 16) if text.startswith(('0x', '0X')) else int(text)
-    except ValueError:
-        return None
+    if isinstance(value, str) and value:
+        try:
+            return int(value, 16) if value.startswith(('0x', '0X')) else int(value)
+        except ValueError:
+            return default
+    return default
 
 
 def _wei_int(value: Any) -> int:
-    parsed = _int_or_none(value)
-    return parsed if parsed is not None else 0
+    return int_or_default(value, default=0)
 
 
 def _bool_or_none(value: Any) -> bool | None:
@@ -182,17 +236,17 @@ def _contract_address(item: Mapping[str, Any]) -> str | None:
 def normalize_transaction(item: Mapping[str, Any]) -> Transaction:
     return Transaction(
         hash=item.get('hash'),
-        block_number=_int_or_none(_first(item, 'blockNumber', 'block_number')),
+        block_number=int_or_default(first_field(item, *BLOCK_NUMBER_KEYS)),
         from_address=_checksum_or_none(item.get('from')),
         to_address=_checksum_or_none(item.get('to')),
         value_wei=_wei_int(item.get('value')),
-        gas=_int_or_none(_first(item, 'gas', 'gas_limit')),
-        gas_price_wei=_int_or_none(_first(item, 'gasPrice', 'gas_price')),
-        gas_used=_int_or_none(_first(item, 'gasUsed', 'gas_used')),
-        nonce=_int_or_none(item.get('nonce')),
-        timestamp=_timestamp_or_none(_first(item, 'timeStamp', 'timestamp')),
+        gas=int_or_default(first_field(item, *GAS_KEYS)),
+        gas_price_wei=int_or_default(first_field(item, *GAS_PRICE_KEYS)),
+        gas_used=int_or_default(first_field(item, *GAS_USED_KEYS)),
+        nonce=int_or_default(item.get('nonce')),
+        timestamp=_timestamp_or_none(first_field(item, *TIMESTAMP_KEYS)),
         is_error=_is_error(item),
-        input_data=_first(item, 'input', 'raw_input'),
+        input_data=first_field(item, 'input', 'raw_input'),
         provider_data=freeze_provider_data(item),
     )
 
@@ -201,16 +255,16 @@ def normalize_internal_transaction(item: Mapping[str, Any]) -> InternalTransacti
     return InternalTransaction(
         hash=item.get('hash'),
         transaction_hash=item.get('transaction_hash'),
-        call_index=_int_or_none(item.get('index')),
-        block_number=_int_or_none(_first(item, 'blockNumber', 'block_number')),
+        call_index=int_or_default(item.get('index')),
+        block_number=int_or_default(first_field(item, *BLOCK_NUMBER_KEYS)),
         from_address=_checksum_or_none(item.get('from')),
         to_address=_checksum_or_none(item.get('to')),
         contract_address=_contract_address(item),
         value_wei=_wei_int(item.get('value')),
-        gas=_int_or_none(_first(item, 'gas', 'gas_limit')),
-        gas_used=_int_or_none(_first(item, 'gasUsed', 'gas_used')),
+        gas=int_or_default(first_field(item, *GAS_KEYS)),
+        gas_used=int_or_default(first_field(item, *GAS_USED_KEYS)),
         is_error=_is_error(item),
-        timestamp=_timestamp_or_none(_first(item, 'timeStamp', 'timestamp')),
+        timestamp=_timestamp_or_none(first_field(item, *TIMESTAMP_KEYS)),
         provider_data=freeze_provider_data(item),
     )
 
@@ -222,24 +276,26 @@ def normalize_token_transfer(item: Mapping[str, Any]) -> TokenTransfer:
     nested_total = total if isinstance(total, dict) else {}
 
     contract = (
-        _first(item, 'contractAddress')
+        first_field(item, 'contractAddress')
         or nested_token.get('address_hash')
         or nested_token.get('address')
     )
-    decimals_raw = _first(item, 'tokenDecimal', 'tokenDecimals') or nested_token.get('decimals')
-    value_raw = _first(item, 'value') or nested_total.get('value')
+    decimals_raw = first_field(item, 'tokenDecimal', 'tokenDecimals') or nested_token.get(
+        'decimals'
+    )
+    value_raw = first_field(item, 'value') or nested_total.get('value')
 
     return TokenTransfer(
-        transaction_hash=_first(item, 'hash', 'transaction_hash'),
-        block_number=_int_or_none(_first(item, 'blockNumber', 'block_number')),
+        transaction_hash=first_field(item, *TRANSACTION_HASH_KEYS),
+        block_number=int_or_default(first_field(item, *BLOCK_NUMBER_KEYS)),
         from_address=_checksum_or_none(item.get('from')),
         to_address=_checksum_or_none(item.get('to')),
         contract_address=_checksum_or_none(contract),
-        token_symbol=_first(item, 'tokenSymbol') or nested_token.get('symbol'),
-        token_name=_first(item, 'tokenName') or nested_token.get('name'),
-        token_decimals=_int_or_none(decimals_raw),
+        token_symbol=first_field(item, 'tokenSymbol') or nested_token.get('symbol'),
+        token_name=first_field(item, 'tokenName') or nested_token.get('name'),
+        token_decimals=int_or_default(decimals_raw),
         value_raw=_wei_int(value_raw),
-        timestamp=_timestamp_or_none(_first(item, 'timeStamp', 'timestamp')),
+        timestamp=_timestamp_or_none(first_field(item, *TIMESTAMP_KEYS)),
         provider_data=freeze_provider_data(item),
     )
 
@@ -249,9 +305,9 @@ def normalize_log(item: Mapping[str, Any]) -> Log:
     topics = tuple(topics_raw) if isinstance(topics_raw, list | tuple) else ()
     return Log(
         address=_checksum_or_none(item.get('address')),
-        block_number=_int_or_none(_first(item, 'blockNumber', 'block_number')),
-        transaction_hash=_first(item, 'transactionHash', 'transaction_hash'),
-        log_index=_int_or_none(_first(item, 'logIndex', 'log_index', 'index')),
+        block_number=int_or_default(first_field(item, *BLOCK_NUMBER_KEYS)),
+        transaction_hash=first_field(item, *LOG_TRANSACTION_HASH_KEYS),
+        log_index=int_or_default(first_field(item, *LOG_INDEX_KEYS)),
         topics=topics,
         data=item.get('data'),
         provider_data=freeze_provider_data(item),
@@ -270,12 +326,12 @@ def normalize_block(item: Mapping[str, Any]) -> Block:
     guess from provider documentation.
     """
     return Block(
-        number=_int_or_none(_first(item, 'number', 'height')),
+        number=int_or_default(first_field(item, 'number', 'height')),
         hash=item.get('hash'),
         timestamp=_timestamp_or_none(item.get('timestamp')),
-        gas_used=_int_or_none(_first(item, 'gasUsed', 'gas_used')),
-        gas_limit=_int_or_none(_first(item, 'gasLimit', 'gas_limit')),
+        gas_used=int_or_default(first_field(item, *GAS_USED_KEYS)),
+        gas_limit=int_or_default(first_field(item, 'gasLimit', 'gas_limit')),
         miner=_checksum_or_none(item.get('miner')),
-        difficulty=_int_or_none(item.get('difficulty')),
+        difficulty=int_or_default(item.get('difficulty')),
         provider_data=freeze_provider_data(item),
     )

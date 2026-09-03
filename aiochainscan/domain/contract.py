@@ -13,35 +13,17 @@ from typing import Any, Protocol
 from ..decode import canonical_abi_type, decode_log_data, decode_transaction_input
 from ..domain.method import Method
 from ..exceptions import ChainscanClientError
-
-
-def _string_field(value: Any) -> str:
-    """Read a string field without changing the source payload."""
-    return value if isinstance(value, str) else ''
-
-
-def _address_field(value: Any) -> str:
-    """Read an explorer address represented as a scalar or nested object."""
-    if isinstance(value, dict):
-        for key in ('hash', 'address_hash', 'address'):
-            nested = value.get(key)
-            if isinstance(nested, str):
-                return nested
-        return ''
-    return _string_field(value)
-
-
-def _int_field(value: Any) -> int:
-    """Read decimal/hex explorer scalars used by decoded domain objects.
-
-    Local, not ``convert.hex_to_int``: missing fields default to ``0``
-    (decoded objects tolerate absent data) instead of raising.
-    """
-    if isinstance(value, int):
-        return value
-    if isinstance(value, str) and value:
-        return int(value, 16) if value.startswith(('0x', '0X')) else int(value)
-    return 0
+from .normalize import (
+    BLOCK_NUMBER_KEYS,
+    GAS_KEYS,
+    GAS_PRICE_KEYS,
+    LOG_INDEX_KEYS,
+    LOG_TRANSACTION_HASH_KEYS,
+    TRANSACTION_HASH_KEYS,
+    first_field,
+    flat_address,
+    int_or_default,
+)
 
 
 def _dict_field(value: Any) -> dict[str, Any]:
@@ -360,14 +342,10 @@ class SmartContract:
                 event = DecodedEvent(
                     name=str(decoded_event_name),
                     args={k: v for k, v in decoded_data.items() if k != 'event'},
-                    address=_address_field(log.get('address', '')),
-                    block_number=_int_field(log.get('blockNumber', log.get('block_number', 0))),
-                    tx_hash=_string_field(
-                        log.get('transactionHash', log.get('transaction_hash', ''))
-                    ),
-                    log_index=_int_field(
-                        log.get('logIndex', log.get('log_index', log.get('index', 0)))
-                    ),
+                    address=flat_address(log.get('address')) or '',
+                    block_number=int_or_default(first_field(log, *BLOCK_NUMBER_KEYS), default=0),
+                    tx_hash=first_field(log, *LOG_TRANSACTION_HASH_KEYS) or '',
+                    log_index=int_or_default(first_field(log, *LOG_INDEX_KEYS), default=0),
                     raw_log=log,
                 )
                 yield event
@@ -416,14 +394,14 @@ class SmartContract:
             if limit is not None and count >= limit:
                 break
 
-            to_address = _address_field(tx.get('to', tx.get('to_address', '')))
+            to_address = flat_address(first_field(tx, 'to', 'to_address')) or ''
             if to_address.lower() != self.address:
                 continue
 
-            block_num = _int_field(tx.get('blockNumber', tx.get('block_number', 0)))
+            block_num = int_or_default(first_field(tx, *BLOCK_NUMBER_KEYS), default=0)
             if block_num < from_block:
                 continue
-            if to_block is not None and block_num > _int_field(to_block):
+            if to_block is not None and block_num > to_block:
                 continue
 
             decoded_tx = tx
@@ -438,13 +416,13 @@ class SmartContract:
                 yield DecodedTransaction(
                     function_name=function_name,
                     args=_dict_field(decoded_tx.get('decoded_data', {})),
-                    tx_hash=_string_field(tx.get('hash', tx.get('transaction_hash', ''))),
-                    from_address=_address_field(tx.get('from', tx.get('from_address', ''))),
-                    to_address=_address_field(tx.get('to', tx.get('to_address', ''))),
-                    value_wei=_int_field(tx.get('value', 0)),
+                    tx_hash=first_field(tx, *TRANSACTION_HASH_KEYS) or '',
+                    from_address=flat_address(first_field(tx, 'from', 'from_address')) or '',
+                    to_address=to_address,
+                    value_wei=int_or_default(tx.get('value'), default=0),
                     block_number=block_num,
-                    gas=_int_field(tx.get('gas', tx.get('gas_limit', 0))),
-                    gas_price_wei=_int_field(tx.get('gasPrice', tx.get('gas_price', 0))),
+                    gas=int_or_default(first_field(tx, *GAS_KEYS), default=0),
+                    gas_price_wei=int_or_default(first_field(tx, *GAS_PRICE_KEYS), default=0),
                     raw_transaction=tx,
                 )
                 count += 1

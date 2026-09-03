@@ -10,6 +10,15 @@ import logging
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any
 
+from ..domain.normalize import (
+    BLOCK_NUMBER_KEYS,
+    GAS_USED_KEYS,
+    TIMESTAMP_KEYS,
+    first_field,
+    flat_address,
+    int_or_default,
+)
+
 if TYPE_CHECKING:
     import polars as pl
 
@@ -18,6 +27,20 @@ try:
     import polars as pl
 
     POLARS_AVAILABLE = True
+
+    # Transaction DataFrame schema, declared once and shared by the empty-case
+    # constructor and the populated-case builder. NOTE: Wei/gas columns are
+    # Utf8 on purpose — Int64 overflows at ~9.22 ETH (1 ETH = 10^18 Wei).
+    _TRANSACTIONS_SCHEMA: dict[str, Any] = {
+        'hash': pl.Utf8,
+        'block_number': pl.Int64,
+        'from_address': pl.Utf8,
+        'to_address': pl.Utf8,
+        'value_wei': pl.Utf8,  # String to prevent overflow (Wei > Int64 max)
+        'value_eth': pl.Float64,
+        'gas_used': pl.Utf8,  # String for consistency with Wei values
+        'timestamp': pl.Utf8,
+    }
 except ImportError:
     POLARS_AVAILABLE = False
 
@@ -80,58 +103,33 @@ async def transactions_to_dataframe(
 
     if not tx_list:
         # Return empty DataFrame with expected schema
-        # NOTE: value_wei stored as String to prevent integer overflow
-        # (1 ETH = 10^18 Wei, Int64 max = ~9.2 ETH)
-        return pl.DataFrame(
-            schema={
-                'hash': pl.Utf8,
-                'block_number': pl.Int64,
-                'from_address': pl.Utf8,
-                'to_address': pl.Utf8,
-                'value_wei': pl.Utf8,  # String to prevent overflow (Wei > Int64 max)
-                'value_eth': pl.Float64,
-                'gas_used': pl.Utf8,  # String for consistency with Wei values
-                'timestamp': pl.Utf8,
-            }
-        )
+        return pl.DataFrame(schema=_TRANSACTIONS_SCHEMA)
 
     rows: list[dict[str, Any]] = []
     for tx in tx_list:
-        # Handle nested address objects (BlockScout V2 format)
-        from_addr = tx.get('from', {})
-        to_addr = tx.get('to', {})
+        # Provider field dialect (owned by domain/normalize.py): alias-first
+        # lookup keeps a falsy 0 (a genesis row keeps its block number), and
+        # nested BlockScout-V2 address objects flatten to their hash string.
+        from_value = flat_address(tx.get('from'))
+        to_value = flat_address(tx.get('to'))
 
-        value_wei = str(int(tx.get('value', 0)))
-        from_value = from_addr.get('hash') if isinstance(from_addr, dict) else from_addr
-        to_value = to_addr.get('hash') if isinstance(to_addr, dict) else to_addr
+        value_wei = str(int_or_default(tx.get('value'), default=0))
 
         rows.append(
             {
                 'hash': tx.get('hash', ''),
-                'block_number': tx.get('block_number') or tx.get('blockNumber'),
+                'block_number': first_field(tx, *BLOCK_NUMBER_KEYS),
                 'from_address': from_value,
                 'to_address': to_value or '',
                 'value_wei': value_wei,
                 'value_eth': int(value_wei) / 1e18,
-                'gas_used': str(int(tx.get('gas_used', 0) or tx.get('gasUsed', 0))),
-                'timestamp': tx.get('timestamp', tx.get('timeStamp', '')),
+                'gas_used': str(int_or_default(first_field(tx, *GAS_USED_KEYS), default=0)),
+                'timestamp': first_field(tx, *TIMESTAMP_KEYS) or '',
             }
         )
         # Store Wei as string to prevent integer overflow (Int64 max ~ 9.22 ETH)
 
-    return pl.from_dicts(
-        rows,
-        schema_overrides={
-            'hash': pl.Utf8,
-            'block_number': pl.Int64,
-            'from_address': pl.Utf8,
-            'to_address': pl.Utf8,
-            'value_wei': pl.Utf8,
-            'value_eth': pl.Float64,
-            'gas_used': pl.Utf8,
-            'timestamp': pl.Utf8,
-        },
-    )
+    return pl.from_dicts(rows, schema_overrides=_TRANSACTIONS_SCHEMA)
 
 
 async def token_portfolio_to_dataframe(tokens: list[dict[str, Any]]) -> 'pl.DataFrame':
@@ -164,7 +162,7 @@ async def token_portfolio_to_dataframe(tokens: list[dict[str, Any]]) -> 'pl.Data
         value = int(item.get('value', 0))
 
         # Handle both Etherscan (uses 'address') and BlockScout V2 (uses 'address_hash')
-        contract_addr = token_info.get('address_hash') or token_info.get('address', '')
+        contract_addr = first_field(token_info, 'address_hash', 'address') or ''
 
         rows.append(
             {

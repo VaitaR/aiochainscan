@@ -36,6 +36,15 @@ from ..chain_registry import get_chain_name, list_supported_chains, resolve_chai
 from ..decode import decode_transaction_input
 from ..domain.method import Method
 from ..domain.models import Address
+from ..domain.normalize import (
+    BLOCK_NUMBER_KEYS,
+    GAS_KEYS,
+    GAS_PRICE_KEYS,
+    TIMESTAMP_KEYS,
+    first_field,
+    flat_address,
+    int_or_default,
+)
 from ..exceptions import ChainscanClientError
 from ..scanners import SCANNER_REGISTRY
 from .cursors import decode_tool_cursor, encode_cursor
@@ -163,36 +172,6 @@ class ClientPool:
 # ---------------------------------------------------------------------------
 
 
-def _flat_address(value: Any) -> str:
-    """Flatten explorer address scalars/objects into a hash string."""
-    if isinstance(value, dict):
-        for key in ('hash', 'address_hash', 'address'):
-            nested = value.get(key)
-            if isinstance(nested, str):
-                return nested
-        return ''
-    return value if isinstance(value, str) else ''
-
-
-def _int_field(value: Any, default: int = 0) -> int:
-    """Read decimal/hex explorer scalars as int.
-
-    Local, not ``convert.hex_to_int``: curated tool output tolerates
-    absent/corrupted scalars via ``default`` instead of raising, and booleans
-    must not parse as ints.
-    """
-    if isinstance(value, bool):
-        return default
-    if isinstance(value, int):
-        return value
-    if isinstance(value, str) and value:
-        try:
-            return int(value, 16) if value.startswith(('0x', '0X')) else int(value)
-        except ValueError:
-            return default
-    return default
-
-
 def _str_field(value: Any) -> str:
     return value if isinstance(value, str) else ''
 
@@ -226,12 +205,12 @@ def _curate_transaction(item: dict[str, Any], currency: str) -> dict[str, Any]:
     method_id = _str_field(item.get('input'))[:10]
     return {
         'hash': item.get('hash'),
-        'from': _checksum(_flat_address(item.get('from'))),
-        'to': _checksum(_flat_address(item.get('to'))),
+        'from': _checksum(flat_address(item.get('from')) or ''),
+        'to': _checksum(flat_address(item.get('to')) or ''),
         'value_wei': value_wei,
         'value': f'{format_units(value_wei, 18)} {currency}',
-        'block_number': _int_field(item.get('blockNumber', item.get('block_number'))),
-        'timestamp': item.get('timeStamp', item.get('timestamp')),
+        'block_number': int_or_default(first_field(item, *BLOCK_NUMBER_KEYS), default=0),
+        'timestamp': first_field(item, *TIMESTAMP_KEYS),
         'is_error': item.get('isError'),
         'method_id': method_id if method_id not in ('', '0x') else None,
     }
@@ -248,8 +227,7 @@ def _token_fields(item: dict[str, Any]) -> dict[str, Any]:
     nested = _nested_dict(item, 'token')
     contract = (
         item.get('contractAddress')
-        or nested.get('address_hash')
-        or nested.get('address')
+        or first_field(nested, 'address_hash', 'address')
         or item.get('address')
     )
     symbol = item.get('tokenSymbol') or nested.get('symbol')
@@ -624,13 +602,13 @@ async def get_transaction_info(client: ChainscanClient, tx_hash: str) -> ToolRes
     notes: list[str] = []
     data: dict[str, Any] = {
         'hash': tx.get('hash', tx_hash),
-        'from': _checksum(_flat_address(tx.get('from'))),
-        'to': _checksum(_flat_address(tx.get('to'))),
-        'block_number': _int_field(tx.get('blockNumber', tx.get('block_number'))),
+        'from': _checksum(flat_address(tx.get('from')) or ''),
+        'to': _checksum(flat_address(tx.get('to')) or ''),
+        'block_number': int_or_default(first_field(tx, *BLOCK_NUMBER_KEYS), default=0),
         'value_wei': _wei_field(tx.get('value')),
-        'nonce': _int_field(tx.get('nonce')),
-        'gas': _int_field(tx.get('gas', tx.get('gas_limit'))),
-        'gas_price_wei': _wei_field(tx.get('gasPrice', tx.get('gas_price'))),
+        'nonce': int_or_default(tx.get('nonce'), default=0),
+        'gas': int_or_default(first_field(tx, *GAS_KEYS), default=0),
+        'gas_price_wei': _wei_field(first_field(tx, *GAS_PRICE_KEYS)),
     }
     data['value'] = f"{format_units(data['value_wei'], 18)} {client.currency}"
 
@@ -772,7 +750,7 @@ async def get_token_info(client: ChainscanClient, token_address: str) -> ToolRes
         'contract_address': _checksum(token),
         'name': info.get('name'),
         'symbol': info.get('symbol'),
-        'decimals': _int_field(info.get('decimals'), default=18) or 18,
+        'decimals': int_or_default(info.get('decimals'), default=18) or 18,
         'total_supply': str(info.get('totalSupply', info.get('total_supply')) or '0'),
     }
     decimals = data['decimals']
