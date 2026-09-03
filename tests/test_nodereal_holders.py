@@ -127,9 +127,12 @@ class TestRequestEnvelope:
         assert rpc_params == [CONTRACT]
 
     def test_wire_method_names(self) -> None:
-        assert NodeRealScanner._WIRE_METHODS[Method.TOKEN_HOLDERS] == 'nr_getTokenHolders'
-        assert NodeRealScanner._WIRE_METHODS[Method.TOKEN_TOP_HOLDERS] == 'nr_getTokenHolders'
-        assert NodeRealScanner._WIRE_METHODS[Method.TOKEN_HOLDER_COUNT] == 'nr_getTokenHolderCount'
+        assert NodeRealScanner.SPECS[Method.TOKEN_HOLDERS].wire_method == 'nr_getTokenHolders'
+        assert NodeRealScanner.SPECS[Method.TOKEN_TOP_HOLDERS].wire_method == 'nr_getTokenHolders'
+        assert (
+            NodeRealScanner.SPECS[Method.TOKEN_HOLDER_COUNT].wire_method
+            == 'nr_getTokenHolderCount'
+        )
 
 
 # ============================================================================

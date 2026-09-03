@@ -61,6 +61,7 @@ from ..exceptions import (
     ChainscanClientProxyError,
     ChainscanDataError,
     ChainscanRateLimitError,
+    ScannerArgumentError,
 )
 from . import register_scanner
 from .base import (
@@ -346,14 +347,20 @@ def _block_number_param(params: dict[str, Any], public: str) -> Any:
 
 def _timestamp_param(params: dict[str, Any], public: str) -> Any:
     """Timestamp as an int (the wire wants a number, not a quoted string)."""
-    return int(_param(params, public))
+    raw = _param(params, public)
+    try:
+        return int(raw)
+    except (TypeError, ValueError) as exc:
+        raise ScannerArgumentError(
+            f'{public} must be a unix timestamp (int or numeric string), got {raw!r}'
+        ) from exc
 
 
 def _closest_param(params: dict[str, Any], public: str) -> Any:
     """``before``/``after`` hint, uppercased; anything else is a caller bug."""
     closest = str(_param(params, public, default='before')).upper()
     if closest not in ('BEFORE', 'AFTER'):
-        raise ValueError(f"closest must be 'before' or 'after', got {closest!r}")
+        raise ScannerArgumentError(f"closest must be 'before' or 'after', got {closest!r}")
     return closest
 
 
@@ -361,7 +368,7 @@ def _contract_creation_param(params: dict[str, Any], public: str) -> Any:
     """First address of the public comma-separated list (NodeReal takes one)."""
     addresses = str(params[public]).split(',')
     if len(addresses) > 1:
-        raise ValueError(
+        raise ScannerArgumentError(
             'NodeReal supports one contract address per '
             f'CONTRACT_CREATION call, got {len(addresses)}'
         )
@@ -453,7 +460,7 @@ def _build_transfer_filter(
         window = (max(end_block - _TRANSFER_WINDOW + 1, 0), end_block)
     address = _param(params, *_declared_sources(spec, 'address'))
     if not address:
-        raise ValueError('address is required')
+        raise ScannerArgumentError('address is required')
     filter_: dict[str, Any] = {
         'category': category,
         'address': address,
@@ -544,50 +551,28 @@ class NodeRealScanner(Scanner):
         {Method.CONTRACT_ABI, Method.CONTRACT_SOURCE}
     )
 
-    # JSON-RPC wire method per logical method (transfers share one wire method)
-    _WIRE_METHODS: ClassVar[dict[Method, str]] = {
-        Method.ACCOUNT_BALANCE: 'eth_getBalance',
-        Method.ACCOUNT_TRANSACTIONS: 'nr_getTransactionByAddress',
-        Method.ACCOUNT_INTERNAL_TXS: 'nr_getTransactionByAddress',
-        Method.ACCOUNT_ERC20_TRANSFERS: 'nr_getTransactionByAddress',
-        Method.ACCOUNT_ERC721_TRANSFERS: 'nr_getTransactionByAddress',
-        Method.ACCOUNT_ERC1155_TRANSFERS: 'nr_getTransactionByAddress',
-        Method.ACCOUNT_TOKEN_PORTFOLIO: 'nr_getTokenHoldings',
-        Method.ACCOUNT_NFT_PORTFOLIO: 'nr_getNFTHoldings',
-        Method.TX_BY_HASH: 'eth_getTransactionByHash',
-        Method.TX_RECEIPT_STATUS: 'eth_getTransactionReceipt',
-        Method.TX_STATUS_CHECK: 'eth_getTransactionReceipt',
-        Method.BLOCK_BY_NUMBER: 'eth_getBlockByNumber',
-        Method.BLOCK_NUMBER_BY_TIMESTAMP: 'nr_getBlockNumberByTimeStamp',
-        Method.CONTRACT_CREATION: 'nr_getContractCreationTransaction',
-        Method.TOKEN_BALANCE: 'nr_getTokenBalance20',
-        Method.TOKEN_SUPPLY: 'nr_getTotalSupply20',
-        Method.TOKEN_INFO: 'nr_getTokenMeta',
-        Method.TOKEN_HOLDERS: 'nr_getTokenHolders',
-        Method.TOKEN_TOP_HOLDERS: 'nr_getTokenHolders',
-        Method.TOKEN_HOLDER_COUNT: 'nr_getTokenHolderCount',
-        Method.EVENT_LOGS: 'eth_getLogs',
-        Method.PROXY_ETH_CALL: 'eth_call',
-        Method.PROXY_GET_BALANCE: 'eth_getBalance',
-    }
-
     # The public→wire mapping, declared once and executed by the builders
     # below. ``param_style`` selects the wire shape; ``param_map`` declares
     # every accepted public name (alternate input spellings included — first
     # declared wins) and, for ``rpc-positional`` methods, the positional wire
-    # order. URLs are built by the dialect hooks (_rpc_url / _rest_contract),
-    # so no spec declares a decorative path. Block-range capability
-    # (``supports_block_range``) is read from these same maps.
+    # order; ``wire_method`` names the JSON-RPC method the spec dispatches to
+    # (every rpc-dialect spec declares one — query-style contract-REST specs
+    # have no wire method and leave it None). URLs are built by the dialect
+    # hooks (_rpc_url / _rest_contract), so no spec declares a decorative
+    # path. Block-range capability (``supports_block_range``) is read from
+    # these same maps.
     SPECS: dict[Method, EndpointSpec] = {
         Method.ACCOUNT_BALANCE: EndpointSpec(
             http_method='POST',
             param_style='rpc-positional',
+            wire_method='eth_getBalance',
             param_map={'address': 'address', 'tag': 'tag'},
             parser=_parse_balance,
         ),
         Method.ACCOUNT_TRANSACTIONS: EndpointSpec(
             http_method='POST',
             param_style='rpc-object',
+            wire_method='nr_getTransactionByAddress',
             param_map={
                 'address': 'address',
                 'start_block': 'fromBlock',
@@ -606,6 +591,7 @@ class NodeRealScanner(Scanner):
         Method.ACCOUNT_INTERNAL_TXS: EndpointSpec(
             http_method='POST',
             param_style='rpc-object',
+            wire_method='nr_getTransactionByAddress',
             param_map={
                 'address': 'address',
                 'start_block': 'fromBlock',
@@ -622,6 +608,7 @@ class NodeRealScanner(Scanner):
         Method.ACCOUNT_ERC20_TRANSFERS: EndpointSpec(
             http_method='POST',
             param_style='rpc-object',
+            wire_method='nr_getTransactionByAddress',
             param_map={
                 'address': 'address',
                 'start_block': 'fromBlock',
@@ -643,6 +630,7 @@ class NodeRealScanner(Scanner):
         Method.ACCOUNT_ERC721_TRANSFERS: EndpointSpec(
             http_method='POST',
             param_style='rpc-object',
+            wire_method='nr_getTransactionByAddress',
             param_map={
                 'address': 'address',
                 'start_block': 'fromBlock',
@@ -664,6 +652,7 @@ class NodeRealScanner(Scanner):
         Method.ACCOUNT_ERC1155_TRANSFERS: EndpointSpec(
             http_method='POST',
             param_style='rpc-object',
+            wire_method='nr_getTransactionByAddress',
             param_map={
                 'address': 'address',
                 'start_block': 'fromBlock',
@@ -685,12 +674,14 @@ class NodeRealScanner(Scanner):
         Method.ACCOUNT_TOKEN_PORTFOLIO: EndpointSpec(
             http_method='POST',
             param_style='rpc-positional',
+            wire_method='nr_getTokenHoldings',
             param_map={'address': 'address', 'page': 'page', 'page_size': 'pageSize'},
             parser=_parse_holdings,
         ),
         Method.ACCOUNT_NFT_PORTFOLIO: EndpointSpec(
             http_method='POST',
             param_style='rpc-positional',
+            wire_method='nr_getNFTHoldings',
             param_map={
                 'address': 'address',
                 'token_type': 'tokenType',
@@ -702,22 +693,26 @@ class NodeRealScanner(Scanner):
         Method.TX_BY_HASH: EndpointSpec(
             http_method='POST',
             param_style='rpc-positional',
+            wire_method='eth_getTransactionByHash',
             param_map={'txhash': 'txhash'},
         ),
         Method.TX_RECEIPT_STATUS: EndpointSpec(
             http_method='POST',
             param_style='rpc-positional',
+            wire_method='eth_getTransactionReceipt',
             param_map={'txhash': 'txhash'},
         ),
         Method.TX_STATUS_CHECK: EndpointSpec(
             http_method='POST',
             param_style='rpc-positional',
+            wire_method='eth_getTransactionReceipt',
             param_map={'txhash': 'txhash'},
             parser=_parse_status_check,
         ),
         Method.BLOCK_BY_NUMBER: EndpointSpec(
             http_method='POST',
             param_style='rpc-positional',
+            wire_method='eth_getBlockByNumber',
             param_map={'block_number': 'block_number'},
             # The wire's second positional: full-tx-objects flag, always False.
             query={'include_full_tx_objects': False},
@@ -725,24 +720,28 @@ class NodeRealScanner(Scanner):
         Method.BLOCK_NUMBER_BY_TIMESTAMP: EndpointSpec(
             http_method='POST',
             param_style='rpc-positional',
+            wire_method='nr_getBlockNumberByTimeStamp',
             param_map={'timestamp': 'timestamp', 'closest': 'closest'},
             parser=_parse_block_number_by_timestamp,
         ),
         Method.CONTRACT_CREATION: EndpointSpec(
             http_method='POST',
             param_style='rpc-positional',
+            wire_method='nr_getContractCreationTransaction',
             param_map={'contract_addresses': 'contractAddress'},
             parser=_parse_contract_creation,
         ),
         Method.TOKEN_BALANCE: EndpointSpec(
             http_method='POST',
             param_style='rpc-positional',
+            wire_method='nr_getTokenBalance20',
             param_map={'contract_address': 'contractAddress', 'address': 'address', 'tag': 'tag'},
             parser=_parse_token_balance,
         ),
         Method.TOKEN_SUPPLY: EndpointSpec(
             http_method='POST',
             param_style='rpc-positional',
+            wire_method='nr_getTotalSupply20',
             param_map={'contract_address': 'contractAddress'},
             # The wire takes a trailing block tag; no public param carries it.
             query={'tag': 'latest'},
@@ -751,12 +750,14 @@ class NodeRealScanner(Scanner):
         Method.TOKEN_INFO: EndpointSpec(
             http_method='POST',
             param_style='rpc-positional',
+            wire_method='nr_getTokenMeta',
             param_map={'contract_address': 'contractAddress'},
             parser=_parse_token_meta,
         ),
         Method.TOKEN_HOLDERS: EndpointSpec(
             http_method='POST',
             param_style='rpc-positional',
+            wire_method='nr_getTokenHolders',
             param_map={
                 'contract_address': 'contract_address',
                 # The wire's PageSize (hex, clamped to the documented 100 cap).
@@ -773,6 +774,7 @@ class NodeRealScanner(Scanner):
         Method.TOKEN_TOP_HOLDERS: EndpointSpec(
             http_method='POST',
             param_style='rpc-positional',
+            wire_method='nr_getTokenHolders',
             param_map={
                 'contract_address': 'contract_address',
                 'offset': 'PageSize',
@@ -786,6 +788,7 @@ class NodeRealScanner(Scanner):
         Method.TOKEN_HOLDER_COUNT: EndpointSpec(
             http_method='POST',
             param_style='rpc-positional',
+            wire_method='nr_getTokenHolderCount',
             param_map={'contract_address': 'contract_address'},
             parser=_parse_token_holder_count,
         ),
@@ -801,6 +804,7 @@ class NodeRealScanner(Scanner):
         Method.EVENT_LOGS: EndpointSpec(
             http_method='POST',
             param_style='rpc-object',
+            wire_method='eth_getLogs',
             param_map={
                 'address': 'address',
                 'from_block': 'fromBlock',
@@ -817,6 +821,7 @@ class NodeRealScanner(Scanner):
         Method.PROXY_ETH_CALL: EndpointSpec(
             http_method='POST',
             param_style='rpc-object',
+            wire_method='eth_call',
             # 'to'/'data' assemble eth_call's single call object; 'tag' is the
             # trailing block tag positional.
             param_map={'to': 'to', 'data': 'data', 'tag': 'tag'},
@@ -824,6 +829,7 @@ class NodeRealScanner(Scanner):
         Method.PROXY_GET_BALANCE: EndpointSpec(
             http_method='POST',
             param_style='rpc-positional',
+            wire_method='eth_getBalance',
             param_map={'address': 'address', 'tag': 'tag'},
         ),
     }
@@ -1019,13 +1025,15 @@ class NodeRealScanner(Scanner):
     ) -> Any:
         """Provider dialect: JSON-RPC envelopes and the contract REST.
 
-        The public→wire param mapping IS declared in ``SPECS`` (``param_style``
-        + ``param_map``, executed by the builders below); what no spec can
-        express is the transport — JSON-RPC envelopes with the API key in the
-        URL path. This override replaces the default transport dispatch while
-        the error ladder and the missing-client guard stay on the base
-        :meth:`Scanner.call`. The spec parser still applies to the raw
-        JSON-RPC/REST payload.
+        The public→wire mapping IS declared in ``SPECS`` (``param_style`` +
+        ``param_map`` + ``wire_method``, executed by the builders below); what
+        no spec can express is the transport — JSON-RPC envelopes with the API
+        key in the URL path. This override replaces the default transport
+        dispatch while the error ladder and the missing-client guard stay on
+        the base :meth:`Scanner.call`. The spec parser still applies to the
+        raw JSON-RPC/REST payload, followed by the client-side token-contract
+        filter for transfer methods (the ONE application on the ``call()``
+        path; the ``fetch_page`` window walk applies it at its own parse site).
         """
         if method in self._REST_METHODS:
             address = str(params[_declared_sources(spec, 'address')[0]])
@@ -1041,15 +1049,23 @@ class NodeRealScanner(Scanner):
                 if window is not None and params.get(_WINDOW_CURSOR) is None:
                     params[_WINDOW_CURSOR] = [window[0], window[1]]
             rpc_params = self._build_rpc_params(method, params)
-            raw_response = await self._rpc(self._WIRE_METHODS[method], rpc_params)
-        return spec.parse_response(raw_response)
-
-    async def call(self, method: Method, **params: Any) -> Any:
-        """Execute a logical method against NodeReal (JSON-RPC or contract REST)."""
-        result = await super().call(method, **params)
+            raw_response = await self._rpc(self._wire_method(spec), rpc_params)
+        result = spec.parse_response(raw_response)
         if method in self._TRANSFER_METHODS and isinstance(result, list):
-            return _filter_transfer_items(self._spec_for(method), result, params)
+            return _filter_transfer_items(spec, result, params)
         return result
+
+    def _wire_method(self, spec: EndpointSpec) -> str:
+        """The spec's declared JSON-RPC wire method.
+
+        Every rpc-dialect spec declares one (enforced by the SPECS sweep in
+        ``tests/test_nodereal.py``); ``None`` here would mean a query-style
+        spec reached an RPC transport, which the REST branch above makes
+        unreachable.
+        """
+        if spec.wire_method is None:  # pragma: no cover
+            raise ChainscanDataError(f'{spec} declares no JSON-RPC wire method')
+        return spec.wire_method
 
     async def fetch_page(
         self,
@@ -1073,18 +1089,28 @@ class NodeRealScanner(Scanner):
           except ``offset``, which is read once as the (100-capped) page
           size and re-clamped identically on every page.
         - everything else: single page, ``None``.
+
+        The request runs under the shared error ladder (the ``call()`` path
+        gets it from :meth:`Scanner.call`), so the exceptions-through-the-
+        ladder contract of :meth:`Scanner.fetch_page` holds on every branch:
+        every ``Chainscan*`` and capability error propagates unchanged,
+        anything unexpected is masked as a non-retryable
+        :class:`ChainscanNetworkError`.
         """
         self._spec_for(method)
+        # Missing-client guard before the ladder: a missing Network is a
+        # programming error (RuntimeError), never a network failure.
         self._require_network_client()
 
-        if method in self._TRANSFER_METHODS:
-            return await self._fetch_transfer_page(method, params)
-        if method in self._HOLDINGS_METHODS:
-            return await self._fetch_holdings_page(method, params)
-        if method in self._HOLDER_METHODS:
-            return await self._fetch_holder_page(params)
-        result = await self.call(method, **params)
-        return Scanner._coerce_items(result), None
+        with translate_unexpected_errors(self._error_context(method)):
+            if method in self._TRANSFER_METHODS:
+                return await self._fetch_transfer_page(method, params)
+            if method in self._HOLDINGS_METHODS:
+                return await self._fetch_holdings_page(method, params)
+            if method in self._HOLDER_METHODS:
+                return await self._fetch_holder_page(params)
+            result = await self.call(method, **params)
+            return Scanner._coerce_items(result), None
 
     async def _resolve_tip(self) -> int:
         """Current chain tip via ``eth_blockNumber`` (hex → int)."""
@@ -1163,7 +1189,7 @@ class NodeRealScanner(Scanner):
             page_key=page_key,
             end_block=tip,
         )
-        raw = await self._rpc(self._WIRE_METHODS[method], [filter_])
+        raw = await self._rpc(self._wire_method(spec), [filter_])
         if not isinstance(raw, dict):
             return [], None
 
@@ -1200,7 +1226,7 @@ class NodeRealScanner(Scanner):
         rpc_params = self._build_rpc_params(
             method, {**params, 'page': page, 'page_size': page_size}
         )
-        raw = await self._rpc(self._WIRE_METHODS[method], rpc_params)
+        raw = await self._rpc(self._wire_method(self._spec_for(method)), rpc_params)
         if not isinstance(raw, dict):
             return [], None
         total = _parse_hex_int(raw.get('totalCount'), 0)
@@ -1223,7 +1249,7 @@ class NodeRealScanner(Scanner):
         """
         page_key = str(params.get('pageKey') or '')
         rpc_params = self._build_rpc_params(Method.TOKEN_HOLDERS, {**params, 'pageKey': page_key})
-        raw = await self._rpc(self._WIRE_METHODS[Method.TOKEN_HOLDERS], rpc_params)
+        raw = await self._rpc(self._wire_method(self._spec_for(Method.TOKEN_HOLDERS)), rpc_params)
         if not isinstance(raw, dict):
             return [], None
         items = _parse_token_holders(raw)

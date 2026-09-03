@@ -169,6 +169,38 @@ class InputLimitExceededError(ChainscanClientError):
         return f'{self.what}: up to {self.limit} allowed per call, got {self.provided}'
 
 
+class ScannerArgumentError(ChainscanClientError):
+    """A scanner refused an argument before any request was sent.
+
+    Raised by scanner-side input validation when the call as asked cannot be
+    served by this provider — e.g. NodeReal's ``closest`` hint outside
+    ``before``/``after``, more than one address for its one-per-call
+    ``CONTRACT_CREATION``, a non-numeric timestamp, or a transfer filter
+    without its required ``address``. Sibling of
+    :class:`InputLimitExceededError`: that one means "more items than the
+    provider documents per call"; this one means "this argument is invalid
+    for this method on this scanner". Both are the caller's problem — every
+    provider would refuse the same input, so the pool must propagate
+    immediately: no failover, no cooldown.
+
+    Raised from BOTH scanner seams (:meth:`Scanner.call` and
+    ``fetch_page``) under one identity. Previously these validations raised
+    a bare ``ValueError``, which the ``call()`` ladder masked into a
+    TRANSIENT ``ChainscanNetworkError`` — a caller bug reading to the pool
+    as a provider fault — while the ``fetch_page`` paths let it escape raw.
+
+    Positioned as a :class:`ChainscanClientError` so
+    ``scanners.base.translate_unexpected_errors`` re-raises it unchanged on
+    its first branch, keeping the identity and ``FailureKind`` a bare
+    ``ValueError`` would lose to the catch-all mask. ``failure_kind`` is
+    restated explicitly (it already equals :class:`ChainscanClientError`'s
+    own default) so :func:`core.pool.classify_failure`'s "carried kind wins"
+    rule always reads it as the caller's problem.
+    """
+
+    failure_kind: FailureKind | None = FailureKind.FATAL
+
+
 class ProviderPoolExhaustedError(ChainscanClientError):
     """Every provider in the pool failed (or is in cooldown) for a request.
 
