@@ -3,7 +3,7 @@ kind: deepening-brief
 id: C9
 slug: one-field-alias-dialect-owner
 source: ../2026-09-03-review.md
-status: accepted
+status: done             # merged to local main as 7a7bdc1 (2026-09-03); gate PASS-WITH-FINDINGS (no HIGH)
 base: 3b7c05e
 ---
 
