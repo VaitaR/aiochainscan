@@ -51,6 +51,7 @@ from typing import TYPE_CHECKING, Any, TypeVar, cast
 import httpx
 
 from ..domain.method import Method
+from ..domain.normalized import InternalTransaction, Log, TokenTransfer, Transaction
 
 # FailureKind moved to ``..exceptions`` (exceptions carry it from the raise
 # site); the aliased import below re-exports it under this module's
@@ -946,6 +947,100 @@ class ChainscanPool(
         return self._forward_stream(
             STREAMING_SPECS_BY_NAME['iter_token_holders_streaming'],
             contract_address=contract_address,
+            batch_size=batch_size,
+            on_progress=on_progress,
+            guarantee_complete=guarantee_complete,
+        )
+
+    def iter_transactions_normalized(
+        self,
+        address: str,
+        from_block: int = 0,
+        to_block: int | str | None = 'latest',
+        batch_size: int = 1000,
+        on_progress: ProgressCallback | None = None,
+        guarantee_complete: bool = True,
+    ) -> AsyncIterator[list[Transaction]]:
+        """Stream normalized ``Transaction`` batches, pinned per call — see
+        :meth:`ChainscanClient.iter_transactions_normalized`."""
+        return self._forward_stream(
+            STREAMING_SPECS_BY_NAME['iter_transactions_normalized'],
+            address=address,
+            from_block=from_block,
+            to_block=to_block,
+            batch_size=batch_size,
+            on_progress=on_progress,
+            guarantee_complete=guarantee_complete,
+        )
+
+    def iter_internal_transactions_normalized(
+        self,
+        address: str,
+        from_block: int = 0,
+        to_block: int | str | None = 'latest',
+        batch_size: int = 1000,
+        on_progress: ProgressCallback | None = None,
+        guarantee_complete: bool = True,
+    ) -> AsyncIterator[list[InternalTransaction]]:
+        """Stream normalized ``InternalTransaction`` batches, pinned per call —
+        see :meth:`ChainscanClient.iter_internal_transactions_normalized`."""
+        return self._forward_stream(
+            STREAMING_SPECS_BY_NAME['iter_internal_transactions_normalized'],
+            address=address,
+            from_block=from_block,
+            to_block=to_block,
+            batch_size=batch_size,
+            on_progress=on_progress,
+            guarantee_complete=guarantee_complete,
+        )
+
+    def iter_token_transfers_normalized(
+        self,
+        address: str,
+        from_block: int = 0,
+        to_block: int | str | None = 'latest',
+        contract_address: str | None = None,
+        batch_size: int = 1000,
+        on_progress: ProgressCallback | None = None,
+        guarantee_complete: bool = True,
+    ) -> AsyncIterator[list[TokenTransfer]]:
+        """Stream normalized ``TokenTransfer`` batches, pinned per call — see
+        :meth:`ChainscanClient.iter_token_transfers_normalized`."""
+        return self._forward_stream(
+            STREAMING_SPECS_BY_NAME['iter_token_transfers_normalized'],
+            address=address,
+            from_block=from_block,
+            to_block=to_block,
+            contract_address=contract_address,
+            batch_size=batch_size,
+            on_progress=on_progress,
+            guarantee_complete=guarantee_complete,
+        )
+
+    def iter_logs_normalized(
+        self,
+        address: str | None,
+        from_block: int = 0,
+        to_block: int | str | None = 'latest',
+        topic0: str | None = None,
+        topic1: str | None = None,
+        topic2: str | None = None,
+        topic3: str | None = None,
+        batch_size: int = 1000,
+        on_progress: ProgressCallback | None = None,
+        guarantee_complete: bool = True,
+    ) -> AsyncIterator[list[Log]]:
+        """Stream normalized ``Log`` batches, pinned per call — see
+        :meth:`ChainscanClient.iter_logs_normalized`."""
+        return self._forward_stream(
+            STREAMING_SPECS_BY_NAME['iter_logs_normalized'],
+            address=address,
+            from_block=from_block,
+            to_block=to_block,
+            topic0=topic0,
+            topic1=topic1,
+            topic2=topic2,
+            topic3=topic3,
             batch_size=batch_size,
             on_progress=on_progress,
             guarantee_complete=guarantee_complete,

@@ -14,10 +14,10 @@ declaration source that replaces all of it:
   progress operation noun, and the behavioural flags (ranged, item-level,
   completeness-routed) plus the ``get_all_*`` aggregator the stream feeds.
 - **One streaming implementation** (:func:`stream_batches` /
-  :func:`stream_items`): validate → block-range guard → build params → bind
-  the page fetch → the ONE cursor loop from
-  :mod:`aiochainscan.services.pagination`. Public methods on the client are
-  thin declarations over these.
+  :func:`stream_items` / :func:`stream_normalized_batches`): validate →
+  block-range guard → build params → bind the page fetch → the ONE cursor
+  loop from :mod:`aiochainscan.services.pagination`. Public methods on the
+  client are thin declarations over these.
 - **One derived pool forward** (``ChainscanPool._forward_stream``): the
   pinned-stream semantics — provider pinning, progress stamping,
   ``guarantee_complete`` forwarding, completeness routing — are read from the
@@ -39,12 +39,18 @@ from __future__ import annotations
 
 import logging
 from collections.abc import AsyncIterator, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Protocol, TypeVar, cast
 
 from ..constants import MAX_BLOCK_NUMBER
 from ..domain.method import Method
 from ..domain.models import Address
+from ..domain.normalize import (
+    normalize_internal_transaction,
+    normalize_log,
+    normalize_token_transfer,
+    normalize_transaction,
+)
 from ..domain.normalized import InternalTransaction, Log, TokenTransfer, Transaction
 from ..services.constants import AGGREGATION_WARNING_THRESHOLD
 from ..services.pagination import (
@@ -64,6 +70,7 @@ __all__ = [
     'collect_stream',
     'stream_batches',
     'stream_items',
+    'stream_normalized_batches',
 ]
 
 T = TypeVar('T')
@@ -258,6 +265,9 @@ class StreamSpec:
             capable member before any request (token holders).
         aggregate: Name of the ``get_all_*`` mixin aggregator this stream
             feeds (declaration metadata driving the consistency sweep).
+        normalizer: Per-item mapper onto a domain model, applied per batch by
+            :func:`stream_normalized_batches` (the ``iter_*_normalized``
+            twins). ``None`` on raw rows — they yield provider dicts.
     """
 
     name: str
@@ -268,10 +278,12 @@ class StreamSpec:
     item_level: bool = False
     completeness_routed: bool = False
     aggregate: str | None = None
+    normalizer: Callable[[JSONDict], Any] | None = None
 
 
-#: The paginated surface. Order is the declaration order of the methods.
-STREAMING_SPECS: tuple[StreamSpec, ...] = (
+#: The raw (provider-dict) rows. The ``iter_*_normalized`` twins in
+#: :data:`STREAMING_SPECS` derive from their same-family siblings here.
+_RAW_SPECS: tuple[StreamSpec, ...] = (
     StreamSpec(
         name='iter_transactions',
         method=Method.ACCOUNT_TRANSACTIONS,
@@ -322,6 +334,57 @@ STREAMING_SPECS: tuple[StreamSpec, ...] = (
         ranged=False,
         completeness_routed=True,
         aggregate='get_all_token_holders',
+    ),
+)
+
+_raw_by_name: dict[str, StreamSpec] = {spec.name: spec for spec in _RAW_SPECS}
+
+
+def _normalized_twin(
+    sibling: StreamSpec,
+    *,
+    name: str,
+    aggregate: str,
+    normalizer: Callable[[JSONDict], Any],
+) -> StreamSpec:
+    """Derive an ``iter_*_normalized`` row from its ``iter_*_streaming`` sibling.
+
+    Everything — the ``Method``, the operation noun, the ``build_params``
+    OBJECT (shared by reference, so a future builder edit reaches both rows),
+    ``ranged`` and the default flags — comes from the sibling via
+    :func:`dataclasses.replace`; only the twin's name, its ``get_all_*``
+    aggregator and the per-item normalizer are new facts. Never re-type the
+    sibling's literals here: that is the drift this derivation exists for.
+    """
+    return replace(sibling, name=name, aggregate=aggregate, normalizer=normalizer)
+
+
+#: The paginated surface. Order is the declaration order of the methods.
+STREAMING_SPECS: tuple[StreamSpec, ...] = (
+    *_RAW_SPECS,
+    _normalized_twin(
+        _raw_by_name['iter_transactions_streaming'],
+        name='iter_transactions_normalized',
+        aggregate='get_all_transactions_normalized',
+        normalizer=normalize_transaction,
+    ),
+    _normalized_twin(
+        _raw_by_name['iter_internal_transactions_streaming'],
+        name='iter_internal_transactions_normalized',
+        aggregate='get_all_internal_transactions_normalized',
+        normalizer=normalize_internal_transaction,
+    ),
+    _normalized_twin(
+        _raw_by_name['iter_token_transfers_streaming'],
+        name='iter_token_transfers_normalized',
+        aggregate='get_all_token_transfers_normalized',
+        normalizer=normalize_token_transfer,
+    ),
+    _normalized_twin(
+        _raw_by_name['iter_logs_streaming'],
+        name='iter_logs_normalized',
+        aggregate='get_all_logs_normalized',
+        normalizer=normalize_log,
     ),
 )
 
@@ -404,6 +467,32 @@ async def stream_items(
     async for batch in stream_batches(host, spec, **kwargs):
         for item in batch:
             yield decode(item) if decode is not None else item
+
+
+async def stream_normalized_batches(
+    host: _StreamHost, spec: StreamSpec, **kwargs: Any
+) -> AsyncIterator[list[Any]]:
+    """THE normalized streaming body: :func:`stream_batches` + the row's mapper.
+
+    Composed over :func:`stream_batches` — identical params, block-range
+    guard and ``guarantee_complete`` semantics — mapping each raw batch
+    through ``spec.normalizer`` as it arrives, never after the raw list is
+    collected (memory stays bounded by ``batch_size``). The
+    ``iter_*_normalized`` client methods are thin declarations over this;
+    the pool forwards kwargs verbatim and never normalizes itself.
+
+    Raises:
+        ValueError: If ``spec`` is a raw row (``normalizer is None``) — a
+            declaration error, not a runtime condition.
+    """
+    normalizer = spec.normalizer
+    if normalizer is None:
+        raise ValueError(
+            f'{spec.name} declares no normalizer — stream_normalized_batches '
+            f'is for iter_*_normalized rows'
+        )
+    async for batch in stream_batches(host, spec, **kwargs):
+        yield [normalizer(item) for item in batch]
 
 
 # ---------------------------------------------------------------------------

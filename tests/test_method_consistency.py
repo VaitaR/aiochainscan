@@ -53,7 +53,7 @@ from aiochainscan.core.mixins import (
     TransactionMixin,
 )
 from aiochainscan.core.pool import ChainscanPool
-from aiochainscan.core.streaming import STREAMING_SPECS
+from aiochainscan.core.streaming import STREAMING_SPECS, STREAMING_SPECS_BY_NAME
 from aiochainscan.core.url_builder import UrlBuilder
 from aiochainscan.domain.method import Method
 from aiochainscan.exceptions import BlockRangeNotSupportedError, MethodNotDeclaredError
@@ -89,10 +89,10 @@ SPECS_BY_SCANNER_NAME: dict[str, list[str]] = {
 # get_all_* aggregations are included to prove they stay callable; their
 # params flow through the iter_*_streaming paths, not ``call()``.
 #
-# The five get_all_* DICT aggregators are NOT hand-listed: they join from the
-# streaming declaration (spec.aggregate) below, so adding a streaming method
-# with its aggregator cannot forget this table. The *_normalized aggregators
-# stay hand-listed (they are mixin surface without a registry row).
+# The get_all_* DICT aggregators (raw and *_normalized alike) are NOT
+# hand-listed: they join from the streaming declaration (spec.aggregate)
+# below, so adding a streaming method with its aggregator cannot forget this
+# table.
 _HAND_INVOCATIONS: dict[str, tuple[tuple[Any, ...], dict[str, Any]]] = {
     # Account
     'get_balance': ((CHECKSUM_ADDRESS,), {}),
@@ -109,9 +109,6 @@ _HAND_INVOCATIONS: dict[str, tuple[tuple[Any, ...], dict[str, Any]]] = {
     'get_erc721_transfers': ((CHECKSUM_ADDRESS,), {'contract_address': CONTRACT_ADDRESS}),
     'get_erc1155_transfers': ((CHECKSUM_ADDRESS,), {'contract_address': CONTRACT_ADDRESS}),
     'get_nft_portfolio': ((CHECKSUM_ADDRESS,), {}),
-    'get_all_transactions_normalized': ((CHECKSUM_ADDRESS,), {}),
-    'get_all_token_transfers_normalized': ((CHECKSUM_ADDRESS,), {}),
-    'get_all_internal_transactions_normalized': ((CHECKSUM_ADDRESS,), {}),
     # Transactions
     'get_transaction': ((TX_HASH,), {}),
     'get_transaction_status': ((TX_HASH,), {}),
@@ -147,7 +144,6 @@ _HAND_INVOCATIONS: dict[str, tuple[tuple[Any, ...], dict[str, Any]]] = {
         (CONTRACT_ADDRESS,),
         {'from_block': 100, 'to_block': 200, 'topic0': TRANSFER_TOPIC0},
     ),
-    'get_all_logs_normalized': ((CONTRACT_ADDRESS,), {}),
     'get_logs_normalized': (
         (CONTRACT_ADDRESS,),
         {'from_block': 100, 'to_block': 200, 'topic0': TRANSFER_TOPIC0},
@@ -165,6 +161,11 @@ _AGGREGATE_ARGS: dict[str, tuple[Any, ...]] = {
     'get_all_internal_transactions': (CHECKSUM_ADDRESS,),
     'get_all_logs': (CONTRACT_ADDRESS,),
     'get_all_token_holders': (CONTRACT_ADDRESS,),
+    # *_normalized twins: same args as their raw counterparts.
+    'get_all_transactions_normalized': (CHECKSUM_ADDRESS,),
+    'get_all_internal_transactions_normalized': (CHECKSUM_ADDRESS,),
+    'get_all_token_transfers_normalized': (CHECKSUM_ADDRESS,),
+    'get_all_logs_normalized': (CONTRACT_ADDRESS,),
 }
 
 INVOCATIONS: dict[str, tuple[tuple[Any, ...], dict[str, Any]]] = {
@@ -375,16 +376,12 @@ def test_invocation_table_has_no_stale_entries() -> None:
 
 
 def test_streaming_registry_declares_every_client_stream() -> None:
-    """A client streaming method without a registry row fails here.
-
-    The ``iter_*_normalized`` twins are exempt: they are typed compositions
-    over declared streams (they never touch ``fetch_page`` themselves).
-    """
+    """A client streaming method without a registry row fails here."""
     declared = {spec.name for spec in STREAMING_SPECS}
     on_client = {
         name
         for name, member in vars(ChainscanClient).items()
-        if inspect.isasyncgenfunction(member) and not name.endswith('_normalized')
+        if inspect.isasyncgenfunction(member)
     }
     undeclared = on_client - declared
     stale = declared - on_client
@@ -394,6 +391,49 @@ def test_streaming_registry_declares_every_client_stream() -> None:
         f'pool forward and this sweep derive from one source.'
     )
     assert not stale, f'STREAMING_SPECS row(s) {sorted(stale)} match no client method.'
+
+
+def test_normalized_twin_rows_derive_from_their_siblings() -> None:
+    """Each ``iter_*_normalized`` row must derive from its streaming sibling.
+
+    The derivation is the point (deepening brief C1): same ``Method``,
+    operation, flags — and the sibling's ``build_params`` by SHARED REFERENCE,
+    so a future builder edit reaches both rows and the twins can never issue
+    params their siblings do not. A twin that re-types its sibling's literals
+    fails here.
+    """
+    twins = {
+        'iter_transactions_normalized': (
+            'iter_transactions_streaming',
+            'get_all_transactions_normalized',
+        ),
+        'iter_internal_transactions_normalized': (
+            'iter_internal_transactions_streaming',
+            'get_all_internal_transactions_normalized',
+        ),
+        'iter_token_transfers_normalized': (
+            'iter_token_transfers_streaming',
+            'get_all_token_transfers_normalized',
+        ),
+        'iter_logs_normalized': ('iter_logs_streaming', 'get_all_logs_normalized'),
+    }
+    assert {spec.name for spec in STREAMING_SPECS if spec.normalizer is not None} == set(
+        twins
+    ), 'exactly the four twins declare a normalizer'
+    for twin_name, (sibling_name, aggregate) in twins.items():
+        twin = STREAMING_SPECS_BY_NAME[twin_name]
+        sibling = STREAMING_SPECS_BY_NAME[sibling_name]
+        assert twin.method is sibling.method
+        assert twin.operation == sibling.operation
+        assert twin.ranged is sibling.ranged
+        assert twin.item_level is False
+        assert twin.completeness_routed is False
+        assert twin.aggregate == aggregate
+        assert twin.normalizer is not None
+        assert twin.build_params is sibling.build_params, (
+            f"{twin_name}: build_params must be the sibling {sibling_name}'s builder "
+            f'OBJECT (shared reference), not a copy or a re-typed variant'
+        )
 
 
 def test_stream_sweep_kwargs_cover_exactly_the_registry() -> None:
@@ -463,6 +503,53 @@ def test_pool_stream_forwards_mirror_client_signatures() -> None:
         }, f'{spec.name}: pool forward must accept (and forward) guarantee_complete'
 
 
+def _public_instance_callables(cls: type) -> set[str]:
+    """Public instance-callable names across the whole MRO.
+
+    Plain functions, coroutine functions and async-generator functions —
+    the callable surface a caller can reach on an instance. Properties,
+    classmethods and dunder (``_``-prefixed) names are naturally outside
+    this walk and must stay outside it (``from_config`` intentionally
+    differs between the two classes).
+    """
+    found: dict[str, Any] = {}
+    for klass in cls.__mro__:
+        for name, member in vars(klass).items():
+            if name.startswith('_'):
+                continue
+            if (
+                inspect.isfunction(member)
+                or inspect.iscoroutinefunction(member)
+                or inspect.isasyncgenfunction(member)
+            ):
+                found[name] = member
+    return set(found)
+
+
+def test_pool_mirrors_the_whole_client_surface() -> None:
+    """Every public client method must exist on the pool — and the pool adds
+    exactly its two pool-only operations.
+
+    The signature-mirror test above pins per-stream parity; this pins the
+    WHOLE surface, so a client method added without a pool counterpart fails
+    here by name. The four ``iter_*_normalized`` twins were exactly such a
+    gap: the pool composed the mixins (so ``get_all_*_normalized`` existed)
+    but never forwarded the generators they call, and every aggregator
+    crashed with ``AttributeError``.
+    """
+    client_surface = _public_instance_callables(ChainscanClient)
+    pool_surface = _public_instance_callables(ChainscanPool)
+
+    missing = client_surface - pool_surface
+    assert not missing, (
+        f'ChainscanPool is missing ChainscanClient method(s) {sorted(missing)} — '
+        f'the pool must mirror the whole client surface'
+    )
+    assert pool_surface - client_surface == {'provider_states', 'reset_cooldowns'}, (
+        'ChainscanPool grew pool-only surface beyond ' "{'provider_states', 'reset_cooldowns'}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # 5. Streaming dialect: one public param dialect through fetch_page
 # ---------------------------------------------------------------------------
@@ -491,6 +578,14 @@ _STREAM_SWEEP_KWARGS: dict[str, dict[str, Any]] = {
     'iter_logs': {'address': CONTRACT_ADDRESS},
     # Holder lists have no block range: only the unbounded phase applies.
     'iter_token_holders_streaming': {'contract_address': CONTRACT_ADDRESS},
+    # *_normalized twins: the same kwargs as their streaming siblings.
+    'iter_transactions_normalized': {'address': CHECKSUM_ADDRESS},
+    'iter_internal_transactions_normalized': {'address': CHECKSUM_ADDRESS},
+    'iter_token_transfers_normalized': {
+        'address': CHECKSUM_ADDRESS,
+        'contract_address': CONTRACT_ADDRESS,
+    },
+    'iter_logs_normalized': {'address': CONTRACT_ADDRESS},
 }
 
 #: Every streaming/paginated client method and the Method it paginates,

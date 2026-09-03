@@ -17,6 +17,7 @@ composition, not merely that both shapes exist:
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 from unittest.mock import patch
 
@@ -24,6 +25,7 @@ import pytest
 
 from aiochainscan.chain_registry import resolve_scanner_target
 from aiochainscan.core.client import ChainscanClient
+from aiochainscan.core.streaming import STREAMING_SPECS_BY_NAME
 from aiochainscan.domain.normalized import InternalTransaction, Log, TokenTransfer, Transaction
 
 WINDOW = 50
@@ -175,23 +177,30 @@ async def test_normalization_happens_per_batch_not_after_full_collection(
     every page has been retrieved. If normalization ran on the fully
     collected raw list, every ``normalize_transaction`` call would land after
     the LAST fetch — this test fails in that case.
+
+    The spy wraps the twin row's ``normalizer`` in the streaming registry
+    (the seam ``stream_normalized_batches`` reads per batch); the spec is
+    frozen, so the spied row is swapped in via ``patch.dict``.
     """
     client, explorer = stub_client
     calls_after_fetch_count: list[int] = []
 
-    from aiochainscan.core import client as client_mod
-
-    real_normalize = client_mod.normalize_transaction
+    spec = STREAMING_SPECS_BY_NAME['iter_transactions_normalized']
+    real_normalize = spec.normalizer
 
     def spy(item: Any) -> Transaction:
         calls_after_fetch_count.append(len(explorer.requests))
-        return real_normalize(item)
+        return real_normalize(item)  # type: ignore[misc, call-arg]
 
-    with patch.object(client_mod, 'normalize_transaction', side_effect=spy):
+    with patch.dict(
+        STREAMING_SPECS_BY_NAME,
+        {'iter_transactions_normalized': replace(spec, normalizer=spy)},
+    ):
         await client.get_all_transactions_normalized('0xABC', from_block=0, to_block=999)
 
     total_fetches = len(explorer.requests)
     assert total_fetches > 1, 'stub setup must produce multiple pages to be a real test'
+    assert calls_after_fetch_count, 'the spy must observe the normalizer actually running'
     # Some normalize_transaction calls must have happened while fewer than
     # the total number of fetches had occurred yet — i.e. normalization
     # interleaves with fetching rather than following it.
