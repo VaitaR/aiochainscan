@@ -147,6 +147,31 @@ class AccountMixin:
         )
         return result if isinstance(result, list) else []
 
+    async def _get_erc_transfers(
+        self: _AccountClientProtocol,
+        method: Method,
+        address: str,
+        contract_address: str | None,
+        start_block: int,
+        end_block: int | str,
+        page: int,
+        offset: int,
+        sort: str,
+    ) -> JSONList:
+        """Fetch one page of ERC-721/ERC-1155 transfers (shared by the twin methods)."""
+        params: dict[str, Any] = {
+            'address': str(Address(address)),
+            'start_block': start_block,
+            'end_block': end_block,
+            'page': page,
+            'offset': offset,
+            'sort': sort,
+        }
+        if contract_address:
+            params['contract_address'] = str(Address(contract_address))
+        result: Any = await self.call(method, **params)
+        return normalize_items(result)
+
     async def get_erc721_transfers(
         self: _AccountClientProtocol,
         address: str,
@@ -158,18 +183,17 @@ class AccountMixin:
         sort: str = 'asc',
     ) -> JSONList:
         """Get ERC-721 token transfers for an address."""
-        params: dict[str, Any] = {
-            'address': address,
-            'start_block': start_block,
-            'end_block': end_block,
-            'page': page,
-            'offset': offset,
-            'sort': sort,
-        }
-        if contract_address:
-            params['contract_address'] = contract_address
-        result: Any = await self.call(Method.ACCOUNT_ERC721_TRANSFERS, **params)
-        return result if isinstance(result, list) else []
+        return await AccountMixin._get_erc_transfers(
+            self,
+            Method.ACCOUNT_ERC721_TRANSFERS,
+            address,
+            contract_address,
+            start_block,
+            end_block,
+            page,
+            offset,
+            sort,
+        )
 
     async def get_erc1155_transfers(
         self: _AccountClientProtocol,
@@ -182,18 +206,17 @@ class AccountMixin:
         sort: str = 'asc',
     ) -> JSONList:
         """Get ERC-1155 token transfers for an address."""
-        params: dict[str, Any] = {
-            'address': address,
-            'start_block': start_block,
-            'end_block': end_block,
-            'page': page,
-            'offset': offset,
-            'sort': sort,
-        }
-        if contract_address:
-            params['contract_address'] = contract_address
-        result: Any = await self.call(Method.ACCOUNT_ERC1155_TRANSFERS, **params)
-        return result if isinstance(result, list) else []
+        return await AccountMixin._get_erc_transfers(
+            self,
+            Method.ACCOUNT_ERC1155_TRANSFERS,
+            address,
+            contract_address,
+            start_block,
+            end_block,
+            page,
+            offset,
+            sort,
+        )
 
     async def get_nft_portfolio(self: _AccountClientProtocol, address: str) -> JSONList:
         """Get all NFTs owned by an address."""

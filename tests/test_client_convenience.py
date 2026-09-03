@@ -23,6 +23,9 @@ from aiochainscan.domain.models import Address, TxHash
 TEST_ADDRESS = '0x1111111111111111111111111111111111111111'
 TEST_CONTRACT = '0x2222222222222222222222222222222222222222'
 TEST_TX_HASH = '0x' + ('a' * 64)
+# Lowercase input whose EIP-55 checksum is mixed-case, so a raw-string
+# forward is distinguishable from the Address() checksum wrap.
+ERC_TWINS_ADDRESS = '0xd8da6bf26964af9d7eed9e03e53415d37aa96045'
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -177,6 +180,19 @@ class TestSinglePageConvenienceMethods:
         assert mock_call.await_args is not None
         assert mock_call.await_args[0][0] == Method.ACCOUNT_ERC1155_TRANSFERS
         assert result == [{'tokenValue': '100'}]
+
+    @pytest.mark.asyncio
+    async def test_erc_transfer_twins_forward_checksummed_address(
+        self, client: ChainscanClient, mock_call: AsyncMock
+    ) -> None:
+        """ERC-721/1155 twins wrap the address like the ERC-20 sibling (EIP-55)."""
+        mock_call.return_value = []
+        checksummed = str(Address(ERC_TWINS_ADDRESS))
+        for getter in (client.get_erc721_transfers, client.get_erc1155_transfers):
+            mock_call.reset_mock()
+            await getter(ERC_TWINS_ADDRESS)
+            assert mock_call.await_args is not None
+            assert mock_call.await_args.kwargs['address'] == checksummed
 
     @pytest.mark.asyncio
     async def test_get_token_portfolio(
