@@ -113,7 +113,7 @@ class SmartContract:
         # Build lookup maps for quick access
         self._function_map: dict[str, dict[str, Any]] = {}
         self._event_map: dict[str, dict[str, Any]] = {}
-        self._event_signature_map: dict[str, dict[str, Any]] = {}  # topic hash -> event
+        self._event_topic_map: dict[str, str] = {}  # event name -> topic hash
         self._build_lookup_maps()
 
     def _build_lookup_maps(self) -> None:
@@ -133,13 +133,16 @@ class SmartContract:
                 if name:
                     self._event_map[name] = item
 
-                    # Also create topic hash mapping for non-anonymous logs.
-                    if item.get('anonymous') is not True:
-                        inputs = item.get('inputs', [])
-                        input_types = ','.join(canonical_abi_type(param) for param in inputs)
-                        signature_text = f'{name}({input_types})'
-                        topic_hash = '0x' + keccak_hex(signature_text)
-                        self._event_signature_map[topic_hash] = item
+                    # Derive the topic0 hash exactly once, here; every other
+                    # consumer (iter_events) reads the map below instead of
+                    # recomputing the signature hash. Named anonymous events
+                    # get a topic too — iter_events has always filtered on
+                    # one for them — preserve that, do not "fix" it.
+                    inputs = item.get('inputs', [])
+                    input_types = ','.join(canonical_abi_type(param) for param in inputs)
+                    signature_text = f'{name}({input_types})'
+                    topic_hash = '0x' + keccak_hex(signature_text)
+                    self._event_topic_map[name] = topic_hash
 
     @classmethod
     async def from_address(
@@ -301,17 +304,11 @@ class SmartContract:
         """
         topics: list[str] | None = None
         if event_name:
-            event_abi = self.get_event_abi(event_name)
-            if not event_abi:
+            if not self.get_event_abi(event_name):
                 raise ValueError(f"Event '{event_name}' not found in contract ABI")
 
-            # Generate topic0 (event signature hash)
-            from aiochainscan.crypto import keccak_hex
-
-            inputs = event_abi.get('inputs', [])
-            input_types = ','.join(canonical_abi_type(param) for param in inputs)
-            signature_text = f'{event_name}({input_types})'
-            topics = ['0x' + keccak_hex(signature_text)]
+            # Filter on the topic0 derived once when the lookup maps were built.
+            topics = [self._event_topic_map[event_name]]
 
         # Traverse the client's paginated iterator. Passing the ABI lets the
         # client decode each page while retaining each original log mapping.

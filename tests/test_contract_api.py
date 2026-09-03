@@ -123,8 +123,8 @@ class TestSmartContractInit:
         assert 'Transfer' in sample_contract._event_map
         assert 'Approval' in sample_contract._event_map
 
-        # Check event signature map (should have topic hashes)
-        assert len(sample_contract._event_signature_map) == 2
+        # Check event topic map (should have topic hashes)
+        assert len(sample_contract._event_topic_map) == 2
 
 
 class TestSmartContractFromAddress:
@@ -331,6 +331,62 @@ class TestSmartContractIterEvents:
                 'batch_size': 1000,
                 'topics': ['0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef'],
             }
+        ]
+
+    @pytest.mark.asyncio
+    async def test_iter_events_filters_on_derived_map_topic(self, sample_contract):
+        """The wire filter is the topic0 filed in the signature map, not a recompute."""
+        seen: list[dict[str, object]] = []
+
+        def capture_iter_logs(*args, **kwargs):
+            seen.append(kwargs)
+            return _stream([])
+
+        sample_contract.client.iter_logs.side_effect = capture_iter_logs
+
+        async for _ in sample_contract.iter_events('Transfer'):
+            pass
+
+        assert len(seen) == 1
+        # Map read: the topic the constructor filed for this event name.
+        assert seen[0]['topics'] == [sample_contract._event_topic_map['Transfer']]
+        # Anchor: keccak256 of Transfer(address,address,uint256).
+        assert sample_contract._event_topic_map['Transfer'] == (
+            '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef'
+        )
+
+    @pytest.mark.asyncio
+    async def test_iter_events_anonymous_event_still_gets_topic(self, mock_client):
+        """Anonymous events keep the historical computed topic0 filter (no 'fix')."""
+        anon_abi = [
+            {
+                'type': 'event',
+                'name': 'AnonymousThing',
+                'inputs': [{'indexed': True, 'name': 'sender', 'type': 'address'}],
+                'anonymous': True,
+            }
+        ]
+        contract = SmartContract(
+            address='0x1234567890123456789012345678901234567890',
+            abi=anon_abi,
+            client=mock_client,
+        )
+        seen: list[dict[str, object]] = []
+
+        def capture_iter_logs(*args, **kwargs):
+            seen.append(kwargs)
+            return _stream([])
+
+        contract.client.iter_logs.side_effect = capture_iter_logs
+
+        # Must not raise (the event IS in _event_map) and must filter on a topic.
+        async for _ in contract.iter_events('AnonymousThing'):
+            pass
+
+        assert len(seen) == 1
+        # Anchor: keccak256 of AnonymousThing(address) — computed today, kept.
+        assert seen[0]['topics'] == [
+            '0x4303e1706734d2d72c0c0649f566d47c1f5fb420f96bce579275c20cd054fb5d'
         ]
 
     @pytest.mark.asyncio
