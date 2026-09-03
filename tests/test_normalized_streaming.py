@@ -7,8 +7,8 @@ composition, not merely that both shapes exist:
 
 - the ``iter_*_normalized`` / ``get_all_*_normalized`` paths yield normalized
   model instances, not dicts;
-- run against the SAME truncating stub scanner ``test_pagination_guarantee.py``
-  uses, they still recover the complete record set under
+- run against the SAME truncating stub scanner the pagination-guarantee
+  tests use, they still recover the complete record set under
   ``guarantee_complete=True`` and still truncate (proving the guard is real,
   not vacuous) under ``guarantee_complete=False``;
 - normalization happens batch-by-batch as data streams in, never after the
@@ -35,8 +35,8 @@ WINDOW = 50
 class TruncatingExplorer:
     """Page/offset explorer that silently stops at ``result_window`` records.
 
-    Mirrors ``tests/test_pagination_guarantee.py::TruncatingExplorer`` (kept
-    as a separate copy so this file stands alone) — a request for
+    Mirrors the ``TruncatingExplorer`` of the pagination-guarantee tests
+    (kept as a separate copy so this file stands alone) — a request for
     ``[start_block, end_block]`` sees only the first ``result_window`` matching
     records, exactly the silent-truncation failure mode Track C exists for.
     Items carry every field the ``domain.normalize`` mappers read for
