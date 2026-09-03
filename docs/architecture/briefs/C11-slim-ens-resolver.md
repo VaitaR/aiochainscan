@@ -3,7 +3,7 @@ kind: deepening-brief
 id: C11
 slug: slim-ens-resolver
 source: ../2026-09-03-review.md
-status: accepted
+status: done             # merged to local main as 750bf55 (2026-09-03); gate PASS, zero findings
 base: 3b7c05e
 ---
 
