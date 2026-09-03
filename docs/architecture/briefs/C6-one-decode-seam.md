@@ -3,11 +3,13 @@ kind: deepening-brief
 id: C6
 slug: one-decode-seam
 source: ../2026-09-03-review.md
-status: accepted
+status: done
 base: 50d971e
 ---
 
 # One decode seam for the single and batch paths
+
+> **Done** — flash lane died to a provider rate limit mid-run; an in-session finishing agent salvaged the uncommitted work (verdict: coherent near-finish), completed two gaps, and committed `7a4df06`; merged to `main` (2026-09-03, no-ff). Gate: PASS-WITH-FINDINGS (LOW only; benchmark no-regression). The brief's repo-wide dead-name grep self-conflicts with its own `fastabi/` fence — resolved by scoping to decode.py.
 
 ## Repo orientation
 
