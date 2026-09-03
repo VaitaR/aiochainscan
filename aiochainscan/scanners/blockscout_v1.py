@@ -20,7 +20,7 @@ from ..core.url_builder import UrlBuilder
 from ..domain.method import Method
 from . import register_scanner
 from ._etherscan_like import EtherscanLikeScanner
-from .base import checksummed_holder_address, hex_block_tag
+from .base import hex_block_tag, holder_item
 
 if TYPE_CHECKING:
     from ..network import Network
@@ -49,22 +49,16 @@ def _parse_token_holders(response: Any) -> list[dict[str, Any]]:
     (verified live 2026-09-02 against ``eth.blockscout.com``):
     ``{"status":"1","message":"OK","result":[{"address":"0x...","value":"..."}]}``.
     The parser runs at the post-unwrap seam (``Network._handle_response`` has
-    already extracted ``result``), so only checksumming and str-coercion are
-    needed to match the shape ``etherscan_v2``/``blockscout_v2`` produce.
+    already extracted ``result``), so extraction is a direct field read and
+    ``base.holder_item`` builds the unified shape.
     """
     if not isinstance(response, list):
         return []
-    items: list[dict[str, Any]] = []
-    for raw in response:
-        if not isinstance(raw, dict):
-            continue
-        items.append(
-            {
-                'address': checksummed_holder_address(raw.get('address')),
-                'value': str(raw.get('value') or '0'),
-            }
-        )
-    return items
+    return [
+        holder_item(raw.get('address'), raw.get('value'))
+        for raw in response
+        if isinstance(raw, dict)
+    ]
 
 
 @register_scanner

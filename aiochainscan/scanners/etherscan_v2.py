@@ -20,7 +20,7 @@ from ..core.endpoint import EndpointSpec, etherscan_parser
 from ..domain.method import Method
 from . import register_scanner
 from ._etherscan_like import EtherscanLikeScanner
-from .base import checksummed_holder_address
+from .base import holder_item
 
 
 def _parse_token_holders(response: Any) -> list[dict[str, Any]]:
@@ -32,12 +32,11 @@ def _parse_token_holders(response: Any) -> list[dict[str, Any]]:
     holder-item list. A full ``{'result': [...]}`` envelope is tolerated
     defensively, but it is not the production shape.
 
-    Unified item shape (Wei-like quantities stay strings):
-
-    - ``address``: holder address, EIP-55 checksummed
-    - ``value``: held quantity in the token's smallest unit (str)
-    - ``TokenHolderAddressType``: preserved when present (``topholders`` only;
-      ``'C'`` for contracts, ``'A'`` for EOAs)
+    Extraction maps ``TokenHolderAddress``/``TokenHolderQuantity`` onto the
+    shared ``base.holder_item`` shape (``address`` EIP-55 checksummed,
+    ``value`` the raw-unit quantity string); ``TokenHolderAddressType`` is
+    preserved when present (``topholders`` only; ``'C'`` for contracts,
+    ``'A'`` for EOAs).
     """
     payload: Any = response
     if isinstance(response, dict) and isinstance(response.get('result'), list):
@@ -48,10 +47,9 @@ def _parse_token_holders(response: Any) -> list[dict[str, Any]]:
     for raw in payload:
         if not isinstance(raw, dict):
             continue
-        item: dict[str, Any] = {
-            'address': checksummed_holder_address(raw.get('TokenHolderAddress')),
-            'value': str(raw.get('TokenHolderQuantity') or '0'),
-        }
+        item: dict[str, Any] = holder_item(
+            raw.get('TokenHolderAddress'), raw.get('TokenHolderQuantity')
+        )
         address_type = raw.get('TokenHolderAddressType')
         if address_type is not None:
             item['TokenHolderAddressType'] = address_type
