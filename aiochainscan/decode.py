@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import warnings
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from hashlib import blake2b
 from typing import Any, cast
@@ -123,12 +123,6 @@ try:
 
     _fast_decode_input_json = _fastabi.decode_input
     _fast_decode_many_json = _fastabi.decode_many
-    _fast_decode_many_direct_json = _fastabi.decode_many_direct
-    _fast_decode_many_flat_json = _fastabi.decode_many_flat
-    _fast_decode_many_hex_json = _fastabi.decode_many_hex
-    _fast_decode_many_raw_json = _fastabi.decode_many_raw
-    _fast_decode_one_json = _fastabi.decode_one
-    _fast_decode_one_direct_json = _fastabi.decode_one_direct
 
     FASTABI_AVAILABLE = True
     # decode_many_to_arrow only exists when fastabi was built with the
@@ -150,39 +144,9 @@ try:
         """Decode single transaction using Rust + orjson for Python object creation."""
         return cast(dict[str, Any], _parse_json(_fast_decode_input_json(input_bytes, abi_json)))
 
-    def _fast_decode_one(calldata: bytes, abi_json: str) -> dict[str, Any]:
-        """Decode single transaction using Rust + orjson for Python object creation."""
-        return cast(dict[str, Any], _parse_json(_fast_decode_one_json(calldata, abi_json)))
-
-    def _fast_decode_one_direct(calldata: bytes, abi: list[dict[str, Any]]) -> dict[str, Any]:
-        """Decode single transaction using Rust + orjson for Python object creation."""
-        return cast(dict[str, Any], _parse_json(_fast_decode_one_direct_json(calldata, abi)))
-
     def _fast_decode_many(calldatas: list[bytes], abi_json: str) -> list[dict[str, Any]]:
         """Decode many transactions using Rust + orjson for Python object creation."""
         return cast(list[dict[str, Any]], _parse_json(_fast_decode_many_json(calldatas, abi_json)))
-
-    def _fast_decode_many_direct(
-        calldatas: list[bytes], abi: list[dict[str, Any]]
-    ) -> list[dict[str, Any]]:
-        """Decode many transactions using Rust + orjson for Python object creation."""
-        return cast(
-            list[dict[str, Any]], _parse_json(_fast_decode_many_direct_json(calldatas, abi))
-        )
-
-    def _fast_decode_many_hex(hex_inputs: list[str], abi_json: str) -> list[dict[str, Any]]:
-        """Decode many hex transactions using Rust + orjson for Python object creation."""
-        return cast(
-            list[dict[str, Any]], _parse_json(_fast_decode_many_hex_json(hex_inputs, abi_json))
-        )
-
-    def _fast_decode_many_raw(calldatas: list[bytes], abi_json: str) -> list[list[Any]]:
-        """Decode many transactions as raw tuples using Rust + orjson."""
-        return cast(list[list[Any]], _parse_json(_fast_decode_many_raw_json(calldatas, abi_json)))
-
-    def _fast_decode_many_flat(calldatas: list[bytes], abi_json: str) -> list[list[Any]]:
-        """Decode many transactions as flat lists using Rust + orjson."""
-        return cast(list[list[Any]], _parse_json(_fast_decode_many_flat_json(calldatas, abi_json)))
 
 except ImportError:
     FASTABI_AVAILABLE = False
@@ -237,12 +201,15 @@ class _AbiIndex:
 
     Building the maps keccak-hashes every function and event signature (~120 µs
     for a 20-function ABI), which the batch and streaming paths would otherwise
-    repeat per item. ``nodes`` then memoises each parameter list's compiled
-    decode plan, keyed by selector / topic hash.
+    repeat per item. ``abi_json`` keeps the serialized ABI the Rust tier is
+    handed, so the single and batch fast paths stop re-serializing per call.
+    ``nodes`` then memoises each parameter list's compiled decode plan, keyed
+    by selector / topic hash.
     """
 
     function_map: dict[str, dict[str, Any]]
     event_map: dict[str, dict[str, Any]]
+    abi_json: str
     nodes: dict[str, tuple[TypeNode, ...]] = field(default_factory=dict)
 
 
@@ -265,7 +232,9 @@ def _abi_index(abi: list[dict[str, Any]]) -> _AbiIndex:
     from ``abi`` itself, so it shares no mutable state with the caller. A
     content digest means one index serves every equal ABI list, and without
     the copy an in-place mutation of one list would change how every other
-    one decodes.
+    one decodes. The payload is retained on the index (``abi_json``): it is
+    byte-for-byte what the fast tier is handed, so the JSON hand-off costs
+    nothing per call.
     """
     by_identity = _ABI_INDEX_BY_IDENTITY.get(id(abi))
     if by_identity is not None and by_identity[0] is abi:
@@ -275,7 +244,8 @@ def _abi_index(abi: list[dict[str, Any]]) -> _AbiIndex:
     digest = blake2b(payload, digest_size=16).digest()
     index = _ABI_INDEX_BY_DIGEST.get(digest)
     if index is None:
-        index = _build_abi_index(cast('list[dict[str, Any]]', orjson.loads(payload)))
+        parsed = cast('list[dict[str, Any]]', orjson.loads(payload))
+        index = _build_abi_index(parsed, payload.decode())
         if len(_ABI_INDEX_BY_DIGEST) >= _ABI_MAPS_CACHE_MAX:
             _ABI_INDEX_BY_DIGEST.clear()
         _ABI_INDEX_BY_DIGEST[digest] = index
@@ -293,7 +263,11 @@ def _preprocess_abi(
     return index.function_map, index.event_map
 
 
-def _build_abi_index(abi: list[dict[str, Any]]) -> _AbiIndex:
+def _build_abi_index(
+    abi: list[dict[str, Any]],
+    abi_json: str,
+) -> _AbiIndex:
+    """Build the lookup maps; ``abi_json`` rides along for the Rust hand-off."""
     function_map: dict[str, dict[str, Any]] = {}
     event_map: dict[str, dict[str, Any]] = {}
 
@@ -317,7 +291,7 @@ def _build_abi_index(abi: list[dict[str, Any]]) -> _AbiIndex:
             if item.get('anonymous') is not True:
                 event_map[topic_hash.lower()] = item
 
-    return _AbiIndex(function_map=function_map, event_map=event_map)
+    return _AbiIndex(function_map=function_map, event_map=event_map, abi_json=abi_json)
 
 
 def _to_rust_convention(data: Any) -> Any:
@@ -349,73 +323,97 @@ def keccak_hash(text: str) -> str:
     return keccak_hex(text)
 
 
-def _declares_selector(abi: list[dict[str, Any]], raw_input: str) -> bool:
-    """Whether ``abi`` declares the function the calldata selects."""
-    return raw_input[:FUNCTION_SELECTOR_LENGTH] in _abi_index(abi).function_map
+# The tier-switch tuple: errors that make the single fast path (and the whole
+# fast batch) retry on the pure floor. AbiTypeNotSupportedError is a ValueError
+# subclass and rides along, exactly as in the literal tuple this replaced —
+# the floor re-raises it after its own attempt.
+_FALLBACK_ERRORS: tuple[type[BaseException], ...] = (
+    ValueError,
+    KeyError,
+    TypeError,
+    RuntimeError,
+)
 
 
-def _decode_transaction_input_fast(
-    transaction: dict[str, Any], abi: list[dict[str, Any]]
+def _declares_selector(index: _AbiIndex, raw_input: str) -> bool:
+    """Whether the ABI behind ``index`` declares the function the calldata selects.
+
+    Takes the index (not the ABI list) because every caller already holds it:
+    the seam must not re-derive the index just to ask this.
+    """
+    return raw_input[:FUNCTION_SELECTOR_LENGTH] in index.function_map
+
+
+def _mark_empty(transaction: dict[str, Any]) -> dict[str, Any]:
+    """Mark one transaction as undecoded: no function name, no decoded data."""
+    transaction['decoded_func'] = ''
+    transaction['decoded_data'] = {}
+    return transaction
+
+
+def _decode_one(
+    transaction: dict[str, Any],
+    index: _AbiIndex,
+    fast: Callable[[bytes, str], dict[str, Any]] | None = None,
+    fast_result: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Fast Rust-based transaction input decoding."""
-    if not transaction.get('input') or len(transaction['input']) < FUNCTION_SELECTOR_LENGTH:
-        transaction['decoded_func'] = ''
-        transaction['decoded_data'] = {}
-        return transaction
+    """The one per-item decode seam every entry point shares.
 
-    try:
-        # Convert hex input to bytes
-        input_hex = transaction['input']
-        if input_hex.startswith('0x'):
-            input_hex = input_hex[2:]
-        input_bytes = bytes.fromhex(input_hex)
+    Owns the per-item plumbing exactly once: the input-length guard and the
+    empty mark, the ``0x`` strip, the ABI→JSON hand-off (``index.abi_json``),
+    the gated fast→pure fall-through, and the tier-switch exception tuple.
 
-        # Convert ABI to JSON string
-        abi_json = orjson.dumps(abi).decode()
-
-        # Call Rust decoder - returns parsed dict via orjson
-        result = _fast_decode_input(input_bytes, abi_json)
-
-        # An empty function name means the Rust backend did not recognise the
-        # call -- including when it cannot build a signature for a type it does
-        # not implement (fixed-point). The Python tier covers the whole spec,
-        # so let it try, but only for a selector this ABI actually declares:
-        # an unknown selector decodes to nothing on either tier.
-        if not result['function_name'] and _declares_selector(abi, transaction['input']):
-            return _decode_transaction_input_python(transaction, abi)
-
-        transaction['decoded_func'] = result['function_name']
-        transaction['decoded_data'] = result['decoded_data']
-
-        return transaction
-    except (ValueError, KeyError, TypeError, RuntimeError):
-        # Fallback to Python implementation on any error
-        return _decode_transaction_input_python(transaction, abi)
-
-
-def _decode_transaction_input_python(
-    transaction: dict[str, Any], abi: list[dict[str, Any]]
-) -> dict[str, Any]:
-    """Python-based transaction input decoding (fallback)."""
-    index = _abi_index(abi)
-    function_map = index.function_map
-
-    if not transaction.get('input') or len(transaction['input']) < FUNCTION_SELECTOR_LENGTH:
-        transaction['decoded_func'] = ''
-        transaction['decoded_data'] = {}
-        return transaction
-
+    ``fast`` is the single-item Rust callable (single fast path);
+    ``fast_result`` is an answer already fetched for this item (batch path).
+    On the single fast path everything from the fetch to the marking sits
+    inside the tier-switch try, so any failure retries on the pure floor;
+    the batch path enters with ``fast_result`` directly, so an unexpected
+    answer shape propagates and the whole-batch fallback owns it.
+    """
     # typing.cast is a real call at runtime; annotated locals cost nothing.
-    raw_input: str = transaction['input']
+    # ``or ''`` keeps the annotation honest: a missing input coalesces to the
+    # empty string the guard below already rejects.
+    raw_input: str = transaction.get('input') or ''
+    if not raw_input or len(raw_input) < FUNCTION_SELECTOR_LENGTH:
+        return _mark_empty(transaction)
+
+    if fast_result is not None:
+        # An empty function name means the fast tier did not recognise the
+        # call -- including when it cannot build a signature for a type it does
+        # not implement (fixed-point). The pure floor covers the whole
+        # spec, so let it try, but only for a selector this ABI actually
+        # declares: an unknown selector decodes to nothing on either tier.
+        # THE fall-through rule — written here and only here.
+        if not fast_result['function_name'] and _declares_selector(index, raw_input):
+            fast_result = None
+        else:
+            transaction['decoded_func'] = fast_result['function_name']
+            transaction['decoded_data'] = fast_result['decoded_data']
+            return transaction
+
+    elif fast is not None:
+        try:
+            hex_body = raw_input[2:] if raw_input.startswith('0x') else raw_input
+            # Re-enter with the fetched answer: fall-through and marking live
+            # in the fast_result branch above, so the rule is written once.
+            return _decode_one(
+                transaction, index, fast_result=fast(bytes.fromhex(hex_body), index.abi_json)
+            )
+        except _FALLBACK_ERRORS:
+            pass
+
+    # Pure floor: decode against the plan memoised in the index.
     func_selector = raw_input[:FUNCTION_SELECTOR_LENGTH]
-    function = function_map.get(func_selector)
+    function = index.function_map.get(func_selector)
 
     if function:
         input_params: list[dict[str, Any]] = function['inputs']
-        input_data = raw_input[FUNCTION_SELECTOR_LENGTH:]
         try:
             decoded_input = _abi_decode_params(
-                input_params, bytes.fromhex(input_data), index, func_selector
+                input_params,
+                bytes.fromhex(raw_input[FUNCTION_SELECTOR_LENGTH:]),
+                index,
+                func_selector,
             )
 
             # Assign the function name directly to transaction
@@ -433,8 +431,7 @@ def _decode_transaction_input_python(
             # A gap in this library, not malformed calldata — never silenced.
             raise
         except _MALFORMED_CALLDATA_ERRORS as e:
-            transaction['decoded_func'] = ''
-            transaction['decoded_data'] = {}
+            _mark_empty(transaction)
             # Log at debug level to help with troubleshooting
             import logging
 
@@ -443,13 +440,26 @@ def _decode_transaction_input_python(
             )
     else:
         # No matching function found, assign empty values
-        transaction['decoded_func'] = ''
-        transaction['decoded_data'] = {}
+        _mark_empty(transaction)
 
     if transaction.get('decoded_data'):
         transaction['decoded_data'] = _to_rust_convention(transaction['decoded_data'])
 
     return transaction
+
+
+def _decode_transaction_input_fast(
+    transaction: dict[str, Any], abi: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Fast Rust-based transaction input decoding."""
+    return _decode_one(transaction, _abi_index(abi), _fast_decode_input)
+
+
+def _decode_transaction_input_python(
+    transaction: dict[str, Any], abi: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Python-based transaction input decoding (fallback)."""
+    return _decode_one(transaction, _abi_index(abi))
 
 
 # Main function that uses fast Rust backend or falls back to Python
@@ -460,10 +470,9 @@ def decode_transaction_input(
     Decode transaction input and return updated transaction with decoded data.
     Uses fast Rust backend when available, falls back to Python implementation.
     """
-    if FASTABI_AVAILABLE:
-        return _decode_transaction_input_fast(transaction, abi)
-    else:
-        return _decode_transaction_input_python(transaction, abi)
+    return _decode_one(
+        transaction, _abi_index(abi), _fast_decode_input if FASTABI_AVAILABLE else None
+    )
 
 
 def _split_top_level(text: str) -> list[str]:
@@ -733,35 +742,29 @@ def decode_transaction_inputs_batch(
         if not calldatas:
             # No valid transactions, return with empty decoded fields
             for tx in transactions:
-                tx['decoded_func'] = ''
-                tx['decoded_data'] = {}
+                _mark_empty(tx)
             return transactions
 
-        # Convert ABI to JSON string
-        abi_json = orjson.dumps(abi).decode()
+        index = _abi_index(abi)
 
         # Call optimized Rust batch decoder with GIL release
-        decoded_results = _fast_decode_many(calldatas, abi_json)
+        decoded_results = _fast_decode_many(calldatas, index.abi_json)
 
         # Map results back to transactions (optimized)
         result_idx = 0
         for i, tx in enumerate(transactions):
             if valid_indices[i] != -1:
-                # Valid transaction with result
-                result = decoded_results[result_idx]
+                # Valid transaction with result — the seam applies the gated
+                # fall-through or the fast answer; an unexpected answer shape
+                # raises into the whole-batch fallback below.
+                _decode_one(tx, index, fast_result=decoded_results[result_idx])
                 result_idx += 1
-                if not result['function_name'] and _declares_selector(abi, tx['input']):
-                    _decode_transaction_input_python(tx, abi)
-                    continue
-                tx['decoded_func'] = result['function_name']
-                tx['decoded_data'] = result['decoded_data']
             else:
                 # Invalid transaction
-                tx['decoded_func'] = ''
-                tx['decoded_data'] = {}
+                _decode_one(tx, index)
 
         return transactions
 
-    except (ValueError, KeyError, TypeError, RuntimeError):
+    except _FALLBACK_ERRORS:
         # Fallback to Python implementation on any error
         return [decode_transaction_input(tx, abi) for tx in transactions]
