@@ -268,6 +268,83 @@ class TestLadderAtTheSeams:
 
 
 # ============================================================================
+# The instance root in the base __str__ / __repr__ / _error_context defaults
+# ============================================================================
+
+
+class TestInstanceRootMessages:
+    """One ``_instance_root`` concept on the base feeds ``__str__``,
+    ``__repr__`` and ``_error_context`` for every scanner that serves a
+    per-instance deployment — the six overrides this replaced each dropped at
+    least one fact (method name or root) the default now always carries."""
+
+    @pytest.mark.parametrize(
+        'factory',
+        [
+            _blockscout_v1,
+            lambda net: _scanner(net),
+            _nodereal,
+        ],
+        ids=['blockscout-v1', 'blockscout-v2', 'nodereal'],
+    )
+    def test_str_and_repr_carry_name_version_and_root(self, factory: Any) -> None:
+        scanner = factory(ExplodingNetwork())
+        root = scanner._instance_root
+        assert root is not None
+
+        text = str(scanner)
+        assert scanner.name in text
+        assert scanner.version in text
+        assert root in text
+
+        detail = repr(scanner)
+        assert type(scanner).__name__ in detail
+        assert scanner.network in detail
+        assert root in detail
+        assert f'methods={len(scanner.SPECS)}' in detail
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ('factory', 'method'),
+        [
+            (_blockscout_v1, Method.ACCOUNT_BALANCE),
+            (lambda net: _scanner(net), Method.ACCOUNT_BALANCE),
+            # A contract-REST method: NodeReal's JSON-RPC paths carry their
+            # own inline context in _rpc, the REST ones go through the
+            # Scanner.call ladder and its _error_context.
+            (_nodereal, Method.CONTRACT_ABI),
+        ],
+        ids=['blockscout-v1', 'blockscout-v2', 'nodereal'],
+    )
+    async def test_unexpected_error_names_method_and_root(
+        self, factory: Any, method: Method
+    ) -> None:
+        scanner = factory(ExplodingNetwork())
+        root = scanner._instance_root
+        assert root is not None
+
+        with pytest.raises(ChainscanNetworkError) as excinfo:
+            await scanner.call(method, address=CHECKSUM_ADDRESS)
+
+        message = str(excinfo.value)
+        assert method.name in message
+        assert root in message
+
+    def test_scanner_without_root_keeps_plain_messages(self) -> None:
+        """No per-instance identity (Etherscan's shared host): no root is
+        printed and the format is unchanged."""
+        scanner = _etherscan_v2(ExplodingNetwork())
+
+        assert scanner._instance_root is None
+        assert 'instance:' not in str(scanner)
+        assert 'instance_root' not in repr(scanner)
+        context = scanner._error_context(Method.ACCOUNT_BALANCE)
+        assert context == (
+            f'{scanner.name} v{scanner.version} unexpected error for {Method.ACCOUNT_BALANCE.name}'
+        )
+
+
+# ============================================================================
 # hex_block_tag
 # ============================================================================
 

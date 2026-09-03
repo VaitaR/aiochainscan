@@ -161,6 +161,7 @@ class BlockScoutV1(EtherscanLikeScanner):
         # Custom self-hosted instance: no registry mapping to resolve.
         if base_url is not None:
             self.instance_domain: str | None = None
+            self._instance_root = base_url
             return
 
         # Get BlockScout instance for this network (shared unknown-network
@@ -168,23 +169,17 @@ class BlockScoutV1(EtherscanLikeScanner):
         self.instance_domain = self._require_mapped_network(
             self.NETWORK_INSTANCES, 'BlockScout instance'
         )
+        self._instance_root = f'https://{self.instance_domain}'
 
     # ------------------------------------------------------------------
     # Provider dialect (the base owns the ladder, dispatch and params)
     # ------------------------------------------------------------------
 
-    def _instance_root(self) -> str:
-        """Instance root for requests: custom self-hosted URL or the
-        registry-mapped public instance."""
-        return self.base_url or f'https://{self.instance_domain}'
-
     def _request_url(self, spec: EndpointSpec, params: dict[str, Any]) -> str:
         """Full per-instance URL: BlockScout instances live on their own
-        hosts, unlike Etherscan's shared subdomain layout."""
-        return f'{self._instance_root()}{spec.path}'
-
-    def _error_context(self, method: Method) -> str:
-        return f'BlockScout unexpected error for {self.base_url or self.instance_domain}'
+        hosts, unlike Etherscan's shared subdomain layout. The root is the
+        ``_instance_root`` attribute set in ``__init__``."""
+        return f'{self._instance_root}{spec.path}'
 
     async def _perform_request(
         self,
@@ -238,23 +233,9 @@ class BlockScoutV1(EtherscanLikeScanner):
 
         return await network.request(
             method='POST',
-            url=f'{self._instance_root()}/api/eth-rpc',
+            url=f'{self._instance_root}/api/eth-rpc',
             json_data={'jsonrpc': '2.0', 'method': rpc_method, 'params': rpc_params, 'id': 1},
             headers={},
-        )
-
-    def __str__(self) -> str:
-        """String representation including instance info."""
-        root = self.base_url or self.instance_domain
-        return f'BlockScout v{self.version} ({root})'
-
-    def __repr__(self) -> str:
-        """Detailed string representation."""
-        return (
-            f'BlockScoutV1(network={self.network!r}, '
-            f'base_url={self.base_url!r}, '
-            f'instance={self.instance_domain!r}, '
-            f'methods={len(self.SPECS)})'
         )
 
     # Most SPECS are inherited from the shared Etherscan-like implementation.

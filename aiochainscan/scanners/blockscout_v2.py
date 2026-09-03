@@ -526,6 +526,7 @@ class BlockScoutV2Scanner(Scanner):
         # ValueError shape lives on the base).
         if base_url is None:
             self.base_url = self._require_mapped_network(self.BASE_URLS, 'Blockscout V2 instance')
+        self._instance_root = self.base_url
 
     def _build_url(self, spec: EndpointSpec, **params: Any) -> str:
         """
@@ -567,9 +568,6 @@ class BlockScoutV2Scanner(Scanner):
         if spec.http_method == 'POST':
             headers['Content-Type'] = 'application/json'
         return headers
-
-    def _error_context(self, method: Method) -> str:
-        return f'Blockscout V2 unexpected error for {self.base_url}'
 
     async def fetch_page(
         self,
@@ -654,15 +652,3 @@ class BlockScoutV2Scanner(Scanner):
         if isinstance(result, dict):
             return dict(result)
         return {}
-
-    def __str__(self) -> str:
-        """String representation including instance info."""
-        return f'BlockScout v{self.version} ({self.base_url})'
-
-    def __repr__(self) -> str:
-        """Detailed string representation."""
-        return (
-            f"BlockScoutV2Scanner(network='{self.network}', "
-            f"base_url='{self.base_url}', "
-            f'methods={len(self.SPECS)})'
-        )
