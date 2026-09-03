@@ -3,7 +3,8 @@ Chain Registry - unified chain information and provider mappings.
 """
 
 import warnings
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from typing import Any
 
 from .base_url import is_url_like, validate_base_url
@@ -52,52 +53,310 @@ URL_BUILDER_CHAIN_IDS: dict[tuple[str, str], str] = {
 }
 
 
-URL_BUILDER_CURRENCIES: dict[str, str] = {
-    'eth': 'ETH',
-    'bsc': 'BNB',
-    'polygon': 'MATIC',
-    'optimism': 'ETH',
-    'arbitrum': 'ETH',
-    'fantom': 'FTM',
-    'gnosis': 'GNO',
-    'flare': 'FLR',
-    'wemix': 'WEMIX',
-    'chiliz': 'CHZ',
-    'mode': 'MODE',
-    'linea': 'LINEA',
-    'blast': 'BLAST',
-    'base': 'BASE',
-    'blockscout_eth': 'ETH',
-    'blockscout_sepolia': 'ETH',
-    'blockscout_gnosis': 'xDAI',
-    'blockscout_polygon': 'MATIC',
-    'blockscout_base': 'ETH',
-    'blockscout_bsc': 'BNB',
-    'nodereal': 'BNB',
-    'blockscout_optimism': 'ETH',
-    'blockscout_arbitrum': 'ETH',
-    'blockscout_scroll': 'ETH',
-    'blockscout_linea': 'ETH',
+# ---------------------------------------------------------------------------
+# Scanner records and per-kind UrlBuilder profiles — the topology source
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class KindProfile:
+    """UrlBuilder-facing facts for one ``api_kind``.
+
+    Static explorer data (currency, domains) plus the config-manager facts the
+    kind carries (its config-dialect networks, its credential family). The
+    families whose profile output is *computed* — the Etherscan V2 unified
+    endpoint (``v2_query_auth``) and the BlockScout instance hosts — stay
+    computed in :func:`get_url_builder_profile`, and so does NodeReal's
+    JSON-RPC dialect (its URLs and chain id derive from the network, not from
+    data).
+    """
+
+    currency: str
+    base_url: str | None = None
+    api_url: str | None = None
+    #: v1-style explorers with a separate testnet domain, served when the
+    #: network name is ``'test'``/``'testnet'``. Declared as a pair.
+    testnet_base_url: str | None = None
+    testnet_api_url: str | None = None
+    #: Routed through the unified ``api.etherscan.io/v2/api`` endpoint with
+    #: query auth; every request carries the chain id.
+    v2_query_auth: bool = False
+    #: Config-dialect networks of the config-manager scanner id named like
+    #: the kind, when one exists. ``None`` for kinds with no config id
+    #: (wemix/chiliz/mode); 'eth' and 'nodereal' declare theirs on their
+    #: scanner records instead.
+    config_networks: frozenset[str] | None = None
+    #: Config id whose credential is the fallback when this kind's own key is
+    #: absent (the V2 family: one Etherscan account serves several chains).
+    credential_family: str | None = None
+
+    def __post_init__(self) -> None:
+        if (self.testnet_base_url is None) != (self.testnet_api_url is None):
+            raise ValueError('KindProfile: testnet_base_url and testnet_api_url are a pair')
+
+
+_URL_KIND_PROFILES: dict[str, KindProfile] = {
+    # Etherscan V2 family — one unified endpoint, chainid-routed, query auth.
+    'eth': KindProfile(currency='ETH', v2_query_auth=True),
+    'bsc': KindProfile(
+        currency='BNB',
+        v2_query_auth=True,
+        config_networks=frozenset({'main', 'test'}),
+        credential_family='eth',
+    ),
+    'polygon': KindProfile(
+        currency='MATIC',
+        v2_query_auth=True,
+        config_networks=frozenset({'main', 'mumbai', 'test'}),
+        credential_family='eth',
+    ),
+    'optimism': KindProfile(
+        currency='ETH',
+        v2_query_auth=True,
+        config_networks=frozenset({'main', 'goerli', 'test'}),
+        credential_family='eth',
+    ),
+    'arbitrum': KindProfile(
+        currency='ETH',
+        v2_query_auth=True,
+        config_networks=frozenset({'main', 'nova', 'goerli', 'test'}),
+        credential_family='eth',
+    ),
+    'base': KindProfile(
+        currency='BASE',
+        v2_query_auth=True,
+        config_networks=frozenset({'main', 'goerli', 'sepolia'}),
+        credential_family='eth',
+    ),
+    # v1-style per-explorer domains, query auth.
+    'fantom': KindProfile(
+        currency='FTM',
+        base_url='https://ftmscan.com',
+        api_url='https://api.ftmscan.com/api',
+        testnet_base_url='https://testnet.ftmscan.com',
+        testnet_api_url='https://api-testnet.ftmscan.com/api',
+        config_networks=frozenset({'main', 'test'}),
+    ),
+    'gnosis': KindProfile(
+        currency='GNO',
+        base_url='https://gnosisscan.io',
+        api_url='https://api.gnosisscan.io/api',
+        config_networks=frozenset({'main', 'chiado'}),
+    ),
+    'flare': KindProfile(
+        currency='FLR',
+        base_url='https://flare.network',
+        api_url='https://flare-explorer.flare.network/api',
+        config_networks=frozenset({'main', 'test'}),
+    ),
+    'wemix': KindProfile(
+        currency='WEMIX',
+        base_url='https://wemixscan.com',
+        api_url='https://api.wemixscan.com/api',
+    ),
+    'chiliz': KindProfile(
+        currency='CHZ',
+        base_url='https://chiliz.com',
+        api_url='https://scan.chiliz.com/api',
+    ),
+    'mode': KindProfile(
+        currency='MODE',
+        base_url='https://routescan.io/v2/network/mainnet/evm/34443/etherscan',
+        api_url='https://routescan.io/v2/network/mainnet/evm/34443/etherscan/api',
+    ),
+    'linea': KindProfile(
+        currency='LINEA',
+        base_url='https://lineascan.build',
+        api_url='https://api.lineascan.build/api',
+        config_networks=frozenset({'main', 'test'}),
+    ),
+    'blast': KindProfile(
+        currency='BLAST',
+        base_url='https://blastscan.io',
+        api_url='https://api.blastscan.io/api',
+        config_networks=frozenset({'main', 'sepolia'}),
+    ),
+    # NodeReal: currency and config networks here; URLs/chain id are dialect
+    # (computed in get_url_builder_profile).
+    'nodereal': KindProfile(
+        currency='BNB',
+        config_networks=frozenset({'bsc', 'bsc-testnet'}),
+    ),
 }
 
+
+@dataclass(frozen=True)
+class ScannerRecord:
+    """Every registry fact about one public scanner name, in one place.
+
+    The lookup tables below (:data:`DEFAULT_SCANNER_VERSIONS`,
+    :data:`SCANNER_CONFIG_IDS`, :data:`BLOCKSCOUT_CONFIG_IDS`,
+    :data:`SCANNER_CONFIG_NETWORKS`, :data:`SCANNER_NETWORK_ALIASES`,
+    :data:`SCANNER_API_KINDS`, :data:`CUSTOM_BASE_URL_SCANNERS`) derive from
+    these records at import — adding or altering a scanner means editing one
+    record, and consistency between the views is validated at import by
+    :func:`_validate_scanner_topology` instead of being assumed.
+
+    Fields:
+        kind: Scanner family ('etherscan', 'blockscout', 'nodereal'). The
+            two BlockScout public names share the family; the 'blockscout'
+            record is its family owner and carries the per-instance
+            topology (hosts, currencies, config ids, display names) that
+            both legs serve.
+        default_version: Version used when the caller passes none
+            (everything else defaults to 'v1').
+        config_id: Config-manager id for credential lookup; ``None`` means
+            the scanner name itself (BlockScout v1 resolves per network via
+            ``config_ids_by_network``).
+        api_kind: UrlBuilder api_kind; ``None`` means the scanner name.
+        network_aliases: Network-name aliases applied for configuration
+            lookups only (the client-facing network name is preserved).
+        supported_networks: Config-dialect networks of the scanner's own
+            config id (``None`` for BlockScout, whose ids derive from the
+            instance hosts).
+        instance_hosts: BlockScout family only — network alias → public
+            instance host.
+        instance_currencies: BlockScout family only — UrlBuilder host id →
+            native currency symbol.
+        config_ids_by_network: BlockScout family only — network name →
+            config-manager id.
+        display_names: BlockScout family only — UrlBuilder host id →
+            human-readable scanner name (consumed by the config manager).
+        custom_base_url: Whether the transport can be pointed at a custom
+            base URL (self-hosted BlockScout, Etherscan v2 proxy).
+    """
+
+    kind: str
+    default_version: str = 'v1'
+    config_id: str | None = None
+    api_kind: str | None = None
+    network_aliases: Mapping[str, str] = field(default_factory=dict)
+    supported_networks: frozenset[str] | None = None
+    instance_hosts: Mapping[str, str] = field(default_factory=dict)
+    instance_currencies: Mapping[str, str] = field(default_factory=dict)
+    config_ids_by_network: Mapping[str, str] = field(default_factory=dict)
+    display_names: Mapping[str, str] = field(default_factory=dict)
+    custom_base_url: bool = False
+
+
+SCANNER_RECORDS: dict[str, ScannerRecord] = {
+    'etherscan': ScannerRecord(
+        kind='etherscan',
+        default_version='v2',
+        config_id='eth',
+        api_kind='eth',
+        network_aliases={
+            # All EtherscanV2 networks route through the single unified endpoint
+            # (api.etherscan.io/v2/api?chainid=...), so all map to 'main' for
+            # config lookup
+            'ethereum': 'main',
+            'eth': 'main',
+            'base': 'main',
+            'bsc': 'main',
+            'bnb': 'main',
+            'binance': 'main',
+            'polygon': 'main',
+            'matic': 'main',
+            'arbitrum': 'main',
+            'arb': 'main',
+            'optimism': 'main',
+            'op': 'main',
+            'sonic': 'main',
+        },
+        supported_networks=frozenset({'main', 'test', 'goerli', 'sepolia'}),
+        custom_base_url=True,
+    ),
+    'blockscout': ScannerRecord(
+        kind='blockscout',
+        # Family owner: the per-instance topology both BlockScout legs serve.
+        network_aliases={'ethereum': 'eth', 'main': 'eth'},
+        instance_hosts={
+            'eth': 'eth.blockscout.com',
+            'ethereum': 'eth.blockscout.com',
+            'sepolia': 'eth-sepolia.blockscout.com',
+            'gnosis': 'gnosis.blockscout.com',
+            'polygon': 'polygon.blockscout.com',
+            'optimism': 'optimism.blockscout.com',
+            'arbitrum': 'arbitrum.blockscout.com',
+            'base': 'base.blockscout.com',
+            'scroll': 'scroll.blockscout.com',
+            'linea': 'linea.blockscout.com',
+            'bsc': 'bsc.blockscout.com',
+            'zksync': 'zksync.blockscout.com',
+        },
+        instance_currencies={
+            'blockscout_eth': 'ETH',
+            'blockscout_sepolia': 'ETH',
+            'blockscout_gnosis': 'xDAI',
+            'blockscout_polygon': 'MATIC',
+            'blockscout_base': 'ETH',
+            'blockscout_bsc': 'BNB',
+            'blockscout_optimism': 'ETH',
+            'blockscout_arbitrum': 'ETH',
+            'blockscout_scroll': 'ETH',
+            'blockscout_linea': 'ETH',
+        },
+        config_ids_by_network={
+            'ethereum': 'blockscout_eth',
+            'eth': 'blockscout_eth',
+            'polygon': 'blockscout_polygon',
+            'gnosis': 'blockscout_gnosis',
+            'optimism': 'blockscout_optimism',
+            'base': 'blockscout_base',
+            'bsc': 'blockscout_bsc',
+            'bnb': 'blockscout_bsc',
+            'scroll': 'blockscout_scroll',
+            'linea': 'blockscout_linea',
+        },
+        display_names={
+            'blockscout_eth': 'BlockScout Ethereum',
+            'blockscout_sepolia': 'BlockScout Sepolia',
+            'blockscout_gnosis': 'BlockScout Gnosis',
+            'blockscout_polygon': 'BlockScout Polygon',
+            'blockscout_base': 'BlockScout Base',
+            'blockscout_bsc': 'BlockScout BSC',
+            'blockscout_optimism': 'BlockScout Optimism',
+            'blockscout_arbitrum': 'BlockScout Arbitrum',
+            'blockscout_scroll': 'BlockScout Scroll',
+            'blockscout_linea': 'BlockScout Linea',
+        },
+        custom_base_url=True,
+    ),
+    'blockscout_v2': ScannerRecord(
+        kind='blockscout',
+        default_version='v2',
+        api_kind='blockscout_eth',
+        network_aliases={'main': 'ethereum'},
+        custom_base_url=True,
+    ),
+    'nodereal': ScannerRecord(
+        kind='nodereal',
+        api_kind='nodereal',
+        network_aliases={
+            # NodeReal's config entry is keyed by canonical chain names; the
+            # BSC aliases map onto 'bsc' for the configuration-manager lookup.
+            'bnb': 'bsc',
+            'binance': 'bsc',
+        },
+        supported_networks=frozenset({'bsc', 'bsc-testnet'}),
+    ),
+}
+
+_blockscout_record = SCANNER_RECORDS['blockscout']
+
+# UrlBuilder api_kind → currency, derived from the per-kind profiles plus the
+# BlockScout per-instance currencies (the record is the single place a new
+# instance registers a currency).
+URL_BUILDER_CURRENCIES: dict[str, str] = {
+    **{kind: profile.currency for kind, profile in _URL_KIND_PROFILES.items()},
+    **dict(_blockscout_record.instance_currencies),
+}
 
 #: Network alias → public BlockScout instance host. The ONE host table for
 #: both BlockScout scanners (v1 ``NETWORK_INSTANCES``, v2 ``BASE_URLS``);
 #: ``BLOCKSCOUT_HOSTS`` below re-keys the same hosts by UrlBuilder api_kind.
-BLOCKSCOUT_INSTANCE_HOSTS: dict[str, str] = {
-    'eth': 'eth.blockscout.com',
-    'ethereum': 'eth.blockscout.com',
-    'sepolia': 'eth-sepolia.blockscout.com',
-    'gnosis': 'gnosis.blockscout.com',
-    'polygon': 'polygon.blockscout.com',
-    'optimism': 'optimism.blockscout.com',
-    'arbitrum': 'arbitrum.blockscout.com',
-    'base': 'base.blockscout.com',
-    'scroll': 'scroll.blockscout.com',
-    'linea': 'linea.blockscout.com',
-    'bsc': 'bsc.blockscout.com',
-    'zksync': 'zksync.blockscout.com',
-}
+#: Derived from the 'blockscout' scanner record.
+BLOCKSCOUT_INSTANCE_HOSTS: dict[str, str] = dict(_blockscout_record.instance_hosts)
 
 
 BLOCKSCOUT_HOSTS: dict[str, str] = {
@@ -107,7 +366,163 @@ BLOCKSCOUT_HOSTS: dict[str, str] = {
 }
 
 
-V2_QUERY_AUTH_API_KINDS: set[str] = {'eth', 'optimism', 'arbitrum', 'bsc', 'polygon', 'base'}
+BLOCKSCOUT_CONFIG_IDS: dict[str, str] = dict(_blockscout_record.config_ids_by_network)
+
+#: UrlBuilder host id → display name (config-manager presentation data whose
+#: home is the record; the configuration manager reads this table directly).
+BLOCKSCOUT_DISPLAY_NAMES: dict[str, str] = dict(_blockscout_record.display_names)
+
+V2_QUERY_AUTH_API_KINDS: frozenset[str] = frozenset(
+    kind for kind, profile in _URL_KIND_PROFILES.items() if profile.v2_query_auth
+)
+
+# Default scanner version when none is provided (everything else defaults to
+# v1) — the records whose default differs from the global fallback.
+DEFAULT_SCANNER_VERSIONS: dict[str, str] = {
+    name: record.default_version
+    for name, record in SCANNER_RECORDS.items()
+    if record.default_version != 'v1'
+}
+
+# Configuration-manager scanner ids for non-BlockScout scanners (api key lookup).
+# There is deliberately no entry for 'moralis'/'routscan': no such scanner exists,
+# unknown names fall through as-is and the config manager raises its honest
+# 'Unknown scanner' error for them.
+SCANNER_CONFIG_IDS: dict[str, str] = {
+    name: record.config_id
+    for name, record in SCANNER_RECORDS.items()
+    if record.config_id is not None
+}
+
+# Networks each configuration-manager scanner id serves, in the config
+# lookup dialect ('main'/'test'-style names, not registry chain names).
+# Single source of the network-validity oracle for client construction
+# (:func:`resolve_scanner_target`); the configuration manager derives its
+# builtin ``supported_networks`` from this table instead of mirroring it.
+# Derived from three views: the per-kind profiles (Etherscan-family config
+# ids), the scanner records ('eth'/'nodereal' own their networks) and the
+# BlockScout host ids (each serves exactly its host suffix, so a new
+# instance registers once for both).
+SCANNER_CONFIG_NETWORKS: dict[str, frozenset[str]] = {
+    **{
+        kind: networks
+        for kind, profile in _URL_KIND_PROFILES.items()
+        if (networks := profile.config_networks) is not None
+    },
+    **{
+        (record.config_id if record.config_id is not None else name): record.supported_networks
+        for name, record in SCANNER_RECORDS.items()
+        if record.supported_networks is not None
+    },
+    **{
+        scanner_id: frozenset({scanner_id.removeprefix('blockscout_')})
+        for scanner_id in BLOCKSCOUT_HOSTS
+    },
+}
+
+# Per-scanner network-name aliases, used for configuration-manager lookups only
+SCANNER_NETWORK_ALIASES: dict[str, dict[str, str]] = {
+    name: dict(record.network_aliases)
+    for name, record in SCANNER_RECORDS.items()
+    if record.network_aliases
+}
+
+# UrlBuilder api_kind per scanner name (BlockScout v1 uses its network-specific id)
+SCANNER_API_KINDS: dict[str, str] = {
+    name: record.api_kind
+    for name, record in SCANNER_RECORDS.items()
+    if record.api_kind is not None
+}
+
+# Scanners whose transport can be pointed at a custom base URL
+# (self-hosted BlockScout, Etherscan v2 proxy). Everything else rejects
+# URL-shaped networks with an honest error.
+CUSTOM_BASE_URL_SCANNERS: frozenset[str] = frozenset(
+    name for name, record in SCANNER_RECORDS.items() if record.custom_base_url
+)
+
+#: Config-manager scanner id → the family config id whose credential is the
+#: fallback when the scanner's own key is absent (the Etherscan V2 family:
+#: one account, several chains). Read by the configuration manager's builtin
+#: definitions; the registry owns family membership, config owns credentials.
+CONFIG_CREDENTIAL_FAMILY: dict[str, str] = {
+    kind: profile.credential_family
+    for kind, profile in _URL_KIND_PROFILES.items()
+    if profile.credential_family is not None
+}
+
+#: BlockScout instance aliases that intentionally do NOT surface as UrlBuilder
+#: host ids. Today: 'zksync' — listed as an instance host but with no
+#: ``blockscout_zksync`` currency entry, so no config-manager scanner exists
+#: for it. Declared here (not silent); making it live would change the public
+#: surface.
+DROPPED_INSTANCE_ALIASES: frozenset[str] = frozenset({'zksync'})
+
+
+def _validate_scanner_topology(
+    instance_hosts: Mapping[str, str],
+    hosts: Mapping[str, str],
+    display_names: Mapping[str, str],
+    dropped_aliases: frozenset[str],
+) -> None:
+    """Import-time proof that the derived scanner tables agree.
+
+    Replaces the two silent failure modes of the formerly hand-maintained
+    tables: an instance alias that never becomes a UrlBuilder host id
+    (zksync used to disappear without a trace) and a derived host id without
+    a display name (the configuration manager used to die on a bare
+    ``KeyError``). Raises ``ValueError`` on any drift.
+    """
+    for alias, host in instance_hosts.items():
+        if f'blockscout_{alias}' in hosts:
+            continue
+        if host in hosts.values():
+            # Same instance under another alias (e.g. 'ethereum' → the 'eth'
+            # host); nothing is lost.
+            continue
+        if alias in dropped_aliases:
+            continue
+        raise ValueError(
+            f'BlockScout instance alias {alias!r} ({host}) is neither derived '
+            f'into BLOCKSCOUT_HOSTS nor declared in DROPPED_INSTANCE_ALIASES'
+        )
+
+    stale_drops = sorted(
+        alias
+        for alias in dropped_aliases
+        if f'blockscout_{alias}' in hosts or instance_hosts.get(alias) in hosts.values()
+    )
+    if stale_drops:
+        raise ValueError(
+            f'DROPPED_INSTANCE_ALIASES lists {stale_drops}, but those aliases '
+            f'resolve to derived host ids — remove them from the dropped set'
+        )
+
+    unknown_drops = sorted(alias for alias in dropped_aliases if alias not in instance_hosts)
+    if unknown_drops:
+        raise ValueError(
+            f'DROPPED_INSTANCE_ALIASES lists {unknown_drops}, which are not '
+            f'BLOCKSCOUT_INSTANCE_HOSTS aliases'
+        )
+
+    unnamed = sorted(set(hosts) - set(display_names))
+    if unnamed:
+        raise ValueError(
+            f'BlockScout host ids without a display name: {unnamed} — the '
+            f'configuration manager would raise a bare KeyError on them'
+        )
+
+    stale_names = sorted(set(display_names) - set(hosts))
+    if stale_names:
+        raise ValueError(f'Display names declared for non-derived host ids: {stale_names}')
+
+
+_validate_scanner_topology(
+    BLOCKSCOUT_INSTANCE_HOSTS,
+    BLOCKSCOUT_HOSTS,
+    BLOCKSCOUT_DISPLAY_NAMES,
+    DROPPED_INSTANCE_ALIASES,
+)
 
 
 def get_url_builder_profile(api_kind: str, network: str) -> dict[str, str | None]:
@@ -119,6 +534,12 @@ def get_url_builder_profile(api_kind: str, network: str) -> dict[str, str | None
     - ``currency``
     - ``auth_mode``: ``header`` or ``query``
     - ``chainid``: optional
+
+    Static per-kind data comes from :data:`_URL_KIND_PROFILES`. Three outputs
+    stay computed because they are derived from the network, not from data:
+    the Etherscan V2 unified endpoint (one pair of URLs for the whole
+    family), the BlockScout instance hosts, and NodeReal's JSON-RPC dialect
+    (testnet/main RPC base and a chain id read off the 'bsc' row).
     """
 
     kind = api_kind.lower().strip()
@@ -131,7 +552,11 @@ def get_url_builder_profile(api_kind: str, network: str) -> dict[str, str | None
     currency = URL_BUILDER_CURRENCIES[kind]
     chainid = URL_BUILDER_CHAIN_IDS.get((kind, net))
 
-    if kind in V2_QUERY_AUTH_API_KINDS:
+    profile = _URL_KIND_PROFILES.get(kind)
+
+    # Etherscan V2 family: one unified endpoint, every request routed by
+    # chainid (kind membership declared per profile row).
+    if profile is not None and profile.v2_query_auth:
         return {
             'base_url': 'https://etherscan.io',
             'api_url': 'https://api.etherscan.io/v2/api',
@@ -168,81 +593,14 @@ def get_url_builder_profile(api_kind: str, network: str) -> dict[str, str | None
             ),
         }
 
-    if kind == 'fantom':
-        net = 'testnet' if net in {'test', 'testnet'} else 'main'
-        if net == 'main':
-            base_url = 'https://ftmscan.com'
-            api_url = 'https://api.ftmscan.com/api'
-        else:
-            base_url = 'https://testnet.ftmscan.com'
-            api_url = 'https://api-testnet.ftmscan.com/api'
+    # Remaining v1-style explorers: static per-kind domains, query auth.
+    if profile is not None and profile.base_url is not None:
+        base_url, api_url = profile.base_url, profile.api_url
+        if profile.testnet_base_url is not None and net in {'test', 'testnet'}:
+            base_url, api_url = profile.testnet_base_url, profile.testnet_api_url
         return {
             'base_url': base_url,
             'api_url': api_url,
-            'currency': currency,
-            'auth_mode': 'query',
-            'chainid': chainid,
-        }
-
-    if kind == 'gnosis':
-        return {
-            'base_url': 'https://gnosisscan.io',
-            'api_url': 'https://api.gnosisscan.io/api',
-            'currency': currency,
-            'auth_mode': 'query',
-            'chainid': chainid,
-        }
-
-    if kind == 'flare':
-        return {
-            'base_url': 'https://flare.network',
-            'api_url': 'https://flare-explorer.flare.network/api',
-            'currency': currency,
-            'auth_mode': 'query',
-            'chainid': chainid,
-        }
-
-    if kind == 'linea':
-        return {
-            'base_url': 'https://lineascan.build',
-            'api_url': 'https://api.lineascan.build/api',
-            'currency': currency,
-            'auth_mode': 'query',
-            'chainid': chainid,
-        }
-
-    if kind == 'blast':
-        return {
-            'base_url': 'https://blastscan.io',
-            'api_url': 'https://api.blastscan.io/api',
-            'currency': currency,
-            'auth_mode': 'query',
-            'chainid': chainid,
-        }
-
-    if kind == 'wemix':
-        return {
-            'base_url': 'https://wemixscan.com',
-            'api_url': 'https://api.wemixscan.com/api',
-            'currency': currency,
-            'auth_mode': 'query',
-            'chainid': chainid,
-        }
-
-    if kind == 'chiliz':
-        return {
-            'base_url': 'https://chiliz.com',
-            'api_url': 'https://scan.chiliz.com/api',
-            'currency': currency,
-            'auth_mode': 'query',
-            'chainid': chainid,
-        }
-
-    if kind == 'mode':
-        base = 'https://routescan.io/v2/network/mainnet/evm/34443/etherscan'
-        return {
-            'base_url': base,
-            'api_url': f'{base}/api',
             'currency': currency,
             'auth_mode': 'query',
             'chainid': chainid,
@@ -467,98 +825,10 @@ def get_moralis_hex(chain_id: int) -> str:
 # Scanner target resolution — the single resolution point behind
 # ChainscanClient.from_config
 # ---------------------------------------------------------------------------
-
-# Default scanner version when none is provided (everything else defaults to v1)
-DEFAULT_SCANNER_VERSIONS: dict[str, str] = {
-    'etherscan': 'v2',
-    'blockscout_v2': 'v2',
-}
-
-# Configuration-manager scanner ids for non-BlockScout scanners (api key lookup).
-# There is deliberately no entry for 'moralis'/'routscan': no such scanner exists,
-# unknown names fall through as-is and the config manager raises its honest
-# 'Unknown scanner' error for them.
-SCANNER_CONFIG_IDS: dict[str, str] = {
-    'etherscan': 'eth',
-}
-
-# BlockScout configuration ids keyed by canonical network name
-BLOCKSCOUT_CONFIG_IDS: dict[str, str] = {
-    'ethereum': 'blockscout_eth',
-    'eth': 'blockscout_eth',
-    'polygon': 'blockscout_polygon',
-    'gnosis': 'blockscout_gnosis',
-    'optimism': 'blockscout_optimism',
-    'base': 'blockscout_base',
-    'bsc': 'blockscout_bsc',
-    'bnb': 'blockscout_bsc',
-    'scroll': 'blockscout_scroll',
-    'linea': 'blockscout_linea',
-}
-
-# Networks each configuration-manager scanner id serves, in the config
-# lookup dialect ('main'/'test'-style names, not registry chain names).
-# Single source of the network-validity oracle for client construction
-# (:func:`resolve_scanner_target`); the configuration manager derives its
-# builtin ``supported_networks`` from this table instead of mirroring it.
-# BlockScout ids serve exactly their host suffix (derived from
-# :data:`BLOCKSCOUT_HOSTS`, so a new instance registers once for both).
-SCANNER_CONFIG_NETWORKS: dict[str, frozenset[str]] = {
-    'eth': frozenset({'main', 'test', 'goerli', 'sepolia'}),
-    'bsc': frozenset({'main', 'test'}),
-    'polygon': frozenset({'main', 'mumbai', 'test'}),
-    'optimism': frozenset({'main', 'goerli', 'test'}),
-    'arbitrum': frozenset({'main', 'nova', 'goerli', 'test'}),
-    'fantom': frozenset({'main', 'test'}),
-    'gnosis': frozenset({'main', 'chiado'}),
-    'flare': frozenset({'main', 'test'}),
-    'linea': frozenset({'main', 'test'}),
-    'blast': frozenset({'main', 'sepolia'}),
-    'base': frozenset({'main', 'goerli', 'sepolia'}),
-    'nodereal': frozenset({'bsc', 'bsc-testnet'}),
-    **{
-        scanner_id: frozenset({scanner_id.removeprefix('blockscout_')})
-        for scanner_id in BLOCKSCOUT_HOSTS
-    },
-}
-
-# Per-scanner network-name aliases, used for configuration-manager lookups only
-SCANNER_NETWORK_ALIASES: dict[str, dict[str, str]] = {
-    'etherscan': {
-        # All EtherscanV2 networks route through the single unified endpoint
-        # (api.etherscan.io/v2/api?chainid=...), so all map to 'main' for config lookup
-        'ethereum': 'main',
-        'eth': 'main',
-        'base': 'main',
-        'bsc': 'main',
-        'bnb': 'main',
-        'binance': 'main',
-        'polygon': 'main',
-        'matic': 'main',
-        'arbitrum': 'main',
-        'arb': 'main',
-        'optimism': 'main',
-        'op': 'main',
-        'sonic': 'main',
-    },
-    'blockscout': {'ethereum': 'eth', 'main': 'eth'},
-    'blockscout_v2': {'main': 'ethereum'},
-    # NodeReal's config entry is keyed by canonical chain names; the BSC
-    # aliases map onto 'bsc' for the configuration-manager lookup.
-    'nodereal': {'bnb': 'bsc', 'binance': 'bsc'},
-}
-
-# UrlBuilder api_kind per scanner name (BlockScout v1 uses its network-specific id)
-SCANNER_API_KINDS: dict[str, str] = {
-    'etherscan': 'eth',
-    'blockscout_v2': 'blockscout_eth',
-    'nodereal': 'nodereal',
-}
-
-# Scanners whose transport can be pointed at a custom base URL
-# (self-hosted BlockScout, Etherscan v2 proxy). Everything else rejects
-# URL-shaped networks with an honest error.
-CUSTOM_BASE_URL_SCANNERS: frozenset[str] = frozenset({'etherscan', 'blockscout', 'blockscout_v2'})
+# The scanner lookup tables this section reads (DEFAULT_SCANNER_VERSIONS,
+# SCANNER_CONFIG_IDS, BLOCKSCOUT_CONFIG_IDS, SCANNER_CONFIG_NETWORKS,
+# SCANNER_NETWORK_ALIASES, SCANNER_API_KINDS, CUSTOM_BASE_URL_SCANNERS) are
+# derived from SCANNER_RECORDS at the top of this module.
 
 # Network label used for custom base_url configurations: the chain is served
 # by a user-provided instance, not by a registry deployment.
@@ -613,19 +883,22 @@ class ScannerTarget:
     ``scanner_version`` select the ``Scanner`` class, ``api_kind`` +
     ``url_network`` select the UrlBuilder profile (``url_network`` is the
     profile-dialect network name — ``'main'`` for Ethereum mainnet, the
-    canonical registry chain name otherwise), ``network`` is the canonical
-    network name, ``api_key`` the resolved credential (``''`` when the scanner
-    needs none), ``chain_id`` the numeric chain identifier (``None`` for
-    custom base URLs without an ``expected_chain_id`` — unknown until the
-    instance is probed), ``expected_chain_id`` the caller's chain expectation
-    (validated lazily before the first request), and ``base_url`` an optional
-    custom instance root overriding the registry.
+    canonical registry chain name otherwise), ``scanner_network`` is the
+    scanner-dialect network name the ``Scanner`` instance is constructed
+    with (BlockScout v1 says ``'eth'`` for Ethereum mainnet, Etherscan says
+    ``'main'``), ``network`` is the canonical network name, ``api_key`` the
+    resolved credential (``''`` when the scanner needs none), ``chain_id``
+    the numeric chain identifier (``None`` for custom base URLs without an
+    ``expected_chain_id`` — unknown until the instance is probed),
+    ``expected_chain_id`` the caller's chain expectation (validated lazily
+    before the first request), and ``base_url`` an optional custom instance
+    root overriding the registry.
 
     Resolution ownership: :func:`resolve_scanner_target` is the single owner
-    of chain-id and UrlBuilder-network resolution. ``ChainscanClient`` and
-    :class:`~aiochainscan.scanners.base.Scanner` trust this object and never
-    re-derive either value (the Scanner's registry fallback serves direct
-    scanner construction only, never the client path).
+    of chain-id, UrlBuilder-network and scanner-network resolution.
+    ``ChainscanClient`` and :class:`~aiochainscan.scanners.base.Scanner` trust
+    this object and never re-derive any of them (the Scanner's registry
+    fallback serves direct scanner construction only, never the client path).
     """
 
     scanner_name: str
@@ -635,6 +908,7 @@ class ScannerTarget:
     api_key: str
     chain_id: int | None
     url_network: str
+    scanner_network: str
     base_url: str | None = None
     expected_chain_id: int | None = None
 
@@ -651,7 +925,8 @@ def resolve_scanner_target(
 
     Single resolution point for client construction: version defaulting, the
     ``blockscout_v2`` → ``('blockscout', 'v2')`` rename, canonical network
-    normalization, UrlBuilder ``api_kind`` mapping and the api-key default
+    normalization, UrlBuilder ``api_kind`` mapping, scanner-dialect network
+    naming (``ScannerTarget.scanner_network``) and the api-key default
     from the configuration manager (env vars / .env / config files).
 
     URL-vs-alias heuristic: when ``network`` is a string carrying a
@@ -743,6 +1018,11 @@ def resolve_scanner_target(
     # mainnet, whose UrlBuilder dialect name is 'main'.
     url_network = 'main' if canonical_name == 'ethereum' else canonical_name
 
+    # Scanner-dialect network name for the Scanner instance — same ownership
+    # (the client used to re-derive this from the target; the target now
+    # carries it as a field).
+    scanner_network = _scanner_network_name(actual_scanner_name, scanner_version, network_str)
+
     return ScannerTarget(
         scanner_name=actual_scanner_name,
         scanner_version=scanner_version,
@@ -751,6 +1031,7 @@ def resolve_scanner_target(
         api_key=resolved_api_key,
         chain_id=chain_id,
         url_network=url_network,
+        scanner_network=scanner_network,
         expected_chain_id=expected_chain_id,
     )
 
@@ -809,13 +1090,18 @@ def _resolve_custom_base_url_target(
         api_key=resolved_api_key,
         chain_id=expected_chain_id,
         url_network=CUSTOM_NETWORK_LABEL,
+        scanner_network=CUSTOM_NETWORK_LABEL,
         expected_chain_id=expected_chain_id,
         base_url=base_url,
     )
 
 
-def get_scanner_network_name(scanner_name: str, scanner_version: str, network: str) -> str:
+def _scanner_network_name(scanner_name: str, scanner_version: str, network: str) -> str:
     """Map the unified network name to the scanner-specific network name.
+
+    Resolution-private: :func:`resolve_scanner_target` computes this once and
+    carries the result on ``ScannerTarget.scanner_network`` — the client and
+    the Scanner trust the target and never re-derive it.
 
     Different scanners use different naming conventions for the same networks:
     BlockScout v1 uses 'eth' for Ethereum mainnet, BlockScout v2 uses

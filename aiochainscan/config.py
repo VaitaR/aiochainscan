@@ -66,6 +66,12 @@ class ScannerConfig:
     supported_networks: set[str] = field(default_factory=set)
     requires_api_key: bool = True
     special_config: dict[str, Any] = field(default_factory=dict)
+    #: The family config id whose credential is the fallback when this
+    #: scanner's own key is absent. Builtin-only, derived from the registry's
+    #: kind profiles (the Etherscan V2 family: one account serves several
+    #: chains); dynamic registrations carry ``None``. Read by
+    #: :meth:`ConfigurationManager.get_api_key`.
+    credential_family: str | None = None
     api_key: str | None = field(default=None, init=False)
 
 
@@ -244,9 +250,11 @@ class ConfigurationManager:
         """Return all builtin scanner definitions (factory method, no side effects).
 
         This module owns credentials and env resolution only. All topology —
-        currencies, supported networks, BlockScout instance hosts — is derived
-        from :mod:`aiochainscan.chain_registry`, the single source, so no
-        hand-maintained mirror of it lives here. Names and non-BlockScout
+        currencies, supported networks, BlockScout instance hosts, BlockScout
+        display names and the V2 credential-family membership — is derived
+        from :mod:`aiochainscan.chain_registry` (whose ``ScannerRecord`` /
+        ``KindProfile`` tables are the single source), so no hand-maintained
+        mirror of it lives here. Etherscan-family names and non-BlockScout
         domains stay local: they drive the primary env-var pattern (e.g.
         'Etherscan' → ``ETHERSCAN_KEY``) and CLI display, which is credential
         and presentation data, not registry topology. The registry import is
@@ -254,7 +262,9 @@ class ConfigurationManager:
         call time both modules are fully initialized.
         """
         from .chain_registry import (
+            BLOCKSCOUT_DISPLAY_NAMES,
             BLOCKSCOUT_HOSTS,
+            CONFIG_CREDENTIAL_FAMILY,
             SCANNER_CONFIG_NETWORKS,
             URL_BUILDER_CURRENCIES,
         )
@@ -273,6 +283,7 @@ class ConfigurationManager:
                 supported_networks=set(SCANNER_CONFIG_NETWORKS[scanner_id]),
                 requires_api_key=requires_api_key,
                 special_config=special_config or {},
+                credential_family=CONFIG_CREDENTIAL_FAMILY.get(scanner_id),
             )
 
         definitions: dict[str, ScannerConfig] = {
@@ -311,24 +322,14 @@ class ConfigurationManager:
             ),
         }
 
-        # BlockScout instances: host, currency and served network all derive
-        # from the registry tables; only the display name stays local.
-        blockscout_names = {
-            'blockscout_eth': 'BlockScout Ethereum',
-            'blockscout_sepolia': 'BlockScout Sepolia',
-            'blockscout_gnosis': 'BlockScout Gnosis',
-            'blockscout_polygon': 'BlockScout Polygon',
-            'blockscout_base': 'BlockScout Base',
-            'blockscout_bsc': 'BlockScout BSC',
-            'blockscout_optimism': 'BlockScout Optimism',
-            'blockscout_arbitrum': 'BlockScout Arbitrum',
-            'blockscout_scroll': 'BlockScout Scroll',
-            'blockscout_linea': 'BlockScout Linea',
-        }
+        # BlockScout instances: host, currency, served network and display
+        # name all derive from the registry record. The lookup cannot KeyError:
+        # chain_registry's import-time validation proves every derived host id
+        # has a display name.
         for scanner_id, host in BLOCKSCOUT_HOSTS.items():
             definitions[scanner_id] = definition(
                 scanner_id,
-                blockscout_names[scanner_id],
+                BLOCKSCOUT_DISPLAY_NAMES[scanner_id],
                 host,
                 requires_api_key=False,
                 special_config={'public_api': True},
@@ -512,9 +513,11 @@ class ConfigurationManager:
         """Get API key for a scanner with validation.
 
         After Etherscan V2 API migration, BSC/Polygon/Arbitrum/Base/Optimism
-        all use ETHERSCAN_KEY as fallback — the family membership is declared
-        by ``chain_registry.V2_QUERY_AUTH_API_KINDS`` (single source; 'eth'
-        itself resolves ETHERSCAN_KEY as its primary strategy already).
+        all use ETHERSCAN_KEY as fallback. Family membership is registry
+        topology, carried on each builtin definition as
+        ``credential_family`` (derived from the registry's kind profiles;
+        'eth' itself resolves ETHERSCAN_KEY as its primary strategy already
+        and declares no family).
         """
         config = self.get_scanner_config(scanner_id)
 
@@ -522,19 +525,18 @@ class ConfigurationManager:
         if config.api_key:
             return config.api_key
 
-        # V2 API family, derived from the registry (lazy import: chain_registry
-        # imports this module for key lookups — see the builtin factory).
-        from .chain_registry import V2_QUERY_AUTH_API_KINDS
-
-        v2_scanners = V2_QUERY_AUTH_API_KINDS - {'eth'}
-        # The family's shared fallback credential is the *eth* scanner's
-        # primary env var (ETHERSCAN_KEY) — taken from the ONE pattern via the
-        # pristine builtin definition, not retyped as a literal here.
+        # The family's shared fallback credential is the family root's
+        # primary env var (ETHERSCAN_KEY) — taken from the ONE pattern via
+        # the pristine builtin definition, not retyped as a literal here.
+        # Looked up on the builtin table (not the loaded config) so a dynamic
+        # registration shadowing a family name keeps the same fallback.
         family_fallback: str | None = None
-        if scanner_id in v2_scanners:
-            eth_builtin = self._get_builtin_scanner('eth')
-            if eth_builtin is not None:
-                family_fallback = credential_env_names('eth', eth_builtin.name)[0]
+        builtin = self._get_builtin_scanner(scanner_id)
+        family = builtin.credential_family if builtin is not None else None
+        if family is not None:
+            family_builtin = self._get_builtin_scanner(family)
+            if family_builtin is not None:
+                family_fallback = credential_env_names(family, family_builtin.name)[0]
                 family_key = os.getenv(family_fallback) or self._env_state.get(family_fallback)
                 if family_key:
                     return family_key

@@ -15,7 +15,6 @@ if TYPE_CHECKING:
 
 from ..chain_registry import (
     ScannerTarget,
-    get_scanner_network_name,
     resolve_scanner_target,
 )
 from ..domain.method import Method
@@ -234,16 +233,13 @@ class ChainscanClient(
         )
 
         # Get scanner class and create instance with shared network client.
-        # The scanner receives the already-resolved chain_id and trusts it
-        # (resolution ownership: resolve_scanner_target — see ScannerTarget).
+        # The scanner receives the already-resolved chain_id and scanner-
+        # dialect network name and trusts both (resolution ownership:
+        # resolve_scanner_target — see ScannerTarget).
         scanner_class = get_scanner_class(target.scanner_name, target.scanner_version)
-        # Use chain_id to resolve the correct network name for this scanner
-        scanner_network = get_scanner_network_name(
-            target.scanner_name, target.scanner_version, target.network
-        )
         self._scanner = scanner_class(
             target.api_key,
-            scanner_network,
+            target.scanner_network,
             self._url_builder,
             target.chain_id,
             network_client=self._network,
