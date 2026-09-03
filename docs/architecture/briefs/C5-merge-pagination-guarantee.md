@@ -3,11 +3,15 @@ kind: deepening-brief
 id: C5
 slug: merge-pagination-guarantee
 source: ../2026-09-03-review.md
-status: accepted
+status: done
 base: 50d971e
 ---
 
 # Merge the pagination-guarantee module into the engine
+
+> **Done** — lane commit `e6bbab3` on `xw/c5-merge-pagination-guarantee`, merged to `main`
+> (2026-09-03, no-ff). Gate: PASS-WITH-FINDINGS — MEDIUM was an evidence-pack note (the test
+> import change was invisible in the diff, closed by the green suites), LOW ×2 cosmetic.
 
 ## Repo orientation
 
