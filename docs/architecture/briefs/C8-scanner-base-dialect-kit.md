@@ -3,11 +3,13 @@ kind: deepening-brief
 id: C8
 slug: scanner-base-dialect-kit
 source: ../2026-09-03-review.md
-status: accepted
+status: done
 base: 50d971e
 ---
 
 # Scanner base defaults: instance root in `__str__` / `_error_context`
+
+> **Done** — lane commit `a5849b0`, merged to `main` (2026-09-03, no-ff). Gate: PASS-WITH-FINDINGS; the MEDIUM (base_url identity in the V1 custom-URL branch) was closed by the orchestrator: the parent stores `base_url` verbatim and the child assigns the same parameter.
 
 ## Repo orientation
 
