@@ -26,7 +26,9 @@ import pytest
 from aiochainscan.core.client import ChainscanClient
 from aiochainscan.domain.method import Method
 from aiochainscan.scanners._etherscan_like import EtherscanLikeScanner
+from aiochainscan.scanners.base import holder_item
 from aiochainscan.scanners.blockscout_v1 import BlockScoutV1
+from aiochainscan.scanners.blockscout_v1 import _parse_token_holders as _parse_bs1_holders
 from aiochainscan.scanners.blockscout_v2 import (
     BlockScoutV2Scanner,
     _parse_token_holder_count,
@@ -35,6 +37,7 @@ from aiochainscan.scanners.blockscout_v2 import (
 from aiochainscan.scanners.etherscan_v2 import EtherscanV2
 from aiochainscan.scanners.etherscan_v2 import _parse_token_holders as _parse_eth_holders
 from aiochainscan.scanners.nodereal import NodeRealScanner
+from aiochainscan.scanners.nodereal import _parse_token_holders as _parse_nr_holders
 
 TOKEN_CONTRACT = '0xDaC17f958D2ee523A2206208994597c13d831EC7'  # USDT (true EIP-55)
 HOLDER_ONE = '0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed'
@@ -113,6 +116,55 @@ def _etherscan_holder_page(entries: list[dict[str, str]]) -> list[dict[str, str]
     bare item list — fakes must sit on that seam, not replay full envelopes.
     """
     return entries
+
+
+# ============================================================================
+# The shared holder-item factory
+# ============================================================================
+
+
+class TestHolderItemFactory:
+    """``base.holder_item`` is the ONE builder of the unified holder item
+    shape (``{'address': EIP-55 str, 'value': str}``); the four scanner
+    parsers keep only their provider-specific field extraction."""
+
+    def test_checksums_address_and_stringifies_value(self) -> None:
+        assert holder_item(HOLDER_ONE_LOWER, 1000) == {'address': HOLDER_ONE, 'value': '1000'}
+        assert holder_item(HOLDER_ONE, '42') == {'address': HOLDER_ONE, 'value': '42'}
+
+    def test_none_value_becomes_zero(self) -> None:
+        assert holder_item(HOLDER_ONE, None) == {'address': HOLDER_ONE, 'value': '0'}
+
+    def test_other_falsy_values_become_zero(self) -> None:
+        assert holder_item(HOLDER_ONE, '') == {'address': HOLDER_ONE, 'value': '0'}
+        assert holder_item(HOLDER_ONE, 0) == {'address': HOLDER_ONE, 'value': '0'}
+
+    def test_undigestable_address_passes_through(self) -> None:
+        assert holder_item('not-an-address', '1') == {'address': 'not-an-address', 'value': '1'}
+
+    @pytest.mark.parametrize(
+        ('parser', 'payload'),
+        [
+            (
+                _parse_eth_holders,
+                [{'TokenHolderAddress': HOLDER_ONE_LOWER, 'TokenHolderQuantity': '5'}],
+            ),
+            (_parse_bs1_holders, [{'address': HOLDER_ONE_LOWER, 'value': '5'}]),
+            (
+                _parse_token_holders,
+                {'items': [{'address': {'hash': HOLDER_ONE_LOWER}, 'value': '5'}]},
+            ),
+            (
+                _parse_nr_holders,
+                {'details': [{'accountAddress': HOLDER_ONE_LOWER, 'tokenBalance': '0x5'}]},
+            ),
+        ],
+        ids=['etherscan-v2', 'blockscout-v1', 'blockscout-v2', 'nodereal'],
+    )
+    def test_parsed_items_carry_exactly_the_unified_keys(self, parser: Any, payload: Any) -> None:
+        items = parser(payload)
+        assert items == [{'address': HOLDER_ONE, 'value': '5'}]
+        assert set(items[0].keys()) == {'address', 'value'}
 
 
 # ============================================================================

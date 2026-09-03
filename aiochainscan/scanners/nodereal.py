@@ -66,8 +66,8 @@ from ..exceptions import (
 from . import register_scanner
 from .base import (
     Scanner,
-    checksummed_holder_address,
     hex_block_tag,
+    holder_item,
     translate_unexpected_errors,
 )
 
@@ -178,10 +178,9 @@ def _parse_token_holders(result: Any) -> list[dict[str, Any]]:
     """``nr_getTokenHolders`` ``details`` → unified holder shape.
 
     Each entry is ``{'accountAddress': str, 'tokenBalance': hex str}``
-    (https://docs.nodereal.io/reference/nr_gettokenholders). Normalized to
-    the library-wide ``{'address': EIP-55 str, 'value': str}`` shape, matching
-    ``etherscan_v2._parse_token_holders`` / ``blockscout_v2._normalize_token_holder_entry``
-    exactly.
+    (https://docs.nodereal.io/reference/nr_gettokenholders). Extraction
+    converts the hex balance to a decimal int; ``base.holder_item`` builds
+    the library-wide ``{'address': EIP-55 str, 'value': str}`` shape.
     """
     if not isinstance(result, dict):
         return []
@@ -191,10 +190,7 @@ def _parse_token_holders(result: Any) -> list[dict[str, Any]]:
         if not isinstance(raw, dict):
             continue
         items.append(
-            {
-                'address': checksummed_holder_address(raw.get('accountAddress')),
-                'value': str(_parse_hex_int(raw.get('tokenBalance'))),
-            }
+            holder_item(raw.get('accountAddress'), _parse_hex_int(raw.get('tokenBalance')))
         )
     return items
 

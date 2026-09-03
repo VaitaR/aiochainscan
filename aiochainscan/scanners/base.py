@@ -58,6 +58,21 @@ def checksummed_holder_address(value: Any) -> Any:
     return value
 
 
+def holder_item(address: Any, value: Any) -> dict[str, Any]:
+    """Build the unified token-holder item every scanner's holder parser emits.
+
+    The ONE cross-scanner item shape — ``{'address': EIP-55 str, 'value':
+    str}`` with the quantity in raw units (Wei-like: never Int64). The
+    scanners' parsers keep only their provider-specific field extraction and
+    hand the resolved address/value here; a falsy ``value`` becomes ``'0'``
+    (providers answer missing quantities as ``None``).
+    """
+    return {
+        'address': checksummed_holder_address(address),
+        'value': str(value) if value else '0',
+    }
+
+
 @contextmanager
 def translate_unexpected_errors(context: str) -> Iterator[None]:
     """Error-translation ladder applied once at the scanner seams.
