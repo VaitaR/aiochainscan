@@ -133,9 +133,12 @@ jobs:
     # previous run's artifacts — the completion mode used to finish v1.0.0
     # after a partial upload (PyPI filenames are immutable, so only the files
     # still missing are uploaded).
+    # NOTE: reads the raw event payload (github.event.inputs), not the `inputs`
+    # context — the latter is not populated in job-level `if` for dispatches.
     if: >-
       github.event_name == 'release' ||
-      (github.event_name == 'workflow_dispatch' && inputs.publish)
+      github.event.inputs.publish == 'true' ||
+      inputs.publish == true
     permissions:
       id-token: write  # For trusted publishing
       actions: read    # Download artifacts from another run in completion mode
@@ -149,7 +152,7 @@ jobs:
           merge-multiple: true
           # Completion mode reads the named run's artifacts (e.g. the original
           # v1.0.0 tag build); releases and no-op dispatches read this run's.
-          run-id: ${{ github.event_name == 'workflow_dispatch' && inputs.artifact_run_id || github.run_id }}
+          run-id: ${{ github.event.inputs.artifact_run_id || github.run_id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       # Two independent publish steps (base / fastabi): twine aborts the whole
