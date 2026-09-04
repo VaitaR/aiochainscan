@@ -10,6 +10,7 @@ import logging
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any
 
+from ..convert import to_decimal_amount, wei_to_ether
 from ..domain.normalize import (
     BLOCK_NUMBER_KEYS,
     GAS_USED_KEYS,
@@ -122,7 +123,7 @@ async def transactions_to_dataframe(
                 'from_address': from_value,
                 'to_address': to_value or '',
                 'value_wei': value_wei,
-                'value_eth': int(value_wei) / 1e18,
+                'value_eth': float(wei_to_ether(value_wei)),
                 'gas_used': str(int_or_default(first_field(tx, *GAS_USED_KEYS), default=0)),
                 'timestamp': first_field(tx, *TIMESTAMP_KEYS) or '',
             }
@@ -169,7 +170,7 @@ async def token_portfolio_to_dataframe(tokens: list[dict[str, Any]]) -> 'pl.Data
                 'symbol': token_info.get('symbol', ''),
                 'name': token_info.get('name', ''),
                 'contract_address': contract_addr,
-                'balance': value / (10**decimals) if decimals > 0 else float(value),
+                'balance': float(to_decimal_amount(value, decimals)),
                 'decimals': decimals,
             }
         )

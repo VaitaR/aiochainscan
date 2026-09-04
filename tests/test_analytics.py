@@ -61,6 +61,36 @@ class TestTransactionsToDataframe:
         assert row['gas_used'] == '21000'
 
     @pytest.mark.asyncio
+    async def test_value_eth_exact_decimal_rounding(self):
+        """
+        CRITICAL TEST: ``value_eth`` must be the nearest double to the exact
+        wei/1e18 amount, produced via one Decimal->float narrowing
+        (``float(wei_to_ether(value_wei))``) rather than ``int(w) / 1e18``,
+        which rounds twice (int->double, then divide) and can miss the
+        nearest double by one ULP.
+
+        946864788125462323 wei is the measured example: ``int(w) / 1e18``
+        yields 0.9468647881254623, while the exact-then-round path yields
+        the correct nearest double, 0.9468647881254624. Exact float
+        equality on purpose — the point is the last bit, not an
+        approx-tolerant comparison.
+        """
+        tx = {
+            'hash': '0xexact',
+            'block_number': 12345678,
+            'from': '0xsender',
+            'to': '0xrecipient',
+            'value': '946864788125462323',
+            'gas_used': '21000',
+            'timestamp': '1234567890',
+        }
+
+        df = await transactions_to_dataframe([tx])
+
+        row = df.row(0, named=True)
+        assert row['value_eth'] == 0.9468647881254624
+
+    @pytest.mark.asyncio
     async def test_value_wei_stored_as_string_prevents_overflow(self):
         """
         CRITICAL TEST: Verify that large Wei values don't overflow.

@@ -69,7 +69,7 @@ from collections.abc import Mapping
 from datetime import datetime
 from typing import Any, overload
 
-from ..convert import to_datetime
+from ..convert import _parse_flexible_int, to_datetime
 from ..crypto import to_checksum_address
 from .normalized import (
     Block,
@@ -165,15 +165,17 @@ def int_or_default(value: Any, default: int | None = None) -> int | None:
     """Hex-or-decimal int coercion with a caller-supplied default.
 
     ``int`` passes, decimal strings and ``0x``-hex strings parse; ``bool``
-    (never ``True`` -> ``1``) and unparseable values yield ``default``.
+    (never ``True`` -> ``1``) and unparseable values yield ``default``. The
+    hex-or-decimal parse itself is ``convert._parse_flexible_int`` (the one
+    owner of that rule) — this wrapper only adds the ``bool`` guard and
+    turns its ``ValueError`` into ``default`` instead of raising. Signed hex
+    (``'-0x10'``) therefore parses here too, unlike the pre-fold version.
     """
     if isinstance(value, bool):
         return default
-    if isinstance(value, int):
-        return value
-    if isinstance(value, str) and value:
+    if isinstance(value, int | str):
         try:
-            return int(value, 16) if value.startswith(('0x', '0X')) else int(value)
+            return _parse_flexible_int(value, 'integer')
         except ValueError:
             return default
     return default

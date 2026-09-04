@@ -371,3 +371,56 @@ class TestPublicExports:
         assert (
             format_ether(row['value'], decimals=int(row['tokenDecimal']), precision=2) == '123.46'
         )
+
+
+# ───────────── domain.normalize.int_or_default: parse-rule parity ──────────
+#
+# int_or_default (aiochainscan/domain/normalize.py) now delegates its
+# hex-or-decimal parse to convert._parse_flexible_int (this module's
+# TestHexToInt covers that parse rule directly). Its own contract layers a
+# ``bool`` guard and a ``default``-on-failure error contract (never raises)
+# on top — that layered contract is what these cases pin.
+
+
+class TestIntOrDefaultDelegatesToFlexibleIntParse:
+    def test_decimal_and_hex_strings(self) -> None:
+        from aiochainscan.domain.normalize import int_or_default
+
+        assert int_or_default('26') == 26
+        assert int_or_default('0x1a') == 26
+        assert int_or_default('0X1a') == 26
+
+    def test_unparsable_string_yields_default(self) -> None:
+        from aiochainscan.domain.normalize import int_or_default
+
+        assert int_or_default('zz', default=-1) == -1
+
+    def test_int_passthrough(self) -> None:
+        from aiochainscan.domain.normalize import int_or_default
+
+        assert int_or_default(26) == 26
+
+    def test_empty_none_and_non_str_non_int_yield_default(self) -> None:
+        from aiochainscan.domain.normalize import int_or_default
+
+        assert int_or_default('', default=0) == 0
+        assert int_or_default(None, default=0) == 0
+        assert int_or_default(1.5, default=0) == 0  # type: ignore[arg-type]
+
+    def test_bool_guard_runs_before_the_parse(self) -> None:
+        # isinstance(True, int) is True in Python — without the bool check
+        # ahead of the parse, True would silently become 1.
+        from aiochainscan.domain.normalize import int_or_default
+
+        assert int_or_default(True, default=0) == 0
+        assert int_or_default(False, default=7) == 7
+
+    def test_signed_hex_now_parses_unlike_pre_fold_behaviour(self) -> None:
+        # The one behaviour change from folding onto _parse_flexible_int:
+        # pre-fold, int_or_default('-0x10') only tested a bare '0x' prefix,
+        # so int('-0x10') raised internally and the caller's default won.
+        # _parse_flexible_int handles the sign, so this now parses to -16
+        # instead of falling back to default. Accepted per brief, pinned here.
+        from aiochainscan.domain.normalize import int_or_default
+
+        assert int_or_default('-0x10', default=0) == -16
