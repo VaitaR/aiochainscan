@@ -36,7 +36,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 import httpx
 import pytest
 
-from aiochainscan.chain_registry import resolve_scanner_target
+from aiochainscan.chain_registry import ScannerTarget, resolve_scanner_target
 from aiochainscan.core.client import ChainscanClient
 from aiochainscan.core.pool import (
     ChainscanPool,
@@ -838,13 +838,22 @@ class _ReplayNetwork:
 
 
 def _bare_client(scanner: Any, network: str) -> ChainscanClient:
-    """ChainscanClient shell around a real scanner (no full wiring)."""
-    client = ChainscanClient.__new__(ChainscanClient)
-    client.scanner_name = scanner.name
-    client.scanner_version = scanner.version
-    client.network = network
-    client._scanner = scanner
-    return client
+    """ChainscanClient wired to a real scanner via the constructor seam (no full wiring).
+
+    The scanner already carries its own ``_ReplayNetwork``; the client's own
+    ``_network`` is an unused placeholder — no test here touches it.
+    """
+    target = ScannerTarget(
+        scanner_name=scanner.name,
+        scanner_version=scanner.version,
+        network=network,
+        api_kind='eth',
+        api_key='',
+        chain_id=None,
+        url_network=network,
+        scanner_network=network,
+    )
+    return ChainscanClient(target, scanner=scanner, network=_ReplayNetwork([]))
 
 
 class TestPinnedStreamMethodUndeclared:

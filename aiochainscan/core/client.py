@@ -10,6 +10,7 @@ import httpx
 if TYPE_CHECKING:
     import polars as pl
 
+    from ..network import Network
     from ..ports.progress import ProgressCallback
     from ..services.ens_resolver import ENSResolver
     from .host import ClientHost
@@ -112,6 +113,8 @@ class ChainscanClient(
         proxy: str | None = None,
         rate_limiter: RateLimiter | None = None,
         retry_policy: RetryPolicy | None = None,
+        scanner: Scanner | None = None,
+        network: 'Network | None' = None,
     ):
         """
         Initialize the unified client from a resolved :class:`ScannerTarget`.
@@ -149,6 +152,26 @@ class ChainscanClient(
             proxy: Proxy URL
             rate_limiter: Rate limiter implementation (default: AioLimiterAdapter)
             retry_policy: Retry policy implementation (default: TenacityRetryAdapter)
+            scanner: Pre-built ``Scanner`` to use instead of constructing one
+                from ``target``. When omitted, a scanner is built exactly as
+                before, wired to whichever ``Network`` this call ends up
+                using (built or injected). Callers wanting this constructor
+                seam are expected to build the scanner via
+                ``aiochainscan.scanners.get_scanner_class`` themselves — this
+                is a wiring seam, not a second resolution path.
+            network: Pre-built ``Network`` to use instead of constructing
+                one from ``target``/``timeout``/``proxy``/``rate_limiter``/
+                ``retry_policy``. When supplied together with ``scanner=None``,
+                the built scanner receives *this* network as its
+                ``network_client`` (the same connection-pooling relationship
+                the default path gives its own network). When supplied
+                together with ``expected_chain_id`` (directly or via
+                ``target.expected_chain_id``), the injected network does
+                **not** get the ``first_request_guard`` retro-fitted — that
+                guard is wired only when this constructor builds the network
+                itself. A caller injecting a network alongside
+                ``expected_chain_id`` is responsible for validating the chain
+                id itself (e.g. via ``validate_chain``).
 
         Raises:
             TypeError: Neither a ``target`` nor the ``chain``/``provider``
@@ -215,37 +238,52 @@ class ChainscanClient(
         self._rate_limiter = rate_limiter
         self._retry_policy = retry_policy
 
-        # Create Network instance owned by this client for connection pooling.
-        # With expected_chain_id the network runs a one-shot validation guard
-        # before the first admitted request (fail fast on chain mismatch).
-        from ..network import Network
+        # Create Network instance owned by this client for connection pooling
+        # — unless the caller injected one (wiring seam: resolution above is
+        # still the single source of chain id / api kind / network name;
+        # this only lets a caller substitute the *collaborators* resolution
+        # feeds). With expected_chain_id the network runs a one-shot
+        # validation guard before the first admitted request (fail fast on
+        # chain mismatch) — an injected network does NOT get that guard
+        # retro-fitted; a caller supplying both is responsible for its own
+        # chain validation (see the `network` parameter docstring above).
+        if network is None:
+            from ..network import Network
 
-        self._network = Network(
-            url_builder=self._url_builder,
-            timeout=timeout,
-            proxy=proxy,
-            rate_limiter=rate_limiter,
-            retry_policy=retry_policy,
-            first_request_guard=(
-                self._validate_expected_chain_once
-                if target.expected_chain_id is not None
-                else None
-            ),
-        )
+            self._network = Network(
+                url_builder=self._url_builder,
+                timeout=timeout,
+                proxy=proxy,
+                rate_limiter=rate_limiter,
+                retry_policy=retry_policy,
+                first_request_guard=(
+                    self._validate_expected_chain_once
+                    if target.expected_chain_id is not None
+                    else None
+                ),
+            )
+        else:
+            self._network = network
 
-        # Get scanner class and create instance with shared network client.
-        # The scanner receives the already-resolved chain_id and scanner-
-        # dialect network name and trusts both (resolution ownership:
-        # resolve_scanner_target — see ScannerTarget).
-        scanner_class = get_scanner_class(target.scanner_name, target.scanner_version)
-        self._scanner = scanner_class(
-            target.api_key,
-            target.scanner_network,
-            self._url_builder,
-            target.chain_id,
-            network_client=self._network,
-            base_url=target.base_url,
-        )
+        # Get scanner class and create instance with shared network client
+        # — unless the caller injected one. The scanner receives the
+        # already-resolved chain_id and scanner-dialect network name and
+        # trusts both (resolution ownership: resolve_scanner_target — see
+        # ScannerTarget). When a network was injected and no scanner was,
+        # the built scanner is wired to *that* network (the connection-
+        # pooling relationship holds whichever collaborator was injected).
+        if scanner is None:
+            scanner_class = get_scanner_class(target.scanner_name, target.scanner_version)
+            self._scanner = scanner_class(
+                target.api_key,
+                target.scanner_network,
+                self._url_builder,
+                target.chain_id,
+                network_client=self._network,
+                base_url=target.base_url,
+            )
+        else:
+            self._scanner = scanner
 
         # Lazy-initialized ENS resolver
         self._ens_resolver: ENSResolver | None = None

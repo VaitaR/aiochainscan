@@ -18,6 +18,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from aiochainscan.chain_registry import ScannerTarget
 from aiochainscan.constants import (
     API_MAX_OFFSET_ETHERSCAN,
     API_MAX_OFFSET_LOGS,
@@ -31,27 +32,49 @@ from aiochainscan.scanners.blockscout_v1 import BlockScoutV1
 from aiochainscan.scanners.blockscout_v2 import BlockScoutV2Scanner
 from aiochainscan.scanners.etherscan_v2 import EtherscanV2
 from aiochainscan.services.pagination import page_fetcher
+from tests.conftest import FakeNetwork
+
+# Every attribute the constructor's default (non-injected) path sets —
+# Contract invariant in docs/architecture/briefs/C14-client-wiring-seam.md:
+# "no partially-initialised instance is reachable through any supported path."
+_CONSTRUCTOR_INVARIANT_ATTRS = (
+    '_target',
+    'scanner_name',
+    'scanner_version',
+    'api_kind',
+    'network',
+    'api_key',
+    'base_url',
+    'chain_id',
+    '_expected_chain_id',
+    '_url_builder',
+    '_timeout',
+    '_proxy',
+    '_rate_limiter',
+    '_retry_policy',
+    '_network',
+    '_scanner',
+    '_ens_resolver',
+)
 
 
-class FakeNetwork:
-    """Minimal Network stand-in: records requests, replays canned responses."""
-
-    def __init__(self, responses: list[Any]) -> None:
-        self.responses = list(responses)
-        self.calls: list[dict[str, Any]] = []
-
-    async def request(self, **kwargs: Any) -> Any:
-        self.calls.append(kwargs)
-        response = self.responses.pop(0)
-        if isinstance(response, Exception):
-            raise response
-        return response
-
-    async def get(self, **kwargs: Any) -> Any:
-        return await self.request(method='GET', **kwargs)
-
-    async def post(self, **kwargs: Any) -> Any:
-        return await self.request(method='POST', **kwargs)
+def test_seam_construction_with_injected_scanner_and_network_sets_every_attribute() -> None:
+    """Non-vacuous check of the Contract invariant: building through the seam
+    with BOTH ``scanner`` and ``network`` injected must still set every
+    attribute the default (nothing-injected) constructor path sets."""
+    target = ScannerTarget(
+        scanner_name='etherscan',
+        scanner_version='v2',
+        network='main',
+        api_kind='eth',
+        api_key='key',
+        chain_id=1,
+        url_network='main',
+        scanner_network='main',
+    )
+    client = ChainscanClient(target, scanner=MagicMock(), network=FakeNetwork([]))
+    for attr in _CONSTRUCTOR_INVARIANT_ATTRS:
+        assert hasattr(client, attr), f'seam construction did not set {attr!r}'
 
 
 class FakePaginatedScanner(Scanner):
@@ -94,16 +117,33 @@ class FakeSinglePageScanner(Scanner):
         return self.result
 
 
-def _bare_client(scanner_name: str, scanner_version: str, scanner: Scanner) -> ChainscanClient:
-    """Build a ChainscanClient shell around an injected scanner (no real wiring)."""
-    client = ChainscanClient.__new__(ChainscanClient)
-    client.scanner_name = scanner_name
-    client.scanner_version = scanner_version
-    client.api_kind = 'test'
-    client.network = 'main'
-    client.api_key = ''
-    client._scanner = scanner
-    return client
+def _bare_client(
+    scanner_name: str,
+    scanner_version: str,
+    scanner: Scanner,
+    network: Any = None,
+) -> ChainscanClient:
+    """Build a ChainscanClient wired to an injected scanner via the constructor seam.
+
+    ``network`` defaults to an unused ``FakeNetwork`` — these tests drive the
+    fake/real scanner directly through ``fetch_page``/``call`` and never
+    touch ``client._network``, except where a caller passes its own fake
+    network to make ``client._network`` (used by e.g. streaming helpers)
+    the same double the scanner itself was wired to.
+    """
+    target = ScannerTarget(
+        scanner_name=scanner_name,
+        scanner_version=scanner_version,
+        network='main',
+        api_kind='eth',
+        api_key='',
+        chain_id=None,
+        url_network='main',
+        scanner_network='main',
+    )
+    return ChainscanClient(
+        target, scanner=scanner, network=network if network is not None else FakeNetwork([])
+    )
 
 
 def _blockscout_scanner(network_client: FakeNetwork) -> BlockScoutV2Scanner:
@@ -591,8 +631,7 @@ class TestClientIterTransactionsOverPort:
             ]
         )
         scanner = _blockscout_scanner(net)
-        client = _bare_client('blockscout', 'v2', scanner)
-        client._network = net
+        client = _bare_client('blockscout', 'v2', scanner, network=net)
 
         batches = [
             batch async for batch in client.iter_transactions_streaming('0xabc', batch_size=10)
@@ -615,8 +654,7 @@ class TestClientIterTransactionsOverPort:
             ]
         )
         scanner = _blockscout_scanner(net)
-        client = _bare_client('blockscout', 'v2', scanner)
-        client._network = net
+        client = _bare_client('blockscout', 'v2', scanner, network=net)
 
         txs = [tx async for tx in client.iter_transactions('0xabc')]
 
@@ -633,8 +671,7 @@ class TestClientIterTransactionsOverPort:
             ]
         )
         scanner = _blockscout_scanner(net)
-        client = _bare_client('blockscout', 'v2', scanner)
-        client._network = net
+        client = _bare_client('blockscout', 'v2', scanner, network=net)
 
         received: list[dict[str, Any]] = []
         with pytest.raises(ChainscanNetworkError):
@@ -652,8 +689,7 @@ class TestClientIterTransactionsOverPort:
             ]
         )
         scanner = _etherscan_scanner(net)
-        client = _bare_client('etherscan', 'v2', scanner)
-        client._network = net
+        client = _bare_client('etherscan', 'v2', scanner, network=net)
 
         txs = [tx async for tx in client.iter_transactions('0xabc', batch_size=2)]
 
@@ -675,8 +711,7 @@ class TestClientIterTransactionsOverPort:
             ]
         )
         scanner = _etherscan_scanner(net)
-        client = _bare_client('blockscout', 'v1', scanner)
-        client._network = net
+        client = _bare_client('blockscout', 'v1', scanner, network=net)
 
         txs = [tx async for tx in client.iter_transactions('0xabc', batch_size=2)]
 

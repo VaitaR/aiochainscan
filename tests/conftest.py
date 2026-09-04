@@ -182,3 +182,45 @@ def fake_base_url(fake_server: FakeServer) -> str:
     """Return the base URL for the in-process aiohttp test server."""
 
     return fake_server.base_url
+
+
+_UNSET: Any = object()
+
+
+class FakeNetwork:
+    """Minimal ``Network`` stand-in shared by scanner/client tests.
+
+    Records every request's kwargs in ``.calls``. Exactly one of two
+    replay modes is selected by which keyword is given:
+
+    - ``responses=[...]``: one entry consumed (``pop(0)``) per call — for a
+      test asserting on a specific sequence of pages/requests.
+    - ``response=...``: the same value replayed for every call — including
+      when that value is itself a list (e.g. a canned holder-list payload),
+      which is why the two modes cannot be told apart by the value's type
+      alone and are instead selected explicitly.
+
+    Either mode raises when the replayed value is an ``Exception`` instance,
+    rather than returning it.
+    """
+
+    def __init__(self, responses: list[Any] | None = None, *, response: Any = _UNSET) -> None:
+        if (responses is None) == (response is _UNSET):
+            raise TypeError('FakeNetwork: pass exactly one of responses= or response=')
+        self._sequential = responses is not None
+        self._responses: list[Any] = list(responses) if responses is not None else []
+        self._single = response
+        self.calls: list[dict[str, Any]] = []
+
+    async def request(self, **kwargs: Any) -> Any:
+        self.calls.append(kwargs)
+        result = self._responses.pop(0) if self._sequential else self._single
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    async def get(self, **kwargs: Any) -> Any:
+        return await self.request(method='GET', **kwargs)
+
+    async def post(self, **kwargs: Any) -> Any:
+        return await self.request(method='POST', **kwargs)

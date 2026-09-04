@@ -15,7 +15,6 @@ the response.
 
 from __future__ import annotations
 
-from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -23,20 +22,7 @@ import pytest
 from aiochainscan.domain.method import Method
 from aiochainscan.exceptions import ChainscanClientProxyError
 from aiochainscan.scanners.blockscout_v1 import BlockScoutV1
-
-
-class FakeNetwork:
-    """Records requests, replays canned responses."""
-
-    def __init__(self, response: Any) -> None:
-        self.response = response
-        self.calls: list[dict[str, Any]] = []
-
-    async def request(self, **kwargs: Any) -> Any:
-        self.calls.append(kwargs)
-        if isinstance(self.response, Exception):
-            raise self.response
-        return self.response
+from tests.conftest import FakeNetwork
 
 
 def _scanner(network: FakeNetwork) -> BlockScoutV1:
@@ -50,7 +36,7 @@ def _scanner(network: FakeNetwork) -> BlockScoutV1:
 
 class TestEthRpcRouting:
     async def test_eth_call_routes_to_eth_rpc(self) -> None:
-        network = FakeNetwork('0x' + 'ff' * 32)
+        network = FakeNetwork(response='0x' + 'ff' * 32)
         scanner = _scanner(network)
         result = await scanner.call(
             Method.PROXY_ETH_CALL, to='0xabc', data='0x70a08231', tag='latest'
@@ -67,7 +53,7 @@ class TestEthRpcRouting:
         }
 
     async def test_eth_get_balance_routes_to_eth_rpc(self) -> None:
-        network = FakeNetwork('0x1')
+        network = FakeNetwork(response='0x1')
         scanner = _scanner(network)
         result = await scanner.call(Method.PROXY_GET_BALANCE, address='0xabc', tag='latest')
         assert result == '0x1'
@@ -76,7 +62,7 @@ class TestEthRpcRouting:
 
     async def test_tx_by_hash_routes_to_eth_rpc(self) -> None:
         tx = {'hash': '0x' + 'ab' * 32, 'blockNumber': '0x1'}
-        network = FakeNetwork(tx)
+        network = FakeNetwork(response=tx)
         scanner = _scanner(network)
         result = await scanner.call(Method.TX_BY_HASH, txhash='0x' + 'ab' * 32)
         assert result == tx
@@ -96,7 +82,7 @@ class TestEthRpcRouting:
             'timestamp': '0x5beca34',
             'transactions': [{'hash': '0x' + 'ab' * 32}],
         }
-        network = FakeNetwork(block)
+        network = FakeNetwork(response=block)
         scanner = _scanner(network)
         result = await scanner.call(Method.BLOCK_BY_NUMBER, block_number=436)
         assert result == block
@@ -111,19 +97,19 @@ class TestEthRpcRouting:
         }
 
     async def test_block_by_number_latest_tag_passthrough(self) -> None:
-        network = FakeNetwork({'number': '0x2'})
+        network = FakeNetwork(response={'number': '0x2'})
         scanner = _scanner(network)
         await scanner.call(Method.BLOCK_BY_NUMBER, block_number='latest')
         assert network.calls[0]['json_data']['params'] == ['latest', True]
 
     async def test_block_by_number_decimal_string_becomes_hex_tag(self) -> None:
-        network = FakeNetwork({'number': '0x1298be0'})
+        network = FakeNetwork(response={'number': '0x1298be0'})
         scanner = _scanner(network)
         await scanner.call(Method.BLOCK_BY_NUMBER, block_number='19500000')
         assert network.calls[0]['json_data']['params'] == ['0x1298be0', True]
 
     async def test_custom_base_url_uses_own_root(self) -> None:
-        network = FakeNetwork('0x1')
+        network = FakeNetwork(response='0x1')
         scanner = BlockScoutV1(
             api_key='',
             network='custom',
@@ -137,12 +123,12 @@ class TestEthRpcRouting:
 
 class TestEthRpcResults:
     async def test_null_result_returns_none(self) -> None:
-        network = FakeNetwork(None)
+        network = FakeNetwork(response=None)
         scanner = _scanner(network)
         assert await scanner.call(Method.TX_BY_HASH, txhash='0x' + 'ab' * 32) is None
 
     async def test_rpc_error_propagates_from_transport(self) -> None:
-        network = FakeNetwork(ChainscanClientProxyError(3, 'execution reverted: nope'))
+        network = FakeNetwork(response=ChainscanClientProxyError(3, 'execution reverted: nope'))
         scanner = _scanner(network)
         with pytest.raises(ChainscanClientProxyError, match='execution reverted'):
             await scanner.call(Method.PROXY_ETH_CALL, to='0xabc', data='0x')
@@ -150,7 +136,7 @@ class TestEthRpcResults:
 
 class TestNonProxyMethodsUnchanged:
     async def test_balance_still_uses_compat_rest(self) -> None:
-        network = FakeNetwork({'status': '1', 'message': 'OK', 'result': '42'})
+        network = FakeNetwork(response={'status': '1', 'message': 'OK', 'result': '42'})
         scanner = _scanner(network)
         result = await scanner.call(Method.ACCOUNT_BALANCE, address='0xabc', tag='latest')
         assert result == '42'

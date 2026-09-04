@@ -12,23 +12,11 @@ All tests here are offline — no network calls, fake ``Network.request``.
 
 from __future__ import annotations
 
-from typing import Any
 from unittest.mock import MagicMock
 
 from aiochainscan.domain.method import Method
 from aiochainscan.scanners.blockscout_v1 import BlockScoutV1
-
-
-class FakeNetwork:
-    """Records requests, replays one canned response."""
-
-    def __init__(self, response: Any) -> None:
-        self.response = response
-        self.calls: list[dict[str, Any]] = []
-
-    async def request(self, **kwargs: Any) -> Any:
-        self.calls.append(kwargs)
-        return self.response
+from tests.conftest import FakeNetwork
 
 
 def _scanner(network: FakeNetwork) -> BlockScoutV1:
@@ -42,7 +30,7 @@ def _scanner(network: FakeNetwork) -> BlockScoutV1:
 
 class TestTokenHoldersDeclared:
     async def test_declared_in_specs(self) -> None:
-        scanner = _scanner(FakeNetwork([]))
+        scanner = _scanner(FakeNetwork(response=[]))
         assert Method.TOKEN_HOLDERS in scanner.SPECS
 
 
@@ -57,7 +45,7 @@ class TestTokenHoldersNormalization:
         raw = [
             {'address': '0x0000000000000000000000000000000000000001', 'value': '42'},
         ]
-        network = FakeNetwork(raw)
+        network = FakeNetwork(response=raw)
         scanner = _scanner(network)
         result = await scanner.call(
             Method.TOKEN_HOLDERS,
@@ -77,7 +65,7 @@ class TestTokenHoldersNormalization:
         # form once mixed-cased, so the assertion is non-trivial.
         lower = '0x8ba1f109551bd432803012645ac136ddd64dba72'.lower()
         raw = [{'address': lower, 'value': '7'}]
-        network = FakeNetwork(raw)
+        network = FakeNetwork(response=raw)
         scanner = _scanner(network)
         result = await scanner.call(
             Method.TOKEN_HOLDERS, contract_address='0xtoken', page=1, offset=10
@@ -87,7 +75,7 @@ class TestTokenHoldersNormalization:
         assert result[0]['value'] == '7'
 
     async def test_non_list_response_yields_empty(self) -> None:
-        network = FakeNetwork({'unexpected': 'shape'})
+        network = FakeNetwork(response={'unexpected': 'shape'})
         scanner = _scanner(network)
         result = await scanner.call(
             Method.TOKEN_HOLDERS, contract_address='0xtoken', page=1, offset=10
@@ -96,7 +84,7 @@ class TestTokenHoldersNormalization:
 
     async def test_missing_value_defaults_to_zero_string(self) -> None:
         raw = [{'address': '0x0000000000000000000000000000000000000002'}]
-        network = FakeNetwork(raw)
+        network = FakeNetwork(response=raw)
         scanner = _scanner(network)
         result = await scanner.call(
             Method.TOKEN_HOLDERS, contract_address='0xtoken', page=1, offset=10
@@ -108,7 +96,7 @@ class TestTokenHoldersWireParams:
     """The SPEC must hit BlockScout's own action name, never Etherscan's."""
 
     async def test_uses_blockscout_action_name(self) -> None:
-        network = FakeNetwork([])
+        network = FakeNetwork(response=[])
         scanner = _scanner(network)
         await scanner.call(
             Method.TOKEN_HOLDERS,
@@ -144,7 +132,7 @@ class TestTokenHoldersPageSizeClamp:
             {'address': f'0x{i:040x}', 'value': str(i)}
             for i in range(1, API_MAX_OFFSET_ETHERSCAN + 1)
         ]
-        network = FakeNetwork(raw)
+        network = FakeNetwork(response=raw)
         scanner = _scanner(network)
         items, next_cursor = await scanner.fetch_page(
             Method.TOKEN_HOLDERS,
@@ -164,11 +152,11 @@ class TestTokenHoldersResultWindow:
     """
 
     async def test_result_window_is_none(self) -> None:
-        scanner = _scanner(FakeNetwork([]))
+        scanner = _scanner(FakeNetwork(response=[]))
         assert scanner.result_window_for(Method.TOKEN_HOLDERS) is None
 
     async def test_other_methods_keep_inherited_window(self) -> None:
         from aiochainscan.constants import API_MAX_OFFSET_ETHERSCAN
 
-        scanner = _scanner(FakeNetwork([]))
+        scanner = _scanner(FakeNetwork(response=[]))
         assert scanner.result_window_for(Method.ACCOUNT_TRANSACTIONS) == API_MAX_OFFSET_ETHERSCAN

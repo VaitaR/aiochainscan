@@ -21,6 +21,7 @@ from typing import Any
 
 import pytest
 
+from aiochainscan.chain_registry import ScannerTarget
 from aiochainscan.core.client import ChainscanClient
 from aiochainscan.core.url_builder import UrlBuilder
 from aiochainscan.domain.method import Method
@@ -32,6 +33,7 @@ from aiochainscan.scanners.blockscout_v2 import (
     _parse_raw,
     _parse_token_transfers,
 )
+from tests.conftest import FakeNetwork
 
 # ============================================================================
 # Fixtures: trimmed real payloads (live capture, eth.blockscout.com, 2026-09-02)
@@ -157,21 +159,6 @@ NFT_PORTFOLIO_RESPONSE: dict[str, Any] = {
 # ============================================================================
 
 
-class FakeNetwork:
-    """Records every request and replays canned responses in order."""
-
-    def __init__(self, responses: list[Any]) -> None:
-        self.responses = list(responses)
-        self.calls: list[dict[str, Any]] = []
-
-    async def request(self, **kwargs: Any) -> Any:
-        self.calls.append(kwargs)
-        response = self.responses.pop(0)
-        if isinstance(response, Exception):
-            raise response
-        return response
-
-
 def _scanner(net: FakeNetwork) -> BlockScoutV2Scanner:
     return BlockScoutV2Scanner(
         api_key='',
@@ -182,20 +169,25 @@ def _scanner(net: FakeNetwork) -> BlockScoutV2Scanner:
 
 
 def _client_shell(scanner: BlockScoutV2Scanner) -> ChainscanClient:
-    """A ChainscanClient shell around a real scanner + FakeNetwork.
+    """A ChainscanClient wired to a real scanner via the constructor seam.
 
     Mirrors the pattern used by ``tests/test_method_consistency.py`` for the
     direct (single-page) block-range sweep; kept self-contained here rather
-    than imported, since that file is off-limits for this change.
+    than imported, since that file is off-limits for this change. The
+    scanner already carries its own ``FakeNetwork``, so the client's own
+    ``_network`` is an unused placeholder.
     """
-    client = ChainscanClient.__new__(ChainscanClient)
-    client.scanner_name = scanner.name
-    client.scanner_version = scanner.version
-    client.api_kind = 'test'
-    client.network = 'ethereum'
-    client.api_key = ''
-    client._scanner = scanner
-    return client
+    target = ScannerTarget(
+        scanner_name=scanner.name,
+        scanner_version=scanner.version,
+        network='ethereum',
+        api_kind='eth',
+        api_key='',
+        chain_id=None,
+        url_network='ethereum',
+        scanner_network='ethereum',
+    )
+    return ChainscanClient(target, scanner=scanner, network=FakeNetwork([]))
 
 
 # ============================================================================
