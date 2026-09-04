@@ -3,8 +3,9 @@ kind: deepening-brief
 id: C15
 slug: value-conversion-one-owner
 source: ../2026-09-05-review.md
-status: accepted
+status: done
 base: c9943a2
+merged: 6fea223
 ---
 
 # Value conversion with one owner production actually uses
