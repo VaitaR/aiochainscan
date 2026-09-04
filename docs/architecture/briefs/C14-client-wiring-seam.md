@@ -3,8 +3,9 @@ kind: deepening-brief
 id: C14
 slug: client-wiring-seam
 source: ../2026-09-05-review.md
-status: accepted
+status: done
 base: c9943a2
+merged: cf28d61
 ---
 
 # A wiring seam for `ChainscanClient`
@@ -165,6 +166,12 @@ and 8 respectively:
 rg -c 'ChainscanClient\.__new__' tests/     # must return nothing
 rg -c '^class FakeNetwork' tests/           # must return exactly one file: tests/conftest.py
 ```
+
+> **Note (post-implementation).** The second observable is anchored at column 0 and so
+> never saw a **nested** double: `tests/test_method_consistency.py:797` defines a
+> function-local `FakeNetwork`, and `tests/test_provider_pool.py:819` a `_ReplayNetwork`.
+> Neither was in this brief's list of eight and neither was consolidated. That is a gap in
+> the observable, not in the work.
 
 Prove the invariant is non-vacuous rather than assuming it. Add a test that builds a
 client through the new seam with an injected scanner and network and asserts **every**
