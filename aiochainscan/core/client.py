@@ -12,6 +12,7 @@ if TYPE_CHECKING:
 
     from ..ports.progress import ProgressCallback
     from ..services.ens_resolver import ENSResolver
+    from .host import ClientHost
 
 from ..chain_registry import (
     ScannerTarget,
@@ -1138,3 +1139,9 @@ class ChainscanClient(
             f"scanner_version='{self.scanner_version}', api_kind='{self.api_kind}', "
             f"network='{self.network}')"
         )
+
+
+if TYPE_CHECKING:  # pragma: no cover - static conformance only
+
+    def _assert_client_host(c: ChainscanClient) -> None:
+        _host: ClientHost = c

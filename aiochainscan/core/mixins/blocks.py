@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Protocol, cast
+from typing import Any, cast
 
 from ...domain.method import Method
 from ...domain.normalize import normalize_block
@@ -14,14 +14,9 @@ from ...exceptions import (
     ChainscanNetworkError,
     ChainscanRateLimitError,
 )
+from ..host import ClientHost
 from ..types import JSONDict
 from ._waiting import api_error_text, poll_until_final
-
-
-class _BlockClientProtocol(Protocol):
-    async def call(self, method: Method, **params: Any) -> Any: ...
-
-    def supports_method(self, method: Method) -> bool: ...
 
 
 def _to_int(value: Any) -> int | None:
@@ -52,28 +47,28 @@ def _countdown_reached(snapshot: Any, target: int) -> bool:
 class BlockMixin:
     """Block-focused typed convenience methods."""
 
-    async def get_block(self: _BlockClientProtocol, block_number: int | str) -> JSONDict:
+    async def get_block(self: ClientHost, block_number: int | str) -> JSONDict:
         """Get block information by number."""
         result: JSONDict = await self.call(Method.BLOCK_BY_NUMBER, block_number=block_number)
         return result
 
-    async def get_block_normalized(self: _BlockClientProtocol, block_number: int | str) -> Block:
+    async def get_block_normalized(self: ClientHost, block_number: int | str) -> Block:
         """Same response as ``get_block``, mapped onto ``domain.normalized.Block``."""
         raw = await BlockMixin.get_block(self, block_number)
         return normalize_block(raw)
 
-    async def get_block_reward(self: _BlockClientProtocol, block_number: int) -> JSONDict:
+    async def get_block_reward(self: ClientHost, block_number: int) -> JSONDict:
         """Get block mining reward information."""
         result: JSONDict = await self.call(Method.BLOCK_REWARD, block_number=block_number)
         return result
 
-    async def get_block_countdown(self: _BlockClientProtocol, target_block: int) -> JSONDict:
+    async def get_block_countdown(self: ClientHost, target_block: int) -> JSONDict:
         """Get estimated time to a target block number."""
         result: JSONDict = await self.call(Method.BLOCK_COUNTDOWN, block_number=target_block)
         return result
 
     async def get_block_by_timestamp(
-        self: _BlockClientProtocol, timestamp: int, closest: str = 'before'
+        self: ClientHost, timestamp: int, closest: str = 'before'
     ) -> JSONDict:
         """Get block number by Unix timestamp."""
         result: JSONDict = await self.call(
@@ -82,7 +77,7 @@ class BlockMixin:
         return result
 
     async def wait_for_block(
-        self: _BlockClientProtocol,
+        self: ClientHost,
         block_number: int,
         timeout: float = 600.0,
         poll_interval: float = 10.0,

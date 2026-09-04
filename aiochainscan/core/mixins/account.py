@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any
 
 from ...domain.method import Method
 from ...domain.models import Address
@@ -14,7 +14,8 @@ from ...domain.normalize import (
 )
 from ...domain.normalized import InternalTransaction, TokenTransfer, Transaction
 from ...services.pagination import normalize_items
-from ..streaming import SupportsStreaming, collect_stream
+from ..host import ClientHost
+from ..streaming import collect_stream
 from ..types import JSONList
 
 if TYPE_CHECKING:
@@ -23,16 +24,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class _AccountClientProtocol(SupportsStreaming, Protocol):
-    scanner_name: str
-
-    async def call(self, method: Method, **params: Any) -> Any: ...
-
-
 class AccountMixin:
     """Account-focused typed convenience methods."""
 
-    async def get_balance(self: _AccountClientProtocol, address: str, tag: str = 'latest') -> str:
+    async def get_balance(self: ClientHost, address: str, tag: str = 'latest') -> str:
         """Get account balance in Wei as string."""
         addr = Address(address)
         params: dict[str, Any] = {'address': str(addr)}
@@ -41,7 +36,7 @@ class AccountMixin:
         return str(result)
 
     async def get_transactions(
-        self: _AccountClientProtocol,
+        self: ClientHost,
         address: str,
         start_block: int = 0,
         end_block: int | None = None,
@@ -58,7 +53,7 @@ class AccountMixin:
         return result if isinstance(result, list) else []
 
     async def get_transactions_normalized(
-        self: _AccountClientProtocol,
+        self: ClientHost,
         address: str,
         start_block: int = 0,
         end_block: int | None = None,
@@ -72,7 +67,7 @@ class AccountMixin:
         return [normalize_transaction(item) for item in raw]
 
     async def get_token_transfers(
-        self: _AccountClientProtocol,
+        self: ClientHost,
         address: str,
         contract_address: str | None = None,
         start_block: int = 0,
@@ -90,7 +85,7 @@ class AccountMixin:
         return result if isinstance(result, list) else []
 
     async def get_token_transfers_normalized(
-        self: _AccountClientProtocol,
+        self: ClientHost,
         address: str,
         contract_address: str | None = None,
         start_block: int = 0,
@@ -103,7 +98,7 @@ class AccountMixin:
         return [normalize_token_transfer(item) for item in raw]
 
     async def get_internal_transactions(
-        self: _AccountClientProtocol,
+        self: ClientHost,
         address: str,
         start_block: int = 0,
         end_block: int | None = None,
@@ -126,7 +121,7 @@ class AccountMixin:
         return result if isinstance(result, list) else []
 
     async def get_internal_transactions_normalized(
-        self: _AccountClientProtocol,
+        self: ClientHost,
         address: str,
         start_block: int = 0,
         end_block: int | None = None,
@@ -140,7 +135,7 @@ class AccountMixin:
         )
         return [normalize_internal_transaction(item) for item in raw]
 
-    async def get_token_portfolio(self: _AccountClientProtocol, address: str) -> JSONList:
+    async def get_token_portfolio(self: ClientHost, address: str) -> JSONList:
         """Get all ERC20 tokens held by address."""
         result: Any = await self.call(
             Method.ACCOUNT_TOKEN_PORTFOLIO, address=str(Address(address))
@@ -148,7 +143,7 @@ class AccountMixin:
         return result if isinstance(result, list) else []
 
     async def _get_erc_transfers(
-        self: _AccountClientProtocol,
+        self: ClientHost,
         method: Method,
         address: str,
         contract_address: str | None,
@@ -173,7 +168,7 @@ class AccountMixin:
         return normalize_items(result)
 
     async def get_erc721_transfers(
-        self: _AccountClientProtocol,
+        self: ClientHost,
         address: str,
         contract_address: str | None = None,
         start_block: int = 0,
@@ -196,7 +191,7 @@ class AccountMixin:
         )
 
     async def get_erc1155_transfers(
-        self: _AccountClientProtocol,
+        self: ClientHost,
         address: str,
         contract_address: str | None = None,
         start_block: int = 0,
@@ -218,14 +213,14 @@ class AccountMixin:
             sort,
         )
 
-    async def get_nft_portfolio(self: _AccountClientProtocol, address: str) -> JSONList:
+    async def get_nft_portfolio(self: ClientHost, address: str) -> JSONList:
         """Get all NFTs owned by an address."""
         result: Any = await self.call(Method.ACCOUNT_NFT_PORTFOLIO, address=str(Address(address)))
         items: JSONList = normalize_items(result)
         return items
 
     async def get_all_transactions(
-        self: _AccountClientProtocol,
+        self: ClientHost,
         address: str,
         from_block: int = 0,
         to_block: int | str | None = None,
@@ -254,7 +249,7 @@ class AccountMixin:
         )
 
     async def get_all_token_transfers(
-        self: _AccountClientProtocol,
+        self: ClientHost,
         address: str,
         contract_address: str | None = None,
         from_block: int = 0,
@@ -285,7 +280,7 @@ class AccountMixin:
         )
 
     async def get_all_internal_transactions(
-        self: _AccountClientProtocol,
+        self: ClientHost,
         address: str,
         from_block: int = 0,
         to_block: int | str | None = None,
@@ -326,7 +321,7 @@ class AccountMixin:
     # normalization ever sees it.
 
     async def get_all_transactions_normalized(
-        self: _AccountClientProtocol,
+        self: ClientHost,
         address: str,
         from_block: int = 0,
         to_block: int | str | None = None,
@@ -353,7 +348,7 @@ class AccountMixin:
         )
 
     async def get_all_token_transfers_normalized(
-        self: _AccountClientProtocol,
+        self: ClientHost,
         address: str,
         contract_address: str | None = None,
         from_block: int = 0,
@@ -378,7 +373,7 @@ class AccountMixin:
         )
 
     async def get_all_internal_transactions_normalized(
-        self: _AccountClientProtocol,
+        self: ClientHost,
         address: str,
         from_block: int = 0,
         to_block: int | str | None = None,

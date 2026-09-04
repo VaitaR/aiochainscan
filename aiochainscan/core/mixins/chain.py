@@ -12,11 +12,10 @@ from typing import TYPE_CHECKING
 
 from ...exceptions import ChainscanDataError
 from ...services.chain_info import ChainInfo
+from ..host import ClientHost
 
 if TYPE_CHECKING:
-    from ...network import Network
     from ...ports.cache import Cache
-    from ...scanners.base import Scanner
 
 # Module-level shared cache: chain identities and the ~60-network Etherscan
 # chainlist are effectively static, so they are fetched at most once per TTL
@@ -43,14 +42,7 @@ def reset_chain_info_cache() -> None:
 class ChainMixin:
     """Chain identity helpers for the unified client."""
 
-    _scanner: Scanner
-    _network: Network
-    scanner_name: str
-    scanner_version: str
-    chain_id: int | None
-    _expected_chain_id: int | None
-
-    async def get_chain_info(self) -> ChainInfo:
+    async def get_chain_info(self: ClientHost) -> ChainInfo:
         """Chain descriptor of the configured instance/provider (cached).
 
         - BlockScout (v1/v2, including self-hosted): probes
@@ -93,7 +85,7 @@ class ChainMixin:
 
         raise ValueError(f'Chain info is not available for scanner {self.scanner_name!r}')
 
-    async def validate_chain(self, expected_chain_id: int | None = None) -> ChainInfo:
+    async def validate_chain(self: ClientHost, expected_chain_id: int | None = None) -> ChainInfo:
         """Validate that the configured instance serves the expected chain.
 
         Expectation precedence: the explicit argument, then the
@@ -114,15 +106,15 @@ class ChainMixin:
         if expected is None:
             expected = self.chain_id
 
-        info = await self.get_chain_info()
+        info = await ChainMixin.get_chain_info(self)
         if expected is not None and info.chain_id != expected:
             raise ChainscanDataError(
-                f'Chain mismatch for {self._instance_label()}: '
+                f'Chain mismatch for {_instance_label(self)}: '
                 f'expected {expected}, instance serves {info.chain_id}'
             )
         return info
 
-    async def _validate_expected_chain_once(self) -> None:
+    async def _validate_expected_chain_once(self: ClientHost) -> None:
         """First-request guard body: fail fast on a chain mismatch.
 
         Wired into the Network layer by ``ChainscanClient`` when the client
@@ -131,16 +123,17 @@ class ChainMixin:
         expected = self._expected_chain_id
         if expected is None:
             return
-        info = await self.get_chain_info()
+        info = await ChainMixin.get_chain_info(self)
         if info.chain_id != expected:
             raise ChainscanDataError(
-                f'Chain mismatch for {self._instance_label()}: '
+                f'Chain mismatch for {_instance_label(self)}: '
                 f'expected {expected}, instance serves {info.chain_id}'
             )
 
-    def _instance_label(self) -> str:
-        """Short human-readable label of the configured instance."""
-        version = self.scanner_version.lstrip('v') or self.scanner_version
-        if self.scanner_name == 'blockscout' and self._scanner.base_url:
-            return f'{self.scanner_name} v{version} at {self._scanner.base_url}'
-        return f'{self.scanner_name} v{version}'
+
+def _instance_label(host: ClientHost) -> str:
+    """Short human-readable label of the configured instance."""
+    version = host.scanner_version.lstrip('v') or host.scanner_version
+    if host.scanner_name == 'blockscout' and host._scanner.base_url:
+        return f'{host.scanner_name} v{version} at {host._scanner.base_url}'
+    return f'{host.scanner_name} v{version}'

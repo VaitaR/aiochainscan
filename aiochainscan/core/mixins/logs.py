@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any
 
 from ...domain.method import Method
 from ...domain.models import Address
 from ...domain.normalize import normalize_log
 from ...domain.normalized import Log
-from ..streaming import SupportsStreaming, collect_stream
+from ..host import ClientHost
+from ..streaming import collect_stream
 from ..types import JSONList
 
 if TYPE_CHECKING:
@@ -18,15 +19,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class _LogsClientProtocol(SupportsStreaming, Protocol):
-    async def call(self, method: Method, **params: Any) -> Any: ...
-
-
 class LogsMixin:
     """Event logs convenience methods."""
 
     async def get_logs(
-        self: _LogsClientProtocol,
+        self: ClientHost,
         address: str,
         from_block: int = 0,
         to_block: int | str | None = None,
@@ -53,7 +50,7 @@ class LogsMixin:
         return result if isinstance(result, list) else []
 
     async def get_logs_normalized(
-        self: _LogsClientProtocol,
+        self: ClientHost,
         address: str,
         from_block: int = 0,
         to_block: int | str | None = None,
@@ -69,7 +66,7 @@ class LogsMixin:
         return [normalize_log(item) for item in raw]
 
     async def get_all_logs(
-        self: _LogsClientProtocol,
+        self: ClientHost,
         address: str,
         from_block: int = 0,
         to_block: int | str | None = None,
@@ -99,7 +96,7 @@ class LogsMixin:
         )
 
     async def get_all_logs_normalized(
-        self: _LogsClientProtocol,
+        self: ClientHost,
         address: str,
         from_block: int = 0,
         to_block: int | str | None = None,

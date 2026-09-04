@@ -87,10 +87,23 @@ class AddressInfoProvider(Protocol):
 
 
 class ENSClient(Protocol):
-    """Client capabilities required by the ENS resolver."""
+    """Client capabilities required by the ENS resolver.
 
-    chain_id: int
-    network: str
+    Structurally a subset of ``aiochainscan.core.host.ClientHost`` — kept as
+    a separate declaration here, rather than importing that protocol, per
+    ``AGENTS.md``'s dependency rule ("Only downward. Never upward.").
+    ``ClientHost`` is the authority; keep this subset in sync with it by
+    hand. Both members are read-only properties on ``ClientHost`` (a plain
+    mutable attribute on ``ChainscanClient`` and a read-only forward on
+    ``ChainscanPool`` both satisfy that), so they are declared the same way
+    here rather than as plain attributes.
+    """
+
+    @property
+    def chain_id(self) -> int | None: ...
+
+    @property
+    def network(self) -> str: ...
 
     async def call(self, method: Method, **params: Any) -> Any: ...
 
@@ -167,7 +180,7 @@ class ENSResolver:
         if not self._is_ens_supported():
             raise ValueError(
                 f'ENS is only supported on Ethereum mainnet. '
-                f'Current network: {getattr(self.client, 'network', None)} (chain_id={self.client.chain_id})'
+                f'Current network: {self.client.network} (chain_id={self.client.chain_id})'
             )
 
         normalized_name = _normalize_ens_name(name)
@@ -214,7 +227,7 @@ class ENSResolver:
         if not self._is_ens_supported():
             raise ValueError(
                 f'ENS is only supported on Ethereum mainnet. '
-                f'Current network: {getattr(self.client, 'network', None)} (chain_id={self.client.chain_id})'
+                f'Current network: {self.client.network} (chain_id={self.client.chain_id})'
             )
 
         if not isinstance(address, str):
@@ -563,7 +576,7 @@ class ENSResolver:
     def __str__(self) -> str:
         """String representation."""
         status = 'enabled' if self.enable_cache else 'disabled'
-        return f'ENSResolver(cache={status}, network={getattr(self.client, 'network', None)})'
+        return f'ENSResolver(cache={status}, network={self.client.network})'
 
     def __repr__(self) -> str:
         """Detailed representation."""
