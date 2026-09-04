@@ -1,0 +1,86 @@
+# One-off: finish the v1.0.0 PyPI release.
+#
+# The original publish job (run 33906218582) uploaded only the base wheel —
+# twine aborts the whole batch on the first error, and the fastabi files were
+# rejected because no pending publisher existed for aiochainscan-fastabi yet.
+# A rerun of that run can never succeed: PyPI forbids reusing a filename even
+# after deletion, and the already-uploaded aiochainscan-1.0.0 wheel sorts first.
+#
+# This workflow re-publishes ONLY the files still missing, downloading the
+# tag-built artifacts from the original run (byte-identical to what the failed
+# publish attempted). It is idempotent: files already on PyPI are pruned from
+# the staging dirs before upload, so it can be dispatched repeatedly until
+# everything lands. Safe to delete once both projects serve 1.0.0 complete.
+
+name: Publish remaining 1.0.0 files
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish-remaining:
+    name: Publish remaining 1.0.0 distributions
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write  # trusted publishing (OIDC)
+      actions: read    # download artifacts from the original release run
+      contents: read
+
+    steps:
+      - name: Download 1.0.0 artifacts from the original release run
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 33906218582
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: dist
+          merge-multiple: true
+
+      # Split by project, then drop anything PyPI already serves (makes the
+      # workflow re-runnable: only genuinely missing files are uploaded).
+      - name: Stage and prune files already on PyPI
+        id: files
+        run: |
+          set -euo pipefail
+          mkdir -p staging/base staging/fastabi
+          find dist -maxdepth 1 -type f -name 'aiochainscan-1.0.0*' -exec mv {} staging/base/ \;
+          find dist -maxdepth 1 -type f -name 'aiochainscan_fastabi-1.0.0*' -exec mv {} staging/fastabi/ \;
+
+          leftovers=$(ls -1 dist | wc -l)
+          if [ "$leftovers" -ne 0 ]; then
+            echo "::error::unexpected files left in dist/: $(ls -1 dist)"
+            exit 1
+          fi
+
+          prune() {
+            project="$1"; dir="$2"
+            existing=$(curl -fsS "https://pypi.org/pypi/$project/1.0.0/json" | jq -r '.urls[].filename' || true)
+            if [ -z "$existing" ]; then
+              echo "$project: 1.0.0 not on PyPI yet — keeping all files"
+              return
+            fi
+            for f in $existing; do
+              if [ -f "$dir/$f" ]; then rm -v "$dir/$f"; fi
+            done
+          }
+          prune aiochainscan staging/base
+          prune aiochainscan-fastabi staging/fastabi
+
+          echo "base_count=$(ls -1 staging/base | wc -l | tr -d ' ')" >> "$GITHUB_OUTPUT"
+          echo "fastabi_count=$(ls -1 staging/fastabi | wc -l | tr -d ' ')" >> "$GITHUB_OUTPUT"
+          echo "--- staging/base ---";   ls -l staging/base || true
+          echo "--- staging/fastabi ---"; ls -l staging/fastabi || true
+
+      - name: Publish remaining aiochainscan files
+        if: steps.files.outputs.base_count != '0'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: staging/base
+
+      - name: Publish aiochainscan-fastabi
+        if: steps.files.outputs.fastabi_count != '0'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: staging/fastabi
