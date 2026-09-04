@@ -3,8 +3,9 @@ kind: deepening-brief
 id: C16
 slug: progress-adapters-at-the-port
 source: ../2026-09-05-review.md
-status: accepted
+status: done
 base: c9943a2
+merged: 182d765
 ---
 
 # Put the progress-port adapters where the port's adapters live
@@ -18,9 +19,17 @@ hexagonal layering that `CONTEXT.md` defines:
   needs. Surviving ports: `cache`, `progress`, `rate_limiter`.
 - **Adapter** — "concrete implementation of a port in `aiochainscan/adapters/`".
 
-The layering is enforced by `import-linter` contracts in `pyproject.toml:147-200`, run
-as part of `make validate` (ruff, format check, import-linter, `mypy --strict`, pytest).
-Run the contracts alone with `uv run lint-imports`.
+The layering is enforced by `import-linter`, run as part of `make validate` (ruff,
+format check, import-linter, `mypy --strict`, pytest). Run the contracts alone with
+`uv run lint-imports`.
+
+> **Correction (post-implementation).** This brief was written believing the contracts
+> live in `pyproject.toml:147-212`. They do not run: import-linter reads `setup.cfg`,
+> then `.importlinter`, then `pyproject.toml`, and stops at the first file with a config
+> section — and this repo has a root `.importlinter` with three contracts, none sourced
+> on `adapters`. Contract item 4 below was therefore unsatisfiable as written and was
+> correctly reported as unmet. The dead-config gap is tracked as candidate C17 in the
+> review. Everything else in this brief was implemented and verified.
 
 ## Task
 

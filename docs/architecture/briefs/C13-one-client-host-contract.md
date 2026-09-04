@@ -210,13 +210,18 @@ Report command output, not a summary of it.
 
 ## Open questions
 
-- If moving `ENSClient` to `ClientHost` would make `aiochainscan.services` import
-  `aiochainscan.core` — forbidden by the import-linter contract at
-  `pyproject.toml:191-200` ("Services do not import core or network") — then **keep
-  `ENSClient` as the services-side protocol** and instead make it structurally identical
-  to the subset of `ClientHost` it needs, with a comment naming `ClientHost` as the
-  authority. Say in your report which of the two you did and why. Do not weaken the
-  import-linter contract to get the merge.
+- **`ENSClient` stays.** (Resolved 2026-09-05, replacing the open question this brief
+  originally carried here.) The `pyproject.toml:192-201` contract "Services do not import
+  core or network" that the question rested on is **inert** — import-linter reads
+  `setup.cfg`, then `.importlinter`, then `pyproject.toml`, stopping at the first file
+  with a config section, and this repo has a root `.importlinter` whose three contracts
+  do not include it. Activating it would also fail immediately on a pre-existing import
+  (`services/pagination.py:75-76` reaches `core.endpoint` / `core.types`); tracked as
+  candidate C17. So `make validate` will not stop a `services -> core` import — but
+  `AGENTS.md`'s "Only downward. Never upward." still stands, and `pagination.py` is a
+  violation to repair, not a precedent to widen. Keep `ENSClient` as the services-side
+  protocol, structurally identical to the subset of `ClientHost` it needs, with a comment
+  naming `ClientHost` as the authority. Do not touch `.importlinter` or `pyproject.toml`.
 - If a mixin needs a member that neither host provides, that is a finding, not a
   blocker: report it as unmet with the file:line, and do not invent a host attribute
   to satisfy it.

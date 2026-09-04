@@ -197,7 +197,8 @@ Report command output, not a summary of it.
 ## Open questions
 
 - If folding `int_or_default` onto `_parse_flexible_int` trips an `import-linter`
-  contract (`pyproject.toml:147-200`), **do not weaken the contract**. Report it, leave
+  contract (the live ones are in `.importlinter`, not the inert
+  `pyproject.toml:147-212` section — see C17), **do not weaken the contract**. Report it, leave
   the two parsers alone, and ship part 1 only — that is a valid partial result, not a
   failure.
 
