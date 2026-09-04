@@ -156,6 +156,9 @@ tmp/
 temp/
 *.tmp
 
+# Internal review/gate artifacts — kept out of the public repo
+docs/reviews/
+
 # Ruff cache
 .ruff_cache/
 
