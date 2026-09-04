@@ -4,12 +4,12 @@ id: C4
 slug: nodereal-inside-base-seams
 source: ../2026-09-03-review.md
 status: done
-base: 50d971e
+base: 8e9bf4a
 ---
 
 # Bring NodeReal's transport back inside the base seams
 
-> **Done** — lane commit `6113a20`, merged to `main` (2026-09-03, no-ff, clean against the C8 merge). Gate: PASS-WITH-FINDINGS (LOW only; export-parity and commit-note spot-checks closed by orchestrator).
+> **Done** — lane commit `b1a47d0`, merged to `main` (2026-09-03, no-ff, clean against the C8 merge). Gate: PASS-WITH-FINDINGS (LOW only; export-parity and commit-note spot-checks closed by orchestrator).
 
 ## Repo orientation
 

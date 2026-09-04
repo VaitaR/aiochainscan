@@ -4,12 +4,12 @@ id: C3
 slug: holder-item-one-owner
 source: ../2026-09-03-review.md
 status: done
-base: 50d971e
+base: 8e9bf4a
 ---
 
 # Give the token-holder item contract one owner
 
-> **Done** — lane commit `25d326f`, merged to `main` (2026-09-03, no-ff, clean over the C4 merge). Gate: PASS-WITH-FINDINGS (LOW only).
+> **Done** — lane commit `88f516b`, merged to `main` (2026-09-03, no-ff, clean over the C4 merge). Gate: PASS-WITH-FINDINGS (LOW only).
 
 ## Repo orientation
 

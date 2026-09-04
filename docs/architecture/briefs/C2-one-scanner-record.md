@@ -4,12 +4,12 @@ id: C2
 slug: one-scanner-record
 source: ../2026-09-03-review.md
 status: done
-base: 50d971e
+base: 8e9bf4a
 ---
 
 # One per-scanner record in `chain_registry`; `config` derives
 
-> **Done** — flash lane died to a provider rate limit; an in-session finishing agent salvaged the ~95%-complete uncommitted work and finished it (commit `3dd2592`); merged to `main` (2026-09-03, no-ff, clean over five earlier candidate merges). Gate: PASS-WITH-FINDINGS; the MEDIUM (alias network-name parity) was closed by the orchestrator with an old-vs-new runtime comparison — identical for matic/arb/bnb/eth/ethereum (etherscan) and ethereum (blockscout).
+> **Done** — flash lane died to a provider rate limit; an in-session finishing agent salvaged the ~95%-complete uncommitted work and finished it (commit `a7876b7`); merged to `main` (2026-09-03, no-ff, clean over five earlier candidate merges). Gate: PASS-WITH-FINDINGS; the MEDIUM (alias network-name parity) was closed by the orchestrator with an old-vs-new runtime comparison — identical for matic/arb/bnb/eth/ethereum (etherscan) and ethereum (blockscout).
 
 ## Repo orientation
 

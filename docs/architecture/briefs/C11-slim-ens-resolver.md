@@ -3,8 +3,8 @@ kind: deepening-brief
 id: C11
 slug: slim-ens-resolver
 source: ../2026-09-03-review.md
-status: done             # merged to local main as 750bf55 (2026-09-03); gate PASS, zero findings
-base: 3b7c05e
+status: done             # merged to local main as af968ff (2026-09-03); gate PASS, zero findings
+base: 485b34c
 ---
 
 # Slim the ENS resolver to its job

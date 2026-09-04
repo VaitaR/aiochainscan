@@ -4,12 +4,12 @@ id: C7
 slug: generate-mcp-tool-layer
 source: ../2026-09-03-review.md
 status: done
-base: 50d971e
+base: 8e9bf4a
 ---
 
 # Generate the MCP tool layer from one spec
 
-> **Done** — lane commit `4a04962`, merged to `main` (2026-09-03, no-ff). Gate: PASS-WITH-FINDINGS; the reviewer's merge condition (execute the golden registration tests with the `mcp` extra) was satisfied before merging: 102 passed, and 6 on merged main. The DoD's "~100 lines shrink" was arithmetically impossible (served docstrings must be restated in the table); the substantive criteria (one table, wrappers gone, one registrar, golden-pinned schemas) are met. New hardening beyond the brief: a golden registration snapshot + tests.
+> **Done** — lane commit `1a22276`, merged to `main` (2026-09-03, no-ff). Gate: PASS-WITH-FINDINGS; the reviewer's merge condition (execute the golden registration tests with the `mcp` extra) was satisfied before merging: 102 passed, and 6 on merged main. The DoD's "~100 lines shrink" was arithmetically impossible (served docstrings must be restated in the table); the substantive criteria (one table, wrappers gone, one registrar, golden-pinned schemas) are met. New hardening beyond the brief: a golden registration snapshot + tests.
 
 ## Repo orientation
 

@@ -3,8 +3,8 @@ kind: deepening-brief
 id: C12
 slug: merge-erc721-1155-twins
 source: ../2026-09-03-review.md
-status: done             # merged to local main as 7e54a55 (2026-09-03); gate PASS-WITH-FINDINGS (2 LOW); lane commit a66af82 carries the normalize_items divergence note
-base: 3b7c05e
+status: done             # merged to local main as 0acc906 (2026-09-03); gate PASS-WITH-FINDINGS (2 LOW); lane commit e46d24b carries the normalize_items divergence note
+base: 485b34c
 ---
 
 # Merge the ERC-721/1155 twins

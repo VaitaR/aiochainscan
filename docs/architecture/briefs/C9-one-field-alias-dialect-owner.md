@@ -3,8 +3,8 @@ kind: deepening-brief
 id: C9
 slug: one-field-alias-dialect-owner
 source: ../2026-09-03-review.md
-status: done             # merged to local main as 7a7bdc1 (2026-09-03); gate PASS-WITH-FINDINGS (no HIGH)
-base: 3b7c05e
+status: done             # merged to local main as 27773e3 (2026-09-03); gate PASS-WITH-FINDINGS (no HIGH)
+base: 485b34c
 ---
 
 # One owner for the provider field-alias dialect

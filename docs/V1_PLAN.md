@@ -8,7 +8,7 @@ Everything below is scoped against that thesis. Anything that does not serve one
 three promises is out of scope for v1 (explicitly: NFT abstractions, prices, DeFi
 protocol adapters, multicall, signing, contract writes, additional explorer vendors).
 
-## Ground truth as of 2026-09-02 (verified against main @ ad278a8)
+## Ground truth as of 2026-09-02 (verified against main @ 1e59d40)
 
 - `pyproject.toml`: `version = "0.6.0"`, `build-backend = "maturin"`, runtime deps are
   exactly `httpx`, `aiolimiter`, `tenacity`, `orjson`.
@@ -146,14 +146,14 @@ MCP stays an extra, not a product. MCP Registry submission comes after SDK adopt
 
 Merged into `main`, `make validate` green (`1089 passed, 13 skipped`, mypy --strict over 72 files):
 
-- **Track A** done (`6ed72cb`). `build-backend = "hatchling.build"`; `aiochainscan-fastabi` is a
+- **Track A** done (`78934f4`). `build-backend = "hatchling.build"`; `aiochainscan-fastabi` is a
   separate maturin distribution; `arrow`/`pyo3-arrow` moved behind an off-by-default cargo
   feature after benchmarking (0.132 s vs 0.298 s over 150k rows, against 0.5-1.3 s per
   explorer page — the win does not survive contact with network latency). Pure-Python
   Keccak-256 (`aiochainscan/_keccak.py`) is the last link of the keccak chain, so a bare
   `pip install aiochainscan` can checksum addresses with zero extras. Base runtime deps
   unchanged at four.
-- **Track D** done (`d8da6b2`). Five frozen slotted dataclasses, `provider_data` preserved,
+- **Track D** done (`50a9601`). Five frozen slotted dataclasses, `provider_data` preserved,
   new `chain=`/`provider=` constructor. Recorded BlockScout fixtures under
   `tests/fixtures/blockscout_v2/` corrected four field mappings that had been extrapolated
   from convention (`transaction_hash` not `hash`, `total.value` not `value`, `raw_input` not
@@ -197,7 +197,7 @@ Merged into `main`, `make validate` green (`1089 passed, 13 skipped`, mypy --str
 
 ### Update — open items 1 and 2 closed
 
-`main` @ 63ffafc, `make validate` green (`1103 passed, 13 skipped`, mypy --strict over 72 files).
+`main` @ bb22812, `make validate` green (`1103 passed, 13 skipped`, mypy --strict over 72 files).
 
 - **Item 1 closed.** Eight new entry points compose completeness with normalization:
   `iter_{transactions,token_transfers,internal_transactions,logs}_normalized` and the matching
@@ -220,7 +220,7 @@ Merged into `main`, `make validate` green (`1089 passed, 13 skipped`, mypy --str
 
 A side effect of the Track A split: the base package builds with hatchling, so `uv sync --extra dev`
 no longer triggers maturin and a fresh worktree has no accelerator. Three defects followed, all
-fixed in 63ffafc:
+fixed in bb22812:
 
 1. `scripts/agent/preflight.sh` probed `import aiochainscan.fastabi` — the crate SOURCE directory,
    which imports as an empty namespace package whether or not the extension exists, so the check

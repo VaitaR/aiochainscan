@@ -4,13 +4,13 @@ id: C1
 slug: derive-pool-streaming-surface
 source: ../2026-09-03-review.md
 status: done
-base: f252ed5
+base: a458aae
 ---
 
 # Derive the pool's streaming surface from `STREAMING_SPECS` (and fix the four broken pool methods)
 
-> **Done** — implemented on `feat/derive-pool-streaming-surface` (commit `44d0bcc`), merged to
-> `main` as `369240d` (2026-09-03). Review gate: PASS-WITH-FINDINGS, LOW-only findings, none
+> **Done** — implemented on `feat/derive-pool-streaming-surface` (commit `f1af137`), merged to
+> `main` as `8e9bf4a` (2026-09-03). Review gate: PASS-WITH-FINDINGS, LOW-only findings, none
 > blocking. Naming choice from Open Questions: `stream_normalized_batches` (recorded in the
 > module docstring and `__all__`).
 

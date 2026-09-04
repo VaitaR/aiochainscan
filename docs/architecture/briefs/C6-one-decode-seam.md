@@ -4,12 +4,12 @@ id: C6
 slug: one-decode-seam
 source: ../2026-09-03-review.md
 status: done
-base: 50d971e
+base: 8e9bf4a
 ---
 
 # One decode seam for the single and batch paths
 
-> **Done** — flash lane died to a provider rate limit mid-run; an in-session finishing agent salvaged the uncommitted work (verdict: coherent near-finish), completed two gaps, and committed `7a4df06`; merged to `main` (2026-09-03, no-ff). Gate: PASS-WITH-FINDINGS (LOW only; benchmark no-regression).
+> **Done** — flash lane died to a provider rate limit mid-run; an in-session finishing agent salvaged the uncommitted work (verdict: coherent near-finish), completed two gaps, and committed `db049eb`; merged to `main` (2026-09-03, no-ff). Gate: PASS-WITH-FINDINGS (LOW only; benchmark no-regression).
 > **Follow-up (2026-09-03, external codex gate):** finding F1 — `_abi_index` was built at the
 > call site before the input-length guard, so a structurally-malformed ABI raised for
 > empty/short inputs where pre-C6 returned empty fields — verified on main (fastabi live) and
