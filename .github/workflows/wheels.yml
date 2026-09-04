@@ -61,7 +61,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Build wheels
-        uses: pypa/cibuildwheel@v2.20.0
+        uses: pypa/cibuildwheel@v3
         with:
           package-dir: aiochainscan/fastabi
         env:
@@ -69,16 +69,18 @@ jobs:
           CIBW_BUILD: "cp312-* cp313-*"
           CIBW_SKIP: "pp* *-musllinux*"  # Skip PyPy and musllinux
 
-          # Explicitly install maturin>=1.8 (fixes ZIP64 "Large file" error)
-          CIBW_BEFORE_BUILD: "pip install 'maturin>=1.8,<2.0'"
-
-          # Install Rust on Linux before build
+          # Rust inside the manylinux container: rustup-init needs
+          # libatomic.so.1, which some base images lack preinstalled.
+          # The package manager name differs across manylinux generations.
           CIBW_BEFORE_ALL_LINUX: >
+            (yum install -y libatomic || dnf install -y libatomic || microdnf install -y libatomic) &&
             curl https://sh.rustup.rs -sSf | sh -s -- -y &&
             export PATH="$HOME/.cargo/bin:$PATH"
-
-          # Ensure Rust is in PATH
           CIBW_ENVIRONMENT_LINUX: 'PATH="$HOME/.cargo/bin:$PATH"'
+
+          # maturin (the build backend) is installed by build isolation.
+          # The old CIBW_BEFORE_BUILD "pip install maturin" worked around a
+          # pip ZIP64 bug and broke on Windows, where bare `pip` is not on PATH.
 
           # Test the native extension itself (top-level module, no aiochainscan needed)
           CIBW_TEST_COMMAND: >-
