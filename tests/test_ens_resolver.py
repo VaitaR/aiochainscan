@@ -512,3 +512,20 @@ class TestENSPerformance:
 
         # Cached should be much faster (at least 10x)
         assert cached_time < first_time / 10
+
+
+class _NetworklessClient:
+    """A pool-like client: ``chain_id`` but no ``network`` attribute."""
+
+    chain_id = 8453
+
+
+@pytest.mark.asyncio
+async def test_unsupported_network_error_survives_client_without_network_attr() -> None:
+    from aiochainscan.services.ens_resolver import ENSResolver
+
+    resolver = ENSResolver(_NetworklessClient())  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match='only supported on Ethereum mainnet'):
+        await resolver.resolve_name('vitalik.eth')
+    with pytest.raises(ValueError, match='only supported on Ethereum mainnet'):
+        await resolver.lookup_address('0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045')

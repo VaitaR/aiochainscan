@@ -167,7 +167,7 @@ class ENSResolver:
         if not self._is_ens_supported():
             raise ValueError(
                 f'ENS is only supported on Ethereum mainnet. '
-                f'Current network: {self.client.network} (chain_id={self.client.chain_id})'
+                f'Current network: {getattr(self.client, 'network', None)} (chain_id={self.client.chain_id})'
             )
 
         normalized_name = _normalize_ens_name(name)
@@ -214,7 +214,7 @@ class ENSResolver:
         if not self._is_ens_supported():
             raise ValueError(
                 f'ENS is only supported on Ethereum mainnet. '
-                f'Current network: {self.client.network} (chain_id={self.client.chain_id})'
+                f'Current network: {getattr(self.client, 'network', None)} (chain_id={self.client.chain_id})'
             )
 
         if not isinstance(address, str):
@@ -563,7 +563,7 @@ class ENSResolver:
     def __str__(self) -> str:
         """String representation."""
         status = 'enabled' if self.enable_cache else 'disabled'
-        return f'ENSResolver(cache={status}, network={self.client.network})'
+        return f'ENSResolver(cache={status}, network={getattr(self.client, 'network', None)})'
 
     def __repr__(self) -> str:
         """Detailed representation."""
