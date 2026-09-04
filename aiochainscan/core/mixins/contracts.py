@@ -3,29 +3,26 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Protocol, cast
+from typing import Any, cast
 
 from ...domain.contract import SmartContract
 from ...domain.method import Method
 from ...domain.models import Address
 from ...exceptions import ChainscanClientApiError, ChainscanRateLimitError
+from ..host import ClientHost
 from ..types import JSONDict, JSONList
 from ._waiting import api_error_text, poll_until_final
-
-
-class _ContractClientProtocol(Protocol):
-    async def call(self, method: Method, **params: Any) -> Any: ...
 
 
 class ContractMixin:
     """Contract-focused typed convenience methods."""
 
-    async def get_contract_abi(self: _ContractClientProtocol, address: str) -> str:
+    async def get_contract_abi(self: ClientHost, address: str) -> str:
         """Get contract ABI as JSON string."""
         result: Any = await self.call(Method.CONTRACT_ABI, address=str(Address(address)))
         return result if isinstance(result, str) else json.dumps(result)
 
-    async def get_contract_source(self: _ContractClientProtocol, address: str) -> JSONDict:
+    async def get_contract_source(self: ClientHost, address: str) -> JSONDict:
         """Get verified contract source code."""
         result: Any = await self.call(Method.CONTRACT_SOURCE, address=str(Address(address)))
         if isinstance(result, dict):
@@ -34,9 +31,7 @@ class ContractMixin:
             return next((item for item in result if isinstance(item, dict)), {})
         return {}
 
-    async def get_contract_creation(
-        self: _ContractClientProtocol, addresses: list[str]
-    ) -> JSONList:
+    async def get_contract_creation(self: ClientHost, addresses: list[str]) -> JSONList:
         """Get contract creator and creation tx hash."""
         result: Any = await self.call(
             Method.CONTRACT_CREATION,
@@ -44,12 +39,12 @@ class ContractMixin:
         )
         return result if isinstance(result, list) else []
 
-    async def get_contract(self: _ContractClientProtocol, address: str) -> SmartContract:
+    async def get_contract(self: ClientHost, address: str) -> SmartContract:
         """Get a SmartContract instance with automatic ABI fetching."""
-        return await SmartContract.from_address(address, cast(Any, self))
+        return await SmartContract.from_address(address, self)
 
     async def wait_for_verification(
-        self: _ContractClientProtocol,
+        self: ClientHost,
         guid: str,
         timeout: float = 300.0,
         poll_interval: float = 10.0,

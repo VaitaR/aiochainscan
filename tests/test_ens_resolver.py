@@ -515,17 +515,26 @@ class TestENSPerformance:
 
 
 class _NetworklessClient:
-    """A pool-like client: ``chain_id`` but no ``network`` attribute."""
+    """A client missing ``network`` — no longer a valid ``ClientHost``.
+
+    Before C13, ``ENSResolver`` read ``self.client.network`` defensively
+    (``getattr(..., 'network', None)``) so a host missing the attribute
+    degraded silently to a ``None`` in the error message instead of
+    failing. ``ClientHost`` now declares ``network`` as a required member
+    of every host (including ``ChainscanPool``, see
+    ``tests/test_client_host_contract.py``), so a client without it is not
+    a valid host and the plain ``self.client.network`` read now fails loud.
+    """
 
     chain_id = 8453
 
 
 @pytest.mark.asyncio
-async def test_unsupported_network_error_survives_client_without_network_attr() -> None:
+async def test_unsupported_network_error_raises_for_client_missing_network_attr() -> None:
     from aiochainscan.services.ens_resolver import ENSResolver
 
     resolver = ENSResolver(_NetworklessClient())  # type: ignore[arg-type]
-    with pytest.raises(ValueError, match='only supported on Ethereum mainnet'):
+    with pytest.raises(AttributeError):
         await resolver.resolve_name('vitalik.eth')
-    with pytest.raises(ValueError, match='only supported on Ethereum mainnet'):
+    with pytest.raises(AttributeError):
         await resolver.lookup_address('0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045')

@@ -2,17 +2,14 @@
 
 from __future__ import annotations
 
-from typing import Any, Protocol, cast
+from typing import Any, cast
 
 from ...domain.method import Method
 from ...domain.models import TxHash
 from ...exceptions import ChainscanClientApiError, ChainscanRateLimitError
+from ..host import ClientHost
 from ..types import JSONDict
 from ._waiting import poll_until_final
-
-
-class _TransactionClientProtocol(Protocol):
-    async def call(self, method: Method, **params: Any) -> Any: ...
 
 
 def _tx_status_is_final(result: Any) -> bool:
@@ -35,20 +32,20 @@ def _tx_status_is_final(result: Any) -> bool:
 class TransactionMixin:
     """Transaction-focused typed convenience methods."""
 
-    async def get_transaction(self: _TransactionClientProtocol, tx_hash: str) -> JSONDict:
+    async def get_transaction(self: ClientHost, tx_hash: str) -> JSONDict:
         result: JSONDict = await self.call(Method.TX_BY_HASH, txhash=str(TxHash(tx_hash)))
         return result
 
-    async def get_transaction_status(self: _TransactionClientProtocol, tx_hash: str) -> JSONDict:
+    async def get_transaction_status(self: ClientHost, tx_hash: str) -> JSONDict:
         result: JSONDict = await self.call(Method.TX_RECEIPT_STATUS, txhash=str(TxHash(tx_hash)))
         return result
 
-    async def check_transaction_status(self: _TransactionClientProtocol, tx_hash: str) -> JSONDict:
+    async def check_transaction_status(self: ClientHost, tx_hash: str) -> JSONDict:
         result: JSONDict = await self.call(Method.TX_STATUS_CHECK, txhash=str(TxHash(tx_hash)))
         return result
 
     async def wait_for_transaction(
-        self: _TransactionClientProtocol,
+        self: ClientHost,
         tx_hash: str,
         timeout: float = 120.0,
         poll_interval: float = 10.0,

@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any
 
 from ...domain.method import Method
 from ...domain.models import Address
-from ..streaming import SupportsStreaming, collect_stream
+from ..host import ClientHost
+from ..streaming import collect_stream
 from ..types import JSONDict, JSONList
 
 if TYPE_CHECKING:
@@ -16,15 +17,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class _TokenClientProtocol(SupportsStreaming, Protocol):
-    async def call(self, method: Method, **params: Any) -> Any: ...
-
-
 class TokenMixin:
     """Token-focused typed convenience methods."""
 
     async def get_token_balance(
-        self: _TokenClientProtocol, address: str, contract_address: str, tag: str = 'latest'
+        self: ClientHost, address: str, contract_address: str, tag: str = 'latest'
     ) -> str:
         result: str = await self.call(
             Method.TOKEN_BALANCE,
@@ -34,18 +31,18 @@ class TokenMixin:
         )
         return str(result)
 
-    async def get_token_info(self: _TokenClientProtocol, contract_address: str) -> JSONDict:
+    async def get_token_info(self: ClientHost, contract_address: str) -> JSONDict:
         result: JSONDict = await self.call(
             Method.TOKEN_INFO, contract_address=str(Address(contract_address))
         )
         return result
 
-    async def get_token_supply(self: _TokenClientProtocol, contract_address: str) -> str:
+    async def get_token_supply(self: ClientHost, contract_address: str) -> str:
         result: str = await self.call(Method.TOKEN_SUPPLY, contract_address=contract_address)
         return str(result)
 
     async def get_token_holders(
-        self: _TokenClientProtocol,
+        self: ClientHost,
         contract_address: str,
         page: int = 1,
         offset: int = 100,
@@ -69,7 +66,7 @@ class TokenMixin:
         return result if isinstance(result, list) else []
 
     async def get_all_token_holders(
-        self: _TokenClientProtocol,
+        self: ClientHost,
         contract_address: str,
         on_progress: ProgressCallback | None = None,
         guarantee_complete: bool = True,
@@ -94,7 +91,7 @@ class TokenMixin:
         )
 
     async def get_top_token_holders(
-        self: _TokenClientProtocol,
+        self: ClientHost,
         contract_address: str,
         limit: int = 100,
     ) -> JSONList:
@@ -113,7 +110,7 @@ class TokenMixin:
         )
         return result if isinstance(result, list) else []
 
-    async def get_token_holder_count(self: _TokenClientProtocol, contract_address: str) -> int:
+    async def get_token_holder_count(self: ClientHost, contract_address: str) -> int:
         """Get the number of addresses holding the token.
 
         Etherscan serves a scalar string count (PRO); BlockScout V2 reads it

@@ -90,6 +90,7 @@ from .types import JSONDict
 if TYPE_CHECKING:
     from ..ports.progress import ProgressCallback
     from ..services.ens_resolver import ENSResolver
+    from .host import ClientHost
 
 T = TypeVar('T')
 
@@ -1132,6 +1133,15 @@ class ChainscanPool(
         self._active_client.scanner_version = value
 
     @property
+    def network(self) -> str:
+        """Network name of the active provider (``ClientHost`` member; see ``core/host.py``)."""
+        return self._active_client.network
+
+    @network.setter
+    def network(self, value: str) -> None:
+        self._active_client.network = value
+
+    @property
     def chain_id(self) -> int | None:
         """Chain id of the active provider."""
         return self._active_client.chain_id
@@ -1221,3 +1231,9 @@ class ChainscanPool(
 
     def __repr__(self) -> str:
         return f'ChainscanPool(providers={list(self.providers)!r})'
+
+
+if TYPE_CHECKING:  # pragma: no cover - static conformance only
+
+    def _assert_client_host(p: ChainscanPool) -> None:
+        _host: ClientHost = p
