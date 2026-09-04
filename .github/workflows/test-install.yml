@@ -19,23 +19,18 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Install build tools
+      # The base distribution is pure Python (hatchling); the Rust accelerator
+      # is the separate aiochainscan-fastabi distribution — no toolchain here.
+      - name: Build wheel and sdist
         run: |
-          python -m pip install --upgrade pip
-          pip install 'maturin>=1.8,<2.0' build wheel setuptools
-
-      - name: Build wheel
-        run: |
-          maturin build --release --out dist/
-          python -m build --sdist
+          python -m pip install --upgrade pip build
+          python -m build --wheel --outdir dist/
+          python -m build --sdist --outdir dist/
 
       - name: Test wheel installation in clean environment
         run: |
@@ -57,6 +52,9 @@ jobs:
 
           # Verify modern public API
           python -c "from aiochainscan import ChainscanClient, Method, SmartContract, DecodedEvent, DecodedTransaction; print('✓ Modern public API imported')"
+
+          # Verify the base install decodes without the Rust accelerator
+          python -c "import aiochainscan.decode as d; assert not d.FASTABI_AVAILABLE; from aiochainscan import abi_pure; print('✓ Pure-Python decode floor importable')"
 
           # Verify CLI is available
           which aiochainscan
@@ -81,22 +79,25 @@ jobs:
               has_pyproject = any('pyproject.toml' in n for n in names)
               has_cargo = any('Cargo.toml' in n for n in names)
               has_rust = any('.rs' in n for n in names)
+              has_license = any(n.endswith('/LICENSE') for n in names)
               print(f'  pyproject.toml present: {has_pyproject}')
-              print(f'  Cargo.toml present: {has_cargo}')
+              print(f'  fastabi Cargo.toml present: {has_cargo}')
               print(f'  Rust sources present: {has_rust}')
-              if not (has_pyproject and has_cargo and has_rust):
+              print(f'  LICENSE present: {has_license}')
+              if not (has_pyproject and has_cargo and has_rust and has_license):
                   print('✗ Source distribution is incomplete!')
                   sys.exit(1)
               print('✓ Source distribution structure is valid')
           "
 
-          # Install the actual generated archive into a clean environment
+          # Install the actual generated archive into a clean environment.
+          # The base distribution builds with hatchling — pure Python, no Rust.
           python -m venv /tmp/test-sdist
           source /tmp/test-sdist/bin/activate
           python -m pip install --upgrade pip
           python -m pip install "$sdist"
           python -c "import aiochainscan; print('✓ Sdist install works')"
-          python -c "from aiochainscan.aiochainscan_fastabi import decode_one; import json; result = json.loads(decode_one(b'', '[]')); assert result == {'function_name': '', 'decoded_data': {}}; print('✓ Native fastabi smoke test passed')"
+          python -c "import aiochainscan.decode as d; assert not d.FASTABI_AVAILABLE; print('✓ Sdist is accelerator-free by design')"
           deactivate
 
       - name: Test editable install
@@ -104,9 +105,6 @@ jobs:
           # Test development install
           python -m venv /tmp/test-editable
           source /tmp/test-editable/bin/activate
-
-          # Install maturin first (for Rust extension build)
-          pip install 'maturin>=1.8,<2.0'
 
           pip install -e .
 
@@ -123,9 +121,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -133,14 +128,10 @@ jobs:
 
       - name: Test direct git install
         run: |
-          # Build wheel directly with maturin (avoids PEP 517 isolation ZIP64 issue)
-          python -m pip install --upgrade pip 'maturin>=1.8,<2.0'
-          maturin build --release --out /tmp/git-wheels/
+          python -m pip install --upgrade pip
 
-          # Simulate user installing the built wheel
-          python -m venv /tmp/test-git
-          source /tmp/test-git/bin/activate
-          pip install /tmp/git-wheels/*.whl
+          # What a user without a PyPI release handy actually runs
+          pip install "aiochainscan @ git+https://github.com/VaitaR/aiochainscan.git"
 
           # Verify installation
           python -c "import aiochainscan; print('✓ Git install successful')"
@@ -148,8 +139,6 @@ jobs:
 
           # List installed files to verify Python modules are present
           pip show -f aiochainscan | grep -E '(aiochainscan/.*\.py|Location:)' | head -20
-
-          deactivate
 
   test-dependencies:
     name: Test Dependencies (Python 3.12)
@@ -159,9 +148,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -169,9 +155,8 @@ jobs:
 
       - name: Build and install
         run: |
-          python -m pip install --upgrade pip 'maturin>=1.8,<2.0'
-          # Use maturin directly to avoid pip PEP 517 isolation which triggers ZIP64 issue
-          maturin build --release --out dist/
+          python -m pip install --upgrade pip build
+          python -m build --wheel --outdir dist/
           pip install dist/*.whl
 
       - name: Check dependencies are installed
@@ -220,9 +205,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -231,8 +213,8 @@ jobs:
       - name: Build and install optional extras
         run: |
           set -euo pipefail
-          python -m pip install --upgrade pip 'maturin>=1.8,<2.0'
-          maturin build --release --out dist/
+          python -m pip install --upgrade pip build
+          python -m build --wheel --outdir dist/
           wheel_path=$(find dist -maxdepth 1 -type f -name '*.whl' -print -quit)
           test -n "$wheel_path"
           python -m pip install "${wheel_path}[fallback,data,mcp]"
@@ -240,7 +222,9 @@ jobs:
       - name: Check optional packages
         run: |
           set -euo pipefail
-          python -c "import eth_abi; print('✓ fallback: eth_abi')"
+          # [fallback] = native Keccak-256 (eth-hash + eth-utils); ABI decoding
+          # needs no extra — aiochainscan/abi_pure.py is the always-present floor.
           python -c "import eth_utils; print('✓ fallback: eth_utils')"
+          python -c "import eth_hash; print('✓ fallback: eth_hash')"
           python -c "import polars; print('✓ data: polars')"
           python -c "import mcp; print('✓ mcp: mcp')"
