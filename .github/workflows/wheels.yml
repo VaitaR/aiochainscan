@@ -133,12 +133,16 @@ jobs:
     # previous run's artifacts — the completion mode used to finish v1.0.0
     # after a partial upload (PyPI filenames are immutable, so only the files
     # still missing are uploaded).
-    # NOTE: reads the raw event payload (github.event.inputs), not the `inputs`
-    # context — the latter is not populated in job-level `if` for dispatches.
+    # NOTE: a result function (always/success) must appear in this condition —
+    # on a dispatch the build jobs are skipped, and a job whose `needs` are
+    # skipped is itself skipped implicitly unless its condition references
+    # job results. Releases additionally require every build to have passed.
     if: >-
-      github.event_name == 'release' ||
-      github.event.inputs.publish == 'true' ||
-      inputs.publish == true
+      always() &&
+      (github.event_name == 'release' ||
+       github.event.inputs.publish == 'true' ||
+       inputs.publish == true) &&
+      (github.event_name == 'workflow_dispatch' || success())
     permissions:
       id-token: write  # For trusted publishing
       actions: read    # Download artifacts from another run in completion mode
