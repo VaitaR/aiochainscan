@@ -61,7 +61,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Build wheels
-        uses: pypa/cibuildwheel@v3
+        uses: pypa/cibuildwheel@v4.2
         with:
           package-dir: aiochainscan/fastabi
         env:
