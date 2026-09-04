@@ -4,11 +4,24 @@ on:
   release:
     types: [published]
   workflow_dispatch:  # Allow manual trigger
+    inputs:
+      publish:
+        description: 'Publish to PyPI via trusted publishing'
+        type: boolean
+        default: false
+      artifact_run_id:
+        description: 'Publish distributions built by this run ID (completion mode; empty = this run)'
+        type: string
+        default: ''
+
+permissions:
+  contents: read
 
 jobs:
   # aiochainscan (base): pure Python, universal wheel + sdist, no Rust toolchain needed.
   build_pure_python:
     name: Build pure-Python aiochainscan (wheel + sdist)
+    if: github.event_name == 'release'  # dispatch runs publish existing artifacts instead
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -43,6 +56,7 @@ jobs:
   # maturin from aiochainscan/fastabi/ — a separate distribution, top-level module name.
   build_fastabi_wheels:
     name: Build fastabi wheels on ${{ matrix.os }}
+    if: github.event_name == 'release'  # dispatch runs publish existing artifacts instead
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -97,6 +111,7 @@ jobs:
 
   build_fastabi_sdist:
     name: Build fastabi source distribution
+    if: github.event_name == 'release'  # dispatch runs publish existing artifacts instead
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -114,19 +129,76 @@ jobs:
     name: Publish to PyPI
     needs: [build_pure_python, build_fastabi_wheels, build_fastabi_sdist]
     runs-on: ubuntu-latest
-    if: github.event_name == 'release'
-
+    # Releases publish normally. A dispatch with publish=true re-publishes a
+    # previous run's artifacts — the completion mode used to finish v1.0.0
+    # after a partial upload (PyPI filenames are immutable, so only the files
+    # still missing are uploaded).
+    if: >-
+      github.event_name == 'release' ||
+      (github.event_name == 'workflow_dispatch' && inputs.publish)
     permissions:
       id-token: write  # For trusted publishing
+      actions: read    # Download artifacts from another run in completion mode
+      contents: read
 
     steps:
-      - name: Download all artifacts
+      - name: Download distributions
         uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
+          # Completion mode reads the named run's artifacts (e.g. the original
+          # v1.0.0 tag build); releases and no-op dispatches read this run's.
+          run-id: ${{ github.event_name == 'workflow_dispatch' && inputs.artifact_run_id || github.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Publish to PyPI
+      # Two independent publish steps (base / fastabi): twine aborts the whole
+      # batch on the first error, so one project's failure must not block the
+      # other. Files already on PyPI are pruned before uploading — filenames
+      # there are immutable, so re-publishing after a partial failure uploads
+      # only what is missing and makes this job safely re-runnable.
+      - name: Stage per project and drop files already on PyPI
+        id: files
+        run: |
+          set -euo pipefail
+          mkdir -p dist staging/base staging/fastabi
+          find dist -maxdepth 1 -type f -name 'aiochainscan-*' -exec mv {} staging/base/ \;
+          find dist -maxdepth 1 -type f -name 'aiochainscan_fastabi-*' -exec mv {} staging/fastabi/ \;
+
+          leftovers=$(ls -1 dist | wc -l)
+          if [ "$leftovers" -ne 0 ]; then
+            echo "::error::unexpected files left in dist/: $(ls -1 dist)"
+            exit 1
+          fi
+
+          prune() {
+            project="$1"; dir="$2"
+            existing=$(curl -fsS "https://pypi.org/pypi/$project/json" \
+              | jq -r '[.releases[][].filename] | join("\n")' || true)
+            if [ -z "$existing" ]; then
+              echo "$project: not on PyPI yet — keeping all files"
+              return
+            fi
+            for f in $existing; do
+              if [ -f "$dir/$f" ]; then rm -v "$dir/$f"; fi
+            done
+          }
+          prune aiochainscan staging/base
+          prune aiochainscan-fastabi staging/fastabi
+
+          echo "base_count=$(ls -1 staging/base | wc -l | tr -d ' ')" >> "$GITHUB_OUTPUT"
+          echo "fastabi_count=$(ls -1 staging/fastabi | wc -l | tr -d ' ')" >> "$GITHUB_OUTPUT"
+          echo "--- staging/base ---";    ls -l staging/base || true
+          echo "--- staging/fastabi ---"; ls -l staging/fastabi || true
+
+      - name: Publish aiochainscan
+        if: steps.files.outputs.base_count != '0'
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          packages-dir: dist/
+          packages-dir: staging/base
+
+      - name: Publish aiochainscan-fastabi
+        if: steps.files.outputs.fastabi_count != '0'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: staging/fastabi
