@@ -23,66 +23,53 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from aiochainscan.chain_registry import ScannerTarget
 from aiochainscan.core.client import ChainscanClient
 from aiochainscan.core.url_builder import UrlBuilder
 from aiochainscan.exceptions import ChainscanNetworkError
 from aiochainscan.network import Network
 from aiochainscan.scanners.blockscout_v2 import BlockScoutV2Scanner
 from aiochainscan.scanners.etherscan_v2 import EtherscanV2
-
-
-class FakeNetwork:
-    """Minimal Network stand-in: records requests, replays canned responses."""
-
-    def __init__(self, responses: list[Any]) -> None:
-        self.responses = list(responses)
-        self.calls: list[dict[str, Any]] = []
-
-    async def request(self, **kwargs: Any) -> Any:
-        self.calls.append(kwargs)
-        response = self.responses.pop(0)
-        if isinstance(response, Exception):
-            raise response
-        return response
-
-    async def get(self, **kwargs: Any) -> Any:
-        return await self.request(method='GET', **kwargs)
-
-    async def post(self, **kwargs: Any) -> Any:
-        return await self.request(method='POST', **kwargs)
+from tests.conftest import FakeNetwork
 
 
 def _make_blockscout_client(responses: list[Any]) -> tuple[ChainscanClient, FakeNetwork]:
-    """Client shell with a real BlockScout V2 scanner over a fake Network."""
+    """Client wired via the constructor seam: a real BlockScout V2 scanner over a fake Network."""
     net = FakeNetwork(responses)
     scanner = BlockScoutV2Scanner(
         api_key='', network='ethereum', url_builder=MagicMock(), network_client=net
     )
-    client = ChainscanClient.__new__(ChainscanClient)
-    client.scanner_name = 'blockscout'
-    client.scanner_version = 'v2'
-    client.api_kind = 'blockscout_eth'
-    client.network = 'ethereum'
-    client.api_key = ''
-    client._network = net
-    client._scanner = scanner
+    target = ScannerTarget(
+        scanner_name='blockscout',
+        scanner_version='v2',
+        network='ethereum',
+        api_kind='blockscout_eth',
+        api_key='',
+        chain_id=None,
+        url_network='ethereum',
+        scanner_network='ethereum',
+    )
+    client = ChainscanClient(target, scanner=scanner, network=net)
     return client, net
 
 
 def _make_etherscan_client(responses: list[Any]) -> tuple[ChainscanClient, FakeNetwork]:
-    """Client shell with a real Etherscan V2 scanner over a fake Network."""
+    """Client wired via the constructor seam: a real Etherscan V2 scanner over a fake Network."""
     net = FakeNetwork(responses)
     scanner = EtherscanV2(
         api_key='test_key', network='main', url_builder=MagicMock(), network_client=net
     )
-    client = ChainscanClient.__new__(ChainscanClient)
-    client.scanner_name = 'etherscan'
-    client.scanner_version = 'v2'
-    client.api_kind = 'eth'
-    client.network = 'ethereum'
-    client.api_key = 'test_key'
-    client._network = net
-    client._scanner = scanner
+    target = ScannerTarget(
+        scanner_name='etherscan',
+        scanner_version='v2',
+        network='ethereum',
+        api_kind='eth',
+        api_key='test_key',
+        chain_id=None,
+        url_network='main',
+        scanner_network='main',
+    )
+    client = ChainscanClient(target, scanner=scanner, network=net)
     return client, net
 
 
@@ -224,14 +211,17 @@ class TestRetryDuringMidIteration:
         scanner = BlockScoutV2Scanner(
             api_key='', network='ethereum', url_builder=MagicMock(), network_client=net
         )
-        client = ChainscanClient.__new__(ChainscanClient)
-        client.scanner_name = 'blockscout'
-        client.scanner_version = 'v2'
-        client.api_kind = 'blockscout_eth'
-        client.network = 'ethereum'
-        client.api_key = ''
-        client._network = net
-        client._scanner = scanner
+        target = ScannerTarget(
+            scanner_name='blockscout',
+            scanner_version='v2',
+            network='ethereum',
+            api_kind='blockscout_eth',
+            api_key='',
+            chain_id=None,
+            url_network='ethereum',
+            scanner_network='ethereum',
+        )
+        client = ChainscanClient(target, scanner=scanner, network=net)
 
         call_count = [0]
 

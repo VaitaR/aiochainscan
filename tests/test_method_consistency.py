@@ -40,6 +40,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from aiochainscan.chain_registry import ScannerTarget
 from aiochainscan.constants import MAX_BLOCK_NUMBER
 from aiochainscan.core.client import ChainscanClient
 from aiochainscan.core.mixins import (
@@ -647,15 +648,23 @@ def _streaming_stub(family_label: str) -> _RecordingPage:
 
 
 def _streaming_client(stub: _RecordingPage) -> ChainscanClient:
-    """A ChainscanClient shell around a recording scanner stub."""
-    client = ChainscanClient.__new__(ChainscanClient)
-    client.scanner_name = stub._scanner.name
-    client.scanner_version = stub._scanner.version
-    client.api_kind = 'test'
-    client.network = 'main'
-    client.api_key = ''
-    client._scanner = stub._scanner
-    return client
+    """A ChainscanClient wired to a recording scanner stub via the constructor seam.
+
+    No test using this helper touches ``client._network`` (the recording
+    stub's ``fetch_page`` is monkey-patched and never calls it), so the
+    client's own network is left to build normally.
+    """
+    target = ScannerTarget(
+        scanner_name=stub._scanner.name,
+        scanner_version=stub._scanner.version,
+        network='main',
+        api_kind='eth',
+        api_key='',
+        chain_id=None,
+        url_network='main',
+        scanner_network='main',
+    )
+    return ChainscanClient(target, scanner=stub._scanner)
 
 
 def _is_unbounded_range(params: dict[str, Any]) -> bool:
@@ -800,13 +809,17 @@ async def test_unbounded_stream_on_rangeless_scanner_still_works() -> None:
         url_builder=UrlBuilder('', 'eth', 'ethereum'),
         network_client=net,  # type: ignore[arg-type]
     )
-    client = ChainscanClient.__new__(ChainscanClient)
-    client.scanner_name = scanner.name
-    client.scanner_version = scanner.version
-    client.api_kind = 'test'
-    client.network = 'ethereum'
-    client.api_key = ''
-    client._scanner = scanner
+    target = ScannerTarget(
+        scanner_name=scanner.name,
+        scanner_version=scanner.version,
+        network='ethereum',
+        api_kind='eth',
+        api_key='',
+        chain_id=None,
+        url_network='ethereum',
+        scanner_network='ethereum',
+    )
+    client = ChainscanClient(target, scanner=scanner)
 
     batches = [batch async for batch in client.iter_transactions_streaming('0xabc')]
 
@@ -852,15 +865,18 @@ class _DirectNet:
 
 
 def _direct_client_shell(scanner: Any) -> ChainscanClient:
-    """A ChainscanClient shell around a real scanner + fake Network."""
-    client = ChainscanClient.__new__(ChainscanClient)
-    client.scanner_name = scanner.name
-    client.scanner_version = scanner.version
-    client.api_kind = 'test'
-    client.network = 'main'
-    client.api_key = ''
-    client._scanner = scanner
-    return client
+    """A ChainscanClient wired to a real scanner (+ its own fake Network) via the seam."""
+    target = ScannerTarget(
+        scanner_name=scanner.name,
+        scanner_version=scanner.version,
+        network='main',
+        api_kind='eth',
+        api_key='',
+        chain_id=None,
+        url_network='main',
+        scanner_network='main',
+    )
+    return ChainscanClient(target, scanner=scanner)
 
 
 _ETHERSCAN_ENVELOPE: dict[str, Any] = {'status': '1', 'message': 'OK', 'result': []}

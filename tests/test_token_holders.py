@@ -23,6 +23,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from aiochainscan.chain_registry import ScannerTarget
 from aiochainscan.core.client import ChainscanClient
 from aiochainscan.domain.method import Method
 from aiochainscan.scanners._etherscan_like import EtherscanLikeScanner
@@ -38,6 +39,7 @@ from aiochainscan.scanners.etherscan_v2 import EtherscanV2
 from aiochainscan.scanners.etherscan_v2 import _parse_token_holders as _parse_eth_holders
 from aiochainscan.scanners.nodereal import NodeRealScanner
 from aiochainscan.scanners.nodereal import _parse_token_holders as _parse_nr_holders
+from tests.conftest import FakeNetwork
 
 TOKEN_CONTRACT = '0xDaC17f958D2ee523A2206208994597c13d831EC7'  # USDT (true EIP-55)
 HOLDER_ONE = '0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed'
@@ -46,27 +48,6 @@ HOLDER_TWO = '0xfB6916095ca1df60bB79Ce92cE3Ea74c37c5d359'
 HOLDER_TWO_LOWER = HOLDER_TWO.lower()
 
 HOLDER_METHODS = (Method.TOKEN_HOLDERS, Method.TOKEN_TOP_HOLDERS, Method.TOKEN_HOLDER_COUNT)
-
-
-class FakeNetwork:
-    """Minimal Network stand-in: records requests, replays canned responses."""
-
-    def __init__(self, responses: list[Any]) -> None:
-        self.responses = list(responses)
-        self.calls: list[dict[str, Any]] = []
-
-    async def request(self, **kwargs: Any) -> Any:
-        self.calls.append(kwargs)
-        response = self.responses.pop(0)
-        if isinstance(response, Exception):
-            raise response
-        return response
-
-    async def get(self, **kwargs: Any) -> Any:
-        return await self.request(method='GET', **kwargs)
-
-    async def post(self, **kwargs: Any) -> Any:
-        return await self.request(method='POST', **kwargs)
 
 
 def _etherscan(network: FakeNetwork) -> EtherscanV2:
@@ -97,15 +78,23 @@ def _nodereal(network: FakeNetwork) -> NodeRealScanner:
 
 
 def _bare_client(scanner_name: str, scanner_version: str, scanner: Any) -> ChainscanClient:
-    """Build a ChainscanClient shell around an injected scanner (no real wiring)."""
-    client = ChainscanClient.__new__(ChainscanClient)
-    client.scanner_name = scanner_name
-    client.scanner_version = scanner_version
-    client.api_kind = 'test'
-    client.network = 'main'
-    client.api_key = ''
-    client._scanner = scanner
-    return client
+    """Build a ChainscanClient wired to an injected scanner via the constructor seam.
+
+    No test here touches ``client._network`` directly — the injected
+    ``scanner`` already carries its own ``FakeNetwork`` — so the client's own
+    ``_network`` is an unused placeholder.
+    """
+    target = ScannerTarget(
+        scanner_name=scanner_name,
+        scanner_version=scanner_version,
+        network='main',
+        api_kind='eth',
+        api_key='',
+        chain_id=None,
+        url_network='main',
+        scanner_network='main',
+    )
+    return ChainscanClient(target, scanner=scanner, network=FakeNetwork([]))
 
 
 def _etherscan_holder_page(entries: list[dict[str, str]]) -> list[dict[str, str]]:
@@ -744,8 +733,8 @@ class TestBlockScoutV1HolderMethodCoverage:
 
 
 def _mocked_client() -> tuple[ChainscanClient, AsyncMock]:
-    with MagicMock():
-        client = ChainscanClient.__new__(ChainscanClient)
+    """A real client with ``.call`` replaced — convenience methods delegate to it."""
+    client = _bare_client('etherscan', 'v2', MagicMock())
     mock_call = AsyncMock()
     client.call = mock_call  # type: ignore[method-assign]
     return client, mock_call
