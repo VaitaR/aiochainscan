@@ -10,20 +10,22 @@ without coupling request code to one provider. It includes pagination helpers,
 streaming iteration, rate limiting, retries, optional Polars exports, ENS
 resolution, and ABI decoding.
 
-> Status: beta. The public API is `ChainscanClient`; provider coverage differs
-> by scanner and endpoint.
+> Status: 1.0.0 — stable public API. The public surface is `ChainscanClient`;
+> provider coverage differs by scanner and endpoint.
 
 ## Installation
 
-Python 3.12 or newer is required. Until the 0.6 release is published, install
-the current API from GitHub:
+Python 3.12 or newer is required:
 
 ```bash
-pip install "aiochainscan @ git+https://github.com/VaitaR/aiochainscan.git"
+pip install aiochainscan
 ```
 
-The package currently published on PyPI is from the older 0.2 series and does
-not match this documentation.
+The optional Rust accelerator installs as a separate distribution:
+
+```bash
+pip install "aiochainscan[fastabi]"
+```
 
 Optional extras are installed only when needed:
 
@@ -32,13 +34,17 @@ Optional extras are installed only when needed:
 | `data` | Polars DataFrame exports |
 | `mcp` | MCP server integration |
 | `http2` | HTTP/2 support; disabled by default |
-| `fallback` | Pure-Python ABI and Keccak fallback |
+| `fallback` | Pure-Python Keccak fallback |
 
 For example:
 
 ```bash
-pip install "aiochainscan[data] @ git+https://github.com/VaitaR/aiochainscan.git"
+pip install "aiochainscan[data]"
 ```
+
+The base install is dependency-light (httpx, orjson, tenacity, aiolimiter) and
+needs no extras to decode ABI calldata, checksum addresses, or run the MCP
+server's default keyless scanner — see the extras table for the accelerators.
 
 ## Quick start
 
@@ -292,7 +298,7 @@ The `mcp` extra exposes the client to AI agents (Claude Desktop, Cursor, …)
 over stdio with 12 read-only tools and an agent-friendly response contract:
 
 ```bash
-pip install "aiochainscan[mcp] @ git+https://github.com/VaitaR/aiochainscan.git"
+pip install "aiochainscan[mcp]"
 python -m aiochainscan.mcp_server
 ```
 
@@ -378,4 +384,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the contribution workflow.
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE).

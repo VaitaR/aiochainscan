@@ -1,10 +1,10 @@
 # aiochainscan Roadmap
 
-Forward-looking plan. Released work (0.3.0 → 0.6.0) is history — see git tags and
+Forward-looking plan. Released work (0.3.0 → 1.0.0) is history — see git tags and
 the release notes; the current feature set is documented in `AGENTS.md`. Strategy
 and the v1 track plan live in [V1_PLAN.md](V1_PLAN.md).
 
-## Current state (0.6.0)
+## Current state (1.0.0)
 
 Pure-Python base install (`aiochainscan`) + separate Rust accelerator
 (`aiochainscan-fastabi`); full Etherscan-v2 surface (33 `Method` values),

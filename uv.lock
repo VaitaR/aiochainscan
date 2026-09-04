@@ -10,7 +10,7 @@ members = [
 
 [[package]]
 name = "aiochainscan"
-version = "0.6.0"
+version = "1.0.0"
 source = { editable = "." }
 dependencies = [
     { name = "aiolimiter" },
@@ -80,7 +80,7 @@ provides-extras = ["dev", "fallback", "http2", "mcp", "data", "fastabi"]
 
 [[package]]
 name = "aiochainscan-fastabi"
-version = "0.2.0"
+version = "1.0.0"
 source = { editable = "aiochainscan/fastabi" }
 
 [[package]]

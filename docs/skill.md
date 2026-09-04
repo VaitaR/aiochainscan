@@ -2,7 +2,7 @@
 
 > **For AI Agents**: how to use the `aiochainscan` library to query blockchain
 > data (balances, transactions, tokens, logs, contracts, gas) over a unified API.
-> Version facts below reflect **0.6.0**; method↔scanner declarations in
+> Version facts below reflect **1.0.0**; method↔scanner declarations in
 > `aiochainscan/scanners/` are authoritative.
 
 ## Ground rules

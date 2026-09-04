@@ -1,7 +1,7 @@
 # aiochainscan - Agent Context Guide
 
 > **Purpose**: Quick context for LLM agents working on this codebase.
-> **Version**: 0.6.0 (August 2026)
+> **Version**: 1.0.0 (September 2026)
 
 ## What is this project?
 
@@ -314,15 +314,17 @@ Branch types: `feat | fix | chore | docs | arch | refactor` (2nd arg, default `f
 | `probe_provider_caps.py` | Re-measures declared pagination caps live (`make probe-caps`); exit 1 on drift or on a provider left unconfirmed for want of a key |
 | `ruff_format_hook.py` | PostToolUse hook — auto-formats edited `*.py` |
 
-### ⚠️ GitHub Actions temporarily DISABLED (Actions-minutes budget)
+### GitHub Actions
 
-CI/CD, Test Installation and Build and Publish Wheels are `disabled_manually`. **Do not wait on CI — it will never run.** Use the local mirror instead:
+CI/CD, Test Installation and Build and Publish Wheels are enabled (re-enabled
+2026-09-04 for the 1.0.0 release). The local mirror stays the fast gate:
 
 ```bash
 make ci-local        # lint + format-check + import-lint + mypy --strict + pytest
 ```
 
-Re-enable when the budget allows: `gh workflow enable ci.yml test-install.yml wheels.yml --repo VaitaR/aiochainscan`.
+`scripts/agent/ci_watch.sh` polls a pushed commit's runs with a bounded wait;
+its exit status is the verdict.
 
 ---
 

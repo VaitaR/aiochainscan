@@ -1,6 +1,6 @@
 [project]
 name = "aiochainscan"
-version = "0.6.0"
+version = "1.0.0"
 description = "Async Python client for Etherscan-compatible and Blockscout APIs"
 authors = [
     { name = "VaitaR", email = "andrey.shivalin@gmail.com" }
@@ -95,6 +95,7 @@ include = [
     "aiochainscan/fastabi",
     "tests",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE",
 ]
 exclude = [

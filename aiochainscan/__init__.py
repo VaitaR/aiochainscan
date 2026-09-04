@@ -32,7 +32,7 @@ from aiochainscan.exceptions import (
 from aiochainscan.scanners import list_scanners, register_scanner
 from aiochainscan.services.chain_info import ChainInfo
 
-__version__ = '0.6.0'
+__version__ = '1.0.0'
 
 __all__ = [
     'AbiTypeNotSupportedError',
