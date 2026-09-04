@@ -24,24 +24,7 @@ from aiochainscan.core.url_builder import UrlBuilder
 from aiochainscan.domain.method import Method
 from aiochainscan.exceptions import InputLimitExceededError
 from aiochainscan.scanners.etherscan_v2 import EtherscanV2
-
-
-class FakeNetwork:
-    """Records every request; replays a canned JSON payload."""
-
-    def __init__(self, response: Any) -> None:
-        self.response = response
-        self.calls: list[dict[str, Any]] = []
-
-    async def request(self, **kwargs: Any) -> Any:
-        self.calls.append(kwargs)
-        return self.response
-
-    async def get(self, **kwargs: Any) -> Any:
-        return await self.request(method='GET', **kwargs)
-
-    async def post(self, **kwargs: Any) -> Any:
-        return await self.request(method='POST', **kwargs)
+from tests.conftest import FakeNetwork
 
 
 def _etherscan(network: FakeNetwork) -> EtherscanV2:
@@ -70,7 +53,7 @@ def _wire_params(fake: FakeNetwork) -> dict[str, Any]:
 
 class TestContractVerifyWireSpellings:
     async def test_constructor_arguments_uses_documented_spelling(self) -> None:
-        fake = FakeNetwork({'result': 'guid-123'})
+        fake = FakeNetwork(response={'result': 'guid-123'})
         await _etherscan(fake).call(
             Method.CONTRACT_VERIFY,
             contract_address='0x1234567890123456789012345678901234567890',
@@ -89,7 +72,7 @@ class TestContractVerifyWireSpellings:
         ), 'legacy misspelling must not be sent once the documented spelling is used'
 
     async def test_evm_version_uses_documented_spelling(self) -> None:
-        fake = FakeNetwork({'result': 'guid-123'})
+        fake = FakeNetwork(response={'result': 'guid-123'})
         await _etherscan(fake).call(
             Method.CONTRACT_VERIFY,
             contract_address='0x1234567890123456789012345678901234567890',
@@ -108,7 +91,7 @@ class TestContractVerifyWireSpellings:
         ), 'lowercase evmversion must not be sent once evmVersion is used'
 
     async def test_license_type_threads_to_wire(self) -> None:
-        fake = FakeNetwork({'result': 'guid-123'})
+        fake = FakeNetwork(response={'result': 'guid-123'})
         await _etherscan(fake).call(
             Method.CONTRACT_VERIFY,
             contract_address='0x1234567890123456789012345678901234567890',
@@ -126,7 +109,7 @@ class TestContractVerifyWireSpellings:
     async def test_public_param_names_unchanged(self) -> None:
         """The public (client-facing) param names must stay stable — only the
         wire spellings changed."""
-        fake = FakeNetwork({'result': 'guid-123'})
+        fake = FakeNetwork(response={'result': 'guid-123'})
         await _etherscan(fake).call(
             Method.CONTRACT_VERIFY,
             contract_address='0x1234567890123456789012345678901234567890',
@@ -154,7 +137,7 @@ class TestContractVerifyWireSpellings:
 class TestContractCreationAddressLimit:
     async def test_five_addresses_pass_through_unchanged(self) -> None:
         addresses = ','.join(f'0x{i:040x}' for i in range(1, 6))
-        fake = FakeNetwork({'result': []})
+        fake = FakeNetwork(response={'result': []})
         result = await _etherscan(fake).call(
             Method.CONTRACT_CREATION, contract_addresses=addresses
         )
@@ -164,7 +147,7 @@ class TestContractCreationAddressLimit:
 
     async def test_six_addresses_raises_before_any_request(self) -> None:
         addresses = ','.join(f'0x{i:040x}' for i in range(1, 7))
-        fake = FakeNetwork({'result': []})
+        fake = FakeNetwork(response={'result': []})
         with pytest.raises(InputLimitExceededError) as exc_info:
             await _etherscan(fake).call(Method.CONTRACT_CREATION, contract_addresses=addresses)
         assert exc_info.value.limit == 5
@@ -175,14 +158,14 @@ class TestContractCreationAddressLimit:
 
     async def test_list_input_is_also_counted(self) -> None:
         addresses = [f'0x{i:040x}' for i in range(1, 7)]
-        fake = FakeNetwork({'result': []})
+        fake = FakeNetwork(response={'result': []})
         with pytest.raises(InputLimitExceededError):
             await _etherscan(fake).call(Method.CONTRACT_CREATION, contract_addresses=addresses)
 
 
 class TestTopHoldersLimit:
     async def test_offset_at_1000_passes_through_unchanged(self) -> None:
-        fake = FakeNetwork({'result': []})
+        fake = FakeNetwork(response={'result': []})
         result = await _etherscan(fake).call(
             Method.TOKEN_TOP_HOLDERS,
             contract_address='0x1234567890123456789012345678901234567890',
@@ -193,7 +176,7 @@ class TestTopHoldersLimit:
         assert params['offset'] == 1000
 
     async def test_offset_at_1001_raises_before_any_request(self) -> None:
-        fake = FakeNetwork({'result': []})
+        fake = FakeNetwork(response={'result': []})
         with pytest.raises(InputLimitExceededError) as exc_info:
             await _etherscan(fake).call(
                 Method.TOKEN_TOP_HOLDERS,
