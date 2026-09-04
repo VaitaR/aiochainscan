@@ -3,8 +3,9 @@ kind: deepening-brief
 id: C13
 slug: one-client-host-contract
 source: ../2026-09-05-review.md
-status: accepted
+status: done
 base: c9943a2
+merged: 3bcd1b0
 ---
 
 # One declared host contract for the client mixins
