@@ -9,11 +9,13 @@ import aiochainscan.chain_registry as chain_registry
 from aiochainscan.chain_registry import (
     BLOCKSCOUT_HOSTS,
     ScannerTarget,
+    resolve_chain_id,
     resolve_scanner_target,
 )
 from aiochainscan.config import ConfigurationManager
 from aiochainscan.scanners.blockscout_v1 import BlockScoutV1
 from aiochainscan.scanners.blockscout_v2 import BlockScoutV2Scanner
+from aiochainscan.scanners.etherscan_v2 import EtherscanV2
 
 KEY_ENV_VARS = (
     'ETHERSCAN_KEY',
@@ -109,11 +111,16 @@ class TestAliasResolution:
         assert target.network == 'polygon'
         assert target.chain_id == 137
 
-    def test_blockscout_bnb_alias_quirk(self):
-        # Preserved behavior: 'bnb' resolves to chain 56 but BlockScout's config
-        # validation only knows the 'bsc' network name, so it raises.
-        with pytest.raises(ValueError, match='Network "bnb" not supported by BlockScout BSC'):
-            resolve_scanner_target('blockscout', 'bnb')
+    def test_blockscout_bnb_alias_constructs_like_bsc(self):
+        # Formerly a pinned quirk: 'bnb' resolved to chain 56 but BlockScout's
+        # config validation only knew the 'bsc' network name, so it raised.
+        # Spelling canonicalization (H2 fix) made construction a function of
+        # the chain, not of the caller's spelling — the alias now constructs
+        # exactly like 'bsc' does.
+        target = resolve_scanner_target('blockscout', 'bnb')
+        assert target.chain_id == 56
+        assert target.api_kind == 'blockscout_bsc'
+        assert target.scanner_network == 'bsc'
 
     def test_etherscan_preserves_network_name(self):
         target = resolve_scanner_target('etherscan', 'ethereum', api_key='k')
@@ -181,6 +188,93 @@ class TestPhantomScannerRejection:
     def test_unknown_scanner_raises(self, phantom: str):
         with pytest.raises(ValueError, match=f'Unknown scanner "{phantom}"'):
             resolve_scanner_target(phantom, 'ethereum')
+
+
+class TestEtherscanAliasConstruction:
+    """H2 regression: every alias the etherscan record declares must not merely
+    resolve but CONSTRUCT. The six short aliases ('eth', 'bnb', 'binance',
+    'matic', 'arb', 'op') used to die in ``Scanner.__init__`` — the registry
+    normalized ``url_network`` but left ``scanner_network`` as the raw spelling,
+    which the scanner's own ``supported_networks`` rejected."""
+
+    ALIASES = (
+        'ethereum',
+        'eth',
+        'base',
+        'bsc',
+        'bnb',
+        'binance',
+        'polygon',
+        'matic',
+        'arbitrum',
+        'arb',
+        'optimism',
+        'op',
+        'sonic',
+    )
+
+    @pytest.mark.parametrize('network', ALIASES)
+    async def test_every_declared_alias_constructs(self, network: str):
+        from aiochainscan import ChainscanClient
+
+        client = ChainscanClient.from_config('etherscan', network, api_key='k' * 34)
+        try:
+            assert client.chain_id == resolve_chain_id(network)
+            # The scanner-dialect name the scanner itself accepted:
+            assert client._scanner.network in EtherscanV2.supported_networks
+        finally:
+            await client.close()
+
+    @pytest.mark.parametrize('chain_id', [1, 56, 137, 42161, 10, 8453, 146])
+    async def test_int_form_constructs_for_the_same_chains(self, chain_id: int):
+        from aiochainscan import ChainscanClient
+
+        client = ChainscanClient.from_config('etherscan', chain_id, api_key='k' * 34)
+        try:
+            assert client.chain_id == chain_id
+        finally:
+            await client.close()
+
+
+class TestBlockscoutSpellingParity:
+    """Every registry spelling of a chain a BlockScout leg serves must
+    construct on that leg — construction is a function of the chain, not of
+    the alias the caller happened to use ('xdai' used to die in config-id
+    lookup while 'gnosis' constructed; 'bnb'/'binance' died in the oracle
+    while 'bsc' constructed)."""
+
+    @pytest.mark.parametrize(
+        'network',
+        [
+            'ethereum',
+            'eth',
+            'main',
+            'sepolia',
+            'gnosis',
+            'xdai',
+            'polygon',
+            'matic',
+            'optimism',
+            'op',
+            'arbitrum',
+            'arb',
+            'base',
+            'scroll',
+            'linea',
+            'bsc',
+            'bnb',
+            'binance',
+        ],
+    )
+    @pytest.mark.parametrize('scanner', ['blockscout', 'blockscout_v2'])
+    async def test_every_spelling_constructs_on_both_legs(self, scanner: str, network: str):
+        from aiochainscan import ChainscanClient
+
+        client = ChainscanClient.from_config(scanner, network)
+        try:
+            assert client.chain_id == resolve_chain_id(network)
+        finally:
+            await client.close()
 
 
 class TestNodeRealResolution:

@@ -634,7 +634,6 @@ STANDARD_CHAINS = {
     5: {
         'name': 'goerli',
         'aliases': ['goerli'],
-        'blockscout_instance': 'eth-goerli.blockscout.com',
         'moralis_hex': '0x5',
     },
     11155111: {
@@ -659,7 +658,7 @@ STANDARD_CHAINS = {
     421614: {
         'name': 'arbitrum-sepolia',
         'aliases': ['arbitrum-sepolia', 'arb-sepolia'],
-        'moralis_hex': '0xaa37a7',
+        'moralis_hex': '0x66eee',
     },
     10: {
         'name': 'optimism',
@@ -702,7 +701,6 @@ STANDARD_CHAINS = {
     250: {
         'name': 'fantom',
         'aliases': ['fantom', 'ftm'],
-        'blockscout_instance': 'ftm.blockscout.com',
         'moralis_hex': '0xfa',
     },
     4002: {
@@ -737,15 +735,13 @@ STANDARD_CHAINS = {
     81457: {
         'name': 'blast',
         'aliases': ['blast'],
-        'blockscout_instance': 'blast.blockscout.com',
         'moralis_hex': '0x13e31',
     },
     168587773: {'name': 'blast-sepolia', 'aliases': ['blast-sepolia'], 'moralis_hex': '0xa0c71fd'},
     34443: {
         'name': 'mode',
         'aliases': ['mode'],
-        'blockscout_instance': 'mode.blockscout.com',
-        'moralis_hex': '0x868c',
+        'moralis_hex': '0x868b',
     },
     1284: {'name': 'moonbeam', 'aliases': ['moonbeam', 'glmr'], 'moralis_hex': '0x504'},
     1285: {'name': 'moonriver', 'aliases': ['moonriver', 'movr'], 'moralis_hex': '0x505'},
@@ -1006,11 +1002,17 @@ def resolve_scanner_target(
     canonical_name = get_chain_name(chain_id)
     network_str = canonical_name if isinstance(network, int) else str(network)
 
-    # Normalize network aliases for configuration lookup only
+    # Normalize network aliases for configuration lookup only.
+    # The alias table is keyed by canonical chain names, so the lookup runs on
+    # the canonical name: one chain must resolve to one target however the
+    # caller spells it ('bnb', 'binance' and 'bsc' are the same chain for the
+    # same scanner — the raw-spelling lookup used to let 'bsc' construct while
+    # 'bnb' died at scanner construction). Dynamically registered scanners
+    # have no registry dialect; their spelling passes through untouched.
     config_network = network_str  # Preserve original for the client property
     aliases = SCANNER_NETWORK_ALIASES.get(scanner)
     if aliases is not None:
-        config_network = aliases.get(network_str, network_str)
+        config_network = aliases.get(canonical_name, canonical_name)
 
     # Configuration-manager scanner id (BlockScout's id depends on the
     # normalized network, so aliases must be resolved first).
@@ -1031,8 +1033,18 @@ def resolve_scanner_target(
     else:
         resolved_api_key = _lookup_api_key(scanner_id)
 
-    # UrlBuilder api_kind (BlockScout v1 uses the network-specific scanner id)
-    api_kind = scanner_id if scanner == 'blockscout' else SCANNER_API_KINDS.get(scanner, scanner)
+    # UrlBuilder api_kind (BlockScout v1 uses the network-specific scanner id;
+    # the v2 leg shares that per-network mapping so its UrlBuilder profile —
+    # and with it ``client.currency`` — reflects the served chain instead of
+    # the family's Ethereum default; requests are unaffected because V2 builds
+    # every URL from the scanner's own base URL, never from the profile).
+    if scanner == 'blockscout':
+        api_kind = scanner_id
+    elif scanner == 'blockscout_v2':
+        candidate = BLOCKSCOUT_CONFIG_IDS.get(config_network, f'blockscout_{config_network}')
+        api_kind = candidate if candidate in URL_BUILDER_CURRENCIES else 'blockscout_eth'
+    else:
+        api_kind = SCANNER_API_KINDS.get(scanner, scanner)
 
     # UrlBuilder network name, resolved exactly once on the whole
     # construction path — THIS resolver owns it (the client and the Scanner
@@ -1042,8 +1054,12 @@ def resolve_scanner_target(
 
     # Scanner-dialect network name for the Scanner instance — same ownership
     # (the client used to re-derive this from the target; the target now
-    # carries it as a field).
-    scanner_network = _scanner_network_name(actual_scanner_name, scanner_version, network_str)
+    # carries it as a field). Derived from the canonical chain name, not the
+    # caller's spelling: the dialect name is a fact about the chain, so every
+    # declared alias of a constructible chain constructs ('bnb' used to reach
+    # etherscan v2 un-normalized and fail its supported-networks check while
+    # 'bsc' constructed).
+    scanner_network = _scanner_network_name(actual_scanner_name, scanner_version, canonical_name)
 
     return ScannerTarget(
         scanner_name=actual_scanner_name,
