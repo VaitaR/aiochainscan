@@ -139,6 +139,34 @@ def test_normalize_token_transfer_etherscan_and_blockscout_shapes():
     assert xfer2.value_raw == 5878047570
 
 
+def test_transaction_pending_status_is_not_an_execution_error():
+    """M9: 'pending' is a lifecycle state, never an execution failure.
+
+    The normalized layer never invents: only known failure statuses may set
+    ``is_error=True``; anything unrecognized (pending, future values, numeric
+    receipt codes) stays ``None``.
+    """
+    tx = normalize_transaction({'hash': '0xp', 'status': 'pending'})
+    assert tx.is_error is None
+    itx = normalize_internal_transaction({'transaction_hash': '0xp', 'status': 'pending'})
+    assert itx.is_error is None
+
+
+def test_transaction_known_failure_statuses_are_errors():
+    for status in ('error', 'failed', 'reverted', 'Error', 'FAILED'):
+        tx = normalize_transaction({'hash': '0xe', 'status': status})
+        assert tx.is_error is True, status
+
+
+def test_transaction_status_ok_false_anything_else_none():
+    assert normalize_transaction({'hash': '0xa', 'status': 'ok'}).is_error is False
+    assert normalize_transaction({'hash': '0xa', 'status': 'OK'}).is_error is False
+    assert normalize_transaction({'hash': '0xb', 'status': 'some-future-value'}).is_error is None
+    assert normalize_transaction({'hash': '0xb', 'status': '0'}).is_error is None
+    assert normalize_transaction({'hash': '0xb', 'status': '0x0'}).is_error is None
+    assert normalize_transaction({'hash': '0xb'}).is_error is None
+
+
 def test_normalize_internal_transaction():
     item = {
         'hash': '0xI',

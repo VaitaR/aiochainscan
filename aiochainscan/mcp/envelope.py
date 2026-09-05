@@ -18,6 +18,7 @@ from typing import Any
 
 __all__ = [
     'DEFAULT_PAGE_SIZE',
+    'MAX_FORMAT_DECIMALS',
     'MAX_PAGE_SIZE',
     'MIN_PAGE_SIZE',
     'STRING_TRUNCATION_LIMIT',
@@ -39,6 +40,16 @@ MAX_PAGE_SIZE = 50
 
 STRING_TRUNCATION_LIMIT = 512
 """Longest string kept verbatim inside ``data`` before flagging truncation."""
+
+MAX_FORMAT_DECIMALS = 78
+"""Largest ``decimals`` scale :func:`format_units` will apply.
+
+uint256 — the widest integer the EVM can hand a token contract — has at most
+78 decimal digits, so no real token can carry a larger scale; provider metadata
+claiming more is corrupt or hostile, and honouring it is quadratic mischief
+(``decimals=10**7`` synthesized a ~10 MB string in ~6s per call). Past the
+bound the raw value is rendered unchanged, exactly like an unparseable one.
+"""
 
 
 @dataclass
@@ -175,15 +186,21 @@ def format_units(value: str | int, decimals: int = 18) -> str:
 
     Pure integer math — never float, so Wei-scale precision survives. Values
     that are not valid integers are returned unchanged (explorers already
-    answer some balances as pre-formatted strings). Negative amounts keep
+    answer some balances as pre-formatted strings); floats fall under the same
+    rule — ``int()`` would silently truncate ``1.5`` to ``1``, so a float is
+    rendered unchanged instead of quietly renumbered. Negative amounts keep
     truncation-toward-zero semantics (``-1500`` at 3 decimals is ``-1.5``,
-    not floor-division's ``-2``).
+    not floor-division's ``-2``). ``decimals`` beyond
+    :data:`MAX_FORMAT_DECIMALS` (no real token can exceed the 78 digits of
+    uint256) returns the raw value unchanged too.
     """
+    if isinstance(value, float):
+        return str(value)
     try:
         amount = int(value)
     except (TypeError, ValueError):
         return str(value)
-    if decimals < 0:
+    if decimals < 0 or decimals > MAX_FORMAT_DECIMALS:
         return str(value)
     sign = '-' if amount < 0 else ''
     scale = 10**decimals

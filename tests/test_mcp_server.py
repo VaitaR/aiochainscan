@@ -8,11 +8,13 @@ are guarded with ``importorskip`` and only run under ``uv run --extra mcp``.
 
 from __future__ import annotations
 
+import base64
 import json
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
 
+import orjson
 import pytest
 
 from aiochainscan.abi_pure import (
@@ -20,6 +22,11 @@ from aiochainscan.abi_pure import (
     decode_arguments,
     encode_arguments,
     selector,
+)
+from aiochainscan.chain_registry import (
+    BLOCKSCOUT_INSTANCE_HOSTS,
+    BLOCKSCOUT_SCANNER_NETWORKS,
+    resolve_scanner_target,
 )
 from aiochainscan.core.endpoint import EndpointSpec
 from aiochainscan.domain.method import Method
@@ -29,6 +36,7 @@ from aiochainscan.mcp.cursors import (
     InvalidCursorError,
     decode_cursor,
     encode_cursor,
+    unwrap_scanner_cursor,
 )
 from aiochainscan.mcp.envelope import (
     DEFAULT_PAGE_SIZE,
@@ -37,7 +45,7 @@ from aiochainscan.mcp.envelope import (
     format_units,
     truncate_long_strings,
 )
-from aiochainscan.scanners import SCANNER_REGISTRY, Scanner, register_scanner
+from aiochainscan.scanners import SCANNER_REGISTRY, Scanner, get_scanner_class, register_scanner
 
 WALLET = '0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed'
 WALLET_OTHER = '0xfB6916095ca1df60bB79Ce92cE3Ea74c37c5d359'
@@ -235,6 +243,23 @@ class TestFormatUnits:
     def test_invalid_falls_back_to_raw(self) -> None:
         assert format_units('not-a-number', 18) == 'not-a-number'
 
+    def test_float_value_returned_unchanged(self) -> None:
+        """The docstring promises non-int input returned unchanged — int(1.5)
+        silently truncating to '1' is a confident wrong number."""
+        assert format_units(1.5) == '1.5'
+        assert format_units(2.0, 18) == '2.0'
+        assert format_units(-0.25, 6) == '-0.25'
+
+    def test_provider_decimals_beyond_bound_falls_back_to_raw(self) -> None:
+        """Provider-controlled decimals must not synthesize megabyte strings
+        (decimals=10**7 cost ~6s and ~10MB per call)."""
+        assert format_units('1000000', 10**7) == '1000000'
+        assert format_units('1000000', 79) == '1000000'
+
+    def test_decimal_bound_is_exact_uint256_digit_count(self) -> None:
+        """78 decimals — the digit count of uint256 — still renders exactly."""
+        assert format_units('1', 78) == '0.' + '0' * 77 + '1'
+
 
 class TestTruncation:
     def test_short_string_untouched(self) -> None:
@@ -288,6 +313,55 @@ class TestCursors:
     def test_empty_token_raises(self) -> None:
         with pytest.raises(InvalidCursorError):
             decode_cursor('')
+
+    def test_version_accepts_only_exact_int(self) -> None:
+        """True == 1 and 1.0 == 1 in Python — the schema version must be an
+        exact int, or a forged 'v': true token would pass as v1."""
+        for bogus_version in (True, 1.0, '1', None):
+            raw = orjson.dumps({'tool': 'get_transactions', 'cursor': {}, 'v': bogus_version})
+            token = base64.urlsafe_b64encode(raw).decode('ascii').rstrip('=')
+            with pytest.raises(InvalidCursorError):
+                decode_cursor(token)
+
+
+class TestUnwrapScannerCursor:
+    """The exported helper must validate the payload like decode_tool_cursor
+    does (minus tool binding, which it deliberately does not own) and never
+    leak raw TypeError/ValueError from garbage tokens."""
+
+    def test_valid_token_roundtrips(self) -> None:
+        token = encode_cursor({'tool': 'get_transactions', 'cursor': {'page': 2, 'offset': 50}})
+        assert unwrap_scanner_cursor(token) == {'page': 2, 'offset': 50}
+
+    def test_cursorless_payload_yields_empty_dict(self) -> None:
+        assert unwrap_scanner_cursor(encode_cursor({'tool': 'x'})) == {}
+        assert unwrap_scanner_cursor(encode_cursor({'tool': 'x', 'cursor': None})) == {}
+
+    def test_mutation_fuzz_never_escapes_raw_exceptions(self) -> None:
+        token = encode_cursor({'tool': 'get_transactions', 'cursor': {'page': 2}})
+        mutations: list[str] = [
+            token[:i] + ('A' if i < len(token) else '') + token[i + 1 :]
+            for i in range(0, len(token), max(1, len(token) // 8))
+        ]
+        mutations += ['', 'garbage', '!!!', token + 'x', token[:-2]]
+        # Well-formed base64 but wrong-typed or foreign cursor payloads:
+        for cursor in ('x', 7, [1, 2], True, {'deep': {'nested': 1}}):
+            raw = orjson.dumps({'tool': 't', 'cursor': cursor})
+            mutations.append(base64.urlsafe_b64encode(raw).decode('ascii').rstrip('='))
+        for mutant in mutations:
+            try:
+                result = unwrap_scanner_cursor(mutant)
+            except InvalidCursorError:
+                continue
+            # Only a well-formed dict cursor may pass through unchanged.
+            assert isinstance(result, dict)
+
+    def test_malformed_cursor_payload_raises_invalid_cursor(self) -> None:
+        for cursor in ('x', 7, [1, 2], True):
+            raw = orjson.dumps({'tool': 't', 'cursor': cursor})
+            token = base64.urlsafe_b64encode(raw).decode('ascii').rstrip('=')
+            with pytest.raises(InvalidCursorError, match='start over'):
+                unwrap_scanner_cursor(token)
 
 
 # ============================================================================
@@ -481,6 +555,26 @@ class TestGetWalletBalance:
         response = await mcp_tools.get_wallet_balance(client, WALLET)
         assert response.data is not None and response.data['balance'] == '0'
         assert 'no' in (response.content_text or '').lower()
+
+    async def test_hex_quantity_balance_normalized(self) -> None:
+        """A proxy/JSON-RPC dialect answering 0x-hex must not leak into the
+        formatted value (get_transaction_info defends with _wei_field; this
+        tool gets the same normalization, with a note when it changed)."""
+        client = StubClient()
+        client.get_balance.value = hex(1_500_000_000_000_000_000)
+        response = await mcp_tools.get_wallet_balance(client, WALLET)
+        assert response.data is not None
+        assert response.data['balance_wei'] == '1500000000000000000'
+        assert response.data['balance'] == '1.5'
+        assert response.notes
+        assert any('0x' in note for note in response.notes)
+
+    async def test_decimal_balance_adds_no_normalization_note(self) -> None:
+        client = StubClient()
+        response = await mcp_tools.get_wallet_balance(client, WALLET)
+        assert response.data is not None
+        assert response.data['balance_wei'] == '1500000000000000000'
+        assert response.notes is None
 
 
 class TestGetAddressOverview:
@@ -984,6 +1078,77 @@ class TestListChains:
         assert response.data is not None
         entry = response.data['chains'][0]
         assert entry['blockscout'] is not None
+
+    def test_entry_schema_is_stable(self) -> None:
+        response = mcp_tools.list_chains()
+        assert response.data is not None
+        for entry in response.data['chains']:
+            assert set(entry) == {'chain_id', 'name', 'aliases', 'blockscout'}
+            assert isinstance(entry['aliases'], list)
+
+    def test_advertised_blockscout_hosts_are_scanner_served(self) -> None:
+        """No host is published unless the BlockScout legs actually serve the
+        chain (declared instance hosts), so a stale registry entry cannot
+        advertise a host no scanner can construct for."""
+        response = mcp_tools.list_chains()
+        assert response.data is not None
+        for entry in response.data['chains']:
+            name = entry['name']
+            if entry['blockscout'] is None:
+                continue
+            assert name in BLOCKSCOUT_SCANNER_NETWORKS, name
+            assert entry['blockscout'] == BLOCKSCOUT_INSTANCE_HOSTS.get(name)
+
+    def test_stale_instance_chains_are_not_advertised(self) -> None:
+        """goerli/fantom/blast/mode carry (or carried) registry instance hosts
+        no scanner can serve — they must read as unavailable here."""
+        response = mcp_tools.list_chains()
+        assert response.data is not None
+        by_name = {c['name']: c for c in response.data['chains']}
+        for stale in ('goerli', 'fantom', 'blast', 'mode'):
+            if stale in by_name:
+                assert by_name[stale]['blockscout'] is None, stale
+
+    def test_coverage_matches_construction_oracle(self) -> None:
+        """The derivation must agree with what a client construction allows:
+        spot-checked ground truth from resolve_scanner_target + the scanner
+        class's declared supported_networks."""
+        coverage = mcp_tools.chain_scanner_coverage()
+        assert 'ethereum' in coverage['etherscan']
+        assert 'goerli' in coverage['etherscan']
+        assert 'moonbeam' not in coverage['etherscan']
+        assert 'linea' not in coverage['etherscan']
+        assert 'ethereum' in coverage['blockscout']
+        assert 'goerli' not in coverage['blockscout']
+        assert 'mode' not in coverage['blockscout']
+        assert coverage['nodereal'] == frozenset({'bsc', 'bsc-testnet'})
+        assert coverage['blockscout'] == coverage['blockscout_v2']
+        # Every chain the tool lists as covered must actually construct.
+        for scanner, chains in coverage.items():
+            version = 'v2' if scanner in ('etherscan', 'blockscout_v2') else 'v1'
+            cls_name, cls_version = (
+                ('blockscout', 'v2') if scanner == 'blockscout_v2' else (scanner, version)
+            )
+            cls = get_scanner_class(cls_name, cls_version)
+            for name in chains:
+                target = resolve_scanner_target(scanner, name, api_key='')
+                assert target.scanner_network in cls.supported_networks, (scanner, name)
+
+    def test_no_blanket_etherscan_coverage_claim(self) -> None:
+        response = mcp_tools.list_chains()
+        text = ' '.join(response.instructions or [])
+        assert 'covers every listed chain' not in text
+
+    def test_instruction_lines_match_derived_coverage(self) -> None:
+        coverage = mcp_tools.chain_scanner_coverage()
+        response = mcp_tools.list_chains()
+        text = ' '.join(response.instructions or [])
+        for scanner, chains in coverage.items():
+            if chains:
+                assert f"'{scanner}'" in text, scanner
+                assert str(len(chains)) in text, scanner
+            else:
+                assert f"'{scanner}'" not in text, scanner
 
 
 class TestClientPool:

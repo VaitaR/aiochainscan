@@ -32,7 +32,15 @@ from typing import TYPE_CHECKING, Any
 import orjson
 
 from ..abi_pure import canonical_signature, decode_arguments, encode_arguments, selector
-from ..chain_registry import get_chain_name, list_supported_chains, resolve_chain_id
+from ..chain_registry import (
+    BLOCKSCOUT_INSTANCE_HOSTS,
+    DEFAULT_SCANNER_VERSIONS,
+    SCANNER_RECORDS,
+    get_chain_name,
+    list_supported_chains,
+    resolve_chain_id,
+    resolve_scanner_target,
+)
 from ..decode import decode_transaction_input
 from ..domain.method import Method
 from ..domain.models import Address
@@ -46,7 +54,7 @@ from ..domain.normalize import (
     int_or_default,
 )
 from ..exceptions import ChainscanClientError
-from ..scanners import SCANNER_REGISTRY
+from ..scanners import SCANNER_REGISTRY, Scanner
 from .cursors import decode_tool_cursor, encode_cursor
 from .envelope import (
     STRING_TRUNCATION_LIMIT,
@@ -66,6 +74,7 @@ __all__ = [
     'ClientPool',
     'DEFAULT_SCANNER_ENV',
     'DEFAULT_SCANNER',
+    'chain_scanner_coverage',
     'get_address_overview',
     'get_contract_abi',
     'get_token_holders',
@@ -93,6 +102,12 @@ _PORTFOLIO_TOKEN_LIMIT = 20
 _NFT_COLLECTION_LIMIT = 10
 _ABI_SIGNATURE_LIMIT = 100
 _FUNCTION_NAME_LIMIT = 60
+_CHAIN_LIST_LIMIT = 12
+
+#: Key-env hint per keyful built-in scanner (the Scanner Support Matrix's
+#: "Key Env Var" column). Coverage itself is always derived from the registry;
+#: only this prose hint is tabled.
+_SCANNER_KEY_ENV: dict[str, str] = {'etherscan': 'ETHERSCAN_KEY', 'nodereal': 'NODEREAL_KEY'}
 
 _SCANNER_HINTS: dict[Method, str] = {
     Method.TOKEN_HOLDERS: "scanners that serve it: 'etherscan' (needs ETHERSCAN_KEY) or 'blockscout_v2'",
@@ -442,20 +457,29 @@ async def _fetch_curated_page(
 async def get_wallet_balance(client: ChainscanClient, address: str) -> ToolResponse:
     """Native-coin balance of an address (Wei + human-readable)."""
     wallet = str(Address(address))
-    balance_wei = await client.get_balance(wallet)
+    raw_balance = await client.get_balance(wallet)
+    # Proxy/JSON-RPC dialects answer hex quantities; normalize through the
+    # same helper get_transaction_info uses before any formatting.
+    balance_wei = _wei_field(raw_balance)
     balance = format_units(balance_wei, 18)
     currency = client.currency
     zero = balance == '0'
+    notes: list[str] | None = None
+    if str(raw_balance) != balance_wei:
+        notes = [
+            f'Provider returned the balance as {raw_balance!r}; normalized to '
+            f'decimal Wei {balance_wei} before formatting.'
+        ]
+    elif zero:
+        notes = [f'Address {wallet} holds no native {currency} on this chain.']
     return build_tool_response(
         data={
             'address': _checksum(wallet),
-            'balance_wei': str(balance_wei),
+            'balance_wei': balance_wei,
             'balance': balance,
             'currency': currency,
         },
-        notes=None
-        if not zero
-        else [f'Address {wallet} holds no native {currency} on this chain.'],
+        notes=notes,
         instructions=[
             'This is the native coin balance only — call get_token_portfolio or '
             'get_address_overview for ERC-20/NFT holdings.'
@@ -1167,8 +1191,101 @@ async def resolve_ens(client: ChainscanClient, name_or_address: str) -> ToolResp
     )
 
 
+def _scanner_class_for_public_name(scanner: str) -> type[Scanner] | None:
+    """The SCANNER_REGISTRY class a client construction picks for ``scanner``.
+
+    Mirrors the registry's version defaulting + the ``blockscout_v2`` alias
+    (``chain_registry._resolve_scanner_identity``): 'v2' where a record
+    declares it, 'v1' otherwise, and 'blockscout_v2' is the public name of the
+    ('blockscout', 'v2') pair.
+    """
+    version = DEFAULT_SCANNER_VERSIONS.get(scanner, 'v1')
+    name, version = ('blockscout', 'v2') if scanner == 'blockscout_v2' else (scanner, version)
+    return SCANNER_REGISTRY.get((name, version))
+
+
+def _scanner_serves_spelling(scanner: str, network: str | int) -> bool:
+    """Whether a client for ``(scanner, network)`` passes BOTH construction
+    gates: the registry's network-validity oracle (``resolve_scanner_target``)
+    and the scanner class's declared ``supported_networks`` (the check the
+    Scanner constructor itself applies). Reading the same declarations the
+    construction path reads — rather than raw chain-table fields — keeps the
+    answer correct whatever the registry later adds or removes.
+    """
+    try:
+        target = resolve_scanner_target(scanner, network, api_key='')
+    except (TypeError, ValueError):
+        return False
+    scanner_cls = _scanner_class_for_public_name(scanner)
+    if scanner_cls is None:
+        return False
+    return target.scanner_network in scanner_cls.supported_networks
+
+
+def chain_scanner_coverage() -> dict[str, frozenset[str]]:
+    """Scanner name → canonical chain names a client actually constructs for.
+
+    A chain counts as served when ANY spelling the tool advertises (name,
+    alias or chain ID) passes both construction gates, since
+    ``list_chains`` advertises all of them. Derived live from the registry
+    declarations, so a scanner whose network table shrinks (or a chain whose
+    instance disappears) stops being claimed here without an edit to this
+    module.
+    """
+    coverage: dict[str, frozenset[str]] = {}
+    for scanner in SCANNER_RECORDS:
+        served: set[str] = set()
+        for chain_id, info in list_supported_chains().items():
+            name = str(info.get('name'))
+            spellings: list[str | int] = [
+                name,
+                *(str(alias) for alias in info.get('aliases', [])),
+                chain_id,
+            ]
+            if any(_scanner_serves_spelling(scanner, spelling) for spelling in spellings):
+                served.add(name)
+        coverage[scanner] = frozenset(served)
+    return coverage
+
+
+def _coverage_instructions(coverage: dict[str, frozenset[str]]) -> list[str]:
+    """Per-scanner coverage lines derived from :func:`chain_scanner_coverage`.
+
+    Replaces the former blanket "scanner 'etherscan' covers every listed
+    chain" claim, which was false (it constructs for a minority of the listed
+    chains) and sent agents into construction errors.
+    """
+    instructions = ['Pass the chain name or ID to the chain parameter of any other tool.']
+    default = resolve_default_scanner()
+    ordered = [
+        *[name for name in coverage if name == default],
+        *sorted(name for name in coverage if name != default),
+    ]
+    for scanner in ordered:
+        chains = sorted(coverage.get(scanner, ()))
+        if not chains:
+            continue
+        key_env = _SCANNER_KEY_ENV.get(scanner)
+        key_hint = f' (needs {key_env})' if key_env else ' (no API key)'
+        listed = ', '.join(chains[:_CHAIN_LIST_LIMIT])
+        more = (
+            f' … and {len(chains) - _CHAIN_LIST_LIMIT} more'
+            if len(chains) > _CHAIN_LIST_LIMIT
+            else ''
+        )
+        instructions.append(
+            f'Scanner {scanner!r} serves {len(chains)} of the listed chains{key_hint}: '
+            f'{listed}{more}.'
+        )
+    return instructions
+
+
 def list_chains(query: str | None = None) -> ToolResponse:
     """Chains served by the MCP tools, filterable by name/alias/ID substring."""
+    coverage = chain_scanner_coverage()
+    blockscout_served = coverage.get('blockscout', frozenset()) | coverage.get(
+        'blockscout_v2', frozenset()
+    )
     matches = []
     needle = (query or '').strip().lower()
     for chain_id, info in sorted(list_supported_chains().items()):
@@ -1181,7 +1298,13 @@ def list_chains(query: str | None = None) -> ToolResponse:
                 'chain_id': chain_id,
                 'name': name,
                 'aliases': aliases,
-                'blockscout': info.get('blockscout_instance'),
+                # Derived from the scanner record's instance-host table and
+                # the coverage derivation — never from the chain table's
+                # informational 'blockscout_instance' field, so a stale field
+                # cannot advertise a host no BlockScout scanner can resolve.
+                'blockscout': (
+                    BLOCKSCOUT_INSTANCE_HOSTS.get(name) if name in blockscout_served else None
+                ),
             }
         )
     notes = None
@@ -1190,11 +1313,7 @@ def list_chains(query: str | None = None) -> ToolResponse:
     return build_tool_response(
         data={'chains': matches, 'count': len(matches)},
         notes=notes,
-        instructions=[
-            'Pass the chain name or ID to the chain parameter of any other tool. '
-            'The default scanner (blockscout) needs no API key; scanner "etherscan" '
-            'covers every listed chain but needs ETHERSCAN_KEY.',
-        ],
+        instructions=_coverage_instructions(coverage),
         content_text=(
             f'{len(matches)} chains available' + (f' matching {query!r}' if query else '') + '.'
         ),

@@ -209,18 +209,45 @@ def _timestamp_or_none(value: Any) -> datetime | None:
         return None
 
 
+#: ``status`` strings this layer interprets as an execution failure — the ONLY
+#: values allowed to set ``is_error=True``. 'error' is BlockScout V2's
+#: execution-status spelling (its enum is ``pending | ok | error``; the repo's
+#: live-recorded fixture is ``status: "ok"``, see
+#: ``tests/fixtures/blockscout_v2/transaction.json``); 'failed' and 'reverted'
+#: are the two other unambiguous execution-failure spellings providers use in
+#: the same field. Everything else is a state this layer does not presume to
+#: read: 'pending' is a lifecycle state, numeric receipt codes ('0', '0x0')
+#: belong to receipt envelopes no mapper here feeds in, and an unrecognized
+#: future value must not silently become an error — ``None`` (unknown), never
+#: a guess.
+KNOWN_FAILURE_STATUSES: frozenset[str] = frozenset({'error', 'failed', 'reverted'})
+
+_SUCCESS_STATUSES: frozenset[str] = frozenset({'ok'})
+
+
 def _is_error(item: Mapping[str, Any]) -> bool | None:
     """Etherscan's ``isError`` flag; BlockScout V2 native has no such key and
     exposes ``status``/``success`` instead (confirmed via
     ``tests/fixtures/blockscout_v2/transaction.json``,
-    ``internal_transaction.json`` — never both present)."""
+    ``internal_transaction.json`` — never both present).
+
+    The ``status`` branch is three-valued on purpose: ``True`` only for a
+    known failure status, ``False`` only for a known success status ('ok'),
+    ``None`` for anything else (pending, unknown, missing) — a pending
+    transaction is not an execution error, and an unrecognized value is not
+    proof of one (see ``KNOWN_FAILURE_STATUSES``).
+    """
     if 'isError' in item:
         return _bool_or_none(item.get('isError'))
     if 'success' in item and item.get('success') is not None:
         return not bool(item['success'])
     status = item.get('status')
     if isinstance(status, str) and status:
-        return status.lower() != 'ok'
+        lowered = status.lower()
+        if lowered in KNOWN_FAILURE_STATUSES:
+            return True
+        if lowered in _SUCCESS_STATUSES:
+            return False
     return None
 
 

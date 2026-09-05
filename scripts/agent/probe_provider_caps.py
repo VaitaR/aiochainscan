@@ -8,9 +8,11 @@ page read as end-of-data. This script is how those numbers are re-measured
 rather than reasoned about: it asks each provider for pages whose sizes straddle
 the declared caps and reports what came back.
 
-Exit status is the verdict: 0 = every declaration matched what the provider
-served, 1 = at least one drifted (or a probe could not be run and the
-declaration is therefore unconfirmed).
+Exit status is the verdict, in BOTH output modes (text and --json):
+0 = every declaration matched what the provider served, 1 = at least one
+drifted, or a probe was rate-limited / otherwise inconclusive (a declared cap
+the probe could not exercise counts as unverified, never as a pass), or a
+provider could not be run at all (declaration unconfirmed).
 
 Usage:
     uv run python scripts/agent/probe_provider_caps.py [--provider etherscan] [--json]
@@ -30,6 +32,7 @@ from typing import Any
 
 from aiochainscan import ChainscanClient
 from aiochainscan.domain.method import Method
+from aiochainscan.exceptions import TRANSIENT_EXCEPTIONS, FailureKind
 
 
 @dataclass(frozen=True)
@@ -76,6 +79,9 @@ class Probe:
     count: int | None = None
     error: str | None = None
     fingerprint: str | None = None
+    blocked: bool = False
+    """The error was a rate limit / transient network fault: the page was
+    never measured, so this probe says nothing about any cap."""
 
     @property
     def outcome(self) -> str:
@@ -83,6 +89,22 @@ class Probe:
             return f'ERROR {self.error}'
         head = f' first={self.fingerprint}' if self.fingerprint else ''
         return f'{self.count} items{head}'
+
+
+def _is_inconclusive_error(exc: BaseException) -> bool:
+    """Whether ``exc`` means "this request was never measured".
+
+    A rate limit or a flaky network says nothing about a cap; only the
+    provider's deterministic refusal does. Probes run through the client, so
+    exceptions arrive translated: the carried ``failure_kind`` is
+    authoritative (the same vocabulary the pool routes on) and
+    ``TRANSIENT_EXCEPTIONS`` is the fallback for anything that does not carry
+    a kind.
+    """
+    kind = getattr(exc, 'failure_kind', None)
+    if kind in (FailureKind.RATE_LIMIT, FailureKind.TRANSIENT):
+        return True
+    return isinstance(exc, TRANSIENT_EXCEPTIONS)
 
 
 @dataclass
@@ -98,6 +120,9 @@ class MethodResult:
     paging_ignored: bool | None = None
     probes: list[Probe] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    rate_limited: bool = False
+    """At least one probe died on a rate limit / transient error — the affected
+    measurement is unconfirmed, never a drift."""
 
     @property
     def effective_page_ceiling(self) -> int | None:
@@ -119,7 +144,7 @@ class MethodResult:
     @property
     def page_size_verdict(self) -> str:
         if self.observed_max_page_size is None:
-            return 'INCONCLUSIVE'
+            return 'RATE_LIMITED' if self.rate_limited else 'INCONCLUSIVE'
         ceiling = self.effective_page_ceiling
         if ceiling is None:
             return 'UNDECLARED'
@@ -133,6 +158,10 @@ class MethodResult:
             # Nothing to overflow: every page is the first page, so the window
             # IS the single page the endpoint serves.
             return 'OK' if self.observed_max_page_size == self.declared_result_window else 'DRIFT'
+        if self.rate_limited and self.window_enforced_at is None:
+            # A throttled or flaky window probe measured nothing — the window
+            # may or may not be enforced. Never read as enforcement.
+            return 'RATE_LIMITED'
         if self.window_enforced_at is None:
             return 'INCONCLUSIVE'
         return 'OK' if self.window_enforced_at > self.declared_result_window else 'DRIFT'
@@ -155,6 +184,7 @@ async def _one_call(client: ChainscanClient, method: Method, params: dict[str, A
         result = await client.call(method, **params)
     except Exception as exc:  # noqa: BLE001 - the provider's refusal IS the measurement
         probe.error = f'{type(exc).__name__}: {str(exc)[:160]}'
+        probe.blocked = _is_inconclusive_error(exc)
     else:
         items = result if isinstance(result, list) else []
         probe.count = len(items)
@@ -208,6 +238,8 @@ async def probe_method(client: ChainscanClient, method: Method, target: Target) 
         result.probes.append(probe)
         if probe.error is not None:
             result.notes.append(f'offset={offset} refused: {probe.error}')
+            if probe.blocked:
+                result.rate_limited = True
             break
         if probe.count == offset:
             result.observed_max_page_size = offset
@@ -238,7 +270,16 @@ async def probe_method(client: ChainscanClient, method: Method, target: Target) 
             probe = await _one_call(client, method, _params_for(method, page, page_size, target))
             result.probes.append(probe)
             if probe.error is not None:
-                result.window_enforced_at = page * page_size
+                if probe.blocked:
+                    # A 429/timeout here says nothing about the window — it
+                    # must not read as the cap being enforced.
+                    result.rate_limited = True
+                    result.notes.append(
+                        f'page={page} probe hit a rate limit / transient error — '
+                        f'window enforcement unconfirmed ({probe.error})'
+                    )
+                else:
+                    result.window_enforced_at = page * page_size
                 break
             if (
                 page > 1
@@ -290,17 +331,51 @@ PROVIDERS: dict[str, tuple[str, tuple[Method, ...], Target]] = {
 }
 
 
-def _render(results: list[Any]) -> int:
+def _verdict(results: list[Any]) -> tuple[int, list[str]]:
+    """The exit code and the parts that explain it — shared by BOTH modes.
+
+    The module promises "exit status is the verdict", so the ``--json`` mode
+    computes the same verdict from the same measurements instead of always
+    exiting 0.
+    """
     drift = 0
     blocked = 0
     inconclusive = 0
+    rate_limited = 0
+    for entry in results:
+        if isinstance(entry, dict):
+            if 'blocked' in entry:
+                blocked += 1
+            continue
+        verdicts = (entry.page_size_verdict, entry.window_verdict)
+        if 'DRIFT' in verdicts:
+            drift += 1
+        elif 'RATE_LIMITED' in verdicts:
+            rate_limited += 1
+        elif 'INCONCLUSIVE' in verdicts and entry.declared_result_window is not None:
+            # A declared cap the probe could not exercise is unverified, not
+            # verified — never fold it into a pass.
+            inconclusive += 1
+    parts = []
+    if drift:
+        parts.append(f'DRIFT — {drift} declaration(s) no longer match what the provider serves')
+    if rate_limited:
+        parts.append(f'{rate_limited} cap probe(s) rate-limited — declarations unconfirmed')
+    if inconclusive:
+        parts.append(f'{inconclusive} declared cap(s) the probe could not exercise')
+    if blocked:
+        parts.append(f'{blocked} provider(s) unconfirmed (no key — documentation only)')
+    if not parts:
+        parts.append('every declared cap was re-measured and matches')
+    return (1 if (drift or rate_limited or inconclusive or blocked) else 0), parts
+
+
+def _render(results: list[Any]) -> int:
     for entry in results:
         if isinstance(entry, dict):
             reason = entry.get('blocked') or entry.get('skipped')
             kind = 'BLOCKED' if 'blocked' in entry else 'SKIP'
             print(f'{kind:12} {entry["provider"]}: {reason}')
-            if kind == 'BLOCKED':
-                blocked += 1
             continue
         print(f'\n=== {entry.provider} · {entry.method}')
         print(
@@ -316,31 +391,16 @@ def _render(results: list[Any]) -> int:
         )
         for note in entry.notes:
             print(f'  note: {note}')
-        verdicts = (entry.page_size_verdict, entry.window_verdict)
-        if 'DRIFT' in verdicts:
-            drift += 1
-        elif 'INCONCLUSIVE' in verdicts and entry.declared_result_window is not None:
-            # A declared cap the probe could not exercise is unverified, not
-            # verified — never fold it into a pass.
-            inconclusive += 1
-    parts = []
-    if drift:
-        parts.append(f'DRIFT — {drift} declaration(s) no longer match what the provider serves')
-    if inconclusive:
-        parts.append(f'{inconclusive} declared cap(s) the probe could not exercise')
-    if blocked:
-        parts.append(f'{blocked} provider(s) unconfirmed (no key — documentation only)')
-    if not parts:
-        parts.append('every declared cap was re-measured and matches')
+    code, parts = _verdict(results)
     print('\nVERDICT:', '; '.join(parts))
-    return 1 if (drift or inconclusive or blocked) else 0
+    return code
 
 
-async def main() -> int:
+async def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--provider', action='append', choices=sorted(PROVIDERS))
     parser.add_argument('--json', action='store_true', help='machine-readable output')
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     if not os.environ.get('ETHERSCAN_KEY'):
         from pathlib import Path
@@ -366,7 +426,8 @@ async def main() -> int:
                 default=str,
             )
         )
-        return 0
+        # Same verdict as the text mode — --json is not a verdict-free path.
+        return _verdict(results)[0]
     return _render(results)
 
 

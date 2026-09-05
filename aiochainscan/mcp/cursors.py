@@ -82,7 +82,15 @@ def decode_cursor(token: str) -> dict[str, Any]:
         raise InvalidCursorError(
             'Invalid or expired cursor. Make a new request without the cursor to start over.'
         ) from exc
-    if not isinstance(payload, dict) or payload.get('v') != CURSOR_VERSION:
+    if not isinstance(payload, dict):
+        raise InvalidCursorError(
+            'Cursor schema not recognized. Make a new request without the cursor to start over.'
+        )
+    version = payload.get('v')
+    # Exact int only: True == 1 and 1.0 == 1 in Python, so `!=` alone would
+    # let a forged 'v': true / 'v': 1.0 token pass as v1. isinstance + the
+    # bool exclusion is the same gate spelled E721-clean.
+    if not isinstance(version, int) or isinstance(version, bool) or version != CURSOR_VERSION:
         raise InvalidCursorError(
             'Cursor schema not recognized. Make a new request without the cursor to start over.'
         )
@@ -141,5 +149,19 @@ def unwrap_scanner_cursor(token: str) -> dict[str, Any]:
 
     The scanner cursor is merged on top of the tool's base request params
     (the ``{**params, **cursor}`` contract of ``Scanner.fetch_page``).
+
+    Unlike :func:`decode_tool_cursor` this applies no tool binding and no key
+    whitelist — the caller owns those when it merges the cursor. It still
+    validates everything tool-independent: the token must decode, carry the
+    current schema version, and hold a well-formed ``cursor`` payload. Any
+    malformed input raises :class:`InvalidCursorError` (with the module's
+    "start over" advice) — a raw ``TypeError``/``ValueError`` never escapes.
     """
-    return dict(decode_cursor(token).get('cursor') or {})
+    cursor = decode_cursor(token).get('cursor')
+    if cursor is None:
+        return {}
+    if not isinstance(cursor, dict):
+        raise InvalidCursorError(
+            'Cursor payload is malformed. Make a new request without the cursor to start over.'
+        )
+    return dict(cursor)
