@@ -7,10 +7,12 @@ the point of the exercise — a base install and an ``aiochainscan[fastabi]``
 install must not disagree about what a transaction says.
 """
 
+import signal
 import warnings
 from decimal import Context, Decimal
 from typing import Any
 
+import orjson
 import pytest
 
 from aiochainscan import decode as decode_module
@@ -215,7 +217,7 @@ def test_bulk_decoding_falls_back_wherever_a_single_decode_does():
     single = decode_transaction_input({'input': calldata}, abi)
     batch = decode_transaction_inputs_batch([{'input': calldata}], abi)[0]
 
-    assert single['decoded_data'] == {'x': Decimal('1.5')}
+    assert single['decoded_data'] == {'x': '1.500000000000000000'}
     assert batch['decoded_data'] == single['decoded_data']
     assert batch['decoded_func'] == single['decoded_func'] == 'f'
 
@@ -304,6 +306,68 @@ class TestTierParity:
 
         assert pure == with_fastabi
 
+    @pytest.mark.skipif(not FASTABI_AVAILABLE, reason='fastabi extension not built')
+    def test_the_pure_floor_agrees_with_the_rust_backend_on_unnamed_inputs(self):
+        """Unnamed inputs must agree WITHOUT pre-filling names.
+
+        The vector test above masks the convention with ``name or f'p{position}'``;
+        these cases exercise the real one: unnamed inputs are keyed ``param_{i}``
+        on both tiers, so adding or dropping ``[fastabi]`` cannot change the keys
+        of a decoded payload.
+        """
+        abi = [
+            {
+                'type': 'function',
+                'name': 'transfer',
+                'inputs': [{'type': 'address', 'name': ''}, {'type': 'uint256', 'name': ''}],
+                'outputs': [],
+            }
+        ]
+        signature = 'transfer(address,uint256)'
+        transaction = {
+            'input': '0x'
+            + keccak_hash(signature)[:8]
+            + '00' * 12
+            + 'ab' * 20
+            + (5).to_bytes(32, 'big').hex()
+        }
+
+        with_fastabi = decode_module._decode_transaction_input_fast(dict(transaction), abi)
+        pure = decode_module._decode_transaction_input_python(dict(transaction), abi)
+
+        assert pure == with_fastabi
+        assert pure['decoded_data'] == {'param_0': '0x' + 'ab' * 20, 'param_1': 5}
+
+    @pytest.mark.skipif(not FASTABI_AVAILABLE, reason='fastabi extension not built')
+    def test_the_pure_floor_agrees_with_the_rust_backend_on_duplicate_names(self):
+        """Duplicate input names must agree on both tiers, and neither may drop
+        a value: the first occurrence keeps the plain name, later ones are
+        suffixed ``_2`` (the Rust tier folds them onto one key otherwise)."""
+        abi = [
+            {
+                'type': 'function',
+                'name': 'f',
+                'inputs': [
+                    {'type': 'uint256', 'name': 'a'},
+                    {'type': 'uint256', 'name': 'a'},
+                ],
+                'outputs': [],
+            }
+        ]
+        signature = 'f(uint256,uint256)'
+        transaction = {
+            'input': '0x'
+            + keccak_hash(signature)[:8]
+            + (1).to_bytes(32, 'big').hex()
+            + (2).to_bytes(32, 'big').hex()
+        }
+
+        with_fastabi = decode_module._decode_transaction_input_fast(dict(transaction), abi)
+        pure = decode_module._decode_transaction_input_python(dict(transaction), abi)
+
+        assert pure == with_fastabi
+        assert pure['decoded_data'] == {'a': 1, 'a_2': 2}
+
     def test_pure_floor_output_convention(self, monkeypatch):
         # Without this the call dispatches to Rust wherever fastabi is built,
         # and the assertion below stops covering the floor it is named after.
@@ -316,6 +380,189 @@ class TestTierParity:
             'data': ['0x0102', '0x'],  # bytes as 0x hex
             'route': ['0x' + 'cd' * 20, [1, str(2**64)]],  # tuples as lists
         }
+
+
+class TestUnnamedAndDuplicateInputNames:
+    """One naming convention on both tiers for unnamed/colliding input names.
+
+    ``dict(zip(names, values))`` used to fold every unnamed input onto the
+    ``''`` key (all but the last silently lost) and a *missing* ``name`` key
+    raised a KeyError that the malformed-calldata net swallowed, voiding the
+    whole decode. The convention — mirrored in ``fastabi/src/lib.rs`` — is:
+    unnamed inputs are keyed ``param_{i}`` by position; a name colliding with
+    an earlier parameter keeps the plain spelling only for the first
+    occurrence, later ones are suffixed ``_2``.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _pure_floor_only(self, monkeypatch):
+        monkeypatch.setattr(decode_module, 'FASTABI_AVAILABLE', False)
+
+    def _decode_data(self, inputs: list[dict[str, Any]], values: list[Any]) -> dict[str, Any]:
+        abi = [{'type': 'function', 'name': 'f', 'inputs': inputs, 'outputs': []}]
+        signature = f'f({",".join(canonical_abi_type(param) for param in inputs)})'
+        calldata = '0x' + keccak_hash(signature)[:8] + encode_arguments(inputs, list(values)).hex()
+        return decode_transaction_input({'input': calldata}, abi)['decoded_data']
+
+    def test_empty_string_names_are_keyed_by_position(self):
+        decoded = self._decode_data(
+            [{'type': 'uint256', 'name': ''}, {'type': 'uint256', 'name': ''}], [1, 2]
+        )
+
+        assert decoded == {'param_0': 1, 'param_1': 2}
+
+    def test_missing_name_keys_are_not_swallowed_as_malformed_calldata(self):
+        decoded = self._decode_data([{'type': 'uint256'}, {'type': 'uint256'}], [1, 2])
+
+        assert decoded == {'param_0': 1, 'param_1': 2}
+
+    def test_duplicate_names_first_keeps_the_plain_name(self):
+        decoded = self._decode_data(
+            [{'type': 'uint256', 'name': 'a'}, {'type': 'uint256', 'name': 'a'}], [1, 2]
+        )
+
+        assert decoded == {'a': 1, 'a_2': 2}
+
+    def test_triple_duplicates_number_consecutively(self):
+        decoded = self._decode_data(
+            [
+                {'type': 'uint256', 'name': 'a'},
+                {'type': 'uint256', 'name': 'a'},
+                {'type': 'uint256', 'name': 'a'},
+            ],
+            [1, 2, 3],
+        )
+
+        assert decoded == {'a': 1, 'a_2': 2, 'a_3': 3}
+
+    def test_mixed_named_unnamed_and_colliding(self):
+        decoded = self._decode_data(
+            [
+                {'type': 'uint256', 'name': ''},
+                {'type': 'uint256', 'name': 'a'},
+                {'type': 'uint256', 'name': ''},
+                {'type': 'uint256', 'name': 'a'},
+            ],
+            [1, 2, 3, 4],
+        )
+
+        assert decoded == {'param_0': 1, 'a': 2, 'param_2': 3, 'a_2': 4}
+
+    def test_unnamed_event_inputs_are_keyed_by_position(self):
+        abi = [
+            {
+                'type': 'event',
+                'name': 'T',
+                'inputs': [{'type': 'uint256', 'name': ''}, {'type': 'uint256', 'name': ''}],
+            }
+        ]
+        log = {
+            'topics': ['0x' + keccak_hash('T(uint256,uint256)')],
+            'data': '0x' + (7).to_bytes(32, 'big').hex() + (8).to_bytes(32, 'big').hex(),
+        }
+
+        decoded = decode_log_data(dict(log), abi)['decoded_data']
+
+        assert decoded == {'event': 'T', 'param_0': 7, 'param_1': 8}
+
+    def test_duplicate_event_names_resolved_identically_to_functions(self):
+        abi = [
+            {
+                'type': 'event',
+                'name': 'T',
+                'inputs': [
+                    {'type': 'uint256', 'name': 'v', 'indexed': True},
+                    {'type': 'uint256', 'name': 'v'},
+                ],
+            }
+        ]
+        log = {
+            'topics': ['0x' + keccak_hash('T(uint256,uint256)'), (9).to_bytes(32, 'big').hex()],
+            'data': '0x' + (8).to_bytes(32, 'big').hex(),
+        }
+
+        decoded = decode_log_data(dict(log), abi)['decoded_data']
+
+        assert decoded == {'event': 'T', 'v': 9, 'v_2': 8}
+
+
+class TestZeroSizeElementArrays:
+    """An array of elements that encode to 0 bytes (an empty tuple) with a
+    non-zero count is a corrupted length word: ``count * 0`` defeats the
+    buffer bound and ``range(count)`` spun on a 2**63 length word (M3)."""
+
+    def test_dynamic_array_with_huge_count_is_rejected(self):
+        nodes = compile_params([{'type': 'tuple[]', 'components': []}, {'type': 'uint256'}])
+        data = (64).to_bytes(32, 'big') + (1).to_bytes(32, 'big') + (2**63).to_bytes(32, 'big')
+
+        if hasattr(signal, 'SIGALRM'):
+
+            def hang_fail(signum: int, frame: Any) -> None:
+                raise AssertionError('decoder spun past 20s on a zero-size element array')
+
+            signal.signal(signal.SIGALRM, hang_fail)
+            signal.alarm(20)
+        try:
+            with pytest.raises(ValueError, match='0 bytes'):
+                decode_values(nodes, data)
+        finally:
+            if hasattr(signal, 'SIGALRM'):
+                signal.alarm(0)
+
+    def test_static_array_of_zero_byte_elements_is_rejected_too(self):
+        nodes = compile_params([{'type': 'tuple[3]', 'components': []}])
+
+        with pytest.raises(ValueError, match='0 bytes'):
+            decode_values(nodes, b'')
+
+    def test_empty_array_of_zero_byte_elements_still_decodes(self):
+        nodes = compile_params([{'type': 'tuple[]', 'components': []}, {'type': 'uint256'}])
+        data = (64).to_bytes(32, 'big') + (1).to_bytes(32, 'big') + (0).to_bytes(32, 'big')
+
+        assert decode_values(nodes, data) == [[], 1]
+
+
+class TestExoticWidthsRejectedAtTheIndex:
+    """ethabi accepts integer/bytes widths Solidity cannot produce (``int12``,
+    ``uint0``, ``bytes0``) where the floor raises AbiTypeNotSupportedError —
+    so the widths are validated at ABI-index build time and the whole ABI is
+    refused before the Rust tier could answer differently."""
+
+    @pytest.mark.parametrize('abi_type', ['int12', 'uint0', 'bytes0'])
+    def test_building_the_index_rejects_non_spec_widths(self, abi_type):
+        abi = [
+            {
+                'type': 'function',
+                'name': 'f',
+                'inputs': [{'type': abi_type, 'name': 'x'}],
+                'outputs': [],
+            }
+        ]
+
+        with pytest.raises(AbiTypeNotSupportedError):
+            decode_module._preprocess_abi(abi)
+
+    def test_rejection_covers_unrelated_functions_of_the_same_abi(self):
+        """The index is built once per ABI: one exotic width anywhere refuses
+        the ABI, on both tiers, instead of deciding per selected function."""
+        abi = [
+            {
+                'type': 'function',
+                'name': 'ok',
+                'inputs': [{'type': 'uint256', 'name': 'x'}],
+                'outputs': [],
+            },
+            {
+                'type': 'function',
+                'name': 'weird',
+                'inputs': [{'type': 'int12', 'name': 'x'}],
+                'outputs': [],
+            },
+        ]
+        calldata = '0x' + keccak_hash('ok(uint256)')[:8] + (1).to_bytes(32, 'big').hex()
+
+        with pytest.raises(AbiTypeNotSupportedError):
+            decode_transaction_input({'input': calldata}, abi)
 
 
 class TestBaseInstall:
@@ -671,6 +918,40 @@ class TestMcpConvention:
         data = encode_arguments(outputs, [[1, 2]])
 
         assert decode_arguments(outputs, data) == {'0': ['1', '2']}
+
+
+class TestFixedPointJsonSerialization:
+    """``fixedMxN`` decodes to Decimal, which orjson refuses: the transaction
+    decode path must render it as a fixed-point string (the same convention
+    ``to_json_values`` uses), so an MCP tool serializing a decoded payload
+    does not die on the first fixed-point argument (M2)."""
+
+    @pytest.fixture(autouse=True)
+    def _pure_floor_only(self, monkeypatch):
+        monkeypatch.setattr(decode_module, 'FASTABI_AVAILABLE', False)
+
+    def _decode_fixed(self, abi_type: str, value: Decimal) -> Any:
+        inputs = [{'type': abi_type, 'name': 'x'}]
+        abi = [{'type': 'function', 'name': 'f', 'inputs': inputs, 'outputs': []}]
+        calldata = (
+            '0x' + keccak_hash(f'f({abi_type})')[:8] + encode_arguments(inputs, [value]).hex()
+        )
+        return decode_transaction_input({'input': calldata}, abi)['decoded_data']['x']
+
+    def test_fixed_point_survives_orjson_serialization(self):
+        decoded = self._decode_fixed('fixed128x18', Decimal('1.5'))
+
+        assert decoded == '1.500000000000000000'  # string, declared scale
+        orjson.dumps({'x': decoded})  # must not raise TypeError
+
+    def test_full_width_fixed_stays_fixed_point_not_scientific(self):
+        decoded = self._decode_fixed(
+            'ufixed256x80', Decimal(2**256 - 1).scaleb(-80, Context(prec=256))
+        )
+
+        assert decoded == format(Decimal(2**256 - 1).scaleb(-80, Context(prec=256)), 'f')
+        assert 'E' not in decoded and 'e' not in decoded
+        orjson.dumps({'x': decoded})
 
 
 class TestTypeNodeLayout:

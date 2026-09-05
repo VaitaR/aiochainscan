@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 import pytest
 
+import aiochainscan.decode as decode_module
 from aiochainscan.decode import (
     _MIN_FASTABI_VERSION,
     FASTABI_AVAILABLE,
@@ -716,17 +717,26 @@ class TestFastabiVersionGate:
     def test_version_parsing(self, raw, expected):
         assert _parse_extension_version(raw) == expected
 
-    @pytest.mark.parametrize('version', ['0.2.0', '0.2.1', '0.3.0', '1.0.0'])
+    @pytest.mark.parametrize('version', ['1.0.1', '1.0.2', '1.1.0', '2.0'])
     def test_strict_extension_accepted(self, version):
         _require_strict_fastabi(self._Ext(version))
 
-    @pytest.mark.parametrize('version', [None, '0.1.0', '0.1.9', '0.0.1', 'garbage'])
+    @pytest.mark.parametrize(
+        'version', [None, '0.1.0', '0.1.9', '0.0.1', '0.2.0', '1.0.0', 'garbage']
+    )
     def test_stale_extension_refused(self, version):
         with (
             pytest.warns(PureAbiDecodeWarning, match='strict ABI decode semantics'),
             pytest.raises(ImportError),
         ):
             _require_strict_fastabi(self._Ext(version))
+
+    def test_version_floor_excludes_the_abort_capable_extensions(self):
+        """1.0.0 and older could kill the whole interpreter on a malformed ABI
+        type (``panic = "abort"`` + ethabi's panicking type-string reader), so
+        the floor was raised past them: a tier that can abort the process is
+        worse than no tier."""
+        assert _MIN_FASTABI_VERSION >= (1, 0, 1)
 
     def test_live_extension_satisfies_the_gate_when_available(self):
         """Whatever the suite decodes with must be the strict tier, not a stale build."""
@@ -758,3 +768,101 @@ def test_stale_extension_leaves_the_import_block_on_the_pure_floor(tmp_path):
         [sys.executable, str(script)], capture_output=True, text=True, check=True
     )
     assert result.stdout.split() == ['False', 'False', 'True']
+
+
+def _panic_type() -> type[BaseException]:
+    """Build a stand-in for pyo3's PanicException with its real coordinates.
+
+    pyo3 raises ``pyo3_runtime.PanicException`` — a BaseException subclass
+    whose module is a label pyo3 never installs as an importable module, so a
+    test cannot import the class; the coordinates are what the decode seams
+    match on.
+    """
+    return type('PanicException', (BaseException,), {'__module__': 'pyo3_runtime'})
+
+
+TRANSFER_ABI = [
+    {
+        'type': 'function',
+        'name': 'transfer',
+        'inputs': [
+            {'type': 'address', 'name': 'to'},
+            {'type': 'uint256', 'name': 'value'},
+        ],
+        'outputs': [],
+    }
+]
+TRANSFER_CALLDATA = (
+    '0xa9059cbb'
+    '000000000000000000000000d8da6bf26964af9d7eed9e03e53415d37aa96045'
+    '00000000000000000000000000000000000000000000000000000002540be400'
+)
+TRANSFER_DECODED = {
+    'to': '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
+    'value': 10_000_000_000,
+}
+
+
+class TestFastabiPanicFallback:
+    """C1 defense-in-depth: an escaping Rust panic surfaces as pyo3's
+    PanicException (a BaseException subclass) and must degrade to the pure
+    floor, not kill a decode loop. The catch is narrowed by exact coordinates
+    — every other BaseException still propagates."""
+
+    def test_panic_exception_is_recognized_by_its_coordinates(self):
+        panic = _panic_type()
+
+        assert decode_module._is_fastabi_panic(panic('kaboom'))
+        assert not decode_module._is_fastabi_panic(ValueError('kaboom'))
+        assert not decode_module._is_fastabi_panic(KeyboardInterrupt())
+        assert not decode_module._is_fastabi_panic(SystemExit(1))
+
+        wrong_module = type('PanicException', (BaseException,), {'__module__': 'builtins'})
+        assert not decode_module._is_fastabi_panic(wrong_module('kaboom'))
+
+    def test_single_fast_path_falls_back_to_the_pure_floor_on_a_panic(self, monkeypatch):
+        monkeypatch.setattr(decode_module, 'FASTABI_AVAILABLE', True)
+
+        def exploding_fast(calldata: bytes, abi_json: str) -> dict[str, object]:
+            raise _panic_type()('panic in a Rust function')
+
+        monkeypatch.setattr(decode_module, '_fast_decode_input', exploding_fast, raising=False)
+
+        result = decode_transaction_input({'input': TRANSFER_CALLDATA}, TRANSFER_ABI)
+
+        assert result['decoded_func'] == 'transfer'
+        assert result['decoded_data'] == TRANSFER_DECODED
+
+    def test_batch_path_falls_back_to_the_pure_floor_on_a_panic(self, monkeypatch):
+        monkeypatch.setattr(decode_module, 'FASTABI_AVAILABLE', True)
+        # The whole-batch fallback re-enters decode_transaction_input, so the
+        # single fast callable must keep answering: an empty fast result makes
+        # the per-item seam fall through to the pure floor, exactly like the
+        # extension does for a selector it cannot decode.
+        monkeypatch.setattr(
+            decode_module,
+            '_fast_decode_input',
+            lambda calldata, abi_json: {'function_name': '', 'decoded_data': {}},
+            raising=False,
+        )
+
+        def exploding_many(calldatas: list[bytes], abi_json: str) -> list[dict[str, object]]:
+            raise _panic_type()('panic in a Rust function')
+
+        monkeypatch.setattr(decode_module, '_fast_decode_many', exploding_many, raising=False)
+        batch = [{'input': TRANSFER_CALLDATA} for _ in range(3)]
+
+        results = decode_module.decode_transaction_inputs_batch(batch, TRANSFER_ABI)
+
+        assert all(result['decoded_data'] == TRANSFER_DECODED for result in results)
+
+    def test_other_base_exceptions_are_never_swallowed(self, monkeypatch):
+        monkeypatch.setattr(decode_module, 'FASTABI_AVAILABLE', True)
+
+        def interrupting_fast(calldata: bytes, abi_json: str) -> dict[str, object]:
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr(decode_module, '_fast_decode_input', interrupting_fast, raising=False)
+
+        with pytest.raises(KeyboardInterrupt):
+            decode_transaction_input({'input': TRANSFER_CALLDATA}, TRANSFER_ABI)

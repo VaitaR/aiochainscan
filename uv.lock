@@ -80,7 +80,7 @@ provides-extras = ["dev", "fallback", "http2", "mcp", "data", "fastabi"]
 
 [[package]]
 name = "aiochainscan-fastabi"
-version = "1.0.0"
+version = "1.0.1"
 source = { editable = "aiochainscan/fastabi" }
 
 [[package]]

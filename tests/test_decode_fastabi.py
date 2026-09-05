@@ -482,3 +482,162 @@ class TestGilRelease:
         # Should complete reasonably fast (< 5 seconds for 10k items)
         # This would timeout if GIL was held during Python object creation
         assert elapsed < 5.0, f'Batch decode took {elapsed:.2f}s, expected < 5s'
+
+
+def _extension():
+    """The extension object decode.py actually bound, in either install layout.
+
+    The library resolves the top-level ``aiochainscan_fastabi`` distribution
+    first and the legacy ``aiochainscan.aiochainscan_fastabi`` second; tests
+    must exercise whichever one is live, and skip when none is.
+    """
+    from aiochainscan import decode as decode_module
+
+    if not decode_module.FASTABI_AVAILABLE:
+        pytest.skip('fastabi extension not built')
+    return decode_module._fastabi
+
+
+class TestPanicSafety:
+    """C1: ABI JSON is external data and ethabi's type-string reader panics on
+    malformed types (a type of ``"]"`` underflows). The extension must turn
+    that into a catchable Python exception — extension 1.0.0 aborted the whole
+    interpreter here (exit 134, SIGABRT)."""
+
+    BAD_TYPE_ABI = [
+        {'type': 'function', 'name': 'f', 'inputs': [{'type': ']', 'name': 'x'}], 'outputs': []}
+    ]
+
+    def test_bad_abi_type_raises_instead_of_aborting_on_decode_input(self):
+        ext = _extension()
+
+        with pytest.raises(ValueError):
+            ext.decode_input(bytes.fromhex('00000000' + '00' * 32), json.dumps(self.BAD_TYPE_ABI))
+
+    def test_bad_abi_type_raises_instead_of_aborting_on_decode_one(self):
+        ext = _extension()
+
+        with pytest.raises(ValueError):
+            ext.decode_one(bytes.fromhex('00000000' + '00' * 32), json.dumps(self.BAD_TYPE_ABI))
+
+    def test_bad_abi_type_raises_instead_of_aborting_on_decode_many(self):
+        ext = _extension()
+
+        with pytest.raises(ValueError):
+            ext.decode_many([bytes.fromhex('00000000' + '00' * 32)], json.dumps(self.BAD_TYPE_ABI))
+
+    def test_bad_abi_type_stays_catchable_through_the_library_seam(self):
+        """decode.py's tier switch must absorb the failure and end on the pure
+        floor, which rejects the type with AbiTypeNotSupportedError."""
+        from aiochainscan.decode import decode_transaction_input
+
+        calldata = '0x00000000' + '00' * 32
+
+        with pytest.raises(ValueError):
+            decode_transaction_input({'input': calldata}, self.BAD_TYPE_ABI)
+
+
+class TestUnnamedAndDuplicateNameConvention:
+    """H1 on the Rust tier: one convention with the pure floor — unnamed
+    inputs keyed ``param_{i}``, name collisions resolved first-keeps-plain /
+    ``_2`` suffix (1.0.0 folded duplicates onto the last value)."""
+
+    UNNAMED_ABI = [
+        {
+            'type': 'function',
+            'name': 'transfer',
+            'inputs': [{'type': 'address', 'name': ''}, {'type': 'uint256', 'name': ''}],
+            'outputs': [],
+        }
+    ]
+
+    def test_unnamed_params_are_keyed_param_i(self):
+        ext = _extension()
+
+        calldata = bytes.fromhex(
+            'a9059cbb' + '00' * 12 + 'ab' * 20 + (5).to_bytes(32, 'big').hex()
+        )
+        decoded = json.loads(ext.decode_input(calldata, json.dumps(self.UNNAMED_ABI)))
+
+        assert decoded['decoded_data'] == {'param_0': '0x' + 'ab' * 20, 'param_1': 5}
+
+    def test_duplicate_names_first_keeps_the_plain_name(self):
+        ext = _extension()
+
+        abi = [
+            {
+                'type': 'function',
+                'name': 'f',
+                'inputs': [{'type': 'uint256', 'name': 'a'}, {'type': 'uint256', 'name': 'a'}],
+                'outputs': [],
+            }
+        ]
+        calldata = bytes.fromhex(
+            '13d1aa2e' + (1).to_bytes(32, 'big').hex() + (2).to_bytes(32, 'big').hex()
+        )
+        decoded = json.loads(ext.decode_input(calldata, json.dumps(abi)))
+
+        assert decoded['decoded_data'] == {'a': 1, 'a_2': 2}
+
+    def test_unnamed_parity_with_the_pure_floor(self):
+        from aiochainscan import decode as decode_module
+
+        ext = _extension()
+
+        calldata = bytes.fromhex(
+            'a9059cbb' + '00' * 12 + 'ab' * 20 + (5).to_bytes(32, 'big').hex()
+        )
+        fast = json.loads(ext.decode_input(calldata, json.dumps(self.UNNAMED_ABI)))
+        pure = decode_module._decode_transaction_input_python(
+            {'input': '0x' + calldata.hex()}, self.UNNAMED_ABI
+        )
+
+        assert fast['decoded_data'] == pure['decoded_data']
+        assert fast['function_name'] == pure['decoded_func']
+
+
+class TestDecodeOneContract:
+    """decode_one answers the empty-result contract of its siblings
+    (decode_input, decode_many): an unknown selector or truncated calldata is
+    an empty decode, not an exception."""
+
+    def test_unknown_selector_returns_empty_result(self):
+        ext = _extension()
+
+        unknown = bytes.fromhex(
+            '12345678000000000000000000000000742d35cc6270c0532c0749334b1c1d434f4e86c0'
+        )
+
+        result = json.loads(ext.decode_one(unknown, json.dumps(TRANSFER_ABI)))
+
+        assert result == {'function_name': '', 'decoded_data': {}}
+
+    def test_truncated_calldata_returns_empty_result(self):
+        ext = _extension()
+
+        result = json.loads(
+            ext.decode_one(bytes.fromhex('a9059cbb' + 'ab' * 10), json.dumps(TRANSFER_ABI))
+        )
+
+        assert result == {'function_name': '', 'decoded_data': {}}
+
+    def test_decode_one_direct_returns_empty_result_on_unknown_selector(self):
+        ext = _extension()
+
+        unknown = bytes.fromhex(
+            '12345678000000000000000000000000742d35cc6270c0532c0749334b1c1d434f4e86c0'
+        )
+
+        result = json.loads(ext.decode_one_direct(unknown, TRANSFER_ABI))
+
+        assert result == {'function_name': '', 'decoded_data': {}}
+
+    def test_decode_one_agrees_with_decode_input_byte_for_byte(self):
+        """Both release the GIL and share one contract; their answers must not
+        drift (a previous draft of decode_one raised where this pins empty)."""
+        ext = _extension()
+
+        calldata = bytes.fromhex(TRANSFER_INPUT[2:])
+        abi_json = json.dumps(TRANSFER_ABI)
+
+        assert ext.decode_one(calldata, abi_json) == ext.decode_input(calldata, abi_json)

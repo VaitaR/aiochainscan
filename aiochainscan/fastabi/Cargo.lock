@@ -63,7 +63,7 @@ dependencies = [
 
 [[package]]
 name = "aiochainscan_fastabi"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "arrow",
  "dashmap 6.1.0",

@@ -530,6 +530,17 @@ def _decode_sequence(
 def _decode_array(elem: TypeNode, count: int, buf: bytes, base: int) -> list[Any]:
     """Decode ``count`` elements of one type -- the same head/tail rules as
     :func:`_decode_sequence`, without materialising ``[elem] * count``."""
+    if count and not elem.head_size:
+        # A zero-byte element (an empty tuple) with a non-zero count is a
+        # corrupted length word -- or a degenerate type no encoder produces:
+        # ``count * 0`` defeats the "array fits in the buffer" bound in
+        # _decode_node, and ``range(count)`` spun for a 2**63 length word on a
+        # 96-byte payload. Rejected for fixed lengths too, so both tiers and
+        # both spellings answer the same way (fastabi mirrors this guard).
+        raise ValueError(
+            f'{elem.canonical} elements encode to 0 bytes, '
+            f'so a count of {count} cannot be reconciled with the payload'
+        )
     values: list[Any] = []
     head_size = count * elem.head_size
     cursor = base

@@ -3,6 +3,7 @@ from __future__ import annotations
 import warnings
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
+from decimal import Decimal
 from hashlib import blake2b
 from typing import Any, cast
 
@@ -61,11 +62,13 @@ def _parse_json(json_str: str) -> Any:
 
 
 # The Rust tier must agree with the pure-Python floor on decode semantics
-# (UTF-8 string validity, dynamic-value padding, full-width fixed point). Those
-# rules landed in the accelerator at 0.2.0, so an older locally built extension
-# would silently decode by the pre-strict rules while this module decodes by the
-# new ones. Refuse it and use the floor instead.
-_MIN_FASTABI_VERSION = (0, 2, 0)
+# (UTF-8 string validity, dynamic-value padding, full-width fixed point; 0.2.0)
+# and must never be able to abort the process (1.0.1 removed `panic = "abort"`
+# and unwinds ethabi's panicking type-string reader into a normal error — ABI
+# JSON is external data, and a tier that can kill the interpreter is worse than
+# no tier). An extension older than this floor is refused and decoding uses the
+# pure floor instead.
+_MIN_FASTABI_VERSION = (1, 0, 1)
 
 
 def _parse_extension_version(raw: object) -> tuple[int, ...] | None:
@@ -90,7 +93,7 @@ def _require_strict_fastabi(module: Any) -> None:
     version = _parse_extension_version(getattr(module, '__version__', None))
     if version is not None and version >= _MIN_FASTABI_VERSION:
         return
-    reported = getattr(module, '__version__', None) or 'unknown (pre-0.2.0)'
+    reported = getattr(module, '__version__', None) or 'unknown'
     warnings.warn(
         f'Ignoring the aiochainscan-fastabi extension at {module.__file__}: it reports '
         f'version {reported}, but strict ABI decode semantics require '
@@ -281,6 +284,7 @@ def _build_abi_index(
         if item_type == 'function':
             name = cast(str, item.get('name', ''))
             inputs_list = cast(list[dict[str, Any]], item.get('inputs', []))
+            _validate_input_types(inputs_list)
             inputs = ','.join(canonical_abi_type(param) for param in inputs_list)
             signature_text = f'{name}({inputs})'
             # 4-byte selector
@@ -289,6 +293,7 @@ def _build_abi_index(
         elif item_type == 'event':
             name = cast(str, item.get('name', ''))
             inputs_list = cast(list[dict[str, Any]], item.get('inputs', []))
+            _validate_input_types(inputs_list)
             inputs = ','.join(canonical_abi_type(param) for param in inputs_list)
             signature_text = f'{name}({inputs})'
             # 32-byte topic hash
@@ -299,14 +304,55 @@ def _build_abi_index(
     return _AbiIndex(function_map=function_map, event_map=event_map, abi_json=abi_json)
 
 
+def _validate_input_types(params: list[dict[str, Any]]) -> None:
+    """Reject ABI types the pure floor cannot parse before the Rust tier sees them.
+
+    ethabi accepts integer/bytes widths Solidity cannot produce (``int12``,
+    ``uint0``, ``bytes0``) where the floor raises ``AbiTypeNotSupportedError``;
+    installing ``[fastabi]`` must not change that answer. Compiling every
+    parameter once here — at index-build time, so once per ABI and cached —
+    makes both tiers refuse the same ABI instead of deciding per selected
+    function. Only inputs are checked: outputs never reach the Rust tier (they
+    are decoded by ``abi_pure.decode_arguments``, which raises on its own).
+    """
+    for param in params:
+        compile_params([param])
+
+
+def _resolved_input_names(params: list[dict[str, Any]]) -> list[str]:
+    """Key decoded values the same way on both tiers.
+
+    THE naming convention, mirrored in ``fastabi/src/lib.rs``
+    (``resolved_param_names``): an unnamed parameter (``name`` missing, null or
+    empty) is keyed ``param_{i}`` by its position; a name colliding with an
+    earlier parameter keeps the plain spelling for the first occurrence only,
+    later ones are suffixed ``_2``, ``_3``, ... ``dict(zip(names, values))``
+    used to fold unnamed inputs onto one ``''`` key — every value but the last
+    silently lost — and a *missing* ``name`` key raised a KeyError that the
+    malformed-calldata net swallowed, voiding the whole decode.
+    """
+    names: list[str] = []
+    for position, param in enumerate(params):
+        base = str(param.get('name') or '') or f'param_{position}'
+        candidate = base
+        suffix = 2
+        while candidate in names:
+            candidate = f'{base}_{suffix}'
+            suffix += 1
+        names.append(candidate)
+    return names
+
+
 def _to_rust_convention(data: Any) -> Any:
     """Normalise decoded values to what the Rust backend serializes.
 
-    ``bytes`` become ``0x`` hex, ints outside i64 become strings, and arrays
-    and tuples both become ``list`` (the pure floor returns Python tuples) --
-    so a decoded value does not change shape when a user adds or drops
-    ``[fastabi]``. One traversal, not one per rule: this runs on every
-    pure-floor decode.
+    ``bytes`` become ``0x`` hex, ints outside i64 become strings, fixed-point
+    Decimals become fixed-point strings (never scientific notation — the same
+    rendering ``abi_pure.to_json_values`` uses, so ``orjson`` can serialize a
+    payload containing a ``fixedMxN`` argument), and arrays and tuples both
+    become ``list`` (the pure floor returns Python tuples) -- so a decoded
+    value does not change shape when a user adds or drops ``[fastabi]``. One
+    traversal, not one per rule: this runs on every pure-floor decode.
     """
     if isinstance(data, bytes):
         return '0x' + data.hex()
@@ -316,6 +362,10 @@ def _to_rust_convention(data: Any) -> Any:
         if data > 9223372036854775807 or data < -9223372036854775808:
             return str(data)
         return data
+    if isinstance(data, Decimal):
+        # fixedMxN decodes to an exact Decimal; JSON has no decimal type and
+        # orjson refuses one, so render it as a plain fixed-point string.
+        return format(data, 'f')
     if isinstance(data, dict):
         return {key: _to_rust_convention(value) for key, value in data.items()}
     if isinstance(data, list | tuple):
@@ -331,13 +381,30 @@ def keccak_hash(text: str) -> str:
 # The tier-switch tuple: errors that make the single fast path (and the whole
 # fast batch) retry on the pure floor. AbiTypeNotSupportedError is a ValueError
 # subclass and rides along, exactly as in the literal tuple this replaced —
-# the floor re-raises it after its own attempt.
+# the floor re-raises it after its own attempt. pyo3's PanicException cannot
+# join this tuple by reference (see ``_is_fastabi_panic``); the two tier-switch
+# seams below handle it right after this tuple.
 _FALLBACK_ERRORS: tuple[type[BaseException], ...] = (
     ValueError,
     KeyError,
     TypeError,
     RuntimeError,
 )
+
+
+def _is_fastabi_panic(exc: BaseException) -> bool:
+    """Whether ``exc`` is pyo3's PanicException — an escaping Rust panic.
+
+    pyo3 raises ``pyo3_runtime.PanicException``, a BaseException subclass
+    whose module is a label pyo3 never installs as an importable module (the
+    type object is created lazily inside the extension; ``import
+    pyo3_runtime`` fails even with one loaded), so the class cannot join
+    ``_FALLBACK_ERRORS`` by reference. The two tier-switch seams identify it
+    by these exact coordinates and re-raise every other BaseException — a
+    deliberate, named exception to "never catch BaseException", narrower than
+    any class-based except could be.
+    """
+    return type(exc).__name__ == 'PanicException' and type(exc).__module__ == 'pyo3_runtime'
 
 
 def _declares_selector(index: _AbiIndex, raw_input: str) -> bool:
@@ -428,6 +495,12 @@ def _decode_one(
             )
         except _FALLBACK_ERRORS:
             pass
+        except BaseException as exc:
+            # pyo3 converts an escaping Rust panic into PanicException (a
+            # BaseException): degrade to the pure floor instead of killing a
+            # decode loop. Narrowed by coordinates — see _is_fastabi_panic.
+            if not _is_fastabi_panic(exc):
+                raise
 
     # Pure floor: decode against the plan memoised in the index.
     func_selector = _selector_of(raw_input)
@@ -448,11 +521,7 @@ def _decode_one(
 
             # Create a new dictionary for decoded transaction
             transaction['decoded_data'] = dict(
-                zip(
-                    [param['name'] for param in input_params],
-                    decoded_input,
-                    strict=False,
-                )
+                zip(_resolved_input_names(input_params), decoded_input, strict=False)
             )
         except AbiTypeNotSupportedError:
             # A gap in this library, not malformed calldata — never silenced.
@@ -622,9 +691,16 @@ def _decode_event_candidate(
     try:
         decoded_log: dict[str, Any] = {'event': event['name']}
         inputs = cast(list[dict[str, Any]], event.get('inputs', []))
-        indexed_params = [param for param in inputs if param.get('indexed') is True]
-        for position, (param, topic) in enumerate(
-            zip(indexed_params, indexed_topics, strict=True)
+        # Same naming convention as functions (_resolved_input_names): unnamed
+        # event inputs are keyed param_{i}, duplicate names get a _2 suffix —
+        # both used to collide on the '' key and all but the last value lost.
+        names = _resolved_input_names(inputs)
+        indexed_positions = [
+            position for position, param in enumerate(inputs) if param.get('indexed') is True
+        ]
+        indexed_params = [inputs[position] for position in indexed_positions]
+        for position, param, topic in zip(
+            indexed_positions, indexed_params, indexed_topics, strict=True
         ):
             if _abi_type_is_dynamic(param):
                 value: Any = topic.lower()
@@ -636,16 +712,19 @@ def _decode_event_candidate(
                     index,
                     None if plan_key is None else f'{plan_key}#{position}',
                 )[0]
-            decoded_log[cast(str, param.get('name', ''))] = value
+            decoded_log[names[position]] = value
 
-        non_indexed_params = [param for param in inputs if param.get('indexed') is not True]
+        non_indexed_positions = [
+            position for position, param in enumerate(inputs) if param.get('indexed') is not True
+        ]
+        non_indexed_params = [inputs[position] for position in non_indexed_positions]
         if non_indexed_params:
             data_bytes = data[2:] if data[:2].lower() == '0x' else data
             non_indexed_values = _abi_decode_params(
                 non_indexed_params, bytes.fromhex(data_bytes), index, plan_key
             )
-            for param, value in zip(non_indexed_params, non_indexed_values, strict=True):
-                decoded_log[cast(str, param.get('name', ''))] = value
+            for position, value in zip(non_indexed_positions, non_indexed_values, strict=True):
+                decoded_log[names[position]] = value
         return decoded_log
     except AbiTypeNotSupportedError:
         # Not "this candidate does not match" — the codec cannot express the
@@ -800,4 +879,10 @@ def decode_transaction_inputs_batch(
 
     except _FALLBACK_ERRORS:
         # Fallback to Python implementation on any error
+        return [decode_transaction_input(tx, abi) for tx in transactions]
+    except BaseException as exc:
+        # An escaping Rust panic degrades to the pure floor; everything else
+        # propagates. Narrowed by coordinates — see _is_fastabi_panic.
+        if not _is_fastabi_panic(exc):
+            raise
         return [decode_transaction_input(tx, abi) for tx in transactions]

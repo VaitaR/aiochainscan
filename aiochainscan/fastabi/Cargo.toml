@@ -1,6 +1,6 @@
 [package]
 name = "aiochainscan_fastabi"
-version = "1.0.0"
+version = "1.0.1"
 edition = "2021"
 
 [lib]
@@ -35,6 +35,9 @@ pyo3-build-config = "0.22"
 [profile.release]
 lto = "fat"                    # Link Time Optimization
 codegen-units = 1             # Better optimization
-panic = "abort"               # Smaller binary
+# panic = "abort" removed deliberately: pyo3 converts an unwinding panic into
+# a catchable PanicException, while abort turns a panic on external data (ABI
+# JSON, calldata) into an uncatchable process death (exit 134). decode.py also
+# refuses extensions older than 1.0.1 for exactly this reason.
 opt-level = 3                 # Maximum optimization
 strip = true                  # Strip symbols
