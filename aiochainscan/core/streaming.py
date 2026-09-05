@@ -37,6 +37,7 @@ registry and fails when a client streaming method is added without a row.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, replace
@@ -450,6 +451,25 @@ async def stream_batches(
         yield batch
 
 
+def _decode_batch_off_loop(decode: ItemDecode, batch: list[JSONDict]) -> list[Any]:
+    """Decode one batch on a worker thread; failures ride home as values.
+
+    A failing item is appended as an exception instance and the remaining
+    items of the batch are left undecoded — the caller re-raises it when the
+    yield loop reaches its position, so every item BEFORE a failure is still
+    produced (the documented per-item semantics) while the decode itself
+    never runs on the event loop.
+    """
+    outcomes: list[Any] = []
+    for item in batch:
+        try:
+            outcomes.append(decode(item))
+        except Exception as exc:  # noqa: BLE001 - re-raised at the item's position
+            outcomes.append(exc)
+            break
+    return outcomes
+
+
 async def stream_items(
     host: _StreamHost,
     spec: StreamSpec,
@@ -460,13 +480,26 @@ async def stream_items(
     """Item-level twin of :func:`stream_batches`: flattened, lazily decoded.
 
     Composed over :func:`stream_batches` (item-level streams take no progress
-    callback); ``decode`` is applied per item at yield time, so items already
-    consumed survive a decode failure on a later item.
+    callback). The decode hook is CPU work (ABI decoding) that used to run
+    inline on the event loop — stalling everything else scheduled there for
+    the whole stream, despite the "decoded in a thread pool (non-blocking)"
+    contract — so it is offloaded BATCH-WISE via ``asyncio.to_thread`` (the
+    same offload ``SmartContract.iter_events`` uses): one worker round-trip
+    per batch instead of per item, ordering preserved, and per-item failures
+    still surface at the failing item's own position — every item already
+    consumed survives, exactly as when decoding inline.
     """
     kwargs.pop('on_progress', None)  # item-level streams take no callback
     async for batch in stream_batches(host, spec, **kwargs):
-        for item in batch:
-            yield decode(item) if decode is not None else item
+        if decode is None:
+            for item in batch:
+                yield item
+            continue
+        outcomes = await asyncio.to_thread(_decode_batch_off_loop, decode, batch)
+        for outcome in outcomes:
+            if isinstance(outcome, BaseException):
+                raise outcome
+            yield outcome
 
 
 async def stream_normalized_batches(

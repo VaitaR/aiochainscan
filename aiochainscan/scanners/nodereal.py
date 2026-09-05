@@ -37,7 +37,12 @@ Pagination notes (verified against BSC mainnet):
   and the live-nested shape.
 - API exhaustion surfaces as JSON-RPC error ``-32005`` and is translated to
   :class:`~aiochainscan.exceptions.ChainscanRateLimitError` so the transport
-  retry policy applies.
+  retry policy applies. The same code carrying a result-size refusal ("logs
+  count exceeds the limit 50000") is a deterministic answer to the request as
+  asked, not throttling: it raises
+  :class:`~aiochainscan.exceptions.ChainscanResultWindowExceededError`, which
+  the guarantee-complete engine splits on like any other result-window
+  overflow.
 
 Data contract: hex quantities are normalized to decimal Wei strings
 (``value``, balances, supplies) and hex block numbers to ints, matching the
@@ -46,6 +51,7 @@ library-wide "Wei strings" convention; unknown provider fields are preserved.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -61,6 +67,7 @@ from ..exceptions import (
     ChainscanClientProxyError,
     ChainscanDataError,
     ChainscanRateLimitError,
+    ChainscanResultWindowExceededError,
     MethodNotDeclaredError,
     ScannerArgumentError,
 )
@@ -93,8 +100,11 @@ _EVENT_LOGS_MAX_RESULTS = 50_000
 # NodeReal overloads JSON-RPC -32005 for BOTH throttling and "your query asks
 # for too much". The second flavour is deterministic — retrying it burns the
 # retry budget and, in a pool, cools a perfectly healthy provider — so those
-# messages keep their FATAL proxy error. Matched narrowly: an unrecognised
-# -32005 stays a rate limit, which is the safe default for a usage code.
+# messages raise the dedicated FATAL
+# :class:`~aiochainscan.exceptions.ChainscanResultWindowExceededError` (which
+# the guarantee engine splits on) instead of a raw proxy error. Matched
+# narrowly: an unrecognised -32005 stays a rate limit, which is the safe
+# default for a usage code.
 _RESULT_SIZE_LIMIT_MARKERS = (
     'exceeds the limit',
     'exceed the limit',
@@ -113,6 +123,35 @@ def _translate_usage_limit(exc: ChainscanClientProxyError) -> ChainscanRateLimit
     return ChainscanRateLimitError(exc.message, 'usage limit reached')
 
 
+def _is_result_size_refusal(exc: ChainscanClientProxyError) -> bool:
+    """Whether this proxy error is the result-size meaning of -32005."""
+    if exc.code != _RATE_LIMIT_JSONRPC_CODE:
+        return False
+    text = (exc.message or '').lower()
+    return any(marker in text for marker in _RESULT_SIZE_LIMIT_MARKERS)
+
+
+def _result_size_limit(message: str | None) -> int | None:
+    """The per-request cap a result-size refusal states, when it states one.
+
+    The measured refusal spells it out — "logs count exceeds the limit
+    ``50000``" — so the trailing integer IS the provider's own window. Any
+    other shape degrades to ``None`` (the error still carries the raw text).
+    """
+    if not message:
+        return None
+    match = re.search(r'(\d+)\s*$', message.strip())
+    return int(match.group(1)) if match else None
+
+
+def _result_window_error(exc: ChainscanClientProxyError) -> ChainscanResultWindowExceededError:
+    """The dedicated, FATAL-but-splittable error for the refusal meaning."""
+    return ChainscanResultWindowExceededError(
+        f'NodeReal JSON-RPC error {exc.code}: {exc.message}',
+        limit=_result_size_limit(exc.message),
+    )
+
+
 class _NodeRealEnvelope:
     """The default response dialect plus NodeReal's -32005 classification.
 
@@ -123,6 +162,12 @@ class _NodeRealEnvelope:
     this once did — produced a "retryable" class that the retried function
     never saw, so a NodeReal usage limit reached the caller after a single
     attempt while an Etherscan-style one was retried five times.
+
+    The result-size meaning of the same code is NOT throttling: it is a
+    deterministic refusal of the query as asked, raised as
+    :class:`~aiochainscan.exceptions.ChainscanResultWindowExceededError`
+    (FATAL — no retry, no pool cooldown) carrying the provider's own cap, so
+    the guarantee engine can recognise it and split the block range.
     """
 
     _inner = CompositeResponseDialect(EtherscanEnvelope(), JsonRpcEnvelope())
@@ -132,9 +177,13 @@ class _NodeRealEnvelope:
             self._inner.raise_if_error(response_json)
         except ChainscanClientProxyError as exc:
             translated = _translate_usage_limit(exc)
-            if translated is None:
-                raise
-            raise translated from exc
+            if translated is not None:
+                raise translated from exc
+            if _is_result_size_refusal(exc):
+                # Marker-matched -32005: the deterministic "your query asks
+                # for too much" refusal, never a retry loop.
+                raise _result_window_error(exc) from exc
+            raise
 
     def extract(self, response_json: Any) -> Any:
         return self._inner.extract(response_json)

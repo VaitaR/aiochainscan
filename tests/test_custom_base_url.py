@@ -571,3 +571,69 @@ class TestExpectedChainIdLazyValidation:
             assert calls == ['GET /api/v2/addresses/0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045']
         finally:
             await client.close()
+
+
+# ============================================================================
+# netloc validation: hostname charset + port range (audit round 2)
+# ============================================================================
+
+
+class TestNetlocValidation:
+    """``urlsplit`` accepts hosts and ports no resolver or HTTP client will
+    ever reach; they must fail with ``ValueError`` at construction time."""
+
+    @pytest.mark.parametrize(
+        'url',
+        [
+            'https://example.com\\..\\etc',  # backslashes ride in the netloc
+            'https\\://host/path',
+            'https://host:99999',  # port that cannot exist
+            'https://host:65536',
+            'https://host:0',
+            'https://host:abc',
+            'https://host:',  # empty port
+            'https://%65xample.com',  # percent-escaped host
+            'https://my_blockscout.internal',  # underscore is not a hostname char
+            'https://exam ple.com'.replace(' ', '%20'),  # percent-escaped space
+            'https://[::1',  # unclosed bracket
+            'https://[::1]junk',  # junk between literal and port
+            'https://[bad hostname]',
+        ],
+    )
+    def test_invalid_netlocs_refused(self, url: str) -> None:
+        with pytest.raises(ValueError):
+            validate_base_url(url)
+
+    @pytest.mark.parametrize(
+        ('url', 'expected'),
+        [
+            ('https://my-blockscout.internal', SELF_HOSTED),
+            ('https://my-blockscout.internal/', SELF_HOSTED),
+            ('https://My-BlockScout.Internal', SELF_HOSTED),
+            ('https://localhost:8080', 'https://localhost:8080'),
+            ('https://example.com.', 'https://example.com.'),  # FQDN root dot
+            ('https://explorer.example.com:8443/bs', 'https://explorer.example.com:8443/bs'),
+            ('https://[::1]', 'https://[::1]'),
+            ('https://[::1]:8443', 'https://[::1]:8443'),
+            ('https://[2001:db8::1]:443', 'https://[2001:db8::1]:443'),
+        ],
+    )
+    def test_valid_netlocs_keep_validating(self, url: str, expected: str) -> None:
+        assert validate_base_url(url) == expected
+
+    def test_valid_netlocs_sweep_unchanged(self) -> None:
+        """Every host form accepted before the netloc check still validates."""
+        hosts = [
+            'my-blockscout.internal',
+            'eth.blockscout.com',
+            'localhost',
+            '127.0.0.1',
+            'a-b.c-d.e',
+            'example.com.',
+            'xn--mnchen-3ya.example',  # punycoded IDN
+            '10.0.0.1:8443',
+            '[::1]',
+            '[::ffff:127.0.0.1]:8080',
+        ]
+        for host in hosts:
+            assert validate_base_url(f'https://{host}/').startswith('https://')

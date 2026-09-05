@@ -13,21 +13,29 @@ Covers:
 from __future__ import annotations
 
 from dataclasses import replace
-from unittest.mock import AsyncMock, MagicMock
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 
+from aiochainscan.adapters.tenacity_retry import TenacityRetryAdapter
+from aiochainscan.chain_registry import resolve_scanner_target
 from aiochainscan.constants import MAX_BLOCK_NUMBER
+from aiochainscan.core.client import ChainscanClient
 from aiochainscan.core.pool import classify_failure
 from aiochainscan.domain.method import Method
 from aiochainscan.exceptions import (
+    ChainscanClientError,
     ChainscanClientProxyError,
     ChainscanNetworkError,
     ChainscanRateLimitError,
+    ChainscanResultWindowExceededError,
     FailureKind,
     MethodNotDeclaredError,
     ScannerArgumentError,
 )
+from aiochainscan.network import Network
 from aiochainscan.scanners import (
     SCANNER_REGISTRY,
     get_scanner_class,
@@ -542,12 +550,15 @@ class TestCall:
         Measured live 2026-09-05 on bsc-mainnet: a 2000-block ``eth_getLogs``
         window answers -32005 "logs count exceeds the limit 50000". Retrying
         that is deterministic waste, and in a pool it cools a healthy provider.
+        The refusal raises the DEDICATED FATAL error (never a raw proxy error):
+        the guarantee engine pattern-matches on this type to split the range,
+        and single-page callers get the window and the narrowing advice.
         """
         scanner = _make_scanner()
         _mock_network(scanner, [{'result': '0x1'}])
         dialect = _NODEREAL_DIALECT
 
-        with pytest.raises(ChainscanClientProxyError):
+        with pytest.raises(ChainscanResultWindowExceededError) as excinfo:
             dialect.raise_if_error(
                 {
                     'jsonrpc': '2.0',
@@ -555,6 +566,55 @@ class TestCall:
                     'error': {'code': -32005, 'message': 'logs count exceeds the limit 50000'},
                 }
             )
+
+        error = excinfo.value
+        assert isinstance(error, ChainscanClientError)
+        assert error.limit == 50_000  # the provider's own stated cap
+        assert '-32005' in str(error)
+        assert '50000' in str(error)
+        assert 'narrowing the block range' in str(error)
+        # FATAL for the pool: a deterministic answer to the request as asked
+        # must not fail over and cool a healthy provider.
+        assert classify_failure(error) is FailureKind.FATAL
+
+    def test_unrecognized_32005_stays_a_rate_limit(self) -> None:
+        """The safe default for an unrecognised usage wording is unchanged."""
+        dialect = _NODEREAL_DIALECT
+
+        with pytest.raises(ChainscanRateLimitError):
+            dialect.raise_if_error(
+                {
+                    'jsonrpc': '2.0',
+                    'id': 1,
+                    'error': {'code': -32005, 'message': 'daily quota exhausted'},
+                }
+            )
+
+    def test_other_proxy_error_codes_are_untouched(self) -> None:
+        dialect = _NODEREAL_DIALECT
+
+        with pytest.raises(ChainscanClientProxyError):
+            dialect.raise_if_error(
+                {
+                    'jsonrpc': '2.0',
+                    'id': 1,
+                    'error': {'code': -32602, 'message': 'invalid params'},
+                }
+            )
+
+    def test_refusal_without_a_stated_limit_degrades_to_none(self) -> None:
+        dialect = _NODEREAL_DIALECT
+
+        with pytest.raises(ChainscanResultWindowExceededError) as excinfo:
+            dialect.raise_if_error(
+                {
+                    'jsonrpc': '2.0',
+                    'id': 1,
+                    'error': {'code': -32005, 'message': 'query returned more than expected'},
+                }
+            )
+
+        assert excinfo.value.limit is None
 
     def test_event_logs_declares_the_measured_result_window(self) -> None:
         """A single-shot ``eth_getLogs`` is not a provider that runs to exhaustion."""
@@ -1053,3 +1113,202 @@ class TestSeamContract:
         returned, cursor = items
         assert [item['hash'] for item in returned] == ['0x1']
         assert cursor is None  # window [0, 500] consumed: no phantom second pass
+
+
+# ============================================================================
+# Over-cap EVENT_LOGS refusal end to end: split instead of a raw FATAL error
+# ============================================================================
+
+
+def _log(block: int, index: int) -> dict[str, Any]:
+    return {
+        'address': CONTRACT,
+        'topics': ['0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef'],
+        'data': '0x',
+        'blockNumber': hex(block),
+        'transactionHash': f'{block:064x}',
+        'logIndex': hex(index),
+    }
+
+
+class _NodeRealLogsTransport:
+    """Fake ``Network.request`` speaking the NodeReal JSON-RPC dialect.
+
+    Serves ``eth_getLogs`` for a block range and REFUSES ranges whose
+    synthetic result exceeds ``cap`` with the measured -32005 envelope —
+    processed through the real ``_NODEREAL_DIALECT``, exactly where the live
+    transport applies it (inside the retry policy).
+    """
+
+    def __init__(self, blocks: dict[int, int], cap: int = 50) -> None:
+        self.cap = cap
+        self.items = [
+            _log(block, index) for block in sorted(blocks) for index in range(blocks[block])
+        ]
+        self.requests: list[tuple[int, int]] = []
+        self.refusals = 0
+
+    @property
+    def all_ids(self) -> list[str]:
+        return [str(item['transactionHash']) + str(item['logIndex']) for item in self.items]
+
+    async def request(self, **kwargs: Any) -> Any:
+        envelope = kwargs['json_data']
+        assert envelope['method'] == 'eth_getLogs'
+        log_filter = envelope['params'][0]
+        start = int(log_filter['fromBlock'], 16)
+        raw_end = log_filter['toBlock']
+        end = MAX_BLOCK_NUMBER if raw_end == 'latest' else int(raw_end, 16)
+        self.requests.append((start, end))
+
+        matching = [item for item in self.items if start <= int(item['blockNumber'], 16) <= end]
+        dialect = kwargs['dialect']
+        if len(matching) > self.cap:
+            self.refusals += 1
+            dialect.raise_if_error(
+                {
+                    'jsonrpc': '2.0',
+                    'id': 1,
+                    'error': {
+                        'code': -32005,
+                        'message': 'logs count exceeds the limit 50000',
+                    },
+                }
+            )
+        return dialect.extract({'jsonrpc': '2.0', 'id': 1, 'result': matching})
+
+
+def _nodereal_client(transport: _NodeRealLogsTransport) -> ChainscanClient:
+    with patch('aiochainscan.core.client.get_scanner_class'):
+        client = ChainscanClient(resolve_scanner_target('nodereal', 'bsc', api_key='test-key'))
+    client._scanner = NodeRealScanner(
+        api_key='test-key',
+        network='bsc',
+        url_builder=MagicMock(),
+        chain_id=client.chain_id,
+        network_client=transport,
+    )
+    return client
+
+
+class TestOverCapLogRefusal:
+    """M1: the refusal must engage the split machinery, not escape raw.
+
+    On the unfixed code the -32005 result-size refusal surfaced as a raw
+    FATAL ``ChainscanClientProxyError`` after ONE request: ``get_all_logs``
+    died mid-stream and a pool cooled nothing but helped nobody.
+    """
+
+    @pytest.mark.asyncio
+    async def test_get_all_logs_recovers_every_record_via_split(self) -> None:
+        transport = _NodeRealLogsTransport(
+            {block: 5 for block in range(0, 26)}, cap=50
+        )  # 130 logs, first (widest) window refused
+        client = _nodereal_client(transport)
+
+        logs = await client.get_all_logs(CONTRACT, from_block=0, to_block=999)
+
+        ids = [str(item['transactionHash']) + str(item['logIndex']) for item in logs]
+        assert ids == transport.all_ids  # complete, ordered, no duplicates
+        assert transport.refusals >= 1
+        narrowed = {r for r in transport.requests if r[0] != 0 or r[1] != MAX_BLOCK_NUMBER}
+        assert narrowed, 'every request stayed window-wide — the split never ran'
+
+    @pytest.mark.asyncio
+    async def test_single_page_get_logs_raises_the_dedicated_error(self) -> None:
+        """Non-guarantee path: helpful dedicated error, exactly one request."""
+        transport = _NodeRealLogsTransport({1: 60}, cap=50)
+        client = _nodereal_client(transport)
+
+        with pytest.raises(ChainscanResultWindowExceededError) as excinfo:
+            await client.get_logs(CONTRACT, from_block=0, to_block=4000)
+
+        assert transport.refusals == 1  # FATAL: no transport retry on a refusal
+        message = str(excinfo.value)
+        assert '50000' in message  # the provider's own stated cap
+        assert 'narrowing the block range' in message
+
+    @pytest.mark.asyncio
+    async def test_get_all_logs_below_the_refusal_cap_never_splits(self) -> None:
+        """A small result is served in one request — the refusal path is inert."""
+        transport = _NodeRealLogsTransport({1: 10}, cap=50)
+        client = _nodereal_client(transport)
+
+        logs = await client.get_all_logs(CONTRACT, from_block=0, to_block=10)
+
+        assert len(logs) == 10
+        assert transport.refusals == 0
+        assert len(transport.requests) == 1
+
+    @pytest.mark.asyncio
+    async def test_usage_limit_is_retried_at_the_transport(self) -> None:
+        """The OTHER -32005 meaning still retries INSIDE the retry policy.
+
+        Regression guard for the round-1 fix: the usage-limit translation
+        happens in the dialect, so the retry policy sees a retryable class.
+        """
+        attempts: list[int] = []
+
+        def handler(_request: httpx.Request) -> httpx.Response:
+            attempts.append(1)
+            return httpx.Response(
+                200,
+                json={
+                    'jsonrpc': '2.0',
+                    'id': 1,
+                    'error': {
+                        'code': -32005,
+                        'message': 'You have reached the maximum API usage limit',
+                    },
+                },
+            )
+
+        scanner = _make_scanner()
+        network = Network(
+            MagicMock(),
+            timeout=10.0,
+            retry_policy=TenacityRetryAdapter(max_attempts=3, min_wait=0, max_wait=0, jitter=0),
+        )
+        network._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        scanner._network_client = network
+        try:
+            with pytest.raises(ChainscanRateLimitError):
+                await scanner.call(Method.ACCOUNT_BALANCE, address=ADDRESS)
+        finally:
+            await network.close()
+
+        assert len(attempts) == 3, 'usage limit must be retried at the transport'
+
+
+class TestEmptyWireNameMapping:
+    """A ``''`` wire name declares an accepted-but-inert input — accepted,
+    but it must never emit a NAMELESS parameter on the wire."""
+
+    spec = NodeRealScanner.SPECS[Method.TOKEN_HOLDERS]
+
+    def test_map_params_skips_the_inert_input(self) -> None:
+        mapped = self.spec.map_params(contract_address=CONTRACT, page=2, offset=50)
+
+        assert '' not in mapped, f'nameless parameter emitted: {mapped}'
+        assert mapped == {
+            'contract_address': CONTRACT,
+            'PageSize': 50,
+        }
+
+    def test_map_params_still_accepts_the_inert_input(self) -> None:
+        # Acceptance is the point of the declaration: no error, no drop of
+        # the other params, and unknown_params='pass' is untouched for names
+        # the map does not declare at all.
+        mapped = self.spec.map_params(contract_address=CONTRACT, page=1, sort='asc')
+
+        assert mapped['contract_address'] == CONTRACT
+        assert mapped['sort'] == 'asc'  # undeclared → passes under its own name
+
+    def test_positional_builder_also_skips_the_inert_input(self) -> None:
+        scanner = _make_scanner()
+        rpc_params = scanner._build_positional_params(
+            self.spec,
+            {'contract_address': CONTRACT, 'offset': 50, 'pageKey': '', 'page': 3},
+        )
+
+        assert rpc_params == [CONTRACT, hex(50), '']  # no third entry for 'page'

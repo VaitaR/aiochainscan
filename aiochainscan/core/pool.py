@@ -504,11 +504,12 @@ class ChainscanPool(
     ) -> None:
         """Warn exactly once per route transition (failure-driven switches only).
 
-        Capability routing (method not declared) never warns: it is
-        deterministic, not exceptional. That covers the transition ONTO the
-        provider chosen after a capability skip too — the route it moves off
-        is a provider that was never asked, so the only reason available
-        ("provider selection changed") describes nothing that happened.
+        Capability routing never warns: it is deterministic, not exceptional —
+        that covers a provider skipped for never declaring the method AND the
+        completeness-routed candidate list of :meth:`_guaranteed_pinned_stream`
+        (both transitions onto the provider chosen this way move off a
+        provider that was never asked, so the only reason available ("provider
+        selection changed") describes nothing that happened).
         ``pending`` still wins: a real failure earlier in the same walk is
         what the caller needs to hear about.
         """
@@ -600,6 +601,7 @@ class ChainscanPool(
         factory: Callable[[_ProviderState], AsyncIterator[T]],
         *,
         candidates: list[_ProviderState] | None = None,
+        capability_routed: bool = False,
     ) -> AsyncIterator[T]:
         """Bind a pagination call to ONE provider with first-page failover.
 
@@ -624,6 +626,10 @@ class ChainscanPool(
                 before any request, providers that cannot honour
                 ``guarantee_complete`` — they never appear here, so they
                 never receive a request and never enter ``attempts``.
+            capability_routed: The candidate list was assembled by capability
+                (completeness) routing, so the transition onto its first
+                member is deterministic routing, not a switch — silent
+                unless a real failure earlier in the walk set ``pending``.
         """
 
         async def _generate() -> AsyncIterator[T]:
@@ -638,7 +644,9 @@ class ChainscanPool(
                         _record_attempt(attempts, state.label, state.last_error)
                     continue
                 self._maybe_warn_switch(
-                    state.label, pending, after_capability_skip=skipped_for_capability
+                    state.label,
+                    pending,
+                    after_capability_skip=skipped_for_capability or capability_routed,
                 )
                 pending = None
                 skipped_for_capability = False
@@ -721,7 +729,12 @@ class ChainscanPool(
             if not state.in_cooldown(now) and _serves_completely(state, method)
         ]
         if capable:
-            return self._pinned_stream(operation, factory, candidates=capable)
+            # Deterministic capability routing onto the chosen member: the
+            # transition off the never-asked priority-1 provider is silent
+            # (``capability_routed``), matching the exception's own contract.
+            return self._pinned_stream(
+                operation, factory, candidates=capable, capability_routed=True
+            )
 
         considered = tuple(state.label for state in self._providers)
         alternatives = tuple(

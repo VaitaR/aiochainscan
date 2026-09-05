@@ -258,6 +258,59 @@ class ChainscanClientContentTypeError(ChainscanClientError):
         return f'[{self.status}] {self.content!r}'
 
 
+class ChainscanResultWindowExceededError(ChainscanClientError):
+    """A provider refused a query whose result set exceeds its own per-request cap.
+
+    NodeReal overloads JSON-RPC ``-32005`` for both throttling and "your query
+    asks for too much"; the second flavour is a *deterministic answer to the
+    request as asked* (measured live 2026-09-05: ``eth_getLogs`` over a
+    2000-block BSC-USD window answers "logs count exceeds the limit 50000")
+    and is raised as THIS error instead of a raw
+    :class:`ChainscanClientProxyError`.
+
+    Placement follows :class:`InputLimitExceededError` /
+    :class:`ScannerArgumentError`: a :class:`ChainscanClientError` with
+    ``failure_kind = FailureKind.FATAL`` — the pool must propagate it and cool
+    nothing (retrying or failing over cannot serve the query as asked), and
+    the ``translate_unexpected_errors`` ladder every scanner seam applies
+    re-raises the family unchanged, keeping this identity and kind.
+
+    FATAL is not terminal for the guarantee engine:
+    ``services.pagination._fetch_window`` catches this error around the window
+    fetch and treats it as the overflow signal — the provider itself said the
+    matching count exceeds its cap — so the adaptive block-range split handles
+    a refused window exactly like a full-window answer and
+    ``get_all_logs``/``iter_logs`` still return the complete set. A range that
+    narrows to a single over-cap block ends in
+    :class:`PaginationDataLossError`, as before.
+
+    Attributes:
+        detail: The provider's own refusal (code and message).
+        limit: The per-request cap the provider stated, when its message
+            carries one (``50000`` in the measured refusal); ``None`` when it
+            does not.
+    """
+
+    failure_kind: FailureKind | None = FailureKind.FATAL
+
+    def __init__(self, detail: str, *, limit: int | None = None) -> None:
+        self.detail = detail
+        self.limit = limit
+        super().__init__(str(self))
+
+    def __str__(self) -> str:
+        window = (
+            f' The provider serves at most {self.limit} records per request.'
+            if self.limit is not None
+            else ''
+        )
+        return (
+            f'{self.detail}.{window} The query as asked cannot be served; narrowing the '
+            'block range (from_block/to_block) helps, and the guaranteed '
+            'get_all_*/iter_* paths split the range automatically.'
+        )
+
+
 class ChainscanResponseTooLargeError(ChainscanClientError):
     """Raised when a response exceeds the configured transport limit."""
 

@@ -102,8 +102,10 @@ class EndpointSpec:
         The ONE param-mapping implementation for ``query``-style specs: static
         :attr:`query` first (public params win on key collision), then the
         provided params — ``None`` values skipped, path placeholders
-        excluded, names translated through :attr:`param_map`, unknown names
-        handled per :attr:`unknown_params`. JSON-RPC styles
+        excluded, names translated through :attr:`param_map` (a public name
+        declared with the EMPTY wire name is accepted-but-inert: it maps to
+        nothing and emits no parameter), unknown names handled per
+        :attr:`unknown_params`. JSON-RPC styles
         (``rpc-positional`` / ``rpc-object``) are mapped by the declaring
         scanner's builders from the same :attr:`param_map` declaration.
 
@@ -122,6 +124,11 @@ class EndpointSpec:
             if f'{{{public_name}}}' in self.path:
                 continue
             scanner_param = self.param_map.get(public_name)
+            if scanner_param == '':
+                # Declared-inert input (mixin parity): tolerated, but it
+                # carries no wire parameter — emitting it produced a
+                # nameless ``''`` entry on the wire.
+                continue
             if scanner_param is None:
                 if self.unknown_params == 'drop':
                     continue

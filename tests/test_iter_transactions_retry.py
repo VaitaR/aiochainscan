@@ -420,3 +420,120 @@ class TestRetryActuallyFires:
         # Should have tried max_attempts times
         assert call_count[0] == 2
         assert 'Persistent failure' in str(exc_info.value)
+
+
+# ============================================================================
+# Streaming decode off the event loop (audit round 2)
+# ============================================================================
+
+
+class TestStreamDecodeOffLoop:
+    """The ABI decode hook used to run inline on the event loop, stalling
+    everything else scheduled there for the whole stream — despite the
+    documented "decoded in a thread pool (non-blocking)" contract."""
+
+    def _client(self) -> ChainscanClient:
+        return _make_blockscout_client(
+            [
+                {
+                    'items': [
+                        {'hash': '0x1', 'input': '0x'},
+                        {'hash': '0x2', 'input': '0x'},
+                        {'hash': '0x3', 'input': '0x'},
+                        {'hash': '0x4', 'input': '0x'},
+                    ],
+                    'next_page_params': None,
+                }
+            ]
+        )[0]
+
+    async def _stream(self, decode: Any = None) -> list[dict[str, Any]]:
+        from aiochainscan.core.streaming import STREAMING_SPECS_BY_NAME, stream_items
+
+        client = self._client()
+        return [
+            item
+            async for item in stream_items(
+                client,
+                STREAMING_SPECS_BY_NAME['iter_transactions'],
+                decode=decode,
+                address='0x123',
+            )
+        ]
+
+    @pytest.mark.asyncio
+    async def test_decode_still_applied_in_order(self):
+        items = await self._stream(decode=lambda item: {**item, 'decoded': True})
+
+        assert [item['hash'] for item in items] == ['0x1', '0x2', '0x3', '0x4']
+        assert all(item['decoded'] is True for item in items)
+
+    @pytest.mark.asyncio
+    async def test_items_before_a_failing_decode_survive(self):
+        """Per-item semantics are unchanged: consumption stops AT the failure,
+        and everything already consumed is kept."""
+        from aiochainscan.core.streaming import STREAMING_SPECS_BY_NAME, stream_items
+
+        def decode(item: dict[str, Any]) -> dict[str, Any]:
+            if item['hash'] == '0x3':
+                raise ValueError('boom')
+            return item
+
+        client = self._client()
+        seen: list[str] = []
+        with pytest.raises(ValueError, match='boom'):
+            async for item in stream_items(
+                client,
+                STREAMING_SPECS_BY_NAME['iter_transactions'],
+                decode=decode,
+                address='0x123',
+            ):
+                seen.append(item['hash'])
+
+        assert seen == ['0x1', '0x2']
+
+    @pytest.mark.asyncio
+    async def test_decode_heavy_stream_does_not_stall_a_heartbeat(self):
+        """The decode of a batch must not block the loop while it runs.
+
+        With an inline decode the 4 x 60ms decode window freezes the loop and
+        the heartbeat gets ~zero ticks; off-loop, the loop stays free and the
+        heartbeat keeps ticking through the same window.
+        """
+        import asyncio
+        import time as _time
+
+        from aiochainscan.core.streaming import STREAMING_SPECS_BY_NAME, stream_items
+
+        client = self._client()
+
+        def decode(item: dict[str, Any]) -> dict[str, Any]:
+            _time.sleep(0.06)  # stand-in for a decode-heavy item
+            return item
+
+        ticks = 0
+
+        async def heartbeat() -> None:
+            nonlocal ticks
+            while True:
+                ticks += 1
+                await asyncio.sleep(0.01)
+
+        beat = asyncio.create_task(heartbeat())
+        try:
+            consumed = 0
+            async for _item in stream_items(
+                client,
+                STREAMING_SPECS_BY_NAME['iter_transactions'],
+                decode=decode,
+                address='0x123',
+            ):
+                consumed += 1
+        finally:
+            beat.cancel()
+
+        assert consumed == 4
+        assert ticks >= 8, (
+            f'loop stalled during decode: heartbeat ticked only {ticks}x in a ~240ms '
+            'decode window'
+        )

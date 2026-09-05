@@ -76,6 +76,7 @@ from ..domain.method import Method
 from ..domain.response import coerce_response_items
 from ..exceptions import (
     ChainscanDataError,
+    ChainscanResultWindowExceededError,
     CompletenessUnavailableError,
     PaginationDataLossError,
 )
@@ -572,7 +573,9 @@ class _Overflow(Enum):
     """Ended below the cap on the provider's own terms — complete."""
 
     CONFIRMED = 'confirmed'
-    """Hit the cap with more records still offered — records are being lost."""
+    """Hit the cap with more records still offered, or was REFUSED as too
+    large — in both the provider itself says more records exist than it will
+    serve, so records are definitely being cut off."""
 
     AT_CAP = 'at_cap'
     """Ended exactly at the cap with no continuation — completeness unprovable."""
@@ -623,7 +626,12 @@ async def _fetch_window(
 
     - :attr:`_Overflow.CONFIRMED` — the provider offered a next cursor of its
       OWN at the cap, i.e. it says more records exist. Data is definitely
-      being cut off.
+      being cut off. Same flavour when the provider REFUSED the window
+      outright (a :class:`ChainscanResultWindowExceededError`, e.g. NodeReal's
+      result-size ``-32005``): the refusal is an explicit statement that the
+      matching count exceeds the cap, which is *stronger* evidence of loss
+      than a full page — reporting it as merely "possibly truncated" would be
+      as wrong as calling complete data lost.
     - :attr:`_Overflow.AT_CAP` — the window came back full with no
       continuation the provider vouches for. Possibly complete, possibly
       truncated; unprovable either way. No probe can settle it: the record
@@ -640,9 +648,10 @@ async def _fetch_window(
     collected: list[JSONDict] = []
     last_cursor: Cursor = None
     refused_beyond_cap = False
+    result_size_refused = False
 
     async def tracking_fetch(request: dict[str, Any]) -> tuple[list[JSONDict], Cursor]:
-        nonlocal last_cursor, refused_beyond_cap
+        nonlocal last_cursor, refused_beyond_cap, result_size_refused
         page = request.get('page')
         offset = request.get('offset')
         if (
@@ -660,7 +669,20 @@ async def _fetch_window(
             # window lands here.
             refused_beyond_cap = True
             return [], None
-        items, cursor = await fetch(request)
+        try:
+            items, cursor = await fetch(request)
+        except ChainscanResultWindowExceededError:
+            # The provider refused the window as larger than its per-request
+            # cap (deterministic answer, FATAL for the pool — but NOT a dead
+            # end here): that IS the overflow signal, in its most explicit
+            # form. Stop collecting; whatever the window served before the
+            # refusal (a cursor dialect can refuse mid-window) is discarded
+            # with the truncated attempt, as every overflowing window is.
+            # A rangeless request has nothing to narrow — the caller turns
+            # the overflow into CompletenessUnavailableError with the real
+            # alternatives; a ranged one splits, exactly like a full window.
+            result_size_refused = True
+            return [], None
         last_cursor = cursor
         return items, cursor
 
@@ -671,6 +693,8 @@ async def _fetch_window(
         collected.extend(batch)
         if len(collected) >= result_window:
             return collected, _overflow_at_cap()
+    if result_size_refused:
+        return collected, _Overflow.CONFIRMED
     if refused_beyond_cap:
         return collected, _overflow_at_cap()
     return collected, _Overflow.NONE

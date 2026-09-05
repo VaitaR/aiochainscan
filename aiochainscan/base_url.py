@@ -34,6 +34,15 @@ _URL_LIKE_RE = re.compile(r'^[a-zA-Z][a-zA-Z0-9+.\-]*://')
 
 _FORBIDDEN_CHARS_RE = re.compile(r'[\s\x00-\x1f\x7f]')
 
+# Legal hostname characters: letters, digits, dots and hyphens (RFC 1123 —
+# punycode spell an IDN through this charset). Everything else — backslashes,
+# percent escapes, underscores, unicode — is refused at validation time
+# instead of surfacing as a late DNS/request error.
+_HOSTNAME_RE = re.compile(r'^[A-Za-z0-9.\-]+$')
+
+# Bracketed IPv6 literal: hex digits, colons (and the IPv4-embedded dot form).
+_IPV6_LITERAL_RE = re.compile(r'^\[[0-9A-Fa-f:.]+\]$')
+
 
 def is_url_like(value: str) -> bool:
     """Return True when *value* looks like ``scheme://…`` (a base URL).
@@ -42,6 +51,49 @@ def is_url_like(value: str) -> bool:
     (``ethereum``, ``base``, ``sepolia``…) never contain ``://``.
     """
     return bool(_URL_LIKE_RE.match(value))
+
+
+def _validate_netloc(url: str, netloc: str) -> None:
+    """Validate the hostname charset and port range BEFORE any request.
+
+    ``urlsplit`` accepts things no DNS resolver or HTTP client will ever
+    reach: ``https://example.com\\..\\etc`` keeps the backslashes inside the
+    netloc, ``https://host:99999`` parses a port that cannot exist, and a
+    percent- or underscore-spelled host only dies at connection time.
+    Refusing them here turns a late DNS/request error into a
+    construction-time ``ValueError``.
+    """
+    # Credentials were already refused, so everything after the last '@' (an
+    # '@' cannot start a hostname) is the host[:port] part.
+    host_part = netloc.rsplit('@', 1)[-1]
+    port: str | None = None
+
+    if host_part.startswith('['):
+        close = host_part.find(']')
+        if close == -1:
+            raise ValueError(f'base URL has a malformed bracketed host: {url!r}')
+        host_literal = host_part[: close + 1]
+        remainder = host_part[close + 1 :]
+        if remainder and not remainder.startswith(':'):
+            raise ValueError(f'base URL has a malformed host[:port]: {url!r}')
+        if not _IPV6_LITERAL_RE.match(host_literal):
+            raise ValueError(
+                f'base URL host has invalid characters for an IPv6 literal: {host_literal!r}'
+            )
+        port = remainder[1:] if remainder else None
+    else:
+        host, port_separator, port_value = host_part.partition(':')
+        if port_separator and not port_value:
+            raise ValueError(f'base URL has an empty port: {url!r}')
+        if not _HOSTNAME_RE.match(host):
+            raise ValueError(
+                f'base URL host must contain only letters, digits, dots and hyphens '
+                f'(spell an IDN in punycode; use a bracketed IPv6 literal), got {host!r}'
+            )
+        port = port_value if port_separator else None
+
+    if port is not None and (not port.isdigit() or not 1 <= int(port) <= 65535):
+        raise ValueError(f'base URL port must be an integer in 1..65535, got {port!r}')
 
 
 def validate_base_url(url: str, *, allow_http: bool = False) -> str:
@@ -88,6 +140,8 @@ def validate_base_url(url: str, *, allow_http: bool = False) -> str:
         raise ValueError(f'base URL is missing a host: {url!r}')
     if parts.username is not None or parts.password is not None:
         raise ValueError('base URL must not contain credentials (user:pass@host)')
+
+    _validate_netloc(url, parts.netloc)
 
     if parts.query:
         raise ValueError(f'base URL must not contain a query string: {parts.query!r}')

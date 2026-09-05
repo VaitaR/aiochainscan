@@ -18,7 +18,10 @@ from aiochainscan.chain_registry import resolve_scanner_target
 from aiochainscan.constants import API_MAX_OFFSET_ETHERSCAN
 from aiochainscan.core.client import ChainscanClient
 from aiochainscan.exceptions import (
+    ChainscanClientError,
+    ChainscanResultWindowExceededError,
     CompletenessUnavailableError,
+    FailureKind,
     PaginationDataLossError,
 )
 from aiochainscan.scanners._etherscan_like import EtherscanLikeScanner
@@ -676,3 +679,184 @@ async def test_client_token_holders_opt_out_still_truncates() -> None:
 
     assert len(holders) == WINDOW
     assert len(holders) < len(explorer.all_ids)
+
+
+# ---------------------------------------------------------------------------
+# Refusal dialects (NodeReal result-size -32005): the refusal IS the overflow
+# ---------------------------------------------------------------------------
+
+
+class RefusingExplorer:
+    """A provider that REFUSES windows over ``result_window`` (NodeReal-style).
+
+    Instead of silently truncating, this dialect answers an over-cap window
+    with a deterministic refusal carrying NO records — the
+    :class:`ChainscanResultWindowExceededError` the NodeReal dialect now maps
+    its result-size ``-32005`` to. Before the refusal engaged the split
+    machinery it escaped the engine as a raw FATAL error after one request.
+    """
+
+    def __init__(self, blocks: dict[int, int], result_window: int = WINDOW) -> None:
+        self.result_window = result_window
+        self.items: list[dict[str, Any]] = [
+            {'blockNumber': str(block), 'id': f'{block}-{index}'}
+            for block in sorted(blocks)
+            for index in range(blocks[block])
+        ]
+        self.requests: list[tuple[int, int, int]] = []
+        self.refusals = 0
+
+    @property
+    def all_ids(self) -> list[str]:
+        return [item['id'] for item in self.items]
+
+    async def fetch(
+        self, params: dict[str, Any]
+    ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+        start = int(params['start_block'])
+        end = int(params['end_block'])
+        page = int(params.get('page', 1))
+        offset = int(params['offset'])
+        self.requests.append((start, end, page))
+
+        matching = [item for item in self.items if start <= int(item['blockNumber']) <= end]
+        if len(matching) > self.result_window:
+            self.refusals += 1
+            raise ChainscanResultWindowExceededError(
+                f'NodeReal JSON-RPC error -32005: logs count exceeds the '
+                f'limit {self.result_window}',
+                limit=self.result_window,
+            )
+        lo = (page - 1) * offset
+        chunk = matching[lo : lo + offset]
+        cursor = {'page': page + 1, 'offset': offset} if lo + offset < len(matching) else None
+        return chunk, cursor
+
+
+@pytest.mark.asyncio
+async def test_result_size_refusal_splits_and_recovers_every_record() -> None:
+    """A refused window is an overflow: the split must engage, not error out."""
+    explorer = RefusingExplorer(spread(range(0, 26), per_block=5))  # 130 records
+
+    collected = await drain(
+        iter_pages(
+            explorer.fetch,
+            dict(BASE_PARAMS),
+            guarantee_complete=True,
+            result_window=explorer.result_window,
+        )
+    )
+
+    assert [item['id'] for item in collected] == explorer.all_ids
+    assert explorer.refusals >= 1, 'the stub never refused — nothing was exercised'
+    narrowed = {r for r in explorer.requests if r[:2] != (0, 999)}
+    assert narrowed, 'no narrower window was requested — the split never ran'
+
+
+@pytest.mark.asyncio
+async def test_result_size_refusal_splits_on_the_observed_boundary_when_possible() -> None:
+    """Records served before a mid-window refusal still drive the split point."""
+    explorer = RefusingExplorer(spread(range(0, 26), per_block=5))
+    # Wide refusal, then a cursor dialect: a page/offset explorer served up to
+    # its offset before the provider refused the CONTINUATION — modelled by
+    # letting the first (widest) request serve one full page before refusing.
+    original_fetch = explorer.fetch
+
+    async def fetch(params: dict[str, Any]) -> tuple[list[dict[str, Any]], Any]:
+        if not explorer.requests:  # very first request: serve one page, then refuse
+            start, end = int(params['start_block']), int(params['end_block'])
+            explorer.requests.append((start, end, int(params.get('page', 1))))
+            page_items = [
+                item for item in explorer.items if start <= int(item['blockNumber']) <= end
+            ][: int(params['offset'])]
+            return page_items, {'page': 2, 'offset': int(params['offset'])}
+        return await original_fetch(params)
+
+    collected = await drain(
+        iter_pages(
+            fetch,
+            dict(BASE_PARAMS),
+            guarantee_complete=True,
+            result_window=explorer.result_window,
+        )
+    )
+
+    assert sorted(item['id'] for item in collected) == sorted(explorer.all_ids)
+
+
+@pytest.mark.asyncio
+async def test_result_size_refusal_single_block_raises_confirmed_data_loss() -> None:
+    """A range narrowed to one over-cap block ends in the whale-block error —
+    and the refusal CONFIRMS the loss (the provider said the count exceeds)."""
+    explorer = RefusingExplorer({7: WINDOW + 10})
+
+    with pytest.raises(PaginationDataLossError) as excinfo:
+        await drain(
+            iter_pages(
+                explorer.fetch,
+                dict(BASE_PARAMS),
+                guarantee_complete=True,
+                result_window=explorer.result_window,
+            )
+        )
+
+    error = excinfo.value
+    assert error.start_block == error.end_block == 7
+    assert error.confirmed is True, 'a refusal is proof of loss, not unprovable'
+    assert 'PAGINATION DATA LOSS' in str(error)
+
+
+@pytest.mark.asyncio
+async def test_result_size_refusal_on_a_rangeless_endpoint_raises_completeness_unavailable() -> (
+    None
+):
+    """No range to narrow is the sibling error — with the refusal confirming."""
+    explorer = RefusingExplorer({1: WINDOW + 5})
+
+    with pytest.raises(CompletenessUnavailableError) as excinfo:
+        await drain(
+            iter_pages(
+                rangeless_fetch(explorer),
+                dict(HOLDERS_PARAMS),
+                guarantee_complete=True,
+                result_window=explorer.result_window,
+                context=PaginationContext(
+                    method='TOKEN_HOLDERS',
+                    provider='nodereal/v1',
+                    alternatives=(),
+                ),
+            )
+        )
+
+    error = excinfo.value
+    assert not isinstance(error, PaginationDataLossError)
+    assert error.confirmed is True
+    assert error.items_fetched == 0  # a refusal serves no records at all
+
+
+@pytest.mark.asyncio
+async def test_opted_out_engine_propagates_the_dedicated_refusal() -> None:
+    """``guarantee_complete=False`` keeps the dedicated error on the caller."""
+    explorer = RefusingExplorer(spread(range(0, 26), per_block=5))
+
+    with pytest.raises(ChainscanResultWindowExceededError) as excinfo:
+        await drain(
+            iter_pages(
+                explorer.fetch,
+                dict(BASE_PARAMS),
+                guarantee_complete=False,
+                result_window=explorer.result_window,
+            )
+        )
+
+    message = str(excinfo.value)
+    assert 'logs count exceeds the limit 50' in message
+    assert 'narrowing the block range' in message
+
+
+def test_refusal_error_is_a_fatal_chainscan_client_error() -> None:
+    """The identity the pool reads: FATAL (no cooldown), but never masked."""
+    error = ChainscanResultWindowExceededError('refused', limit=50_000)
+    assert isinstance(error, ChainscanClientError)
+    assert error.failure_kind is FailureKind.FATAL
+    assert error.limit == 50_000

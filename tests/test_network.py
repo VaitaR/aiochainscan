@@ -868,3 +868,148 @@ class TestUnsupportedVerb:
             assert acquired == 0
         finally:
             await network.close()
+
+
+class TestContentTypeAbsentHeader:
+    """round-2 #9 half: a 200 with a JSON body but NO content-type header is
+    common from sloppy proxies — treat the absent header as an opaque JSON
+    attempt while an explicit non-JSON type stays refused."""
+
+    def _response(self, content: bytes, headers: dict[str, str]) -> httpx.Response:
+        return httpx.Response(
+            200, headers=headers, content=content, request=httpx.Request('GET', 'https://x/api')
+        )
+
+    def test_absent_content_type_with_json_body_is_parsed(self, ub: UrlBuilder) -> None:
+        network = Network(ub, timeout=10.0)
+        response = httpx.Response(
+            200, content=b'{"result": "0x1"}', request=httpx.Request('GET', 'https://x/api')
+        )
+        assert response.headers.get('content-type') is None
+
+        assert network._handle_response(response) == '0x1'
+
+    def test_empty_content_type_with_json_body_is_parsed(self, ub: UrlBuilder) -> None:
+        network = Network(ub, timeout=10.0)
+        response = self._response(b'{"result": "0x2"}', {'content-type': ''})
+
+        assert network._handle_response(response) == '0x2'
+
+    def test_absent_content_type_with_non_json_body_still_refused(self, ub: UrlBuilder) -> None:
+        """No header is not a licence for garbage: the parse step rejects."""
+        network = Network(ub, timeout=10.0)
+        response = httpx.Response(
+            200, content=b'<html>blocked</html>', request=httpx.Request('GET', 'https://x/api')
+        )
+
+        with pytest.raises(ChainscanClientContentTypeError):
+            network._handle_response(response)
+
+    def test_explicit_non_json_type_is_refused_without_a_parse_attempt(
+        self, ub: UrlBuilder
+    ) -> None:
+        network = Network(ub, timeout=10.0)
+        response = self._response(b'{"result": "json-looking"}', {'content-type': 'text/html'})
+
+        with pytest.raises(ChainscanClientContentTypeError):
+            network._handle_response(response)
+
+
+class TestDebugLogRedactionIsLazy:
+    """Debug-log arguments (redacted URL/payload/headers) cost real loop
+    time; they must be built only when DEBUG can actually emit the record."""
+
+    @staticmethod
+    async def _one_request(ub: UrlBuilder) -> None:
+        network = Network(ub, timeout=10.0)
+        network._client = httpx.AsyncClient(transport=httpx.MockTransport(_ok_handler))
+        try:
+            await network.get(params={'module': 'proxy', 'action': 'test'})
+        finally:
+            injected = network._client
+            network._client = None
+            await injected.aclose()
+            await network.close()
+
+    async def test_no_redaction_work_when_debug_is_off(self, ub: UrlBuilder) -> None:
+        calls = {'n': 0}
+
+        def counting_redactor(value: Any) -> Any:
+            calls['n'] += 1
+            return value
+
+        logger = logging.getLogger('aiochainscan.network')
+        assert not logger.isEnabledFor(logging.DEBUG)
+
+        with (
+            patch('aiochainscan.network._redact_url', side_effect=counting_redactor),
+            patch('aiochainscan.network._redact_payload', side_effect=counting_redactor),
+            patch('aiochainscan.network._redact_headers', side_effect=counting_redactor),
+        ):
+            await self._one_request(ub)
+
+        assert calls['n'] == 0, 'redaction helpers ran with DEBUG disabled'
+
+    async def test_debug_on_still_logs_the_redacted_request(self, ub: UrlBuilder, caplog) -> None:
+        import aiochainscan.network as network_module
+
+        calls = {'n': 0}
+
+        def counting(real: Any) -> Any:
+            def wrapper(value: Any) -> Any:
+                calls['n'] += 1
+                return real(value)  # the REAL redaction, counted
+
+            return wrapper
+
+        with (
+            patch(
+                'aiochainscan.network._redact_url',
+                new=counting(network_module._redact_url),
+            ),
+            patch(
+                'aiochainscan.network._redact_payload',
+                new=counting(network_module._redact_payload),
+            ),
+            patch(
+                'aiochainscan.network._redact_headers',
+                new=counting(network_module._redact_headers),
+            ),
+            caplog.at_level(logging.DEBUG, logger='aiochainscan.network'),
+        ):
+            await self._one_request(ub)
+
+        assert calls['n'] > 0, 'DEBUG on: the redacted request line was built'
+        request_lines = [r for r in caplog.records if 'url=' in r.getMessage()]
+        assert request_lines, 'the request debug line is missing'
+        assert 'test_api_key' not in request_lines[0].getMessage(), 'must stay redacted'
+
+
+class TestClosedNetworkBeforeGuard:
+    """A request on a closed Network must fail with the typed closed error
+    BEFORE the first-request guard engages — the guard's failure memory is
+    for configuration verdicts, not lifecycle bugs."""
+
+    async def test_closed_network_errors_cleanly_and_poisons_nothing(self, ub: UrlBuilder) -> None:
+        guard_calls = 0
+
+        async def guard() -> None:
+            nonlocal guard_calls
+            guard_calls += 1
+
+        network = Network(ub, timeout=10.0, first_request_guard=guard)
+        network._client = httpx.AsyncClient(transport=httpx.MockTransport(_ok_handler))
+        try:
+            await network.close()
+
+            with pytest.raises(ChainscanClientError, match='Network is closed'):
+                await network.get(params={'module': 'proxy', 'action': 'test'})
+
+            assert guard_calls == 0, 'the guard probe ran on a closed network'
+            assert network._guard_done is False, 'guard state poisoned by a closed request'
+            assert network._guard_error is None
+        finally:
+            injected = network._client
+            network._client = None
+            if injected is not None:
+                await injected.aclose()

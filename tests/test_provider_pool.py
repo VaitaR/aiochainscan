@@ -61,6 +61,7 @@ from aiochainscan.exceptions import (
     ChainscanNetworkError,
     ChainscanProviderSwitchWarning,
     ChainscanRateLimitError,
+    ChainscanResultWindowExceededError,
     CompletenessUnavailableError,
     MethodNotDeclaredError,
     ProviderPoolExhaustedError,
@@ -965,7 +966,12 @@ class TestCompletenessRouting:
             [{'address': HOLDER, 'value': '5'}]
         )
 
-        with pytest.warns(ChainscanProviderSwitchWarning):
+        # Deliberate expectation change (audit round 2, cosmetic): routing
+        # straight to the completeness-capable member is capability routing —
+        # deterministic, therefore SILENT. It used to warn with the
+        # meaningless reason "provider selection changed".
+        with warnings.catch_warnings():
+            warnings.simplefilter('error', ChainscanProviderSwitchWarning)
             batches = [batch async for batch in pool.iter_token_holders_streaming(TOKEN)]
 
         assert batches == [[{'address': HOLDER, 'value': '5'}]]
@@ -1052,7 +1058,9 @@ class TestCompletenessRouting:
             [{'address': HOLDER, 'value': '5'}]
         )
 
-        with pytest.warns(ChainscanProviderSwitchWarning):
+        # Same deliberate silence as above: capability routing, not a switch.
+        with warnings.catch_warnings():
+            warnings.simplefilter('error', ChainscanProviderSwitchWarning)
             batches = [batch async for batch in pool.iter_token_holders_streaming(TOKEN)]
 
         assert batches == [[{'address': HOLDER, 'value': '5'}]]
@@ -1385,3 +1393,52 @@ class TestCapabilityRoutingIsSilent:
 
         with pytest.warns(ChainscanProviderSwitchWarning, match='rate limit'):
             assert await pool.call(Method.GAS_ORACLE) == {'SafeGasPrice': '10'}
+
+
+# ---------------------------------------------------------------------------
+# NodeReal over-cap refusal: FATAL means propagate — no failover, no cooldown
+# ---------------------------------------------------------------------------
+
+
+class _RefusingTransport:
+    """Network double that raises the dedicated result-window refusal."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def request(self, **_kwargs: Any) -> Any:
+        self.calls += 1
+        raise ChainscanResultWindowExceededError(
+            'NodeReal JSON-RPC error -32005: logs count exceeds the limit 50000',
+            limit=50_000,
+        )
+
+
+class TestNodeRealResultWindowRefusal:
+    """The -32005 result-size refusal is a deterministic FATAL answer: the
+    pool must propagate it immediately and cool nothing — the split remedy
+    lives INSIDE the member's guarantee engine, not in pool failover."""
+
+    async def test_refusal_propagates_without_failover_or_cooldown(
+        self, etherscan: ChainscanClient, clock: FakeClock
+    ) -> None:
+        nodereal = ChainscanClient(resolve_scanner_target('nodereal', 'bsc', api_key='test-key'))
+        transport = _RefusingTransport()
+        nodereal._scanner._network_client = transport  # type: ignore[union-attr]
+        pool = ChainscanPool([nodereal, etherscan], clock=clock)
+        eth_call = stub_client(etherscan, [])
+
+        with pytest.raises(ChainscanResultWindowExceededError):
+            await pool.get_logs(TOKEN, from_block=0, to_block=4000)
+
+        assert transport.calls == 1, 'FATAL errors are never retried'
+        assert eth_call.await_count == 0, 'FATAL errors never fail over'
+        states = pool.provider_states()
+        assert states['nodereal/bsc']['available'] is True, 'a refusal never cools a provider'
+        assert states['nodereal/bsc']['last_error'] is None
+
+    async def test_refusal_classifies_fatal(self) -> None:
+        assert (
+            classify_failure(ChainscanResultWindowExceededError('refused', limit=50_000))
+            is FailureKind.FATAL
+        )
