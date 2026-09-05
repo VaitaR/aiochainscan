@@ -74,7 +74,14 @@ async def test_logging_progress_emits_on_named_logger(caplog: pytest.LogCaptureF
     assert 'page=2' in records[0].message
 
 
-async def test_callback_with_interval_calls_wrapped_callback_first_time() -> None:
+async def test_callback_with_interval_calls_wrapped_callback_first_time(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The monotonic clock starts near zero on a freshly booted machine, so the
+    # first call must not be gated by min_interval_seconds (CI red on young
+    # runners while dev machines with long uptimes stayed green).
+    monkeypatch.setattr('time.monotonic', lambda: 1.0)
+
     calls: list[int] = []
 
     async def inner(fetched: int, total_expected: int | None, **kwargs: object) -> None:

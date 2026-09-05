@@ -304,7 +304,10 @@ def callback_with_interval(
     """
     from time import monotonic
 
-    last_call_time = 0.0
+    # None until the first invocation: a monotonic clock starts near zero on a
+    # freshly booted machine, so 0.0 as the initial value would swallow the
+    # first call whenever min_interval_seconds exceeds the uptime.
+    last_call_time: float | None = None
 
     async def wrapper(
         fetched: int,
@@ -320,9 +323,8 @@ def callback_with_interval(
 
         # Always call on first invocation or completion
         is_complete = total_expected is not None and fetched >= total_expected
-        time_elapsed = now - last_call_time
 
-        if is_complete or time_elapsed >= min_interval_seconds:
+        if is_complete or last_call_time is None or now - last_call_time >= min_interval_seconds:
             await callback(
                 fetched,
                 total_expected,
