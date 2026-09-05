@@ -141,11 +141,14 @@ async with ChainscanClient.from_config('etherscan', 'ethereum') as client:
 > **Value conversion helpers** (`convert.py`): module-level, stateless, stdlib-only
 > utilities for the string scalars every explorer API returns. Wei/token math is
 > `Decimal`-exact (`to_decimal_amount` / `wei_to_ether` — integer str/int only,
-> fractional base-unit strings are rejected as corrupted data; negatives valid;
+> fractional base-unit strings are rejected as corrupted data; so are scientific
+> notation (`'1e18'`), `'1_000'`-style separators, full-width digits and `bool`;
+> negatives valid;
 > 10^30+ wei exact), `format_ether` renders fixed-precision strings (half-up,
 > context precision sized to the value so 10^40 wei does not overflow),
 > `hex_to_int` accepts hex `'0x1a'` / decimal `'26'` / int (the proxy-vs-REST
-> dual mode; signed hex `-0x10` works; bare `'1a'` is ambiguous → `ValueError`),
+> dual mode; signed hex `-0x10` works; bare `'1a'` is ambiguous → `ValueError`,
+> and the underscore/full-width/`bool` rejections apply here too),
 > `hex_to_str` decodes data fields (utf-8; `'0x'` → `''`), `to_datetime` /
 > `to_iso` convert unix seconds (hex tolerated) to tz-aware UTC datetime /
 > ISO-8601. All exported from the package root; enforced by `tests/test_convert.py`.
@@ -172,7 +175,8 @@ async with ChainscanClient.from_config('etherscan', 'ethereum') as client:
 > Transparency: `last_provider`, `provider=<label>` stamp in progress
 > callbacks, `ChainscanProviderSwitchWarning` on switches (a switch that only
 > stepped over a provider which never declared the method is routing, not
-> failure, and warns about nothing),
+> failure, and warns about nothing — the same silence covers guaranteed calls
+> routed straight to a completeness-capable member of the candidate list),
 > `ProviderPoolExhaustedError.attempts = [(provider, exception), ...]`.
 > The pool never duplicates retries — it reacts only to exceptions that
 > survived each member client's tenacity `Network`.
@@ -224,7 +228,8 @@ async with ChainscanClient.from_config('etherscan', 'ethereum') as client:
 >   from 10_000 to 1000 in July 2026). Treat `max_page_size` as a measured
 >   constant with a shelf life: re-measure it with `make probe-caps`
 >   (`scripts/agent/probe_provider_caps.py` — asks each provider for pages
->   straddling its declared caps and exits non-zero on drift), do not reason
+>   straddling its declared caps and exits non-zero on drift or on any
+>   unconfirmed declaration, in both text and `--json` modes), do not reason
 >   about it. Last run 2026-09-02: Etherscan v2 and BlockScout V1 both
 >   reproduced their declarations for `ACCOUNT_TRANSACTIONS` and `EVENT_LOGS`
 >   (Etherscan serves 1000 per page and refuses `page*offset` at 11_000;
@@ -235,7 +240,7 @@ async with ChainscanClient.from_config('etherscan', 'ethereum') as client:
 >   verify" for them rather than firing requests whose answer could not move a
 >   declaration; a declared cap the probe cannot exercise counts as unverified,
 >   never as a pass.
-> - **Reaching the cap has two flavours** and the error says which. The
+> - **Reaching the cap has three signals** and the error says which. The
 >   provider offered a continuation at the cap → records are definitely being
 >   cut off (`confirmed=True`). The window came back exactly full with *no*
 >   continuation → possibly complete, possibly capped, and the API offers no
@@ -247,6 +252,11 @@ async with ChainscanClient.from_config('etherscan', 'ethereum') as client:
 >   `{page, offset}` cursor is this library's own arithmetic and is emitted
 >   whether or not more data exists, so counting it as a continuation reported
 >   data that ends exactly on the cap as confirmed loss.
+>   The third signal is an outright provider refusal: NodeReal's result-size
+>   `-32005` raises `ChainscanResultWindowExceededError` (FATAL, carries the
+>   stated limit), which the guaranteed engine converts to the overflow
+>   outcome and splits — the provider *said* the count exceeds its cap, so
+>   that path is `confirmed=True`, never "possibly".
 > - **The split is adaptive**: on overflow the block range is cut at the block
 >   of the last record the provider managed to serve (arithmetic bisect only
 >   when items carry no block number), and each half is strictly narrower, so
@@ -317,7 +327,7 @@ Branch types: `feat | fix | chore | docs | arch | refactor` (2nd arg, default `f
 | `validate_fast.sh` | The DONE gate — ruff, format, import-lint, mypy --strict, full pytest |
 | `safe_commit.sh` | `git add` + commit with index.lock retry (worktree-aware; use `make commit`) |
 | `ci_watch.sh` | Bounded GH Actions poller; exit status is the verdict |
-| `probe_provider_caps.py` | Re-measures declared pagination caps live (`make probe-caps`); exit 1 on drift or on a provider left unconfirmed for want of a key |
+| `probe_provider_caps.py` | Re-measures declared pagination caps live (`make probe-caps`); exit 1 on drift, rate-limited/inconclusive probes, or an unconstructible provider — in both output modes |
 | `ruff_format_hook.py` | PostToolUse hook — auto-formats edited `*.py` |
 
 ### GitHub Actions
@@ -547,7 +557,12 @@ Every `Method` enum value (33 total) maps to typed convenience methods on `Chain
 >
 > Keys for this live surface live in `~/.aiochainscan/.env` (machine-level, read by
 > `ConfigurationManager` for every cwd, so worktrees need no plumbing); a repo-local
-> `./.env` still overrides it. NodeReal also documents these two methods as "BSC and ETH mainnet
+> `./.env` still overrides it, and within the repo `./.env.local` (loaded before
+> `./.env`) overrides `./.env`. `os.environ` outranks every file. A `.env` file that is
+> not valid UTF-8 is warned about and its undecodable lines skipped, never fatal.
+> `ConfigurationManager` is a process-wide singleton; constructing it with a different
+> `config_dir` warns and keeps the original — rebind via `reset_instance()` / `reload()`.
+> NodeReal also documents these two methods as "BSC and ETH mainnet
 > only" while `supported_networks` is BSC-only — deliberately not widened, since nothing
 > establishes ETH support for the other 22 methods.
 
@@ -598,15 +613,19 @@ BscScan-compatible verified-contract REST on `open-platform.nodereal.io`. Networ
   transport retry policy applies; the same code carrying a result-size refusal
   ("logs count exceeds the limit 50000") is a deterministic answer to the
   request as asked — retrying it burns the budget and cools a healthy
-  provider — so it stays a data error. The translation lives in the scanner's
+  provider — so it raises `ChainscanResultWindowExceededError` (a FATAL
+  `ChainscanClientError` carrying the stated limit), not a generic data
+  error. The translation lives in the scanner's
   `ResponseDialect` (`_NodeRealEnvelope`), i.e. inside `Network._send`, which
-  is what puts it under the retry policy at all.
+  is what puts the usage-limit meaning under the retry policy at all.
 - `EVENT_LOGS` is capped at **50 000 logs per request** and NodeReal *errors*
   rather than truncating (live-measured 2026-09-05, bsc-mainnet: a 200-block
   span of BSC-USD `Transfer` served 26 841 logs; 2000 and 20 000 blocks both
-  answered `-32005`). Declared in `RESULT_WINDOW_OVERRIDES`, so the guarantee
-  machinery splits the range instead of reading the refusal as a rate limit,
-  and `scanners_serving_completely(EVENT_LOGS)` stops naming NodeReal as a
+  answered `-32005`). Declared in `RESULT_WINDOW_OVERRIDES`, and the
+  guaranteed engine converts the dedicated refusal into the overflow outcome
+  and splits the range (a range narrowing to a single over-cap block still
+  ends in `PaginationDataLossError(confirmed=True)`), while
+  `scanners_serving_completely(EVENT_LOGS)` stops naming NodeReal as a
   remedy it cannot be.
 
 ### BlockScout networks and instance probing
@@ -617,7 +636,11 @@ registers for v1 and v2 at once and neither leg can advertise a network it
 cannot resolve to an instance — nor refuse, at construction, one the registry
 just resolved. Both also record the resolved instance as `base_url` on the
 registry path, which is what `get_chain_info()` / `validate_chain()` probe; a
-custom base URL is the same field by another route.
+custom base URL is the same field by another route. The v2 leg derives its
+UrlBuilder kind (hence `client.currency`) per network through the same
+`BLOCKSCOUT_CONFIG_IDS` mapping v1 uses, so **v2 currency always equals v1
+currency** for the same chain; its requests are still built from the scanner's
+own `BASE_URLS`, never the UrlBuilder profile.
 
 ### BlockScout v1 proxy fallback (`/api/eth-rpc`)
 
@@ -681,7 +704,7 @@ Agent adapter over `ChainscanClient` — **run**: `python -m aiochainscan.mcp_se
 
 | File | Purpose |
 |------|---------|
-| `mcp/envelope.py` | `ToolResponse{data, notes, instructions, pagination, content_text}` + truncation (`{value_sample, value_truncated}`, 512 chars) + `format_units` (lossless int math) |
+| `mcp/envelope.py` | `ToolResponse{data, notes, instructions, pagination, content_text}` + truncation (`{value_sample, value_truncated}`, 512 chars) + `format_units` (lossless int math; `decimals` clamped at 78 — the uint256 digit count — and float/non-int input returned unchanged) |
 | `mcp/cursors.py` | Opaque Base64URL cursors wrapping `fetch_page` scanner cursors (`InvalidCursorError` with "start over" advice) |
 | `mcp/tools.py` | 12 tools as plain `client -> ToolResponse` functions (**no mcp import** — offline-testable) + `ClientPool` (one client per `(scanner, chain)`, connection pooling across calls) |
 | `mcp/server.py` | FastMCP wiring: envelope → `CallToolResult` (text + structuredContent), tool registration |
@@ -727,6 +750,11 @@ Agent adapter over `ChainscanClient` — **run**: `python -m aiochainscan.mcp_se
    URL leave it empty and declare `param_style` (`'rpc-positional'` /
    `'rpc-object'`) plus the full `param_map` so the builders, the
    block-range capability and the consistency sweep read one declaration)
+4. Register the scanner's declared network surface in
+   `tests/test_registry_consistency.py` — `test_all_scanners_are_swept`
+   deliberately fails until the new scanner's declared tables join the
+   cross-product construction sweep (spelling-canonicalized: alias spellings
+   like `bnb`/`binance`/`bsc` all resolve to one construction target)
 4. The base owns the seams — do NOT override `call()` for transport:
    `Scanner.call()` applies the error ladder (`translate_unexpected_errors`)
    exactly once and dispatches through ONE mechanism (UrlBuilder endpoint
@@ -752,7 +780,7 @@ Agent adapter over `ChainscanClient` — **run**: `python -m aiochainscan.mcp_se
 ### Modifying HTTP Behavior
 - Rate limiting: `adapters/aiolimiter_adapter.py` (burst=1 for APIs)
 - Retry logic: `network.py` — one admission path (`Network._send`: guard → rate-limit → dispatch → handle → finish → retry, written once) retrying `exceptions.TRANSIENT_EXCEPTIONS`, the single transient vocabulary shared with the first-request guard and `TenacityRetryAdapter.DEFAULT_RETRY_EXCEPTIONS`
-- Response envelopes: dialect seam in `network.py` (`ResponseDialect` protocol; `EtherscanEnvelope` + `JsonRpcEnvelope`, composed as the default since every path serves both dialects)
+- Response envelopes: dialect seam in `network.py` (`ResponseDialect` protocol; `EtherscanEnvelope` + `JsonRpcEnvelope`, composed as the default since every path serves both dialects); an absent/empty content-type header is accepted as an opaque JSON attempt, an explicit non-JSON type (`text/html`) is refused before parsing
 - JSON parsing: Always use `orjson.loads(response.content)` not `response.json()`
 - Credential redaction helpers live in `aiochainscan/_redaction.py` (re-exported from `network.py`)
 
@@ -848,6 +876,7 @@ Semantics:
 from aiochainscan.exceptions import (
     ChainscanRateLimitError,      # Retry with backoff
     ChainscanNetworkError,        # Retry (connection issues)
+    ChainscanResultWindowExceededError,  # FATAL: provider refused the request as over its result window (engine splits it)
     PaginationDataLossError,      # Whale block: a single block over the API's cap
     CompletenessUnavailableError, # Endpoint has no splittable dimension here (.alternatives)
     ChainscanDataError,           # Data contract violation
@@ -893,13 +922,29 @@ transaction inputs, event logs, `SmartContract.iter_events` and the MCP
 
 - **One output convention across both tiers** (the Rust one): ints above
   `i64::MAX` as strings, `bytes`/`bytesN` as `0x` hex, arrays *and* tuples as
-  `list`. `tests/test_abi_pure.py::TestTierParity` pins it — a decoded value
+  `list`, `fixedMxN`/`ufixedMxN` as a fixed-point string (`format(v,'f')`,
+  never scientific) so orjson/MCP never sees a `Decimal`.
+  `tests/test_abi_pure.py::TestTierParity` pins it — a decoded value
   must not change shape when a user adds or drops `[fastabi]`.
+- **Decoded-input naming is one convention on both tiers**
+  (`decode.py:_resolved_input_names` mirrored by `lib.rs resolved_param_names`):
+  unnamed inputs (missing/null/empty name) are keyed `param_{i}` by position;
+  duplicate names — first keeps the plain spelling, later ones get `_2`, `_3`…;
+  applies to function decodes, event decodes and Arrow columns. Before this,
+  empty names folded onto one `''` key (all but the last value silently lost)
+  and an ABI with unnamed params could void the whole decode.
 - **Unsupported Solidity type → `AbiTypeNotSupportedError`**, never an empty
   `decoded_data`: a gap in this library must not read as undecodable
-  calldata. Malformed/truncated calldata stays non-fatal (empty result), which
+  calldata. Non-spec widths (`int12`, `uint0`, `bytes0`) are validated at
+  ABI-index build (`_validate_input_types`), so an ABI containing one is
+  refused before the Rust tier could decode it — installing `[fastabi]`
+  cannot soften the rejection. Malformed/truncated calldata stays non-fatal
+  (empty result), which
   is what `_MALFORMED_CALLDATA_ERRORS` is for — a spam transaction whose
-  selector collides must not kill a decode loop.
+  selector collides must not kill a decode loop; an array of zero-size
+  elements with a non-zero count (e.g. `tuple[]` of empty tuples, count=2^63)
+  is treated as a corrupted length word on both tiers — it used to bypass the
+  buffer bound and spin forever.
 - **Both tiers are strict about padding**, and deliberately so: the spec says
   the unused bits of a word are zero (or the sign extension, for `int<N>`), so
   rejecting is more defensible than guessing. Dirty `address`/`bytesN`
@@ -971,10 +1016,15 @@ transaction inputs, event logs, `SmartContract.iter_events` and the MCP
 
 - **Build**: NOT automatic. Since the distribution split the base package builds with hatchling, so `uv sync --extra dev` installs no Rust extension — build it explicitly with `cd aiochainscan/fastabi && uv run --with maturin maturin develop --release`, or pass `AIO_BUILD_FASTABI=1` to `make wt-new`. Without it `tests/test_crypto.py` skips 12 tests and `decode()` uses the Python fallback; `scripts/agent/preflight.sh` reports which module (if any) is live.
 - **Version floor**: the extension exports `__version__` from `CARGO_PKG_VERSION`, and
-  `decode.py` refuses anything below `_MIN_FASTABI_VERSION` (0.2.0) — the release that made
+  `decode.py` refuses anything below `_MIN_FASTABI_VERSION` (1.0.1) — the release that
+  removed `panic = "abort"` and unwinds the ethabi ABI parser (`catch_unwind`), so a
+  malformed ABI type raises a catchable `ValueError` instead of aborting the process
+  (exit 134); earlier releases could kill the interpreter on hostile ABI data, and a tier
+  that can do that is worse than no tier. decode.py degrades any surviving Rust panic
+  (`PanicException`) to the pure floor via a coordinate-matched check — pyo3 never
+  registers the class as an importable module. The 0.2.0 floor before it made
   the Rust tier reject non-UTF-8 strings and dirty dynamic padding. A stale local build is
-  ignored with `PureAbiDecodeWarning` and decoding drops to the pure floor, because a tier
-  that decodes by the pre-strict rules is worse than no Rust tier. Bump both
+  ignored with `PureAbiDecodeWarning` and decoding drops to the pure floor. Bump both
   `fastabi/Cargo.toml` and `fastabi/pyproject.toml` whenever decode semantics change, and
   raise the floor with them.
 - **Cache**: LRU with 1000 entries max (~50MB)
