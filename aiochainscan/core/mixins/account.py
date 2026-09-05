@@ -14,9 +14,9 @@ from ...domain.normalize import (
 )
 from ...domain.normalized import InternalTransaction, TokenTransfer, Transaction
 from ...services.pagination import normalize_items
+from ...types import JSONList
 from ..host import ClientHost
 from ..streaming import collect_stream
-from ..types import JSONList
 
 if TYPE_CHECKING:
     from ...ports.progress import ProgressCallback

@@ -43,7 +43,7 @@ typecheck: ## mypy --strict aiochainscan
 	$(RUN) mypy --strict aiochainscan
 
 import-lint: ## Import Linter (hexagonal dependency rule)
-	$(RUN) lint-imports --config .importlinter
+	$(RUN) lint-imports
 
 pre-commit: ## pre-commit run --all-files
 	$(RUN) pre-commit run --all-files --show-diff-on-failure

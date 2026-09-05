@@ -7,9 +7,9 @@ from typing import TYPE_CHECKING, Any
 
 from ...domain.method import Method
 from ...domain.models import Address
+from ...types import JSONDict, JSONList
 from ..host import ClientHost
 from ..streaming import collect_stream
-from ..types import JSONDict, JSONList
 
 if TYPE_CHECKING:
     from ...ports.progress import ProgressCallback

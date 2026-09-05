@@ -14,8 +14,8 @@ from ...exceptions import (
     ChainscanNetworkError,
     ChainscanRateLimitError,
 )
+from ...types import JSONDict
 from ..host import ClientHost
-from ..types import JSONDict
 from ._waiting import api_error_text, poll_until_final
 
 

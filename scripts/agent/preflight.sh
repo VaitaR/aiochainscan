@@ -66,15 +66,13 @@ else
   fail "AGENTS.md missing — cannot determine governance rules"
 fi
 
-# 5. Import linter config present + runs
-if [ -f ".importlinter" ]; then
-  if uv run lint-imports --config .importlinter >/dev/null 2>&1; then
-    ok "import-lint: no boundary violations"
-  else
-    fail "import-lint: boundary check failed"
-  fi
+# 5. Import linter contracts run and hold
+# No "config missing -> skip" branch: the contracts live in pyproject.toml and a
+# missing config must read as a failure, not as a pass.
+if uv run lint-imports >/dev/null 2>&1; then
+  ok "import-lint: no boundary violations"
 else
-  info "import-lint: skipped (.importlinter not found)"
+  fail "import-lint: boundary check failed"
 fi
 
 # 6. Test collection (catches import errors/syntax errors before a full run)

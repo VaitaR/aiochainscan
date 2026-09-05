@@ -60,7 +60,7 @@ from ..services.pagination import (
     iter_pages,
     validate_batch_size,
 )
-from .types import JSONDict
+from ..types import JSONDict
 
 __all__ = [
     'STREAMING_SPECS',

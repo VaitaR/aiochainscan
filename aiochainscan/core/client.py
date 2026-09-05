@@ -31,6 +31,7 @@ from ..services.pagination import (
     normalize_items,
     page_fetcher,
 )
+from ..types import JSONDict
 from .mixins import (
     AccountMixin,
     BlockMixin,
@@ -49,7 +50,6 @@ from .streaming import (
     stream_items,
     stream_normalized_batches,
 )
-from .types import JSONDict
 from .url_builder import UrlBuilder
 
 

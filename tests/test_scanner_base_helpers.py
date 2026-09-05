@@ -22,8 +22,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from aiochainscan.core.endpoint import coerce_response_items
 from aiochainscan.domain.method import Method
+from aiochainscan.domain.response import coerce_response_items
 from aiochainscan.exceptions import (
     ChainscanClientApiError,
     ChainscanClientError,

@@ -68,14 +68,12 @@ fi
 
 # --- 3. Import linter (hexagonal dependency rule) ---
 echo "-- import-lint --"
-if [ -f ".importlinter" ]; then
-  if uv run lint-imports --config .importlinter >/dev/null 2>&1; then
-    ok "import-lint: no boundary violations"
-  else
-    fail "import-lint: boundary check failed"
-  fi
+# No "config missing -> skip" branch: the contracts live in pyproject.toml and a
+# missing config must read as a failure, not as a pass.
+if uv run lint-imports >/dev/null 2>&1; then
+  ok "import-lint: no boundary violations"
 else
-  info "import-lint: skipped (.importlinter not found)"
+  fail "import-lint: boundary check failed"
 fi
 
 # --- 4. mypy strict ---

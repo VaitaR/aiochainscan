@@ -71,6 +71,7 @@ from ..exceptions import (
 from ..exceptions import (
     FailureKind as FailureKind,
 )
+from ..types import JSONDict
 from .client import ChainscanClient
 from .mixins import (
     AccountMixin,
@@ -85,7 +86,6 @@ from .mixins import (
     TransactionMixin,
 )
 from .streaming import STREAMING_SPECS_BY_NAME, StreamSpec
-from .types import JSONDict
 
 if TYPE_CHECKING:
     from ..ports.progress import ProgressCallback

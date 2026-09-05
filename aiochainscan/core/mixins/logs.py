@@ -9,9 +9,9 @@ from ...domain.method import Method
 from ...domain.models import Address
 from ...domain.normalize import normalize_log
 from ...domain.normalized import Log
+from ...types import JSONList
 from ..host import ClientHost
 from ..streaming import collect_stream
-from ..types import JSONList
 
 if TYPE_CHECKING:
     from ...ports.progress import ProgressCallback

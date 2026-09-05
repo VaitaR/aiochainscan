@@ -72,15 +72,15 @@ from enum import Enum
 from typing import Any, NamedTuple, Protocol, runtime_checkable
 
 from ..constants import MAX_BLOCK_NUMBER
-from ..core.endpoint import coerce_response_items
-from ..core.types import JSONDict
 from ..domain.method import Method
+from ..domain.response import coerce_response_items
 from ..exceptions import (
     ChainscanDataError,
     CompletenessUnavailableError,
     PaginationDataLossError,
 )
 from ..ports.progress import ProgressCallback
+from ..types import JSONDict
 
 logger = logging.getLogger(__name__)
 

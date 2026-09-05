@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from ...domain.method import Method
+from ...types import JSONDict
 from ..host import ClientHost
-from ..types import JSONDict
 
 
 class StatsMixin:

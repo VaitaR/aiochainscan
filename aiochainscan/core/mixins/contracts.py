@@ -9,8 +9,8 @@ from ...domain.contract import SmartContract
 from ...domain.method import Method
 from ...domain.models import Address
 from ...exceptions import ChainscanClientApiError, ChainscanRateLimitError
+from ...types import JSONDict, JSONList
 from ..host import ClientHost
-from ..types import JSONDict, JSONList
 from ._waiting import api_error_text, poll_until_final
 
 

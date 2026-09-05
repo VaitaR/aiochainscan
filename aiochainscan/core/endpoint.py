@@ -160,23 +160,3 @@ def etherscan_parser(response: Any) -> Any:
     if isinstance(response, dict) and 'result' in response:
         return response['result']
     return response
-
-
-def coerce_response_items(response: Any) -> list[dict[str, Any]]:
-    """Coerce a parsed API response into a list of item dicts.
-
-    Canonical implementation of the response→items coercion shared by
-    ``Scanner._coerce_items`` (scanners layer) and
-    ``services.pagination.normalize_items`` (services layer) — one coercion
-    contract, maintained once. Core is imported by both layers, so it is the
-    only legal shared home (services must not import scanners).
-
-    Accepts the shapes explorers actually return: a plain list, an envelope
-    dict with an ``'items'`` key, or anything else (treated as no data).
-    """
-    if isinstance(response, list):
-        return list(response)
-    if isinstance(response, dict):
-        items = response.get('items')
-        return list(items) if items else []
-    return []

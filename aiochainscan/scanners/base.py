@@ -8,10 +8,11 @@ from contextlib import contextmanager
 from typing import Any, ClassVar, Literal
 
 from ..chain_registry import resolve_chain_id
-from ..core.endpoint import EndpointSpec, coerce_response_items
+from ..core.endpoint import EndpointSpec
 from ..core.url_builder import UrlBuilder
 from ..crypto import to_checksum_address
 from ..domain.method import Method
+from ..domain.response import coerce_response_items
 from ..exceptions import ChainscanClientError, ChainscanNetworkError, MethodNotDeclaredError
 from ..network import Network
 
@@ -320,7 +321,7 @@ class Scanner(ABC):
     def _coerce_items(result: Any) -> list[dict[str, Any]]:
         """Best-effort coercion of a parsed response into a list of items.
 
-        Canonical implementation: :func:`core.endpoint.coerce_response_items`
+        Canonical implementation: :func:`domain.response.coerce_response_items`
         (shared with ``services.pagination.normalize_items``).
         """
         return coerce_response_items(result)

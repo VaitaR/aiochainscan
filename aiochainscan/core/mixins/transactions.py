@@ -7,8 +7,8 @@ from typing import Any, cast
 from ...domain.method import Method
 from ...domain.models import TxHash
 from ...exceptions import ChainscanClientApiError, ChainscanRateLimitError
+from ...types import JSONDict
 from ..host import ClientHost
-from ..types import JSONDict
 from ._waiting import poll_until_final
 
 
