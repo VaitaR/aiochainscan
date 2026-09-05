@@ -49,6 +49,7 @@ from ..exceptions import ChainscanClientError
 from ..scanners import SCANNER_REGISTRY
 from .cursors import decode_tool_cursor, encode_cursor
 from .envelope import (
+    STRING_TRUNCATION_LIMIT,
     NextCall,
     Pagination,
     ToolResponse,
@@ -174,6 +175,17 @@ class ClientPool:
 
 def _str_field(value: Any) -> str:
     return value if isinstance(value, str) else ''
+
+
+def _sample_text(text: str, limit: int = STRING_TRUNCATION_LIMIT) -> str:
+    """Cap free-form text destined for ``notes``/``content_text``.
+
+    ``truncate_long_strings`` only bounds ``data``; a contract returning a large
+    blob would otherwise reach the agent verbatim through the prose fields.
+    """
+    if len(text) <= limit:
+        return text
+    return f'{text[:limit]}… [truncated, {len(text)} chars total]'
 
 
 def _checksum(value: str) -> str:
@@ -1075,7 +1087,12 @@ async def read_contract(
             result = None
             outcome = 'undecodable'
             notes.append(f'Could not decode outputs ({exc}); raw result kept.')
-            notes.append(f'raw result: {result_hex}')
+            notes.append(f'raw result: {_sample_text(result_hex)}')
+
+    if result:
+        result, result_truncated = truncate_long_strings(result)
+        if result_truncated:
+            notes.append('Long output values were replaced by a truncated sample.')
 
     return build_tool_response(
         data={
@@ -1092,14 +1109,14 @@ async def read_contract(
             'get_contract_abi to discover other callable functions.'
         ],
         content_text=(
-            f'{function_name}({", ".join(str(a) for a in parsed_args)}) on '
+            f'{function_name}({_sample_text(", ".join(str(a) for a in parsed_args))}) on '
             f'{contract} at block {block} -> '
             + (
                 'empty/reverted'
                 if outcome == 'empty'
-                else f'undecodable outputs, raw result {result_hex}'
+                else f'undecodable outputs, raw result {_sample_text(result_hex)}'
                 if outcome == 'undecodable'
-                else orjson.dumps(result).decode()
+                else _sample_text(orjson.dumps(result).decode())
             )
             + '.'
         ),

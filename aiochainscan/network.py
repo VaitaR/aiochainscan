@@ -68,6 +68,7 @@ from aiochainscan.exceptions import (
     ChainscanClientContentTypeError,
     ChainscanClientError,
     ChainscanClientProxyError,
+    ChainscanDataError,
     ChainscanNetworkError,
     ChainscanRateLimitError,
     ChainscanResponseTooLargeError,
@@ -200,13 +201,42 @@ def _raise_if_etherscan_error(response_json: Any) -> None:
         )
 
 
+def _is_jsonrpc_batch(response_json: Any) -> bool:
+    """Whether the payload is a non-empty list of JSON-RPC envelopes.
+
+    Deliberately narrow: a top-level list is a legitimate payload shape for
+    other dialects, so only elements that identify themselves as JSON-RPC
+    (a ``jsonrpc`` member, or an ``id`` alongside ``result``/``error``) count.
+    """
+    if not isinstance(response_json, list) or not response_json:
+        return False
+    return all(
+        isinstance(item, dict)
+        and ('jsonrpc' in item or ('id' in item and ('result' in item or 'error' in item)))
+        for item in response_json
+    )
+
+
 def _raise_if_jsonrpc_error(response_json: Any) -> None:
     """JSON-RPC 2.0 error-object check (``{"jsonrpc", "id", "result"|"error"}``).
 
     A present-but-null ``error`` is not an error: several nodes emit both
     members and null the unused one, so the key's presence cannot be the
     signal — its value must be.
+
+    A batch answer (a list of envelopes) is refused rather than passed on:
+    this library never batches, so the caller would receive a list of
+    envelopes where a single payload is expected, and any ``error`` member
+    inside it would go unread. The request ``id`` is deliberately NOT
+    checked — the dialect sees the response only, and each HTTP response is
+    paired with its own request by the transport.
     """
+    if _is_jsonrpc_batch(response_json):
+        raise ChainscanDataError(
+            'JSON-RPC batch response received for a single request '
+            f'({len(response_json)} envelopes); '
+            'this transport sends no batches and cannot unwrap one.'
+        )
     if not isinstance(response_json, dict):
         return
     err = response_json.get('error')

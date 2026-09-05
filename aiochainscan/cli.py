@@ -12,6 +12,9 @@ from pathlib import Path
 
 from aiochainscan.config import config_manager
 
+# One of the files ConfigurationManager loads scanners from at startup.
+DEFAULT_SCANNER_CONFIG_FILE = 'aiochainscan.json'
+
 
 def cmd_list_scanners(args: argparse.Namespace) -> None:
     """List all available scanners and their status."""
@@ -122,16 +125,28 @@ def cmd_add_scanner(args: argparse.Namespace) -> None:
 
     try:
         config_manager.register_scanner(args.id, scanner_data)
-        print(f'✅ Successfully added scanner: {args.id}')
+
+        if args.save is not None:
+            config_file = Path(args.save)
+            config_manager.persist_scanner(args.id, config_file)
+            print(f'✅ Successfully added scanner: {args.id}')
+            print(f'   Saved to: {config_file}')
+        else:
+            print(f'✅ Registered scanner for this process only: {args.id}')
+
         print(f'   Name: {scanner_data["name"]}')
         print(f'   Domain: {scanner_data["base_domain"]}')
         print(f'   Networks: {", ".join(scanner_data["supported_networks"])}')
+
+        if args.save is None:
+            print('   💡 Nothing was written to disk. Pass --save to persist it,')
+            print(f'      e.g. --save {DEFAULT_SCANNER_CONFIG_FILE}')
 
         if scanner_data['requires_api_key']:
             suggestions = config_manager._get_api_key_suggestions(args.id)
             print(f'   💡 Set API key with: {suggestions[0]}=your_api_key')
 
-    except ValueError as e:
+    except (ValueError, OSError) as e:
         print(f'❌ Error adding scanner: {e}')
         sys.exit(1)
 
@@ -224,6 +239,18 @@ Examples:
     add_parser.add_argument('--networks', help='Comma-separated networks (default: main)')
     add_parser.add_argument(
         '--no-api-key', action='store_true', help='Scanner does not require API key'
+    )
+    add_parser.add_argument(
+        '--save',
+        nargs='?',
+        const=DEFAULT_SCANNER_CONFIG_FILE,
+        default=None,
+        metavar='PATH',
+        help=(
+            'Persist the scanner into a JSON config file '
+            f'(default: {DEFAULT_SCANNER_CONFIG_FILE}); without it the registration '
+            'lives only for this process'
+        ),
     )
     add_parser.set_defaults(func=cmd_add_scanner)
 

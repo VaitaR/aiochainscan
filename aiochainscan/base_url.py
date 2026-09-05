@@ -25,7 +25,7 @@ stripped, optional base path kept (reverse-proxy mounts such as
 from __future__ import annotations
 
 import re
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import unquote, urlsplit, urlunsplit
 
 __all__ = ['is_url_like', 'validate_base_url']
 
@@ -95,7 +95,10 @@ def validate_base_url(url: str, *, allow_http: bool = False) -> str:
         raise ValueError(f'base URL must not contain a fragment: {parts.fragment!r}')
 
     path = parts.path.rstrip('/')
-    if '..' in path.split('/'):
+    # Percent-decode before the dot-segment check: '%2e%2e' and '..%2f' are the
+    # same traversal to any server that decodes the path, and this check is
+    # defense in depth precisely against a path the caller did not read.
+    if '..' in unquote(path).replace('\\', '/').split('/'):
         raise ValueError(f'base URL path must not contain ".." segments: {path!r}')
 
     # Normalize: lowercase scheme + netloc (host[:port]); keep the base path.

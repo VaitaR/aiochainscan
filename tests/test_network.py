@@ -789,6 +789,31 @@ class TestJsonRpcEnvelopeEdges:
 
         assert _extract_envelope_payload(payload) == '0x1'
 
+    def test_batch_response_is_refused(self) -> None:
+        """A list of envelopes would hide its own ``error`` members."""
+        payload = [
+            {'jsonrpc': '2.0', 'id': 1, 'result': '0x1'},
+            {'jsonrpc': '2.0', 'id': 2, 'error': {'code': -32000, 'message': 'boom'}},
+        ]
+
+        with pytest.raises(ChainscanDataError, match='batch'):
+            _raise_if_jsonrpc_error(payload)
+
+    @pytest.mark.parametrize(
+        'payload',
+        [
+            [],
+            ['0xabc', '0xdef'],
+            [{'items': []}],
+            [{'blockNumber': '1'}, {'blockNumber': '2'}],
+        ],
+        ids=['empty', 'strings', 'dicts', 'records'],
+    )
+    def test_non_jsonrpc_lists_pass_through(self, payload: list[object]) -> None:
+        _raise_if_jsonrpc_error(payload)  # must not raise
+
+        assert _extract_envelope_payload(payload) == payload
+
 
 class TestContentTypeGate:
     @pytest.mark.parametrize(

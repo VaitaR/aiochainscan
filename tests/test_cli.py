@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -203,6 +204,7 @@ class TestCmdAddScanner:
         args.currency = 'CUSTOM'
         args.networks = 'main,test'
         args.no_api_key = False
+        args.save = None
 
         cmd_add_scanner(args)
 
@@ -217,9 +219,65 @@ class TestCmdAddScanner:
         }
         mock_config_manager.register_scanner.assert_called_once_with('custom', expected_data)
 
-        # Verify success message
+        # Without --save nothing reaches disk, and the output must say so
+        mock_config_manager.persist_scanner.assert_not_called()
         print_calls = [call[0][0] for call in mock_print.call_args_list]
-        assert any('Successfully added scanner: custom' in call for call in print_calls)
+        assert any('for this process only: custom' in call for call in print_calls)
+        assert any('Nothing was written to disk' in call for call in print_calls)
+
+    def test_add_scanner_save_writes_a_loadable_config_file(self, tmp_path):
+        """--save persists the scanner where ConfigurationManager reads it back."""
+        from aiochainscan.config import ConfigurationManager
+
+        manager = ConfigurationManager.__new__(ConfigurationManager)
+        manager.config_dir = tmp_path
+        manager._scanners = {}
+        manager._env_state = {}
+        manager._initialized = True
+        manager._env_loaded = True
+
+        config_file = tmp_path / 'aiochainscan.json'
+        kept = {
+            'name': 'Kept',
+            'base_domain': 'kept.io',
+            'currency': 'KPT',
+            'supported_networks': ['main'],
+            'requires_api_key': False,
+            'special_config': {},
+        }
+        config_file.write_text(json.dumps({'scanners': {'kept': kept}}))
+
+        args = MagicMock()
+        args.id = 'custom'
+        args.name = 'Custom Chain'
+        args.domain = 'customscan.io'
+        args.currency = 'CUSTOM'
+        args.networks = 'main,test'
+        args.no_api_key = True
+        args.save = str(config_file)
+
+        with patch('aiochainscan.cli.config_manager', manager):
+            cmd_add_scanner(args)
+
+        written = json.loads(config_file.read_text())
+        assert written['scanners']['kept'] == kept
+        assert written['scanners']['custom'] == {
+            'name': 'Custom Chain',
+            'base_domain': 'customscan.io',
+            'currency': 'CUSTOM',
+            'supported_networks': ['main', 'test'],
+            'requires_api_key': False,
+            'special_config': {},
+        }
+
+        # A fresh manager over the same directory picks the scanner up.
+        reloaded = ConfigurationManager.__new__(ConfigurationManager)
+        reloaded.config_dir = tmp_path
+        reloaded._scanners = {}
+        reloaded._env_state = {}
+        reloaded._env_loaded = True
+        reloaded._load_config_file(config_file)
+        assert reloaded._scanners['custom'].base_domain == 'customscan.io'
 
     @patch('aiochainscan.cli.config_manager')
     @patch('builtins.print')
@@ -235,6 +293,7 @@ class TestCmdAddScanner:
         args.currency = 'EXT'
         args.networks = None
         args.no_api_key = True
+        args.save = None
 
         cmd_add_scanner(args)
 

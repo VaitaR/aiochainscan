@@ -664,6 +664,39 @@ class ConfigurationManager:
 
         logger.info(f'Configuration exported to {output_file}')
 
+    def persist_scanner(self, scanner_id: str, config_file: Path) -> None:
+        """Merge one registered scanner into a JSON config file this manager loads.
+
+        Entries already in the file are preserved; the API key is never written,
+        since key resolution stays with the environment.
+        """
+        config = self.get_scanner_config(scanner_id)
+
+        document: dict[str, Any] = {}
+        if config_file.exists():
+            loaded: Any = json.loads(config_file.read_text())
+            if not isinstance(loaded, dict):
+                raise ValueError(f'{config_file} does not contain a JSON object')
+            document = cast(dict[str, Any], loaded)
+
+        scanners_section: Any = document.setdefault('scanners', {})
+        if not isinstance(scanners_section, dict):
+            raise ValueError(f'{config_file} has a non-object "scanners" section')
+
+        cast(dict[str, Any], scanners_section)[scanner_id] = {
+            'name': config.name,
+            'base_domain': config.base_domain,
+            'currency': config.currency,
+            'supported_networks': sorted(config.supported_networks),
+            'requires_api_key': config.requires_api_key,
+            'special_config': config.special_config,
+        }
+
+        config_file.parent.mkdir(parents=True, exist_ok=True)
+        config_file.write_text(json.dumps(document, indent=2) + '\n')
+
+        logger.info(f'Persisted scanner {scanner_id} to {config_file}')
+
 
 _config_manager_instance: ConfigurationManager | None = None
 

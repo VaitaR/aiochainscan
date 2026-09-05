@@ -264,6 +264,39 @@ class TestIterPagesCursorIntegrity:
         assert batches == [[{'h': 1}], [{'h': 2}]]
         assert len(fetch.seen_params) == 2
 
+    @pytest.mark.asyncio
+    async def test_cycle_history_is_bounded(self) -> None:
+        """The guard remembers a window, not every page ever walked.
+
+        A long walk used to grow a fingerprint set page by page; a cycle a
+        provider can actually produce closes well inside the window.
+        """
+        from aiochainscan.services.pagination import _CURSOR_HISTORY_LIMIT
+
+        pages = _CURSOR_HISTORY_LIMIT + 50
+        fetch = FakePageFetch(
+            [([{'h': index}], {'page': index + 2}) for index in range(pages)] + [([], None)]
+        )
+
+        batches = [batch async for batch in iter_pages(fetch, {'page': 1})]
+
+        assert len(batches) == pages
+        assert len(fetch.seen_params) == pages + 1
+
+    @pytest.mark.asyncio
+    async def test_cycle_inside_the_window_still_raises(self) -> None:
+        from aiochainscan.services.pagination import _CURSOR_HISTORY_LIMIT
+
+        span = _CURSOR_HISTORY_LIMIT // 2
+        fetch = FakePageFetch(
+            [([{'h': index}], {'page': index + 2}) for index in range(span)]
+            + [([{'h': span}], {'page': 1})]
+        )
+
+        with pytest.raises(ChainscanDataError, match='repeats'):
+            async for _ in iter_pages(fetch, {'page': 1}):
+                pass
+
 
 # ---------------------------------------------------------------------------
 # progress callback

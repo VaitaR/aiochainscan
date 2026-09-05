@@ -479,10 +479,19 @@ class ChainscanClient(
         return self._url_builder.currency
 
     async def close(self) -> None:
-        """Close the network client and release resources."""
-        if self._network is not None:
-            await self._network.close()
-            self._network = None  # type: ignore[assignment]
+        """Close the network client and release resources.
+
+        Idempotent, and the closed ``Network`` is kept rather than dropped: the
+        scanner holds the same object, so clearing the reference here turned a
+        clean "Network is closed" into an ``AttributeError`` on whichever path
+        happened to reach the client's own attribute first. A request after
+        ``close()`` raises :class:`ChainscanClientError` from every seam.
+
+        The ``Network`` is closed even when it was injected — a client owns the
+        transport it was handed (that is how ``ChainscanPool`` tears its members
+        down). Share a transport only between clients closed together.
+        """
+        await self._network.close()
 
     # Context manager support
     async def __aenter__(self) -> 'ChainscanClient':

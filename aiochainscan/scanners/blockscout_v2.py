@@ -15,6 +15,7 @@ Base URL example: https://eth.blockscout.com/api/v2/
 
 from __future__ import annotations
 
+import re
 import urllib.parse
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -22,11 +23,14 @@ from ..chain_registry import BLOCKSCOUT_INSTANCE_HOSTS, BLOCKSCOUT_SCANNER_NETWO
 from ..core.endpoint import EndpointSpec
 from ..core.url_builder import UrlBuilder
 from ..domain.method import Method
+from ..exceptions import ScannerArgumentError
 from . import register_scanner
 from .base import Scanner, holder_item, translate_unexpected_errors
 
 if TYPE_CHECKING:
     from ..network import Network
+
+_PATH_PLACEHOLDER = re.compile(r'\{([^{}]+)\}')
 
 
 # ============================================================================
@@ -536,6 +540,16 @@ class BlockScoutV2Scanner(Scanner):
             placeholder = f'{{{param_name}}}'
             if placeholder in path:
                 path = path.replace(placeholder, urllib.parse.quote(str(value), safe=''))
+
+        # An unfilled placeholder is a caller who omitted a required argument;
+        # sending '{block_number}' as a literal path segment asks the instance
+        # a question about a resource by that name and reads the 404 as data.
+        unfilled = _PATH_PLACEHOLDER.findall(path)
+        if unfilled:
+            raise ScannerArgumentError(
+                f'{self.name} {self.version}: missing path parameter(s) '
+                f'{", ".join(sorted(unfilled))} for {spec.path!r}'
+            )
 
         return f'{self.base_url}{path}'
 

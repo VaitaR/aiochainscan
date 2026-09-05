@@ -888,6 +888,52 @@ class TestReadContract:
         assert '0xdeadbeef' in response.content_text
         assert response.notes
 
+    async def test_long_output_is_bounded_everywhere(self) -> None:
+        """A contract returning a blob must not reach the agent verbatim."""
+        name_abi = [
+            {
+                'type': 'function',
+                'name': 'name',
+                'inputs': [],
+                'outputs': [{'name': 'value', 'type': 'string'}],
+                'stateMutability': 'view',
+            }
+        ]
+        blob = 'x' * 20_000
+        encoded = blob.encode()
+        padded = encoded + bytes(-len(encoded) % 32)
+        client = StubClient()
+        client.support(Method.CONTRACT_ABI, Method.PROXY_ETH_CALL)
+        client.get_contract_abi.value = json.dumps(name_abi)
+        client.eth_call.value = (
+            '0x'
+            + (32).to_bytes(32, 'big').hex()
+            + len(encoded).to_bytes(32, 'big').hex()
+            + padded.hex()
+        )
+
+        response = await mcp_tools.read_contract(client, TOKEN, 'name', args='[]')
+
+        assert response.data is not None
+        assert response.data['result'] == {
+            'value': {'value_sample': 'x' * STRING_TRUNCATION_LIMIT, 'value_truncated': True}
+        }
+        assert len(response.content_text) < 2 * STRING_TRUNCATION_LIMIT
+        assert all(len(note) < 2 * STRING_TRUNCATION_LIMIT for note in response.notes or [])
+
+    async def test_long_undecodable_raw_result_is_bounded(self) -> None:
+        client = StubClient()
+        client.support(Method.CONTRACT_ABI, Method.PROXY_ETH_CALL)
+        client.get_contract_abi.value = json.dumps(BALANCE_OF_ABI)
+        client.eth_call.value = '0xdead' + 'ab' * 20_000  # not a whole number of words
+
+        response = await mcp_tools.read_contract(client, TOKEN, 'balanceOf', args=f'["{WALLET}"]')
+
+        assert response.data is not None
+        assert response.data['result'] is None
+        assert len(response.content_text) < 2 * STRING_TRUNCATION_LIMIT
+        assert all(len(note) < 2 * STRING_TRUNCATION_LIMIT for note in response.notes or [])
+
 
 class TestResolveEns:
     async def test_forward(self) -> None:

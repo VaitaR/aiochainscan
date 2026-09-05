@@ -8,7 +8,7 @@ from typing import Any, cast
 
 import orjson
 
-from aiochainscan.abi_pure import TypeNode, compile_params, decode_values
+from aiochainscan.abi_pure import _BASE_ALIASES, TypeNode, compile_params, decode_values
 from aiochainscan.crypto import keccak_hex
 from aiochainscan.exceptions import (
     AbiTypeNotSupportedError,
@@ -182,14 +182,7 @@ def canonical_abi_type(param: dict[str, Any]) -> str:
     """Build an ABI canonical type, including recursively nested tuples."""
     type_name = cast(str, param.get('type', ''))
     base, suffix = _split_array_suffix(type_name)
-    aliases = {
-        'uint': 'uint256',
-        'int': 'int256',
-        'byte': 'bytes1',
-        'fixed': 'fixed128x18',
-        'ufixed': 'ufixed128x18',
-    }
-    base = aliases.get(base, base)
+    base = _BASE_ALIASES.get(base, base)
     if base == 'tuple':
         components = cast(list[dict[str, Any]], param.get('components', []))
         base = f"({','.join(canonical_abi_type(component) for component in components)})"

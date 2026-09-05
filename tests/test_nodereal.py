@@ -25,6 +25,7 @@ from aiochainscan.exceptions import (
     ChainscanNetworkError,
     ChainscanRateLimitError,
     FailureKind,
+    MethodNotDeclaredError,
     ScannerArgumentError,
 )
 from aiochainscan.scanners import (
@@ -803,6 +804,49 @@ class TestMethodSupport:
             Method.PROXY_GET_BALANCE,
         ):
             assert expected in methods, expected
+
+
+# ============================================================================
+# Topic operators
+# ============================================================================
+
+
+class TestTopicOperators:
+    """``eth_getLogs`` ANDs its topic positions and cannot express an OR
+    between two of them, so the operator must be refused, not dropped."""
+
+    @pytest.mark.parametrize('operator', ['or', 'OR'])
+    @pytest.mark.asyncio
+    async def test_or_between_topics_is_refused(self, operator: str) -> None:
+        scanner = _make_scanner()
+        network = _mock_network(scanner, [{'logs': []}])
+
+        with pytest.raises(MethodNotDeclaredError, match='cannot express'):
+            await scanner.call(
+                Method.EVENT_LOGS,
+                address=ADDRESS,
+                topic0='0x' + 'aa' * 32,
+                topic1='0x' + 'bb' * 32,
+                topic0_1_opr=operator,
+            )
+
+        network.request.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_and_is_what_the_wire_already_does(self) -> None:
+        scanner = _make_scanner()
+        network = _mock_network(scanner, [[]])
+
+        await scanner.call(
+            Method.EVENT_LOGS,
+            address=ADDRESS,
+            topic0='0x' + 'aa' * 32,
+            topic1='0x' + 'bb' * 32,
+            topic0_1_opr='and',
+        )
+
+        wire_filter = network.request.await_args.kwargs['json_data']['params'][0]
+        assert wire_filter['topics'] == ['0x' + 'aa' * 32, '0x' + 'bb' * 32]
 
 
 # ============================================================================

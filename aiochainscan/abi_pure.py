@@ -54,6 +54,9 @@ __all__ = [
     'to_json_values',
 ]
 
+#: Solidity's canonical spellings for the shorthand type names. Shared with
+#: ``decode.py``, which builds selectors from the same names: a table that
+#: exists twice indexes a function under a selector the calldata never carries.
 _BASE_ALIASES = {
     'uint': 'uint256',
     'int': 'int256',
@@ -110,6 +113,8 @@ def _parse_param(param: dict[str, Any]) -> TypeNode:
         inner = _parse_param({**param, 'type': type_name[:bracket]})
         suffix = type_name[bracket:]
         size_text = suffix[1:-1]
+        if size_text and not _is_canonical_number(size_text):
+            raise AbiTypeNotSupportedError(type_name)
         length = int(size_text) if size_text else None
         is_dynamic = length is None or inner.is_dynamic
         static_size = 32 if length is None or is_dynamic else length * inner.static_size
@@ -152,6 +157,8 @@ def _parse_param(param: dict[str, Any]) -> TypeNode:
     if base == 'bytes':
         return TypeNode(canonical=base, kind='bytes', is_dynamic=True)
     if base.startswith('bytes') and base[5:].isdigit():
+        if not _is_canonical_number(base[5:]):
+            raise AbiTypeNotSupportedError(type_name)
         width = int(base[5:])
         if not 0 < width <= 32:
             raise AbiTypeNotSupportedError(type_name)
@@ -160,6 +167,8 @@ def _parse_param(param: dict[str, Any]) -> TypeNode:
         if base.startswith(prefix):
             width_text, _, scale_text = base[len(prefix) :].partition('x')
             if width_text.isdigit() and scale_text.isdigit():
+                if not (_is_canonical_number(width_text) and _is_canonical_number(scale_text)):
+                    raise AbiTypeNotSupportedError(type_name)
                 scale = int(scale_text)
                 if not 0 < scale <= 80:
                     raise AbiTypeNotSupportedError(type_name)
@@ -172,8 +181,21 @@ def _parse_param(param: dict[str, Any]) -> TypeNode:
     raise AbiTypeNotSupportedError(type_name)
 
 
+def _is_canonical_number(digits: str) -> bool:
+    """Whether ``digits`` is the one spelling the ABI gives that number.
+
+    A type name is hashed into a selector verbatim, so ``uint08`` and
+    ``uint256[01]`` are not lenient spellings of ``uint8`` and ``uint256[1]``:
+    they select a different function. ``str.isdigit`` also accepts full-width
+    and other Unicode decimal forms, which ``int()`` happily parses.
+    """
+    return digits.isascii() and digits.isdigit() and str(int(digits)) == digits
+
+
 def _integer_width(type_name: str, digits: str) -> int:
     """Validate a spec integer width: a multiple of 8 in 8..256."""
+    if not _is_canonical_number(digits):
+        raise AbiTypeNotSupportedError(type_name)
     width = int(digits)
     if width % 8 or not 0 < width <= 256:
         raise AbiTypeNotSupportedError(type_name)

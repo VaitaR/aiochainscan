@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from aiochainscan.domain.method import Method
+from aiochainscan.exceptions import ScannerArgumentError
 from aiochainscan.scanners import SCANNER_REGISTRY, get_scanner_class, list_scanners
 from aiochainscan.scanners.blockscout_v2 import (
     BlockScoutV2Scanner,
@@ -324,6 +325,14 @@ class TestUrlBuilding:
 
         expected = f'https://eth.blockscout.com/api/v2/addresses/{address}'
         assert url == expected
+
+    def test_unfilled_placeholder_is_refused_locally(self, scanner: BlockScoutV2Scanner) -> None:
+        """A literal '{block_number}' on the wire asks about a resource by that
+        name and reads the 404 as data."""
+        spec = BlockScoutV2Scanner.SPECS[Method.BLOCK_BY_NUMBER]
+
+        with pytest.raises(ScannerArgumentError, match='block_number'):
+            scanner._build_url(spec)
 
     def test_build_url_for_transactions(self, scanner: BlockScoutV2Scanner) -> None:
         """_build_url should work for transactions endpoint."""

@@ -147,6 +147,24 @@ class TestCanonicalAbiSelectors:
 
         assert set(_preprocess_abi(uint_abi)[0]) == set(_preprocess_abi(uint256_abi)[0])
 
+    @pytest.mark.parametrize(
+        ('alias', 'canonical'),
+        [
+            ('uint', 'uint256'),
+            ('int', 'int256'),
+            ('byte', 'bytes1'),
+            ('function', 'bytes24'),
+            ('fixed', 'fixed128x18'),
+            ('ufixed', 'ufixed128x18'),
+        ],
+    )
+    def test_every_alias_indexes_under_the_canonical_selector(self, alias, canonical):
+        """One alias table, or a function is indexed under a selector no
+        calldata carries: ``function`` was known to the codec and not here."""
+        abi = [{'type': 'function', 'name': 'f', 'inputs': [{'type': alias, 'name': 'v'}]}]
+
+        assert '0x' + keccak_hash(f'f({canonical})')[:8] in _preprocess_abi(abi)[0]
+
     def test_tuple_selector_uses_components_and_array_suffix(self):
         abi = [
             {

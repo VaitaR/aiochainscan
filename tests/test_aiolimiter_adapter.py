@@ -180,3 +180,23 @@ async def test_simple_limiter_serializes_same_key_without_cross_key_locking() ->
 
     assert same_key_elapsed >= 0.04
     assert different_key_elapsed < 0.04
+
+
+@pytest.mark.parametrize(
+    ('kwargs', 'field'),
+    [
+        ({'max_rate': 0}, 'max_rate'),
+        ({'max_rate': -1.0}, 'max_rate'),
+        ({'time_period': 0}, 'time_period'),
+        ({'max_burst': 0}, 'max_burst'),
+    ],
+)
+def test_non_positive_construction_args_are_refused(kwargs: dict[str, float], field: str) -> None:
+    """These divide the derived bucket period.
+
+    Accepted here, the failure surfaced as a bare ZeroDivisionError from
+    ``acquire`` — which the scanner error ladder reads as a TRANSIENT network
+    fault, so the pool cooled a healthy provider over a caller's argument.
+    """
+    with pytest.raises(ValueError, match=f'{field} must be greater than 0'):
+        AioLimiterAdapter(**kwargs)

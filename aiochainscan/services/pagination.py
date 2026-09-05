@@ -125,6 +125,12 @@ def validate_batch_size(batch_size: int) -> None:
         raise ValueError(f'batch_size must be at least 1, got {batch_size}')
 
 
+#: Request states the cursor-cycle guard remembers. A cycle a provider can
+#: actually produce closes long before this; an unbounded set would grow with
+#: the number of pages walked.
+_CURSOR_HISTORY_LIMIT = 512
+
+
 def _request_fingerprint(params: dict[str, Any]) -> str:
     """Create a deterministic fingerprint for a JSON-like request state."""
     try:
@@ -342,11 +348,18 @@ async def iter_pages(
 
     page = 1
     fetched = 0
+    # Bounded history: a provider that repeats a request state does it within a
+    # few pages, and remembering every page of a million-page walk costs more
+    # memory than the pages themselves.
+    seen_order: deque[str] = deque(maxlen=_CURSOR_HISTORY_LIMIT)
     seen_states: set[str] = set()
     while True:
         fingerprint = _request_fingerprint(params)
         if fingerprint in seen_states:
             raise ChainscanDataError('Pagination cursor repeats a prior request state.')
+        if len(seen_order) == _CURSOR_HISTORY_LIMIT:
+            seen_states.discard(seen_order[0])
+        seen_order.append(fingerprint)
         seen_states.add(fingerprint)
 
         items, cursor = await fetch(params)

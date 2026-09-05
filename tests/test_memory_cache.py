@@ -104,36 +104,52 @@ async def test_multiple_updates_at_capacity():
 
 
 @pytest.mark.asyncio
-async def test_expired_keys_cleared_before_eviction():
-    """Test that expired keys are cleared before LRU eviction.
+async def test_expired_entry_is_evicted_before_a_live_one():
+    """An expired entry must lose its slot before a live entry does.
 
-    This is a regression test for Low Severity bug where expired keys
-    were not cleared before eviction, causing valid entries to be evicted
-    while expired entries remained in the cache.
+    The store has to be FULL and the expired entry must not be the LRU one,
+    or the eviction path is never exercised: popping the oldest already
+    removes an expired entry that happens to sit at the front.
     """
-    import time
+    cache = InMemoryCache(max_size=2)
 
-    cache = InMemoryCache(max_size=3)
+    await cache.set('live', 'value', ttl_seconds=600)
+    await cache.set('dead', 'value', ttl_seconds=-1)  # deadline in the past
 
-    # Add entries with short TTL that will expire
-    await cache.set('expired1', 'val1', ttl_seconds=1)
-    await cache.set('expired2', 'val2', ttl_seconds=1)
+    await cache.set('fresh', 'value')
 
-    # Wait for them to expire
-    time.sleep(1.1)
+    assert await cache.get('live') == 'value'  # survived, though least recent
+    assert await cache.get('fresh') == 'value'
+    assert await cache.get('dead') is None
+    assert len(cache) == 2
 
-    # Add a valid entry - should clear expired keys first, not evict by LRU
-    await cache.set('valid', 'valid_value')
 
-    # Valid entry should exist
-    assert await cache.get('valid') == 'valid_value'
+@pytest.mark.asyncio
+async def test_non_positive_ttl_expires_immediately():
+    """``ttl_seconds=0`` used to mean "no deadline", i.e. an immortal entry."""
+    cache = InMemoryCache()
 
-    # Expired entries should be gone (cleared before eviction, not after)
-    assert await cache.get('expired1') is None
-    assert await cache.get('expired2') is None
+    await cache.set('zero', 'value', ttl_seconds=0)
+    await cache.set('negative', 'value', ttl_seconds=-5)
+    await cache.set('none', 'value', ttl_seconds=None)
 
-    # Cache should only have 1 entry (valid), not 3
-    assert len(cache) == 1
+    assert await cache.get('zero') is None
+    assert await cache.get('negative') is None
+    assert await cache.get('none') == 'value'  # only None means "never expires"
+
+
+@pytest.mark.asyncio
+async def test_ttl_is_measured_on_the_monotonic_clock(monkeypatch):
+    """A wall-clock jump must not stretch or collapse a live TTL."""
+    import time as time_module
+
+    cache = InMemoryCache()
+    await cache.set('key', 'value', ttl_seconds=60)
+
+    jumped = time_module.time() + 3600
+    monkeypatch.setattr(time_module, 'time', lambda: jumped)
+
+    assert await cache.get('key') == 'value'
 
 
 @pytest.mark.asyncio

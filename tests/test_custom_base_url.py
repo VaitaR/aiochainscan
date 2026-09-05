@@ -171,6 +171,19 @@ class TestValidateBaseUrl:
         with pytest.raises(ValueError, match=r'\.\.'):
             validate_base_url('https://my-blockscout.internal/../probe')
 
+    @pytest.mark.parametrize(
+        'url',
+        [
+            'https://my-blockscout.internal/%2e%2e/probe',
+            'https://my-blockscout.internal/..%2fprobe',
+            'https://my-blockscout.internal/.%2e/probe',
+        ],
+    )
+    def test_percent_encoded_parent_segment_refused(self, url: str) -> None:
+        """Same traversal to any server that decodes the path."""
+        with pytest.raises(ValueError, match=r'\.\.'):
+            validate_base_url(url)
+
     def test_whitespace_refused(self) -> None:
         with pytest.raises(ValueError, match='whitespace'):
             validate_base_url('https://my blockscout.internal')

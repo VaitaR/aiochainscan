@@ -61,6 +61,7 @@ from ..exceptions import (
     ChainscanClientProxyError,
     ChainscanDataError,
     ChainscanRateLimitError,
+    MethodNotDeclaredError,
     ScannerArgumentError,
 )
 from ..network import CompositeResponseDialect, EtherscanEnvelope, JsonRpcEnvelope
@@ -384,6 +385,27 @@ def _declared_sources(spec: EndpointSpec, wire_name: str) -> tuple[str, ...]:
     spellings are declared in ``param_map`` too), first declared wins.
     """
     return tuple(public for public, wire in spec.param_map.items() if wire == wire_name)
+
+
+def _reject_unsupported_topic_operators(params: dict[str, Any]) -> None:
+    """Refuse a topic-pair operator ``eth_getLogs`` cannot express.
+
+    Etherscan's ``topicX_Y_opr`` combines two *different* topic positions;
+    ``eth_getLogs`` ANDs its positions and offers OR only among the values of
+    one position. 'and' is therefore already what the wire does, and 'or' has
+    no encoding — dropping it silently would answer a narrower question than
+    the caller asked. Raised as a capability gap so the pool routes to a
+    provider that declares the operator instead of cooling this one.
+    """
+    for name, value in params.items():
+        if not (name.startswith('topic') and name.endswith('_opr')) or value is None:
+            continue
+        if str(value).lower() != 'and':
+            raise MethodNotDeclaredError(
+                f'nodereal v1 cannot express {name}={value!r}: eth_getLogs ANDs its '
+                f'topic positions and has no operator between them. Use an '
+                f"Etherscan-dialect provider for topic operators, or 'and'."
+            )
 
 
 def _take(params: dict[str, Any], public: str) -> Any:
@@ -1061,6 +1083,7 @@ class NodeRealScanner(Scanner):
         address = _param(params, *_declared_sources(spec, 'address'))
         if address:
             log_filter['address'] = address
+        _reject_unsupported_topic_operators(params)
         topics = [
             _param(params, *_declared_sources(spec, wire_name))
             for wire_name in ('topic0', 'topic1', 'topic2', 'topic3')

@@ -33,6 +33,9 @@ class AioLimiterAdapter(RateLimiter):
         max_burst: Maximum requests allowed to burst through immediately.
             Default is 1 to prevent WAF/DDoS detection triggers.
             Set higher for non-rate-limited APIs (e.g., local nodes).
+
+    Raises:
+        ValueError: Any of the three is not strictly positive.
     """
 
     def __init__(
@@ -41,6 +44,18 @@ class AioLimiterAdapter(RateLimiter):
         time_period: float = 1.0,
         max_burst: float | None = None,
     ) -> None:
+        # Every one of these divides or scales the derived bucket period, so a
+        # non-positive value is refused here rather than surfacing later as a
+        # bare ZeroDivisionError from ``acquire`` — which the scanner error
+        # ladder would translate into a TRANSIENT network fault and cool a
+        # perfectly healthy provider.
+        if max_rate <= 0:
+            raise ValueError(f'max_rate must be greater than 0, got {max_rate}')
+        if time_period <= 0:
+            raise ValueError(f'time_period must be greater than 0, got {time_period}')
+        if max_burst is not None and max_burst <= 0:
+            raise ValueError(f'max_burst must be greater than 0, got {max_burst}')
+
         self._max_rate = max_rate
         self._time_period = time_period
         # Default to 1.0 to prevent burst requests that trigger WAF blocks.

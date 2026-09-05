@@ -397,6 +397,22 @@ class TestBaseInstall:
 
         assert excinfo.value.abi_type == 'uint257'
 
+    @pytest.mark.parametrize(
+        'type_name',
+        [
+            pytest.param('uint256[-1]', id='negative-array-length'),
+            pytest.param('uint256[01]', id='non-canonical-array-length'),
+            pytest.param('uint08', id='non-canonical-width'),
+            pytest.param('bytes032', id='non-canonical-bytes-width'),
+            pytest.param('uint\uff12\uff15\uff16', id='full-width-digits'),
+        ],
+    )
+    def test_non_canonical_type_spelling_raises(self, type_name: str) -> None:
+        """A type name is hashed verbatim, so a lenient spelling is a different
+        function — and ``uint256[-1]`` used to decode to an empty list."""
+        with pytest.raises(AbiTypeNotSupportedError):
+            compile_params([{'type': type_name, 'name': 'x'}])
+
     def test_unsupported_type_in_event_raises(self):
         abi = [
             {

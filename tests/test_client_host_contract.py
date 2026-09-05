@@ -20,6 +20,8 @@ from aiochainscan.chain_registry import resolve_scanner_target
 from aiochainscan.core.client import ChainscanClient
 from aiochainscan.core.host import ClientHost
 from aiochainscan.core.pool import ChainscanPool
+from aiochainscan.domain.method import Method
+from aiochainscan.exceptions import ChainscanClientError
 from aiochainscan.services.ens_resolver import ENSResolver
 
 # ``ClientHost`` members from the brief's table (async ``call`` excluded —
@@ -133,3 +135,20 @@ class TestEnsResolverNetworkMessageNonVacuous:
         text = str(resolver)
         assert 'None' not in text
         assert pool.network in text
+
+
+class TestClientCloseKeepsOneErrorShape:
+    """``close()`` used to drop the client's ``Network`` reference while the
+    scanner kept the same (closed) object, so a post-close call raised an
+    ``AttributeError`` or a clean error depending on which seam it reached."""
+
+    async def test_request_after_close_raises_the_closed_network_error(self) -> None:
+        client = ChainscanClient(resolve_scanner_target('blockscout_v2', 'ethereum'))
+        await client.close()
+        await client.close()  # idempotent
+
+        with pytest.raises(ChainscanClientError, match='Network is closed'):
+            await client.get_balance('0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045')
+
+        with pytest.raises(ChainscanClientError, match='Network is closed'):
+            await client.fetch_page(Method.ACCOUNT_TRANSACTIONS, {'address': '0x0'})
