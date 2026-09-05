@@ -35,8 +35,13 @@ def _coerce_decimal(raw: str | int) -> Decimal:
     """Parse a base-unit amount exactly (integer str/int only, no float step).
 
     Wei semantics are integer math: fractional base-unit strings are rejected
-    as corrupted data rather than silently accepted.
+    as corrupted data rather than silently accepted. So are Python-literal
+    spellings no explorer sends — ``'1_000'``, Unicode digit forms
+    (``'１０００'``), scientific notation (``'1e18'``, which would silently
+    rescale the amount) and ``bool`` (an ``int`` subclass).
     """
+    if isinstance(raw, bool):
+        raise ValueError(f'Amount must be str or int, got bool: {raw!r}')
     if isinstance(raw, int):
         return Decimal(raw)
     if not isinstance(raw, str):
@@ -44,6 +49,17 @@ def _coerce_decimal(raw: str | int) -> Decimal:
     text = raw.strip()
     if not text:
         raise ValueError('Amount string is empty — expected a base-unit integer string')
+    if not text.isascii() or '_' in text:
+        # int()/Decimal() accept '1_000' and full-width digits; accepting
+        # them here would read corrupted data as a number.
+        raise ValueError(f'Invalid amount value: {raw!r}')
+    if 'e' in text or 'E' in text:
+        # '1e18' would parse, stay integral and rescale to a confident
+        # wrong amount — scientific notation is never a base-unit string.
+        raise ValueError(
+            f'Scientific notation is not a base-unit integer string: {raw!r} '
+            '(expected the plain integer the API returned)'
+        )
     try:
         value = Decimal(text)
     except InvalidOperation as exc:
@@ -56,11 +72,22 @@ def _coerce_decimal(raw: str | int) -> Decimal:
 
 
 def _parse_flexible_int(value: str | int, kind: str) -> int:
-    """Parse an API scalar that arrives as int, decimal string or ``0x`` hex string."""
+    """Parse an API scalar that arrives as int, decimal string or ``0x`` hex string.
+
+    Accepts exactly the shapes providers send: hex (``'0x1a'``, signed),
+    decimal strings and plain ints. Python-literal spellings (``'1_0'``),
+    Unicode digit forms (``'２６'`` — ``int()`` accepts full-width digits)
+    and ``bool`` (an ``int`` subclass) are rejected instead of silently
+    coerced.
+    """
+    if isinstance(value, bool):
+        raise ValueError(f'{kind.capitalize()} must be str or int, got bool: {value!r}')
     if isinstance(value, int):
         return value
     if isinstance(value, str):
         text = value.strip()
+        if not text.isascii() or '_' in text:
+            raise ValueError(f'Invalid {kind} value: {value!r}')
         body = text[1:] if text[:1] in ('+', '-') else text
         try:
             if body[:2].lower() == '0x':
@@ -88,8 +115,10 @@ def to_decimal_amount(raw: str | int, decimals: int) -> Decimal:
         Exact amount as ``Decimal`` (e.g. ``Decimal('1.5')``).
 
     Raises:
-        ValueError: On empty/None-like input, non-numeric, fractional or
-            non-finite values, or negative ``decimals``.
+        ValueError: On empty/None-like input, non-numeric, fractional,
+            non-finite or scientific-notation values (``'1e18'`` is not a
+            base-unit integer string), ``'1_000'``-style digit separators,
+            non-ASCII digit forms, ``bool``, or negative ``decimals``.
 
     Examples:
         >>> to_decimal_amount('1500000000000000000', 18)
@@ -177,8 +206,9 @@ def hex_to_int(value: str | int) -> int:
 
     Raises:
         ValueError: On non-hex/non-decimal strings (including bare hex like
-            ``'1a'`` without the ``0x`` prefix — that is ambiguous) or
-            non-str/int input.
+            ``'1a'`` without the ``0x`` prefix — that is ambiguous),
+            ``'1_0'``-style digit separators, non-ASCII digit forms,
+            ``bool``, or non-str/int input.
 
     Examples:
         >>> hex_to_int('0x1a')

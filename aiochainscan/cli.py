@@ -16,6 +16,20 @@ from aiochainscan.config import config_manager
 DEFAULT_SCANNER_CONFIG_FILE = 'aiochainscan.json'
 
 
+def _parse_networks_arg(raw: str | None) -> list[str]:
+    """Split the ``--networks`` value into a clean list of network names.
+
+    Whitespace around names is stripped and empty items are dropped:
+    ``'main, test,,x'`` registers ``['main', 'test', 'x']`` — not networks
+    literally named ``' test'`` or ``''``. A blank value (missing or all
+    separators) falls back to the documented default ``['main']``.
+    """
+    if not raw:
+        return ['main']
+    networks = [item.strip() for item in raw.split(',')]
+    return [item for item in networks if item] or ['main']
+
+
 def cmd_list_scanners(args: argparse.Namespace) -> None:
     """List all available scanners and their status."""
     print('🔍 Available Blockchain Scanners')
@@ -114,11 +128,12 @@ def cmd_check_config(args: argparse.Namespace) -> None:
 
 def cmd_add_scanner(args: argparse.Namespace) -> None:
     """Add a custom scanner configuration."""
+    networks = _parse_networks_arg(args.networks)
     scanner_data = {
         'name': args.name,
         'base_domain': args.domain,
         'currency': args.currency,
-        'supported_networks': args.networks.split(',') if args.networks else ['main'],
+        'supported_networks': networks,
         'requires_api_key': not args.no_api_key,
         'special_config': {},
     }
@@ -129,7 +144,7 @@ def cmd_add_scanner(args: argparse.Namespace) -> None:
         if args.save is not None:
             config_file = Path(args.save)
             config_manager.persist_scanner(args.id, config_file)
-            print(f'✅ Successfully added scanner: {args.id}')
+            print(f'✅ Registered scanner (credentials/display entry): {args.id}')
             print(f'   Saved to: {config_file}')
         else:
             print(f'✅ Registered scanner for this process only: {args.id}')
@@ -137,6 +152,16 @@ def cmd_add_scanner(args: argparse.Namespace) -> None:
         print(f'   Name: {scanner_data["name"]}')
         print(f'   Domain: {scanner_data["base_domain"]}')
         print(f'   Networks: {", ".join(scanner_data["supported_networks"])}')
+
+        # Honest scope statement: this registration lives in the configuration
+        # manager, which owns credentials and display data only. It does NOT
+        # add a scanner class, so ChainscanClient.from_config() — which
+        # resolves scanner classes from the aiochainscan scanner registry —
+        # will not construct a client from this entry alone.
+        print('   ℹ️  This entry carries credentials and display data for a')
+        print('      separately-registered scanner class. ChainscanClient.from_config()')
+        print('      resolves scanner classes from the aiochainscan scanner registry')
+        print('      and will not construct a client from this registration alone.')
 
         if args.save is None:
             print('   💡 Nothing was written to disk. Pass --save to persist it,')
@@ -188,7 +213,6 @@ def cmd_test_scanner(args: argparse.Namespace) -> None:
             print(f'✅ Scanner {args.scanner} is working correctly')
 
         except Exception as e:
-            print(f'❌ API test failed: {e}')
             print(f'❌ Scanner test failed: {e}')
             sys.exit(1)
         finally:

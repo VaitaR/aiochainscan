@@ -225,6 +225,72 @@ class TestCmdAddScanner:
         assert any('for this process only: custom' in call for call in print_calls)
         assert any('Nothing was written to disk' in call for call in print_calls)
 
+    @patch('aiochainscan.cli.config_manager')
+    @patch('builtins.print')
+    def test_add_scanner_networks_stripped_and_empties_dropped(
+        self, mock_print, mock_config_manager
+    ):
+        """'main, test,,x' means three networks — not one named ' test'."""
+        mock_config_manager._get_api_key_suggestions.return_value = ['CUSTOM_KEY']
+
+        args = MagicMock()
+        args.id = 'custom'
+        args.name = 'Custom Chain'
+        args.domain = 'customscan.io'
+        args.currency = 'CUSTOM'
+        args.networks = 'main, test,,x'
+        args.no_api_key = True
+        args.save = None
+
+        cmd_add_scanner(args)
+
+        data = mock_config_manager.register_scanner.call_args[0][1]
+        assert data['supported_networks'] == ['main', 'test', 'x']
+
+    @patch('aiochainscan.cli.config_manager')
+    @patch('builtins.print')
+    def test_add_scanner_all_blank_networks_fall_back_to_main(
+        self, mock_print, mock_config_manager
+    ):
+        mock_config_manager._get_api_key_suggestions.return_value = ['CUSTOM_KEY']
+
+        args = MagicMock()
+        args.id = 'custom'
+        args.name = 'Custom Chain'
+        args.domain = 'customscan.io'
+        args.currency = 'CUSTOM'
+        args.networks = ', ,'
+        args.no_api_key = True
+        args.save = None
+
+        cmd_add_scanner(args)
+
+        data = mock_config_manager.register_scanner.call_args[0][1]
+        assert data['supported_networks'] == ['main']
+
+    @patch('aiochainscan.cli.config_manager')
+    @patch('builtins.print')
+    def test_add_scanner_message_states_credentials_only(self, mock_print, mock_config_manager):
+        """The registration carries credentials/display for a separately-
+        registered scanner class — the message must say exactly that, so a
+        user does not expect from_config() to construct a client from it."""
+        mock_config_manager._get_api_key_suggestions.return_value = ['CUSTOM_KEY']
+
+        args = MagicMock()
+        args.id = 'custom'
+        args.name = 'Custom Chain'
+        args.domain = 'customscan.io'
+        args.currency = 'CUSTOM'
+        args.networks = 'main'
+        args.no_api_key = True
+        args.save = None
+
+        cmd_add_scanner(args)
+
+        print_calls = [call[0][0] for call in mock_print.call_args_list]
+        assert any('separately-registered scanner class' in call for call in print_calls)
+        assert any('ChainscanClient.from_config' in call for call in print_calls)
+
     def test_add_scanner_save_writes_a_loadable_config_file(self, tmp_path):
         """--save persists the scanner where ConfigurationManager reads it back."""
         from aiochainscan.config import ConfigurationManager
@@ -393,6 +459,25 @@ class TestCmdTestScanner:
 
         assert exc_info.value.code == 1
         client.close.assert_awaited_once_with()
+
+    def test_test_scanner_failure_prints_error_once(self):
+        """The same failure must not be printed twice."""
+        from aiochainscan import ChainscanClient
+
+        client = MagicMock()
+        client.call = AsyncMock(side_effect=RuntimeError('provider unavailable'))
+        client.close = AsyncMock()
+        args = MagicMock(scanner='etherscan', network='main')
+
+        with (
+            patch.object(ChainscanClient, 'from_config', return_value=client),
+            patch('builtins.print') as mock_print,
+            pytest.raises(SystemExit),
+        ):
+            cmd_test_scanner(args)
+
+        printed = ' '.join(str(call.args[0]) for call in mock_print.call_args_list if call.args)
+        assert printed.count('provider unavailable') == 1
 
     def test_test_scanner_success_closes_client(self):
         """A successful diagnostic also closes the created client."""

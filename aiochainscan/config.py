@@ -56,6 +56,72 @@ def credential_env_names(scanner_id: str, display_name: str | None = None) -> tu
     return tuple(dict.fromkeys(candidates))
 
 
+#: U+FFFD — the only way a decoded ``.env`` line can contain it is
+#: ``errors='replace'`` on bytes that are not valid UTF-8.
+_REPLACEMENT_CHAR = '\ufffd'
+
+
+def _normalize_env_key(raw_key: str) -> str | None:
+    """Normalize a ``.env`` key: trim whitespace and an optional ``export ``.
+
+    The python-dotenv convention ``export KEY=val`` is accepted; a bare
+    ``export=val`` keeps ``export`` as a genuine key (no separator follows).
+    ``None`` means the line has no usable key.
+    """
+    key = raw_key.strip()
+    if key.startswith('export') and len(key) > len('export') and key[len('export')] in (' ', '\t'):
+        key = key[len('export') :].strip()
+    return key or None
+
+
+def _parse_env_value(raw_value: str) -> str:
+    """Parse the value half of a ``.env`` line.
+
+    A single- or double-quoted value is unquoted and a ``#`` inside it is
+    data. An unquoted value stops at the first ``#`` (inline comment) and
+    quotes are stripped as legacy spelling, not syntax — the pre-dialect
+    parser's ``strip('"\\'')`` behaviour for malformed/unterminated input.
+    """
+    value = raw_value.strip()
+    if value[:1] in ('"', "'"):
+        quote = value[0]
+        end = value.find(quote, 1)
+        if end > 0:
+            return value[1:end]
+    return value.split('#', 1)[0].strip().strip('"\'')
+
+
+def _coerce_networks_list(networks_any: Any, scanner_id: str) -> list[str]:
+    """Validate a ``supported_networks`` declaration into a list of strings.
+
+    A bare string is the classic silent corruption: ``set('main')`` happily
+    becomes ``{'m', 'a', 'i', 'n'}``. A non-iterable would surface as a bare
+    ``TypeError``. Both are configuration errors and raise ``ValueError``
+    naming the scanner and the offending value.
+    """
+    if isinstance(networks_any, str | bytes):
+        raise ValueError(
+            f'Invalid scanner configuration for {scanner_id}: supported_networks '
+            f'must be a list of network names, got the string {networks_any!r} '
+            '(did you mean ["main"]?)'
+        )
+    try:
+        networks = list(networks_any)
+    except TypeError as exc:
+        raise ValueError(
+            f'Invalid scanner configuration for {scanner_id}: supported_networks '
+            f'must be a list of network names, got {type(networks_any).__name__}: '
+            f'{networks_any!r}'
+        ) from exc
+    for item in networks:
+        if not isinstance(item, str):
+            raise ValueError(
+                f'Invalid scanner configuration for {scanner_id}: supported_networks '
+                f'entries must be strings, got {type(item).__name__}: {item!r}'
+            )
+    return networks
+
+
 @dataclass
 class ScannerConfig:
     """Configuration for a blockchain scanner."""
@@ -108,22 +174,56 @@ class ConfigurationManager:
     config_dir: Path
 
     def __new__(cls, config_dir: Path | None = None) -> ConfigurationManager:
-        """Thread-safe singleton pattern: return same instance on subsequent calls."""
-        if cls._instance is None:
-            with cls._lock:
-                # Double-check locking pattern for thread safety
-                if cls._instance is None:
-                    instance = super().__new__(cls)
-                    # Initialize instance attributes here to avoid __init__ race conditions
-                    instance._initialized = False
-                    instance._scanners = {}
-                    instance._env_loaded = False
-                    instance._builtin_loaded = False
-                    instance._config_files_loaded = False
-                    instance._env_state = {}
-                    instance.config_dir = config_dir or Path.cwd()
-                    cls._instance = instance
+        """Thread-safe singleton pattern: return same instance on subsequent calls.
+
+        The manager is process-wide configuration by design (the machine-level
+        ``~/.aiochainscan/.env`` is read for every cwd), so a second
+        construction cannot rebind it to another directory. It warns instead:
+        silently keeping the first directory while the caller believes they
+        configured another one is exactly how an embedder ends up reading a
+        foreign ``.env``/JSON. ``reset_instance()`` (fresh binding) or
+        ``reload(config_dir)`` (rebind in place) are the supported ways to
+        change directories; a re-init with the SAME directory stays silent.
+        """
+        requested = config_dir if config_dir is not None else Path.cwd()
+        if cls._instance is not None:
+            existing = cls._instance
+            if cls._differs(existing.config_dir, requested):
+                logger.warning(
+                    'ConfigurationManager is a process-wide singleton already '
+                    f'bound to {existing.config_dir}; ignoring config_dir={requested}. '
+                    'Use ConfigurationManager.reset_instance() to rebind.'
+                )
+            return cls._instance
+        with cls._lock:
+            # Double-check locking pattern for thread safety
+            if cls._instance is None:
+                instance = super().__new__(cls)
+                # Initialize instance attributes here to avoid __init__ race conditions
+                instance._initialized = False
+                instance._scanners = {}
+                instance._env_loaded = False
+                instance._builtin_loaded = False
+                instance._config_files_loaded = False
+                instance._env_state = {}
+                instance.config_dir = requested
+                cls._instance = instance
         return cls._instance
+
+    @staticmethod
+    def _differs(bound: Path, requested: Path) -> bool:
+        """Whether *requested* names a different directory than *bound*.
+
+        Compares resolved paths so spelling differences (relative vs absolute,
+        symlinked temp dirs) are not false alarms; if resolution fails the
+        paths are treated as different — warning is the safe direction.
+        """
+        if bound == requested:
+            return False
+        try:
+            return bound.resolve() != requested.resolve()
+        except OSError:  # pragma: no cover - pathological paths
+            return True
 
     def __init__(self, config_dir: Path | None = None) -> None:
         """
@@ -349,10 +449,17 @@ class ConfigurationManager:
         return definitions
 
     def _load_env_files(self) -> None:
-        """Load environment variables from .env files."""
+        """Load environment variables from .env files.
+
+        Parsing is first-setter-wins, so the load order IS the precedence:
+        ``./.env.local`` > ``./.env`` > ``~/.aiochainscan/.env`` — the
+        universal dotenv convention that the local, untracked file carries
+        the more specific overrides. ``os.environ`` outranks every file
+        regardless of order (enforced per key in :meth:`_load_env_file`).
+        """
         env_files = [
-            self.config_dir / '.env',
             self.config_dir / '.env.local',
+            self.config_dir / '.env',
             Path.home() / '.aiochainscan' / '.env',
         ]
 
@@ -365,22 +472,47 @@ class ConfigurationManager:
         """Load variables from a specific .env file into internal state.
 
         Variables are stored in ``_env_state`` so that the host process's
-        ``os.environ`` is never mutated.
+        ``os.environ`` is never mutated. Only the first setter of a key wins
+        (``os.environ`` outranks every file).
+
+        Dialect (python-dotenv conventions, kept deliberately small): an
+        optional ``export `` key prefix, single- or double-quoted values (a
+        ``#`` inside quotes is data), an unquoted inline ``#`` comment, CRLF
+        line endings and a UTF-8 BOM.
+
+        Like the JSON config loader, this is warn-and-continue on corruption:
+        bytes that are not valid UTF-8 produce one warning naming the file
+        and their lines are skipped — never stored half-decoded, since a
+        corrupted credential is worse than a missing one — while the file's
+        remaining lines still load.
         """
+        skipped: int = 0
         try:
-            with open(env_file) as f:
+            with open(env_file, encoding='utf-8-sig', errors='replace') as f:
                 for line in f:
                     line = line.strip()
-                    if line and not line.startswith('#') and '=' in line:
-                        key, value = line.split('=', 1)
-                        key = key.strip()
-                        value = value.strip().strip('"\'')
-
-                        # Only set if not already in env_state or real environment
-                        if key not in self._env_state and key not in os.environ:
-                            self._env_state[key] = value
+                    if not line or line.startswith('#') or '=' not in line:
+                        continue
+                    key_part, _, raw_value = line.partition('=')
+                    key = _normalize_env_key(key_part)
+                    if key is None:
+                        continue
+                    value = _parse_env_value(raw_value)
+                    if _REPLACEMENT_CHAR in key or _REPLACEMENT_CHAR in value:
+                        # U+FFFD can only come from errors='replace' here:
+                        # the line held bytes that are not valid UTF-8.
+                        skipped += 1
+                        continue
+                    if key not in self._env_state and key not in os.environ:
+                        self._env_state[key] = value
         except OSError as e:
             logger.warning(f'Failed to load {env_file}: {e}')
+            return
+        if skipped:
+            logger.warning(
+                f'{env_file}: {skipped} line(s) contained bytes that are not '
+                f'valid UTF-8 and were skipped'
+            )
 
     def _load_config_files(self) -> None:
         """Load scanner configurations from JSON files."""
@@ -410,11 +542,23 @@ class ConfigurationManager:
             # Load API keys
             if 'api_keys' in config_data:
                 api_keys = cast(dict[str, str], config_data['api_keys'])
+                unknown = [key for key in api_keys if key not in self._scanners]
                 for scanner_id, api_key in api_keys.items():
                     if scanner_id in self._scanners:
                         self._scanners[scanner_id].api_key = api_key
+                if unknown:
+                    # A key bound to a typo'd id ('etherscan' instead of 'eth')
+                    # must not vanish silently — the scanner would later fail
+                    # with "API key required" and no hint why.
+                    logger.warning(
+                        f'{config_file}: ignoring api_keys for unknown scanner '
+                        f'id(s): {", ".join(sorted(unknown))}'
+                    )
 
-        except (OSError, json.JSONDecodeError, KeyError, TypeError) as e:
+        except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError) as e:
+            # ValueError: register_scanner's input validation (malformed
+            # supported_networks etc.) — one bad entry must not crash client
+            # construction, matching this loader's warn-and-continue contract.
             logger.warning(f'Failed to load config from {config_file}: {e}')
 
     def _load_api_keys(self) -> None:
@@ -465,11 +609,7 @@ class ConfigurationManager:
         self._ensure_env_loaded()
         try:
             networks_any: Any = config_data.get('supported_networks', ['main'])
-            networks_list: list[str]
-            if isinstance(networks_any, set):
-                networks_list = list(cast(set[str], networks_any))
-            else:
-                networks_list = cast(list[str], networks_any)
+            networks_list: list[str] = _coerce_networks_list(networks_any, scanner_id)
 
             scanner_config = ScannerConfig(
                 name=config_data['name'],

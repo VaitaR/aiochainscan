@@ -129,6 +129,31 @@ class TestToDecimalAmount:
     def test_zero_decimals(self) -> None:
         assert to_decimal_amount('42', 0) == Decimal('42')
 
+    def test_error_scientific_notation_rejected(self) -> None:
+        # '1e18' silently read as Decimal('1e18').scaleb(-18) == 1 would turn
+        # a 1-ether-looking string into exactly 1 token — corrupted data must
+        # raise, not compute. (Regression for round-1 audit item #38.)
+        with pytest.raises(ValueError, match='[Ss]cientific notation'):
+            to_decimal_amount('1e18', 18)
+        with pytest.raises(ValueError, match='[Ss]cientific notation'):
+            to_decimal_amount('1E6', 6)
+        with pytest.raises(ValueError, match='[Ss]cientific notation'):
+            wei_to_ether('1e18')
+
+    def test_error_underscore_separator_rejected(self) -> None:
+        # Decimal() accepts Python's '1_000' spelling; no explorer sends it.
+        with pytest.raises(ValueError, match='Invalid amount value'):
+            to_decimal_amount('1_000', 0)
+
+    def test_error_non_ascii_digit_forms_rejected(self) -> None:
+        with pytest.raises(ValueError, match='Invalid amount value'):
+            to_decimal_amount('１０００', 0)
+
+    def test_error_bool_rejected(self) -> None:
+        # bool is an int subclass; True must not silently become 1 base unit.
+        with pytest.raises(ValueError, match='Amount must be str or int'):
+            to_decimal_amount(True, 18)  # type: ignore[arg-type]
+
 
 class TestFormatEther:
     def test_default_precision(self) -> None:
@@ -230,6 +255,32 @@ class TestHexToInt:
             hex_to_int('')
         with pytest.raises(ValueError, match='Invalid integer value'):
             hex_to_int('0x')
+
+    def test_signed_decimal_string(self) -> None:
+        assert hex_to_int('+26') == 26
+        assert hex_to_int('+0x10') == 16
+
+    def test_error_underscore_separator_rejected(self) -> None:
+        # '1_0' is a Python literal nicety no provider sends; silently
+        # reading it as 10 means corrupted data becomes a number.
+        # (Regression for round-1 audit item #38.)
+        with pytest.raises(ValueError, match='Invalid integer value'):
+            hex_to_int('1_0')
+        with pytest.raises(ValueError, match='Invalid integer value'):
+            hex_to_int('0x1_0')
+
+    def test_error_non_ascii_digit_forms_rejected(self) -> None:
+        # Full-width '２６' must not silently parse as 26: int() accepts
+        # Unicode decimal digits, but no explorer sends them.
+        with pytest.raises(ValueError, match='Invalid integer value'):
+            hex_to_int('２６')
+
+    def test_error_bool_rejected(self) -> None:
+        # bool is an int subclass; without the guard True passes through as 1.
+        with pytest.raises(ValueError, match='must be str or int'):
+            hex_to_int(True)  # type: ignore[arg-type]
+        with pytest.raises(ValueError, match='must be str or int'):
+            hex_to_int(False)  # type: ignore[arg-type]
 
     def test_error_non_str_int(self) -> None:
         with pytest.raises(ValueError, match='Integer must be str or int'):

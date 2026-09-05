@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import tempfile
 from pathlib import Path
@@ -646,3 +647,330 @@ class TestCredentialEnvNamePattern:
                 manager.get_api_key('bsc')
 
         ConfigurationManager.reset_instance()
+
+
+# ─────────────────────────── fixtures and helpers ──────────────────────────
+
+
+@pytest.fixture
+def isolated_manager(tmp_path, monkeypatch):
+    """A fresh ConfigurationManager bound to tmp_path with a fake HOME.
+
+    Hermetic by construction: no machine-level ``~/.aiochainscan`` state and
+    no cwd-dependent config files can leak into (or out of) the test.
+    """
+    monkeypatch.setattr(Path, 'home', lambda: tmp_path)
+    ConfigurationManager.reset_instance()
+    try:
+        yield ConfigurationManager(tmp_path)
+    finally:
+        ConfigurationManager.reset_instance()
+
+
+def _write(manager: ConfigurationManager, name: str, content) -> Path:
+    """Write an env file next to the manager's config dir (str or bytes)."""
+    env_file = manager.config_dir / name
+    if isinstance(content, bytes):
+        env_file.write_bytes(content)
+    else:
+        env_file.write_text(content)
+    return env_file
+
+
+class TestEnvFileDialect:
+    """The hand-rolled ``.env`` parser follows python-dotenv conventions.
+
+    Every test here runs against an isolated manager (fake HOME, tmp config
+    dir) so the host's real ``~/.aiochainscan/.env`` can never mask a parse.
+    """
+
+    def test_export_prefix_is_not_part_of_the_key(self, isolated_manager):
+        _write(isolated_manager, '.env', 'export ETHERSCAN_KEY=exported\n')
+        isolated_manager._ensure_env_loaded()
+        assert isolated_manager._env_state.get('ETHERSCAN_KEY') == 'exported'
+        assert 'export ETHERSCAN_KEY' not in isolated_manager._env_state
+
+    def test_export_prefix_with_tab_and_multiple_spaces(self, isolated_manager):
+        _write(isolated_manager, '.env', 'export\tFIRST_KEY=a\nexport  SECOND_KEY=b\n')
+        isolated_manager._ensure_env_loaded()
+        assert isolated_manager._env_state.get('FIRST_KEY') == 'a'
+        assert isolated_manager._env_state.get('SECOND_KEY') == 'b'
+
+    def test_bare_export_is_kept_as_a_key(self, isolated_manager):
+        # A line like `export=val` has no space after 'export'; 'export' is
+        # then a genuine key, not a prefix.
+        _write(isolated_manager, '.env', 'export=kept\n')
+        isolated_manager._ensure_env_loaded()
+        assert isolated_manager._env_state.get('export') == 'kept'
+
+    def test_unquoted_inline_comment_is_stripped(self, isolated_manager):
+        _write(isolated_manager, '.env', 'PLAIN_KEY=value # trailing comment\n')
+        isolated_manager._ensure_env_loaded()
+        assert isolated_manager._env_state.get('PLAIN_KEY') == 'value'
+
+    def test_hash_inside_quoted_values_is_data(self, isolated_manager):
+        _write(
+            isolated_manager,
+            '.env',
+            'DOUBLE_KEY="v # kept"\nSINGLE_KEY=\'v # also kept\'\n',
+        )
+        isolated_manager._ensure_env_loaded()
+        assert isolated_manager._env_state.get('DOUBLE_KEY') == 'v # kept'
+        assert isolated_manager._env_state.get('SINGLE_KEY') == 'v # also kept'
+
+    def test_bom_does_not_corrupt_the_first_key(self, isolated_manager):
+        _write(isolated_manager, '.env', b'\xef\xbb\xbfETHERSCAN_KEY=bom_key\n')
+        isolated_manager._ensure_env_loaded()
+        assert isolated_manager._env_state.get('ETHERSCAN_KEY') == 'bom_key'
+        assert '\ufeffETHERSCAN_KEY' not in isolated_manager._env_state
+
+    def test_env_local_overshadows_env(self, isolated_manager):
+        """``.env.local`` must beat ``.env`` — the universal dotenv convention.
+
+        First-setter-wins parsing makes the load order the precedence, so the
+        local (untracked) file loads before the tracked ``.env``.
+        """
+        _write(isolated_manager, '.env', 'ETHERSCAN_KEY=from_env\nONLY_IN_ENV=env\n')
+        _write(isolated_manager, '.env.local', 'ETHERSCAN_KEY=from_local\n')
+        isolated_manager._ensure_env_loaded()
+        assert isolated_manager._env_state.get('ETHERSCAN_KEY') == 'from_local'
+        # A key only present in .env still loads.
+        assert isolated_manager._env_state.get('ONLY_IN_ENV') == 'env'
+
+    def test_repo_files_still_overshadow_the_machine_level_file(
+        self, isolated_manager, tmp_path, monkeypatch
+    ):
+        # Documented contract: repo-local ./.env overrides ~/.aiochainscan/.env.
+        # (home is already the fake tmp_path; write the machine-level file.)
+        (tmp_path / '.aiochainscan').mkdir()
+        (tmp_path / '.aiochainscan' / '.env').write_text('ETHERSCAN_KEY=from_home\n')
+        _write(isolated_manager, '.env', 'ETHERSCAN_KEY=from_repo\n')
+        isolated_manager._ensure_env_loaded()
+        assert isolated_manager._env_state.get('ETHERSCAN_KEY') == 'from_repo'
+
+    @pytest.mark.parametrize(
+        'content,key,expected',
+        [
+            # CRLF line endings
+            ('CRLF_KEY=val\r\nNEXT=x\r\n', 'CRLF_KEY', 'val'),
+            # no trailing newline on the last line
+            ('NO_TRAILING=last', 'NO_TRAILING', 'last'),
+            # '=' inside the value survives (split on the FIRST '=')
+            ('EQ_KEY=a=b=c', 'EQ_KEY', 'a=b=c'),
+            # quoted values keep inner spaces
+            ('SPACED_KEY=" two words "', 'SPACED_KEY', ' two words '),
+            # empty value
+            ('EMPTY_KEY=', 'EMPTY_KEY', ''),
+        ],
+    )
+    def test_existing_behavior_preserved(self, isolated_manager, content, key, expected):
+        _write(isolated_manager, '.env', content)
+        isolated_manager._ensure_env_loaded()
+        assert isolated_manager._env_state.get(key) == expected
+
+
+class TestBinaryEnvFileTolerance:
+    """A non-UTF-8 ``.env`` must not crash client construction.
+
+    The JSON config loader deliberately warns-and-continues on corruption;
+    the env loader is the one config source that used to let
+    ``UnicodeDecodeError`` escape ``ChainscanClient.from_config`` (round-2
+    audit M5). Undecodable lines are skipped — a half-decoded credential is
+    worse than a missing one — and the file's remaining lines still load.
+    """
+
+    def test_binary_env_file_warns_and_continues(self, isolated_manager, caplog):
+        _write(
+            isolated_manager,
+            '.env',
+            b'\x00\xff\xfebinary\xff=1\nETHERSCAN_KEY=works_despite_junk\n',
+        )
+
+        with caplog.at_level(logging.WARNING, logger='aiochainscan.config'):
+            isolated_manager._ensure_env_loaded()
+
+        assert isolated_manager._env_state.get('ETHERSCAN_KEY') == 'works_despite_junk'
+        # The undecodable line was skipped, not stored half-decoded.
+        assert not any('\ufffd' in key for key in isolated_manager._env_state)
+        warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+        assert warnings, 'a binary .env must produce a warning'
+        assert any('not valid UTF-8' in r.getMessage() for r in warnings)
+
+    def test_binary_env_file_yields_a_working_client(self, isolated_manager, caplog):
+        """End-to-end pin: construction-path credential resolution survives."""
+        _write(
+            isolated_manager,
+            '.env',
+            b'\xff\xd8\xff\xe0junk\x00\x01=2\nETHERSCAN_KEY=client_still_works\n',
+        )
+
+        with (
+            caplog.at_level(logging.WARNING, logger='aiochainscan.config'),
+            patch.dict(os.environ, {}, clear=True),
+        ):
+            assert isolated_manager.get_scanner_config('eth').name == 'Etherscan'
+            assert isolated_manager.get_api_key('eth') == 'client_still_works'
+
+
+class TestSingletonConfigDir:
+    """``ConfigurationManager(config_dir=B)`` after the singleton exists must
+    not silently keep directory A (round-2 audit M8).
+
+    Chosen behaviour: warn and keep the first binding. The manager is
+    documented as process-wide configuration (the machine-level
+    ``~/.aiochainscan/.env`` is read for every cwd), so per-directory
+    instances would multiply credential state and break the singleton
+    identity contract; the surprise callers actually hit — reading another
+    directory's ``.env``/JSON while believing they configured a different
+    directory — is exactly what the warning names, together with the
+    ``reset_instance()`` remedy.
+    """
+
+    def test_differing_config_dir_warns_and_keeps_first(self, tmp_path, monkeypatch, caplog):
+        monkeypatch.setattr(Path, 'home', lambda: tmp_path)
+        dir_a = tmp_path / 'a'
+        dir_b = tmp_path / 'b'
+        dir_a.mkdir()
+        dir_b.mkdir()
+        ConfigurationManager.reset_instance()
+        try:
+            with caplog.at_level(logging.WARNING, logger='aiochainscan.config'):
+                first = ConfigurationManager(dir_a)
+                again = ConfigurationManager(dir_b)
+
+            assert again is first
+            assert first.config_dir == dir_a
+            warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+            assert len(warnings) == 1
+            message = warnings[0].getMessage()
+            assert str(dir_a) in message
+            assert str(dir_b) in message
+            assert 'reset_instance' in message
+        finally:
+            ConfigurationManager.reset_instance()
+
+    def test_differing_config_dir_warns_in_either_order(self, tmp_path, monkeypatch, caplog):
+        monkeypatch.setattr(Path, 'home', lambda: tmp_path)
+        dir_a = tmp_path / 'a'
+        dir_b = tmp_path / 'b'
+        dir_a.mkdir()
+        dir_b.mkdir()
+        ConfigurationManager.reset_instance()
+        try:
+            with caplog.at_level(logging.WARNING, logger='aiochainscan.config'):
+                first = ConfigurationManager(dir_b)
+                second = ConfigurationManager(dir_a)
+
+            assert second is first
+            assert first.config_dir == dir_b
+            warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+            assert len(warnings) == 1
+        finally:
+            ConfigurationManager.reset_instance()
+
+    def test_same_config_dir_reinit_is_silent(self, tmp_path, monkeypatch, caplog):
+        monkeypatch.setattr(Path, 'home', lambda: tmp_path)
+        ConfigurationManager.reset_instance()
+        try:
+            first = ConfigurationManager(tmp_path)
+            with caplog.at_level(logging.WARNING, logger='aiochainscan.config'):
+                again = ConfigurationManager(tmp_path)
+
+            assert again is first
+            assert first.config_dir == tmp_path
+            assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+        finally:
+            ConfigurationManager.reset_instance()
+
+    def test_equivalent_paths_are_not_a_directory_change(self, tmp_path, monkeypatch, caplog):
+        """A differently-spelled path to the same directory is no change."""
+        monkeypatch.setattr(Path, 'home', lambda: tmp_path)
+        target = tmp_path / 'a'
+        ConfigurationManager.reset_instance()
+        try:
+            first = ConfigurationManager(target)
+            with caplog.at_level(logging.WARNING, logger='aiochainscan.config'):
+                again = ConfigurationManager(target.resolve())
+
+            assert again is first
+            assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+        finally:
+            ConfigurationManager.reset_instance()
+
+
+class TestRegisterScannerInputValidation:
+    """``supported_networks`` corruption must fail loudly, not become
+    ``set('main')`` == ``{'m', 'a', 'i', 'n'}`` (round-2 audit LOW)."""
+
+    def _base_data(self, **overrides):
+        data = {
+            'name': 'Test Scanner',
+            'base_domain': 'test.example',
+            'currency': 'TST',
+        }
+        data.update(overrides)
+        return data
+
+    def test_string_networks_rejected(self):
+        manager = ConfigurationManager()
+        with pytest.raises(ValueError, match='supported_networks'):
+            manager.register_scanner('badscan', self._base_data(supported_networks='main'))
+
+    def test_non_iterable_networks_raise_value_error_not_type_error(self):
+        manager = ConfigurationManager()
+        with pytest.raises(ValueError, match='supported_networks'):
+            manager.register_scanner('badscan', self._base_data(supported_networks=42))
+
+    def test_non_string_entries_rejected(self):
+        manager = ConfigurationManager()
+        with pytest.raises(ValueError, match='supported_networks'):
+            manager.register_scanner('badscan', self._base_data(supported_networks=['main', 42]))
+
+    @pytest.mark.parametrize('networks', [['main', 'test'], {'main'}, ('main', 't')])
+    def test_sequence_networks_still_accepted(self, networks):
+        manager = ConfigurationManager()
+        manager.register_scanner('okscan', self._base_data(supported_networks=networks))
+        assert manager.get_scanner_config('okscan').supported_networks == set(networks)
+
+    def test_json_config_with_string_networks_warns_and_continues(self, isolated_manager, caplog):
+        """The JSON loader's warn-and-continue contract covers the new
+        validation error: one malformed scanner entry must not crash
+        client construction."""
+        config_file = isolated_manager.config_dir / 'aiochainscan.json'
+        config_file.write_text(
+            json.dumps(
+                {
+                    'scanners': {
+                        'broken': {
+                            'name': 'Broken',
+                            'base_domain': 'broken.example',
+                            'currency': 'BRK',
+                            'supported_networks': 'main',
+                        },
+                    }
+                }
+            )
+        )
+
+        with caplog.at_level(logging.WARNING, logger='aiochainscan.config'):
+            isolated_manager._load_config_file(config_file)
+
+        assert any('supported_networks' in r.getMessage() for r in caplog.records)
+        # Builtins remain reachable — construction not poisoned.
+        assert isolated_manager.get_scanner_config('eth').name == 'Etherscan'
+
+    def test_api_keys_for_unknown_scanner_ids_warn(self, isolated_manager, caplog):
+        """An api_keys entry keyed by an unknown id is silently dropped today;
+        the warning must name it (e.g. 'etherscan' instead of 'eth')."""
+        isolated_manager.get_scanner_config('eth')  # load at least one scanner
+        config_file = isolated_manager.config_dir / 'aiochainscan.json'
+        config_file.write_text(
+            json.dumps({'api_keys': {'eth': 'known_key', 'etherscan': 'misnamed_key'}})
+        )
+
+        with caplog.at_level(logging.WARNING, logger='aiochainscan.config'):
+            isolated_manager._load_config_file(config_file)
+
+        assert isolated_manager._scanners['eth'].api_key == 'known_key'
+        warnings = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
+        assert any('etherscan' in m for m in warnings)
