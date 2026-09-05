@@ -84,19 +84,25 @@ class EtherscanLikeScanner(Scanner):
         return items, {'page': page + 1, 'offset': offset}
 
     def _spec_pages_by_offset(self, method: Method) -> bool:
-        """Whether this method's spec maps ``page``/``offset`` onto the wire.
+        """Whether this method's spec maps a ``page`` number onto the wire.
 
-        A spec that maps neither has exactly ONE page: the params would be
-        dropped before the request, so every "next page" is byte-for-byte the
-        first one. Advancing the cursor there does not paginate, it repeats —
-        BlockScout V1's ``getLogs`` ignores page/offset and answers at most
-        1000 logs with ``status=1``, which made an unguaranteed ``get_all_logs``
+        The synthesized cursor advances ``page``, so a spec that does not
+        carry ``page`` has exactly ONE page: the param is dropped before the
+        request and every "next page" is byte-for-byte the first one.
+        Advancing the cursor there does not paginate, it repeats — BlockScout
+        V1's ``getLogs`` ignores page/offset and answers at most 1000 logs
+        with ``status=1``, which made an unguaranteed ``get_all_logs``
         re-fetch the same page forever (verified live 2026-09-02).
+
+        ``offset`` alone does not qualify. Etherscan's ``topholders`` maps it
+        as a RESULT LIMIT with no ``page`` beside it, so treating it as a page
+        size made a full 1000-holder page synthesize ``page=2`` — which the
+        endpoint ignores, answering page 1 again, forever.
         """
         spec = self.SPECS.get(method)
         if spec is None:
             return False
-        return 'page' in spec.param_map or 'offset' in spec.param_map
+        return 'page' in spec.param_map
 
     async def _perform_raw_request(
         self,

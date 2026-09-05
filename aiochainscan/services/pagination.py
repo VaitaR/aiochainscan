@@ -113,7 +113,14 @@ type ItemDecode = Callable[[JSONDict], JSONDict]
 
 
 def validate_batch_size(batch_size: int) -> None:
-    """Validate the positive page size required by public streaming methods."""
+    """Validate the positive page size required by public streaming methods.
+
+    Raises ``ValueError`` for a non-integer too: the public methods document
+    one rejection type for a bad ``batch_size``, and a caller passing ``None``
+    hit the same contract as one passing ``0``.
+    """
+    if not isinstance(batch_size, int) or isinstance(batch_size, bool):
+        raise ValueError(f'batch_size must be an integer, got {batch_size!r}')
     if batch_size < 1:
         raise ValueError(f'batch_size must be at least 1, got {batch_size}')
 
@@ -421,10 +428,16 @@ async def collect_all(
         All items from all batches, in order.
     """
     items: list[JSONDict] = []
+    warned = False
     async for batch in batches:
         items.extend(batch)
-        if len(items) == threshold:
+        if not warned and len(items) >= threshold:
+            # ``>=``, not ``==``: a batch that steps over the threshold in one
+            # go is exactly the memory pressure the warning exists for, and an
+            # equality trigger stays silent for every batch size that does not
+            # land on it.
             logger.warning(warning)
+            warned = True
     return items
 
 
@@ -570,6 +583,17 @@ class PaginationContext:
     alternatives: tuple[str, ...] = ()
 
 
+def _is_provider_cursor(cursor: Cursor) -> bool:
+    """Whether ``cursor`` carries a continuation the PROVIDER vouched for.
+
+    Page/offset cursors are synthesized locally after any full page, so they
+    prove nothing about records past the cap. Anything else (BlockScout V2's
+    ``next_page_params``, NodeReal's ``pageKey``) came back from the provider
+    and does.
+    """
+    return cursor is not None and bool(cursor) and not set(cursor.keys()) <= {'page', 'offset'}
+
+
 async def _fetch_window(
     fetch: PageFetch,
     params: dict[str, Any],
@@ -584,29 +608,58 @@ async def _fetch_window(
     only records the cursor of the most recent page so the overflow flavour
     can be told apart once the cap is reached:
 
-    - :attr:`_Overflow.CONFIRMED` — the provider offered a next cursor at the
-      cap, i.e. it says more records exist. Data is definitely being cut off.
-    - :attr:`_Overflow.AT_CAP` — the window came back exactly full with no
-      continuation. Possibly complete, possibly truncated; unprovable either
-      way. No probe can settle it: the ambiguous case is precisely the one
-      where the provider handed back no cursor, and cursors are opaque (see
-      the module docstring), so there is nothing to request the next page
-      with. Splitting resolves it for a ranged query; a rangeless one can
-      only be reported as unproven.
+    - :attr:`_Overflow.CONFIRMED` — the provider offered a next cursor of its
+      OWN at the cap, i.e. it says more records exist. Data is definitely
+      being cut off.
+    - :attr:`_Overflow.AT_CAP` — the window came back full with no
+      continuation the provider vouches for. Possibly complete, possibly
+      truncated; unprovable either way. No probe can settle it: the record
+      after the cap is exactly the one ``page * offset`` forbids requesting.
+      Splitting resolves it for a ranged query; a rangeless one can only be
+      reported as unproven.
+
+    A page/offset cursor is NOT a provider signal: ``fetch_page`` synthesizes
+    ``{'page': n + 1, 'offset': …}`` after every full page, so at the cap it
+    says only "the last page was full" — which is equally true of a window
+    holding exactly ``result_window`` records. Calling that confirmed loss
+    would report complete data as lost.
     """
     collected: list[JSONDict] = []
     last_cursor: Cursor = None
+    refused_beyond_cap = False
 
     async def tracking_fetch(request: dict[str, Any]) -> tuple[list[JSONDict], Cursor]:
-        nonlocal last_cursor
+        nonlocal last_cursor, refused_beyond_cap
+        page = request.get('page')
+        offset = request.get('offset')
+        if (
+            isinstance(page, int)
+            and page > 1
+            and isinstance(offset, int)
+            and offset > 0
+            and page * offset > result_window
+        ):
+            # Past the provider's own ``page * offset`` cap: it answers such a
+            # request with a window error, which is FATAL (no failover, no
+            # split) and would replace a splittable overflow with a dead end.
+            # Reaching the cap IS the overflow — report it and let the caller
+            # narrow the range. Only a batch size that does not divide the
+            # window lands here.
+            refused_beyond_cap = True
+            return [], None
         items, cursor = await fetch(request)
         last_cursor = cursor
         return items, cursor
 
+    def _overflow_at_cap() -> _Overflow:
+        return _Overflow.CONFIRMED if _is_provider_cursor(last_cursor) else _Overflow.AT_CAP
+
     async for batch in iter_pages(tracking_fetch, dict(params)):
         collected.extend(batch)
         if len(collected) >= result_window:
-            return collected, _Overflow.CONFIRMED if last_cursor is not None else _Overflow.AT_CAP
+            return collected, _overflow_at_cap()
+    if refused_beyond_cap:
+        return collected, _overflow_at_cap()
     return collected, _Overflow.NONE
 
 

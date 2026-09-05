@@ -56,7 +56,7 @@ def get_scanner_class(name: str, version: str) -> type[Scanner]:
     key = (name, version)
     if key not in SCANNER_REGISTRY:
         available = list(SCANNER_REGISTRY.keys())
-        raise ValueError(f"Scanner '{name}' v{version} not found. Available: {available}")
+        raise ValueError(f"Scanner '{name}' {version} not found. Available: {available}")
     return SCANNER_REGISTRY[key]
 
 

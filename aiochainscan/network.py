@@ -22,7 +22,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from typing import Any, Protocol, cast
 
 import httpx
@@ -104,15 +107,73 @@ class ResponseDialect(Protocol):
         ...
 
 
+# Etherscan-compat explorers answer an empty result set with a FAILING status
+# ("No transactions found", "No logs found", "No records found") and a
+# ``result`` that is still the empty list. That is a complete, correct answer
+# to a query that matched nothing — not an error — so it must reach the caller
+# as ``[]``.
+_EMPTY_RESULT_MESSAGE = re.compile(r'^\s*no\b.*\bfound\b[.\s]*$', re.IGNORECASE)
+
+_RATE_LIMIT_MARKERS = ('rate limit', 'limit reached', 'too many requests')
+
+
+def _parse_retry_after(header: str | None) -> int | None:
+    """Seconds advertised by an RFC 9110 ``Retry-After`` header, if any.
+
+    Both spellings are accepted — delta-seconds and an HTTP-date — because
+    both are served in practice. ``None`` for an absent, unparsable or past
+    value leaves :class:`ChainscanRateLimitError` on its own default, which
+    is what the provider pool then uses to size the cooldown.
+    """
+    if not header:
+        return None
+    raw = header.strip()
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        pass
+    try:
+        when = parsedate_to_datetime(raw)
+    except (TypeError, ValueError):
+        return None
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=UTC)
+    delta = (when - datetime.now(UTC)).total_seconds()
+    return int(delta) if delta > 0 else None
+
+
+def _mentions_rate_limit(text: Any) -> bool:
+    return isinstance(text, str) and any(marker in text.lower() for marker in _RATE_LIMIT_MARKERS)
+
+
+def _is_empty_result_envelope(message: Any, raw_result: Any) -> bool:
+    """Whether a failing Etherscan envelope is really an empty result set.
+
+    Both halves are required: the "no ... found" message AND a list-shaped
+    ``result``. A genuine error carries its detail as a string, so a string
+    ``result`` never qualifies however the message reads.
+    """
+    return (
+        isinstance(raw_result, list)
+        and isinstance(message, str)
+        and _EMPTY_RESULT_MESSAGE.match(message) is not None
+    )
+
+
 def _raise_if_etherscan_error(response_json: Any) -> None:
     """Etherscan status-envelope check (``{"status", "message", "result"}``).
 
-    ``status`` outside the success set raises. Rate-limit TEXT inside an
-    HTTP 200 becomes :class:`ChainscanRateLimitError` (its class default
-    carries ``FailureKind.RATE_LIMIT``, so the raise site needs no explicit
-    kind):
+    ``status`` outside the success set raises, EXCEPT for the empty result
+    set (see :func:`_is_empty_result_envelope`), which is a success answering
+    ``[]``.
+
+    Rate-limit TEXT inside an HTTP 200 becomes
+    :class:`ChainscanRateLimitError` (its class default carries
+    ``FailureKind.RATE_LIMIT``, so the raise site needs no explicit kind).
+    The text rides in ``result`` or in ``message`` depending on the provider:
 
     ``{"status":"0","message":"NOTOK","result":"Max rate limit reached"}``
+    ``{"status":"0","message":"Max calls rate limit reached","result":"NOTOK"}``
 
     Any other failing status raises :class:`ChainscanClientApiError` with
     the kind computed by :func:`aiochainscan.exceptions.api_error_failure_kind`
@@ -124,14 +185,14 @@ def _raise_if_etherscan_error(response_json: Any) -> None:
 
     status = response_json.get('status')
     if status not in (None, '1', 1, 'OK', 'ok', 'Success', 'success'):
-        message = _excerpt(response_json.get('message'))
+        raw_message = response_json.get('message')
+        if _is_empty_result_envelope(raw_message, response_json.get('result')):
+            return
+
+        message = _excerpt(raw_message)
         result = _excerpt(response_json.get('result'))
 
-        if isinstance(result, str) and (
-            'rate limit' in result.lower()
-            or 'limit reached' in result.lower()
-            or 'too many requests' in result.lower()
-        ):
+        if _mentions_rate_limit(result) or _mentions_rate_limit(message):
             raise ChainscanRateLimitError(message, result)
 
         raise ChainscanClientApiError(
@@ -140,11 +201,16 @@ def _raise_if_etherscan_error(response_json: Any) -> None:
 
 
 def _raise_if_jsonrpc_error(response_json: Any) -> None:
-    """JSON-RPC 2.0 error-object check (``{"jsonrpc", "id", "result"|"error"}``)."""
+    """JSON-RPC 2.0 error-object check (``{"jsonrpc", "id", "result"|"error"}``).
+
+    A present-but-null ``error`` is not an error: several nodes emit both
+    members and null the unused one, so the key's presence cannot be the
+    signal — its value must be.
+    """
     if not isinstance(response_json, dict):
         return
-    if 'error' in response_json:
-        err = response_json['error']
+    err = response_json.get('error')
+    if err is not None:
         if isinstance(err, dict):
             code, message = err.get('code'), _excerpt(err.get('message'))
         else:
@@ -342,12 +408,17 @@ class Network:
         made by the guard itself (same task) skip the hook so the probe can
         reach the transport.
 
-        Failure memory: only configuration errors (anything outside
+        Failure memory: only configuration errors (an ``Exception`` outside
         ``TRANSIENT_EXCEPTIONS``) are cached as fatal — every later
         request fails fast with the remembered error. Transient probe
         failures are re-raised but NOT remembered: the guard stays armed and
         the next request probes again, so one unlucky 429/DNS blip cannot
-        brick the client for its whole lifetime.
+        brick the client for its whole lifetime. Neither is a bare
+        ``BaseException``: cancelling the task that happened to run the probe
+        (or Ctrl-C) says nothing about the configuration, and remembering it
+        would re-raise one task's ``CancelledError`` into every later,
+        unrelated request — marking their tasks cancelled for the client's
+        whole lifetime.
         """
         if self._first_request_guard is None:
             return
@@ -369,11 +440,12 @@ class Network:
             try:
                 await self._first_request_guard()
             except BaseException as e:
-                if not isinstance(e, TRANSIENT_EXCEPTIONS):
+                if isinstance(e, Exception) and not isinstance(e, TRANSIENT_EXCEPTIONS):
                     self._guard_error = e
                     self._guard_done = True
-                # Transient: nothing remembered — the guard re-runs on the
-                # next request.
+                # Transient failure or a bare BaseException (cancellation,
+                # KeyboardInterrupt): nothing remembered — the guard re-runs
+                # on the next request.
                 raise
             finally:
                 self._guard_owner = None
@@ -484,6 +556,7 @@ class Network:
         data: dict[str, Any] | None = None,
         json_data: dict[str, Any] | None = None,
         headers: dict[str, str] | None = None,
+        dialect: ResponseDialect | None = None,
     ) -> dict[str, Any] | list[Any] | str:
         """Perform HTTP request to custom URL with rate limiting and retries.
 
@@ -497,6 +570,12 @@ class Network:
             data: Form data (for POST with form encoding)
             json_data: JSON data (for POST with JSON encoding)
             headers: Request headers
+            dialect: Response-envelope handling for this request (default: the
+                composite Etherscan + JSON-RPC dialect). A scanner whose
+                provider overloads an envelope code passes its own adapter so
+                the classification happens INSIDE the retry policy —
+                translating after this method returns yields a "retryable"
+                exception class the retried function never saw.
 
         Returns:
             Parsed response data (JSON decoded).
@@ -508,7 +587,7 @@ class Network:
             data=data,
             json_data=json_data,
             headers=headers,
-            dialect=_DEFAULT_DIALECT,
+            dialect=dialect if dialect is not None else _DEFAULT_DIALECT,
             log_format='[%s %s] url=%r params=%r headers=%r',
             log_payload=params,
         )
@@ -556,6 +635,13 @@ class Network:
         path; ``log_format``/``log_payload`` preserve each entry point's
         debug-log shape ('params=' vs 'data=').
         """
+        # An unsupported verb is the caller's bug, not a request outcome:
+        # rejecting it here keeps it out of the retry policy and off the rate
+        # limiter, which would otherwise spend a token per attempt on a
+        # request that is never dispatched.
+        if method not in ('GET', 'POST'):
+            raise ValueError(f'Unsupported HTTP method: {method}')
+
         # Fail-fast config checks (e.g. expected chain validation) run before
         # the retry policy so a validation error is never retried.
         await self._run_first_request_guard()
@@ -626,7 +712,10 @@ class Network:
         # which can retain credentials in the exception chain.
         if status_code >= 400:
             if status_code == 429:
-                raise ChainscanRateLimitError('HTTP 429', 'Too Many Requests')
+                retry_after = _parse_retry_after(response.headers.get('retry-after'))
+                if retry_after is None:
+                    raise ChainscanRateLimitError('HTTP 429', 'Too Many Requests')
+                raise ChainscanRateLimitError('HTTP 429', 'Too Many Requests', retry_after)
             safe_url = _redact_url(response.url)
             if 500 <= status_code <= 599:
                 raise ChainscanNetworkError(
@@ -650,9 +739,12 @@ class Network:
                 f'HTTP {status_code} for {safe_url}: {response.reason_phrase}'
             )
 
-        # Parse JSON response
+        # Parse JSON response. The gate matches any JSON media type, not the
+        # exact ``application/json`` string: structured suffixes
+        # (``application/vnd.api+json``) and ``text/json`` are JSON, and
+        # rejecting them turns a parseable body into a content-type error.
         content_type = response.headers.get('content-type', '')
-        if 'application/json' not in content_type:
+        if 'json' not in content_type.lower():
             raise ChainscanClientContentTypeError(status_code, _excerpt(content))
 
         try:

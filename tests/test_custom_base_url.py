@@ -382,6 +382,32 @@ class TestGetChainInfoBlockscout:
             await client.close()
 
 
+class TestGetChainInfoRegistryBlockScoutV1:
+    """The registry path resolves an instance, so it can be probed like a
+    custom one — ``base_url`` used to stay None there and the probe refused."""
+
+    async def test_v1_alias_path_probes_the_resolved_instance(self) -> None:
+        client = ChainscanClient.from_config('blockscout', 'ethereum')
+        calls: list[str] = []
+        _install_transport(client, _blockscout_handler('0x1', calls))
+        try:
+            info = await client.get_chain_info()
+            assert info.chain_id == 1
+            assert info.explorer_url == 'https://eth.blockscout.com'
+            assert 'POST /api/eth-rpc' in calls
+        finally:
+            await client.close()
+
+    async def test_v1_alias_path_validates_the_chain(self) -> None:
+        client = ChainscanClient.from_config('blockscout', 'ethereum')
+        _install_transport(client, _blockscout_handler('0x38'))
+        try:
+            with pytest.raises(ChainscanDataError, match='expected 1, instance serves 56'):
+                await client.validate_chain(1)
+        finally:
+            await client.close()
+
+
 class TestGetChainInfoEtherscan:
     async def test_chainlist_entry_returned(self) -> None:
         client = ChainscanClient.from_config('etherscan', 'ethereum', api_key='k')

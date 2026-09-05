@@ -421,6 +421,56 @@ class TestTokenPortfolioToDataframe:
         row = df.row(0, named=True)
         assert row['contract_address'] == '0xblockscout_address'
 
+    @pytest.mark.asyncio
+    async def test_null_decimals_yields_a_null_balance_not_a_crash(self):
+        """BlockScout V2 answers ``decimals: null`` for unreadable metadata.
+
+        An unknown scale is not 18: the row keeps its identity and reports a
+        null balance instead of a number scaled by a guess.
+        """
+        tokens = [
+            {
+                'token': {
+                    'symbol': 'MYST',
+                    'name': 'Mystery',
+                    'address_hash': '0xmystery',
+                    'decimals': None,
+                },
+                'value': '12345',
+            }
+        ]
+
+        row = (await token_portfolio_to_dataframe(tokens)).row(0, named=True)
+        assert row['symbol'] == 'MYST'
+        assert row['contract_address'] == '0xmystery'
+        assert row['decimals'] is None
+        assert row['balance'] is None
+
+    @pytest.mark.asyncio
+    async def test_null_token_object_and_null_value_degrade(self):
+        tokens = [
+            {'token': None, 'value': '5'},
+            {'token': {'symbol': 'A', 'address': '0xa', 'decimals': 18}, 'value': None},
+        ]
+
+        df = await token_portfolio_to_dataframe(tokens)
+
+        assert df.row(0, named=True)['symbol'] == ''
+        assert df.row(0, named=True)['decimals'] == 18  # absent scale keeps the default
+        assert df.row(1, named=True)['balance'] is None
+
+    @pytest.mark.asyncio
+    async def test_unparseable_value_does_not_kill_the_frame(self):
+        tokens = [
+            {'token': {'symbol': 'A', 'address': '0xa', 'decimals': 18}, 'value': 'n/a'},
+            {'token': {'symbol': 'B', 'address': '0xb', 'decimals': 18}, 'value': '10' + '0' * 18},
+        ]
+
+        df = await token_portfolio_to_dataframe(tokens)
+
+        assert df.row(0, named=True)['balance'] is None
+        assert df.row(1, named=True)['balance'] == pytest.approx(10.0, rel=1e-10)
+
 
 class TestPolarsAvailability:
     """Tests for is_polars_available function."""

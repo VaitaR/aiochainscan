@@ -7,11 +7,13 @@ import pytest
 
 import aiochainscan.chain_registry as chain_registry
 from aiochainscan.chain_registry import (
+    BLOCKSCOUT_HOSTS,
     ScannerTarget,
     resolve_scanner_target,
 )
 from aiochainscan.config import ConfigurationManager
 from aiochainscan.scanners.blockscout_v1 import BlockScoutV1
+from aiochainscan.scanners.blockscout_v2 import BlockScoutV2Scanner
 
 KEY_ENV_VARS = (
     'ETHERSCAN_KEY',
@@ -140,8 +142,10 @@ class TestApiKindDefaulting:
         assert target.api_kind == 'eth'
 
     def test_unknown_scanner_falls_back_to_own_name(self):
-        # 'bsc' exists as a config id but not as a scanner api_kind mapping
-        target = resolve_scanner_target('bsc', 'bnb', api_key='k')
+        # 'bsc' exists as a config id but not as a scanner api_kind mapping.
+        # The network is the config id's own dialect name ('bnb' is a chain
+        # alias, which that id does not declare on either key path).
+        target = resolve_scanner_target('bsc', 'main', api_key='k')
         assert target.api_kind == 'bsc'
         assert target.scanner_version == 'v1'
 
@@ -225,7 +229,25 @@ class TestErrorBehavior:
     def test_etherscan_unsupported_network_raises(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setenv('ETHERSCAN_KEY', 'envkey123456')
         with pytest.raises(ValueError, match='not supported by Etherscan'):
-            resolve_scanner_target('etherscan', 'holesky')
+            resolve_scanner_target('etherscan', 'gnosis')
+
+    @pytest.mark.parametrize('key', [None, 'explicit'])
+    def test_network_validity_does_not_depend_on_the_key_source(
+        self, monkeypatch: pytest.MonkeyPatch, key: str | None
+    ):
+        monkeypatch.setenv('ETHERSCAN_KEY', 'envkey123456')
+        with pytest.raises(ValueError, match='not supported by Etherscan'):
+            resolve_scanner_target('etherscan', 'gnosis', api_key=key)
+
+    @pytest.mark.parametrize('key', [None, 'explicit'])
+    def test_holesky_is_served_on_both_key_paths(
+        self, monkeypatch: pytest.MonkeyPatch, key: str | None
+    ):
+        # Etherscan V2 routes chain 17000 and the scanner declares holesky, so
+        # the registry oracle must not be the one thing that refuses it.
+        monkeypatch.setenv('ETHERSCAN_KEY', 'envkey123456')
+        target = resolve_scanner_target('etherscan', 'holesky', api_key=key)
+        assert target.chain_id == 17000
 
 
 class TestFromConfigIntegration:
@@ -256,7 +278,9 @@ class TestFromConfigIntegration:
         finally:
             await client.close()
 
-    @pytest.mark.parametrize('network', sorted(BlockScoutV1.supported_networks))
+    @pytest.mark.parametrize(
+        'network', sorted(host_id.removeprefix('blockscout_') for host_id in BLOCKSCOUT_HOSTS)
+    )
     async def test_from_config_all_blockscout_v1_networks(self, network: str):
         from aiochainscan import ChainscanClient
 
@@ -267,6 +291,26 @@ class TestFromConfigIntegration:
             assert client._scanner.instance_domain == BlockScoutV1.NETWORK_INSTANCES[network]
         finally:
             await client.close()
+
+    @pytest.mark.parametrize('scanner', ['blockscout', 'blockscout_v2'])
+    async def test_bsc_constructs_on_both_blockscout_legs(self, scanner: str) -> None:
+        # The registry resolves chain 56 for both legs, so neither may refuse
+        # it at construction after resolution succeeded.
+        from aiochainscan import ChainscanClient
+
+        client = ChainscanClient.from_config(scanner, 'bsc')
+        try:
+            assert client.chain_id == 56
+            assert client._scanner.base_url == 'https://bsc.blockscout.com'
+        finally:
+            await client.close()
+
+    @pytest.mark.parametrize('network', sorted(BlockScoutV1.supported_networks))
+    def test_every_declared_blockscout_network_resolves_to_an_instance(self, network: str) -> None:
+        # A declared network the host table cannot resolve is a construction
+        # failure for a network the scanner advertises.
+        assert network in BlockScoutV1.NETWORK_INSTANCES
+        assert network in BlockScoutV2Scanner.BASE_URLS
 
     def test_from_config_unknown_scanner_raises(self):
         from aiochainscan import ChainscanClient

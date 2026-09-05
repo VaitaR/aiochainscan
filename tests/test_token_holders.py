@@ -358,6 +358,29 @@ class TestEtherscanV2FetchPage:
         )
         assert cursor is None
 
+    async def test_top_holders_is_one_page(self) -> None:
+        """``topholders`` maps ``offset`` as a LIMIT and declares no ``page``.
+
+        Reading ``offset`` as a page size synthesized ``page=2`` after a full
+        page — which the endpoint ignores, answering page 1 again: an endless
+        loop of identical pages without ``guarantee_complete``, and duplicate
+        records with it.
+        """
+        entries = [
+            {'TokenHolderAddress': HOLDER_ONE, 'TokenHolderQuantity': str(i)} for i in range(3)
+        ]
+        network = FakeNetwork([_etherscan_holder_page(entries)])
+        scanner = _etherscan(network)
+
+        items, cursor = await scanner.fetch_page(
+            Method.TOKEN_TOP_HOLDERS,
+            {'contract_address': TOKEN_CONTRACT, 'offset': 3},
+        )
+
+        assert len(items) == 3
+        assert cursor is None
+        assert 'page' not in EtherscanV2.SPECS[Method.TOKEN_TOP_HOLDERS].param_map
+
     async def test_empty_page_terminates(self) -> None:
         network = FakeNetwork([_etherscan_holder_page([])])
         scanner = _etherscan(network)

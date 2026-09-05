@@ -244,7 +244,7 @@ class Scanner(ABC):
         if base_url is None and network not in self.supported_networks:
             available = ', '.join(sorted(self.supported_networks))
             raise ValueError(
-                f"Network '{network}' not supported by {self.name} v{self.version}. "
+                f"Network '{network}' not supported by {self.name} {self.version}. "
                 f'Available: {available}'
             )
 
@@ -336,7 +336,7 @@ class Scanner(ABC):
         if method not in self.SPECS:
             available = [str(m) for m in self.SPECS]
             raise MethodNotDeclaredError(
-                f'Method {method} not supported by {self.name} v{self.version}. '
+                f'Method {method} not supported by {self.name} {self.version}. '
                 f'Available: {", ".join(available)}'
             )
         return self.SPECS[method]
@@ -350,7 +350,7 @@ class Scanner(ABC):
         """
         if self._network_client is None:
             raise RuntimeError(
-                f'{self.name} v{self.version}: network_client is required. '
+                f'{self.name} {self.version}: network_client is required. '
                 'Create scanner via ChainscanClient.from_config() which injects it automatically.'
             )
         return self._network_client
@@ -496,7 +496,7 @@ class Scanner(ABC):
         default says everything the scanners used to say in divergent
         overrides (two of which dropped the method name).
         """
-        context = f'{self.name} v{self.version} unexpected error for {method.name}'
+        context = f'{self.name} {self.version} unexpected error for {method.name}'
         if self._instance_root is not None:
             context += f' ({self._instance_root})'
         return context
@@ -646,7 +646,7 @@ class Scanner(ABC):
         """String representation of the scanner."""
         networks = ', '.join(sorted(self.supported_networks))
         root = f', instance: {self._instance_root}' if self._instance_root is not None else ''
-        return f'{self.name} v{self.version} (networks: {networks}{root})'
+        return f'{self.name} {self.version} (networks: {networks}{root})'
 
     def __repr__(self) -> str:
         """Detailed string representation.

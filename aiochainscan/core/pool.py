@@ -45,6 +45,7 @@ from __future__ import annotations
 import inspect
 import time
 import warnings
+from collections import Counter
 from collections.abc import AsyncIterator, Callable, Sequence
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
@@ -203,6 +204,38 @@ class _ProviderState:
         return f'_ProviderState({self.label!r}, cooldown_until={self.cooldown_until:.1f})'
 
 
+def _provider_labels(members: list[ChainscanClient]) -> list[str]:
+    """One distinct label per member — the pool's whole transparency surface.
+
+    ``scanner_name/network`` is the documented spelling, but it is not unique:
+    ``blockscout`` v1 and v2 on the same chain — the documented V1→V2 failover
+    pair — share it. Duplicate labels collapse ``provider_states()`` to one
+    row for two members and make ``ProviderPoolExhaustedError.attempts`` drop
+    the second failure. Members whose base label collides therefore carry the
+    scanner version too, and members still identical after that (the same
+    provider twice — two keys rotating one quota) get an ordinal; everyone
+    else keeps the documented format.
+    """
+    base = [f'{client.scanner_name}/{client.network}' for client in members]
+    base_counts = Counter(base)
+    qualified = [
+        label
+        if base_counts[label] == 1
+        else f'{client.scanner_name} {client.scanner_version}/{client.network}'
+        for label, client in zip(base, members, strict=True)
+    ]
+    qualified_counts = Counter(qualified)
+    seen: Counter[str] = Counter()
+    labels: list[str] = []
+    for label in qualified:
+        if qualified_counts[label] == 1:
+            labels.append(label)
+            continue
+        seen[label] += 1
+        labels.append(f'{label} #{seen[label]}')
+    return labels
+
+
 def _record_attempt(attempts: list[tuple[str, Exception]], label: str, error: Exception) -> None:
     """Append ``(label, error)`` keeping at most one entry per provider."""
     if all(existing != label for existing, _ in attempts):
@@ -212,14 +245,24 @@ def _record_attempt(attempts: list[tuple[str, Exception]], label: str, error: Ex
 def _serves_completely(state: _ProviderState, method: Method) -> bool:
     """True if this member declares ``method`` with no result window.
 
-    ``Scanner.result_window is None`` means the provider paginates by an
-    exhaustible server cursor (BlockScout V2, NodeReal) — nothing can
-    overflow it, so it can serve ``method`` completely regardless of dataset
-    size. A capped provider (``result_window`` is an int) can still succeed
-    for a dataset under its cap, but cannot GUARANTEE it, which is exactly
-    what ``guarantee_complete=True`` promises.
+    ``result_window_for(method) is None`` means the provider paginates THIS
+    endpoint by an exhaustible server cursor (BlockScout V2, NodeReal) —
+    nothing can overflow it, so it can serve ``method`` completely regardless
+    of dataset size. A capped endpoint (an int window) can still succeed for a
+    dataset under its cap, but cannot GUARANTEE it, which is exactly what
+    ``guarantee_complete=True`` promises.
+
+    The question is per method, mirroring
+    :func:`aiochainscan.scanners.scanners_serving_completely`: BlockScout V1
+    caps its account endpoints at 10_000 and still serves the holder list to
+    exhaustion, so reading the scanner-wide window here would route the pool
+    away from the very member the documented remedy config names.
     """
-    return state.client.supports_method(method) and state.client._scanner.result_window is None
+    return state.client.supports_method(method) and _window_for(state, method) is None
+
+
+def _window_for(state: _ProviderState, method: Method) -> int | None:
+    return state.client._scanner.result_window_for(method)
 
 
 def _inject_provider_progress(label: str, callback: ProgressCallback) -> ProgressCallback:
@@ -352,8 +395,8 @@ class ChainscanPool(
                     f'got {type(client).__name__}'
                 )
         self._providers = [
-            _ProviderState(label=f'{client.scanner_name}/{client.network}', client=client)
-            for client in members
+            _ProviderState(label=label, client=client)
+            for label, client in zip(_provider_labels(members), members, strict=True)
         ]
         self._clock = clock
         self._rate_limit_cooldown = float(rate_limit_cooldown)
@@ -452,13 +495,27 @@ class ChainscanPool(
             return self._plan_cooldown
         return 0.0  # METHOD_UNDECLARED / FATAL never cool a provider
 
-    def _maybe_warn_switch(self, to_label: str, pending: tuple[str, float] | None) -> None:
+    def _maybe_warn_switch(
+        self,
+        to_label: str,
+        pending: tuple[str, float] | None,
+        *,
+        after_capability_skip: bool = False,
+    ) -> None:
         """Warn exactly once per route transition (failure-driven switches only).
 
         Capability routing (method not declared) never warns: it is
-        deterministic, not exceptional.
+        deterministic, not exceptional. That covers the transition ONTO the
+        provider chosen after a capability skip too — the route it moves off
+        is a provider that was never asked, so the only reason available
+        ("provider selection changed") describes nothing that happened.
+        ``pending`` still wins: a real failure earlier in the same walk is
+        what the caller needs to hear about.
         """
         if to_label == self._route:
+            return
+        if after_capability_skip and pending is None:
+            self._route = to_label
             return
         from_label = self._route
         now = self._clock()
@@ -497,8 +554,10 @@ class ChainscanPool(
         """Run ``invoke`` with failover across providers (single request)."""
         attempts: list[tuple[str, Exception]] = []
         pending: tuple[str, float] | None = None
+        skipped_for_capability = False
         for state in self._candidates():
             if method is not None and not state.client.supports_method(method):
+                skipped_for_capability = True
                 continue  # capability routing — silent
             now = self._clock()
             if state.in_cooldown(now):
@@ -507,8 +566,11 @@ class ChainscanPool(
                 if state.last_error is not None:
                     _record_attempt(attempts, state.label, state.last_error)
                 continue
-            self._maybe_warn_switch(state.label, pending)
+            self._maybe_warn_switch(
+                state.label, pending, after_capability_skip=skipped_for_capability
+            )
             pending = None
+            skipped_for_capability = False
             try:
                 result = await invoke(state.client)
             except Exception as exc:
@@ -517,6 +579,7 @@ class ChainscanPool(
                     raise
                 _record_attempt(attempts, state.label, exc)
                 if kind is FailureKind.METHOD_UNDECLARED:
+                    skipped_for_capability = True
                     continue  # no cooldown, no warning — capability gap
                 cooldown = self._cooldown_for(kind, exc)
                 state.enter_cooldown(self._clock() + cooldown, exc, kind)
@@ -566,6 +629,7 @@ class ChainscanPool(
         async def _generate() -> AsyncIterator[T]:
             attempts: list[tuple[str, Exception]] = []
             pending: tuple[str, float] | None = None
+            skipped_for_capability = False
             for state in candidates if candidates is not None else self._candidates():
                 if state.in_cooldown(self._clock()):
                     # Skip without any HTTP attempt; keep the error that
@@ -573,8 +637,11 @@ class ChainscanPool(
                     if state.last_error is not None:
                         _record_attempt(attempts, state.label, state.last_error)
                     continue
-                self._maybe_warn_switch(state.label, pending)
+                self._maybe_warn_switch(
+                    state.label, pending, after_capability_skip=skipped_for_capability
+                )
                 pending = None
+                skipped_for_capability = False
                 stream = factory(state)
                 try:
                     first = await stream.__anext__()
@@ -588,6 +655,7 @@ class ChainscanPool(
                         raise
                     _record_attempt(attempts, state.label, exc)
                     if kind is FailureKind.METHOD_UNDECLARED:
+                        skipped_for_capability = True
                         continue
                     cooldown = self._cooldown_for(kind, exc)
                     state.enter_cooldown(self._clock() + cooldown, exc, kind)
@@ -667,7 +735,7 @@ class ChainscanPool(
             ),
             None,
         )
-        window = declaring.client._scanner.result_window if declaring is not None else None
+        window = _window_for(declaring, method) if declaring is not None else None
         provider_desc = (
             f'{declaring.label} (pool considered: {", ".join(considered)})'
             if declaring is not None
@@ -1211,9 +1279,22 @@ class ChainscanPool(
     # -- lifecycle ------------------------------------------------------------
 
     async def close(self) -> None:
-        """Close every member client (each closes its own Network)."""
+        """Close every member client (each closes its own Network).
+
+        Every member is closed even when one refuses: teardown is the last
+        chance to release the other members' httpx pools, and abandoning them
+        because the first one raised leaks sockets for the process lifetime.
+        The first failure is re-raised once the rest are closed.
+        """
+        first_error: BaseException | None = None
         for state in self._providers:
-            await state.client.close()
+            try:
+                await state.client.close()
+            except Exception as exc:  # noqa: PERF203 - per-member isolation is the point
+                if first_error is None:
+                    first_error = exc
+        if first_error is not None:
+            raise first_error
 
     async def __aenter__(self) -> ChainscanPool:
         return self

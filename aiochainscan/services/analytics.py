@@ -158,19 +158,28 @@ async def token_portfolio_to_dataframe(tokens: list[dict[str, Any]]) -> 'pl.Data
 
     rows: list[dict[str, Any]] = []
     for item in tokens:
-        token_info = item.get('token', {})
-        decimals = int(token_info.get('decimals', 18))
-        value = int(item.get('value', 0))
+        # A provider may answer ``token: null`` (BlockScout V2 does, for a token
+        # whose metadata it could not read) and ``decimals: null`` with it. A
+        # null scale is not 18 — it is unknown, so the row keeps its identity
+        # and reports a null balance instead of a number scaled by a guess.
+        raw_token = item.get('token')
+        token_info: dict[str, Any] = raw_token if isinstance(raw_token, dict) else {}
+        decimals = int_or_default(token_info.get('decimals', 18), None)
+        value = int_or_default(item.get('value', 0), None)
 
         # Handle both Etherscan (uses 'address') and BlockScout V2 (uses 'address_hash')
         contract_addr = first_field(token_info, 'address_hash', 'address') or ''
 
         rows.append(
             {
-                'symbol': token_info.get('symbol', ''),
-                'name': token_info.get('name', ''),
+                'symbol': token_info.get('symbol') or '',
+                'name': token_info.get('name') or '',
                 'contract_address': contract_addr,
-                'balance': float(to_decimal_amount(value, decimals)),
+                'balance': (
+                    float(to_decimal_amount(value, decimals))
+                    if value is not None and decimals is not None
+                    else None
+                ),
                 'decimals': decimals,
             }
         )

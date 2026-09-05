@@ -170,7 +170,9 @@ async with ChainscanClient.from_config('etherscan', 'ethereum') as client:
 > providers. Sticky routing, per-class cooldowns and pagination pinning: see
 > the "Multi-Provider Failover Pool" Semantics list below for the exact numbers.
 > Transparency: `last_provider`, `provider=<label>` stamp in progress
-> callbacks, `ChainscanProviderSwitchWarning` on switches,
+> callbacks, `ChainscanProviderSwitchWarning` on switches (a switch that only
+> stepped over a provider which never declared the method is routing, not
+> failure, and warns about nothing),
 > `ProviderPoolExhaustedError.attempts = [(provider, exception), ...]`.
 > The pool never duplicates retries — it reacts only to exceptions that
 > survived each member client's tenacity `Network`.
@@ -241,6 +243,10 @@ async with ChainscanClient.from_config('etherscan', 'ethereum') as client:
 >   probe can settle the ambiguous case: it is precisely the case where the
 >   provider returned no cursor, and cursors are opaque, so there is nothing
 >   to request a further page with.
+>   The continuation has to be the *provider's* — an opaque server cursor. A
+>   `{page, offset}` cursor is this library's own arithmetic and is emitted
+>   whether or not more data exists, so counting it as a continuation reported
+>   data that ends exactly on the cap as confirmed loss.
 > - **The split is adaptive**: on overflow the block range is cut at the block
 >   of the last record the provider managed to serve (arithmetic bisect only
 >   when items carry no block number), and each half is strictly narrower, so
@@ -474,7 +480,7 @@ Every `Method` enum value (33 total) maps to typed convenience methods on `Chain
 ### Services (Business Logic)
 | File | Purpose | Key Pattern |
 |------|---------|-------------|
-| `services/pagination.py` | Pagination | `iter_pages`/`iter_items`/`collect_all` over `Scanner.fetch_page` cursors; the guarantee machinery lives in `services/pagination_guarantee.py` (adaptive range splitting, re-exported here) |
+| `services/pagination.py` | Pagination | `iter_pages`/`iter_items`/`collect_all` over `Scanner.fetch_page` cursors; the guarantee machinery (adaptive range splitting) lives in the same module |
 | `services/ens_resolver.py` | ENS name resolution | Cache + BlockScout V2 |
 | `services/analytics.py` | Polars DataFrames | Column-oriented, Utf8 for Wei |
 | `services/constants.py` | Shared service constants | - |
@@ -587,8 +593,31 @@ BscScan-compatible verified-contract REST on `open-platform.nodereal.io`. Networ
   inputs are the spec's declared `fromBlock`/`toBlock` sources.
 - Holdings methods (`nr_getTokenHoldings`, `nr_getNFTHoldings`) page at 100
   items with hex `totalCount` cursors.
-- JSON-RPC `-32005` (usage limit) is translated to `ChainscanRateLimitError`
-  so the transport retry policy applies.
+- JSON-RPC `-32005` is **overloaded** and only one of its meanings is
+  throttling. A usage limit is translated to `ChainscanRateLimitError` so the
+  transport retry policy applies; the same code carrying a result-size refusal
+  ("logs count exceeds the limit 50000") is a deterministic answer to the
+  request as asked — retrying it burns the budget and cools a healthy
+  provider — so it stays a data error. The translation lives in the scanner's
+  `ResponseDialect` (`_NodeRealEnvelope`), i.e. inside `Network._send`, which
+  is what puts it under the retry policy at all.
+- `EVENT_LOGS` is capped at **50 000 logs per request** and NodeReal *errors*
+  rather than truncating (live-measured 2026-09-05, bsc-mainnet: a 200-block
+  span of BSC-USD `Transfer` served 26 841 logs; 2000 and 20 000 blocks both
+  answered `-32005`). Declared in `RESULT_WINDOW_OVERRIDES`, so the guarantee
+  machinery splits the range instead of reading the refusal as a rate limit,
+  and `scanners_serving_completely(EVENT_LOGS)` stops naming NodeReal as a
+  remedy it cannot be.
+
+### BlockScout networks and instance probing
+
+Both legs derive `supported_networks` from `BLOCKSCOUT_SCANNER_NETWORKS` (the
+shared instance-host table minus `DROPPED_INSTANCE_ALIASES`), so a new instance
+registers for v1 and v2 at once and neither leg can advertise a network it
+cannot resolve to an instance — nor refuse, at construction, one the registry
+just resolved. Both also record the resolved instance as `base_url` on the
+registry path, which is what `get_chain_info()` / `validate_chain()` probe; a
+custom base URL is the same field by another route.
 
 ### BlockScout v1 proxy fallback (`/api/eth-rpc`)
 
@@ -808,6 +837,10 @@ Semantics:
   propagate but still cool the provider.
 - **from_config** excludes unconstructible providers with a warning (missing
   key etc.); raises only when NO provider could be built.
+- Provider labels are unique by construction: `scanner/network`, qualified with
+  the version on a collision and then with an ordinal. Two members rendering
+  one label make `last_provider`, the progress stamp and the switch warnings
+  unreadable.
 - All state is per-pool-instance — nothing global.
 
 ### Error Handling

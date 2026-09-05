@@ -27,9 +27,14 @@ from aiochainscan.exceptions import (
     FailureKind,
     ScannerArgumentError,
 )
-from aiochainscan.scanners import SCANNER_REGISTRY, get_scanner_class
+from aiochainscan.scanners import (
+    SCANNER_REGISTRY,
+    get_scanner_class,
+    scanners_serving_completely,
+)
 from aiochainscan.scanners.base import BLOCK_RANGE_PARAM_KEYS, spec_declares_block_range
 from aiochainscan.scanners.nodereal import (
+    _NODEREAL_DIALECT,
     NodeRealScanner,
     _declared_sources,
     _filter_transfer_items,
@@ -422,6 +427,33 @@ class TestCall:
         wire_filter = network.request.await_args.kwargs['json_data']['params'][0]
         assert 'contractAddresses' not in wire_filter
 
+    @pytest.mark.parametrize('end_block', [1000, '1000', '0x3e8'])
+    @pytest.mark.asyncio
+    async def test_string_end_block_bounds_the_walk(self, end_block: object) -> None:
+        """Every spelling the library accepts must bound the window walk.
+
+        A string end read as "unbounded" resolved the live tip instead and
+        walked past the block the caller asked to stop at, returning records
+        outside the requested range — there is no client-side block filter
+        behind this.
+        """
+        scanner = _make_scanner()
+        network = _mock_network(scanner, [{'transfers': []}])
+
+        await scanner.call(
+            Method.ACCOUNT_TRANSACTIONS,
+            address=ADDRESS,
+            start_block=500,
+            end_block=end_block,
+        )
+
+        # The tip was never probed: no eth_blockNumber request was issued.
+        assert [c.kwargs['json_data']['method'] for c in network.request.await_args_list] == [
+            'nr_getTransactionByAddress'
+        ]
+        wire_filter = network.request.await_args.kwargs['json_data']['params'][0]
+        assert wire_filter['toBlock'] == hex(1000)
+
     @pytest.mark.asyncio
     async def test_call_unsupported_method_raises(self) -> None:
         scanner = _make_scanner()
@@ -478,14 +510,55 @@ class TestCall:
         assert filter_['toBlock'] == '0x1000'
 
     @pytest.mark.asyncio
-    async def test_rate_limit_code_translated(self) -> None:
+    async def test_usage_limit_is_classified_inside_the_retry_boundary(self) -> None:
+        """-32005 becomes a rate limit in the DIALECT, not after ``_send`` returns.
+
+        Translating around the call site produced a retryable class the
+        retried function never saw: the transport made one attempt where an
+        Etherscan-style rate limit was retried five times.
+        """
         scanner = _make_scanner()
-        _mock_network(
-            scanner,
-            [ChainscanClientProxyError(-32005, 'You have reached the maximum API usage limit')],
-        )
+        _mock_network(scanner, [{'result': '0x1'}])
+
+        await scanner.call(Method.ACCOUNT_BALANCE, address=ADDRESS)
+
+        dialect = scanner._network_client.request.await_args.kwargs['dialect']
         with pytest.raises(ChainscanRateLimitError):
-            await scanner.call(Method.ACCOUNT_BALANCE, address=ADDRESS)
+            dialect.raise_if_error(
+                {
+                    'jsonrpc': '2.0',
+                    'id': 1,
+                    'error': {
+                        'code': -32005,
+                        'message': 'You have reached the maximum API usage limit',
+                    },
+                }
+            )
+
+    def test_result_size_limit_stays_fatal(self) -> None:
+        """ "logs count exceeds the limit" rides the same code and is NOT throttling.
+
+        Measured live 2026-09-05 on bsc-mainnet: a 2000-block ``eth_getLogs``
+        window answers -32005 "logs count exceeds the limit 50000". Retrying
+        that is deterministic waste, and in a pool it cools a healthy provider.
+        """
+        scanner = _make_scanner()
+        _mock_network(scanner, [{'result': '0x1'}])
+        dialect = _NODEREAL_DIALECT
+
+        with pytest.raises(ChainscanClientProxyError):
+            dialect.raise_if_error(
+                {
+                    'jsonrpc': '2.0',
+                    'id': 1,
+                    'error': {'code': -32005, 'message': 'logs count exceeds the limit 50000'},
+                }
+            )
+
+    def test_event_logs_declares_the_measured_result_window(self) -> None:
+        """A single-shot ``eth_getLogs`` is not a provider that runs to exhaustion."""
+        assert NodeRealScanner.result_window_for(Method.EVENT_LOGS) == 50_000
+        assert 'nodereal/v1' not in scanners_serving_completely(Method.EVENT_LOGS)
 
     @pytest.mark.asyncio
     async def test_contract_abi_via_rest(self) -> None:
@@ -885,12 +958,16 @@ class TestSeamContract:
     @pytest.mark.asyncio
     async def test_fetch_page_keeps_chainscan_errors_unchanged(self) -> None:
         # The ladder must NOT rewrite provider-dialect translations: the
-        # -32005 rate-limit translation from a fetch_page path stays a
-        # retryable rate-limit error.
+        # -32005 rate-limit translation the dialect raised inside the
+        # transport stays a retryable rate-limit error out here.
         scanner = _make_scanner()
         _mock_network(
             scanner,
-            [ChainscanClientProxyError(-32005, 'You have reached the maximum API usage limit')],
+            [
+                ChainscanRateLimitError(
+                    'You have reached the maximum API usage limit', 'usage limit'
+                )
+            ],
         )
         with pytest.raises(ChainscanRateLimitError):
             await scanner.fetch_page(Method.TOKEN_HOLDER_COUNT, {'contract_address': CONTRACT})

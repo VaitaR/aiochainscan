@@ -63,6 +63,7 @@ from ..exceptions import (
     ChainscanRateLimitError,
     ScannerArgumentError,
 )
+from ..network import CompositeResponseDialect, EtherscanEnvelope, JsonRpcEnvelope
 from . import register_scanner
 from .base import (
     Scanner,
@@ -79,6 +80,66 @@ _TRANSFER_WINDOW = 1000
 _TRANSFER_MAX_COUNT = 1000
 _HOLDINGS_PAGE_SIZE = 100  # nr_get*Holdings pageSize cap ("should be less equal than 100")
 _RATE_LIMIT_JSONRPC_CODE = -32005
+
+# ``eth_getLogs`` refuses a query whose result set exceeds this many logs
+# (measured 2026-09-05 on bsc-mainnet: a 2000-block window on BSC-USD answers
+# JSON-RPC -32005 "logs count exceeds the limit 50000"; a 200-block window
+# served 26 841 logs). Declared as this method's result window so the registry
+# stops advertising NodeReal as a complete server of EVENT_LOGS: the call is
+# single-shot with no cursor, so nothing here runs to exhaustion.
+_EVENT_LOGS_MAX_RESULTS = 50_000
+
+# NodeReal overloads JSON-RPC -32005 for BOTH throttling and "your query asks
+# for too much". The second flavour is deterministic — retrying it burns the
+# retry budget and, in a pool, cools a perfectly healthy provider — so those
+# messages keep their FATAL proxy error. Matched narrowly: an unrecognised
+# -32005 stays a rate limit, which is the safe default for a usage code.
+_RESULT_SIZE_LIMIT_MARKERS = (
+    'exceeds the limit',
+    'exceed the limit',
+    'query returned more than',
+    'result set too large',
+)
+
+
+def _translate_usage_limit(exc: ChainscanClientProxyError) -> ChainscanRateLimitError | None:
+    """NodeReal's -32005 as a retryable rate limit, or ``None`` to keep it fatal."""
+    if exc.code != _RATE_LIMIT_JSONRPC_CODE:
+        return None
+    text = (exc.message or '').lower()
+    if any(marker in text for marker in _RESULT_SIZE_LIMIT_MARKERS):
+        return None
+    return ChainscanRateLimitError(exc.message, 'usage limit reached')
+
+
+class _NodeRealEnvelope:
+    """The default response dialect plus NodeReal's -32005 classification.
+
+    The translation belongs HERE, inside ``_handle_response``, rather than
+    around the call site: ``_handle_response`` runs inside the retry policy,
+    so a rate limit raised here re-enters the retry loop like every other
+    transient failure. Translating after ``retry_policy.run`` returned — as
+    this once did — produced a "retryable" class that the retried function
+    never saw, so a NodeReal usage limit reached the caller after a single
+    attempt while an Etherscan-style one was retried five times.
+    """
+
+    _inner = CompositeResponseDialect(EtherscanEnvelope(), JsonRpcEnvelope())
+
+    def raise_if_error(self, response_json: Any) -> None:
+        try:
+            self._inner.raise_if_error(response_json)
+        except ChainscanClientProxyError as exc:
+            translated = _translate_usage_limit(exc)
+            if translated is None:
+                raise
+            raise translated from exc
+
+    def extract(self, response_json: Any) -> Any:
+        return self._inner.extract(response_json)
+
+
+_NODEREAL_DIALECT = _NodeRealEnvelope()
 
 # Cursor keys threaded through fetch_page params (must not collide with wire params).
 _WINDOW_CURSOR = '__nr_window'
@@ -493,6 +554,13 @@ class NodeRealScanner(Scanner):
     # the pagination engine (see base class).
     result_window = None
 
+    # …except ``eth_getLogs``, which is a single JSON-RPC call with no cursor
+    # of any kind: it neither pages nor runs to exhaustion, and the node
+    # refuses a query past _EVENT_LOGS_MAX_RESULTS outright.
+    RESULT_WINDOW_OVERRIDES = {
+        Method.EVENT_LOGS: _EVENT_LOGS_MAX_RESULTS,
+    }
+
     auth_mode = 'query'  # informational; the key rides in the URL path
     auth_field = 'apikey'
 
@@ -882,25 +950,22 @@ class NodeRealScanner(Scanner):
 
         ``Network._handle_response`` unwraps the JSON-RPC ``result`` and maps
         ``error`` objects to :class:`ChainscanClientProxyError`; the -32005
-        usage-limit code is re-raised as a retryable rate-limit error —
-        provider-dialect translation composing with the shared error ladder
-        (this ladder also covers the ``fetch_page`` paths that call ``_rpc``
-        directly, outside :meth:`Scanner.call`).
+        usage-limit code is re-raised as a retryable rate-limit error by
+        :class:`_NodeRealEnvelope` — provider-dialect translation composing
+        with the shared error ladder (this ladder also covers the
+        ``fetch_page`` paths that call ``_rpc`` directly, outside
+        :meth:`Scanner.call`).
         """
         envelope = {'jsonrpc': '2.0', 'method': wire_method, 'params': rpc_params, 'id': 1}
         network = self._require_network_client()
         with translate_unexpected_errors(f'NodeReal unexpected error for {self.rpc_base_url}'):
-            try:
-                return await network.request(
-                    method='POST',
-                    url=self._rpc_url(),
-                    json_data=envelope,
-                    headers={'Content-Type': 'application/json', 'Accept': 'application/json'},
-                )
-            except ChainscanClientProxyError as exc:
-                if exc.code == _RATE_LIMIT_JSONRPC_CODE:
-                    raise ChainscanRateLimitError(exc.message, 'usage limit reached') from exc
-                raise
+            return await network.request(
+                method='POST',
+                url=self._rpc_url(),
+                json_data=envelope,
+                headers={'Content-Type': 'application/json', 'Accept': 'application/json'},
+                dialect=_NODEREAL_DIALECT,
+            )
 
     async def _rest_contract(self, action: str, address: str) -> Any:
         """GET a BscScan-compatible verified-contract endpoint."""
@@ -1128,8 +1193,13 @@ class NodeRealScanner(Scanner):
         2. a window cursor without its tip (defensive: every cursor carries
            the tip — resolve it again if it was lost);
         3. an explicit bounded end (the public names declared to feed the
-           wire's ``toBlock``; ``MAX_BLOCK_NUMBER`` is the streaming
-           iterators' "unbounded" sentinel, so only a *bounded* end wins);
+           wire's ``toBlock``, in any spelling the rest of the library
+           accepts — ``1000``, ``'1000'`` or ``'0x3e8'``; ``MAX_BLOCK_NUMBER``
+           is the streaming iterators' "unbounded" sentinel, so only a
+           *bounded* end wins). A string end read as "unbounded" would walk
+           past the block the caller asked to stop at and return records
+           outside the requested range — there is no client-side block filter
+           behind this.
         4. the live chain tip via ``eth_blockNumber``.
 
         Window: the ``__nr_window`` cursor parsed to ints, else the window
@@ -1147,8 +1217,9 @@ class NodeRealScanner(Scanner):
             tip = await self._resolve_tip()
         else:
             requested_end = _param(params, *_declared_sources(spec, 'toBlock'))
-            if isinstance(requested_end, int) and requested_end < MAX_BLOCK_NUMBER:
-                tip = requested_end
+            bounded_end = _parse_hex_int(requested_end, MAX_BLOCK_NUMBER)
+            if requested_end is not None and bounded_end < MAX_BLOCK_NUMBER:
+                tip = bounded_end
             else:
                 tip = await self._resolve_tip()
 

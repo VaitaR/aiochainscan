@@ -78,7 +78,7 @@ class TestSpecFor:
         message = str(excinfo.value)
         # Message format: method, scanner name + version, available list.
         assert str(Method.ETH_PRICE) in message
-        assert 'blockscout vv2' in message
+        assert 'blockscout v2' in message
         for declared in scanner.SPECS:
             assert str(declared) in message
 
@@ -108,7 +108,7 @@ class TestRequireNetworkClient:
         with pytest.raises(RuntimeError, match='network_client is required') as excinfo:
             scanner._require_network_client()
 
-        assert 'blockscout vv2' in str(excinfo.value)
+        assert 'blockscout v2' in str(excinfo.value)
         assert 'from_config' in str(excinfo.value)
 
 
@@ -340,7 +340,7 @@ class TestInstanceRootMessages:
         assert 'instance_root' not in repr(scanner)
         context = scanner._error_context(Method.ACCOUNT_BALANCE)
         assert context == (
-            f'{scanner.name} v{scanner.version} unexpected error for {Method.ACCOUNT_BALANCE.name}'
+            f'{scanner.name} {scanner.version} unexpected error for {Method.ACCOUNT_BALANCE.name}'
         )
 
 

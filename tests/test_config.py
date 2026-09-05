@@ -477,6 +477,26 @@ class TestLazyLoading:
 
         ConfigurationManager.reset_instance()
 
+    def test_registered_scanner_sees_a_key_that_exists_only_in_a_dotenv_file(self, tmp_path):
+        """Registration is a valid first call, and it resolves a credential.
+
+        It read ``.env`` state without loading the ``.env`` files, so the
+        documented "loaded on first access" contract held only for whoever
+        happened to trigger full initialization first.
+        """
+        (tmp_path / '.env').write_text('CUSTOMSCAN_KEY=from_dotenv_only\n')
+        ConfigurationManager.reset_instance()
+        manager = ConfigurationManager(tmp_path)
+
+        with patch.dict(os.environ, {}, clear=True):
+            manager.register_scanner(
+                'customscan',
+                {'name': 'CustomScan', 'base_domain': 'customscan.io', 'currency': 'ETH'},
+            )
+            assert manager.get_api_key('customscan') == 'from_dotenv_only'
+
+        ConfigurationManager.reset_instance()
+
     def test_os_environ_overrides_the_dotenv_key(self, tmp_path):
         (tmp_path / '.env').write_text('ETHERSCAN_KEY=from_dotenv\n')
         ConfigurationManager.reset_instance()

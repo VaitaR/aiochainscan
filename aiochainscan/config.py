@@ -194,6 +194,21 @@ class ConfigurationManager:
                 # Load API keys after config files (they might define keys)
                 self._load_api_keys()
 
+    def _ensure_env_loaded(self) -> None:
+        """Load the ``.env`` files once, without the rest of the initialization.
+
+        Credential resolution reads ``_env_state``, so any path that resolves a
+        key before full initialization must come through here — otherwise the
+        ".env is loaded on first access" contract holds only for whoever
+        happens to trigger :meth:`_ensure_initialized` first.
+        """
+        if self._env_loaded:
+            return
+        with self._lock:
+            if not self._env_loaded:
+                self._load_env_files()
+                self._env_loaded = True
+
     def _get_scanner_config_lazy(self, scanner_id: str) -> ScannerConfig | None:
         """
         Get scanner config with lazy loading for individual scanners.
@@ -208,11 +223,7 @@ class ConfigurationManager:
             return self._scanners[scanner_id]
 
         # Ensure env is loaded for API keys
-        if not self._env_loaded:
-            with self._lock:
-                if not self._env_loaded:
-                    self._load_env_files()
-                    self._env_loaded = True
+        self._ensure_env_loaded()
 
         # Try to load just this one scanner from builtins
         builtin_config = self._get_builtin_scanner(scanner_id)
@@ -449,6 +460,9 @@ class ConfigurationManager:
 
     def register_scanner(self, scanner_id: str, config_data: dict[str, Any]) -> None:
         """Dynamically register a new scanner."""
+        # The credential lookup below reads ``.env`` state, and registration can
+        # be the very first call made against this manager.
+        self._ensure_env_loaded()
         try:
             networks_any: Any = config_data.get('supported_networks', ['main'])
             networks_list: list[str]

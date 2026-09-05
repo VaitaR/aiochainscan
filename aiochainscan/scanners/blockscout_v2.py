@@ -18,7 +18,7 @@ from __future__ import annotations
 import urllib.parse
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from ..chain_registry import BLOCKSCOUT_INSTANCE_HOSTS
+from ..chain_registry import BLOCKSCOUT_INSTANCE_HOSTS, BLOCKSCOUT_SCANNER_NETWORKS
 from ..core.endpoint import EndpointSpec
 from ..core.url_builder import UrlBuilder
 from ..domain.method import Method
@@ -318,20 +318,10 @@ class BlockScoutV2Scanner(Scanner):
         Method.TOKEN_HOLDERS: frozenset({'address_hash', 'items_count', 'value'}),
     }
 
-    # BlockScout V2 supports many networks through different instances
-    supported_networks = {
-        'ethereum',
-        'eth',  # Alias for ethereum
-        'sepolia',
-        'gnosis',
-        'polygon',
-        'arbitrum',
-        'optimism',
-        'base',
-        'scroll',
-        'linea',
-        'zksync',
-    }
+    # Declared from the same host table ``BASE_URLS`` is built from: an alias
+    # this scanner can resolve to an instance is one it declares. Hand-listing
+    # them let 'bsc' resolve in the registry and then fail at construction.
+    supported_networks = set(BLOCKSCOUT_SCANNER_NETWORKS)
 
     # Network -> Base URL mapping for Blockscout instances — derived from the
     # shared per-alias host table (one table for BlockScout v1 and v2).

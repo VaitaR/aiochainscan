@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import warnings
 from collections.abc import AsyncIterator
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
@@ -1034,6 +1035,29 @@ class TestCompletenessRouting:
         # The cooling capable provider is still named as a real remedy.
         assert excinfo.value.alternatives == ('blockscout/ethereum',)
 
+    async def test_per_method_window_keeps_blockscout_v1_eligible(
+        self, etherscan: ChainscanClient, clock: FakeClock
+    ) -> None:
+        """The documented holders remedy config must actually route to V1.
+
+        BlockScout V1 caps its account endpoints at 10_000 and still serves
+        the holder list to exhaustion (``RESULT_WINDOW_OVERRIDES``). Reading
+        the scanner-wide window instead made the pool declare it incapable
+        and raise ``CompletenessUnavailableError`` before a single request —
+        for the very configuration the docs name as the remedy.
+        """
+        blockscout_v1 = ChainscanClient(resolve_scanner_target('blockscout', 'ethereum'))
+        pool = ChainscanPool([etherscan, blockscout_v1], clock=clock)
+        blockscout_v1.iter_token_holders_streaming = stream_stub(  # type: ignore[assignment]
+            [{'address': HOLDER, 'value': '5'}]
+        )
+
+        with pytest.warns(ChainscanProviderSwitchWarning):
+            batches = [batch async for batch in pool.iter_token_holders_streaming(TOKEN)]
+
+        assert batches == [[{'address': HOLDER, 'value': '5'}]]
+        assert pool.last_provider == 'blockscout/ethereum'
+
     async def test_guarantee_complete_false_is_unaffected(self, pool: ChainscanPool) -> None:
         """With ``guarantee_complete=False`` the capped priority-1 provider serves as before."""
         etherscan, blockscout = (p.client for p in pool._providers)
@@ -1276,3 +1300,88 @@ class TestConstructionAndLifecycle:
         assert pool.scanner_version == 'v2'
         assert pool.chain_id == 1
         assert pool.currency == 'ETH'
+
+
+# ---------------------------------------------------------------------------
+# Label uniqueness and capability-routing silence
+# ---------------------------------------------------------------------------
+
+
+class TestProviderLabels:
+    """One label per member — the pool's whole transparency surface.
+
+    ``blockscout`` v1 and v2 on the same chain (the documented V1→V2 failover
+    pair) share ``blockscout/ethereum``: with duplicate labels
+    ``provider_states()`` collapsed two members into one row and
+    ``ProviderPoolExhaustedError.attempts`` dropped the second failure,
+    reporting "All 1 providers failed" after two real attempts.
+    """
+
+    def test_colliding_members_get_distinct_labels(self, clock: FakeClock) -> None:
+        v1 = ChainscanClient(resolve_scanner_target('blockscout', 'ethereum'))
+        v2 = ChainscanClient(resolve_scanner_target('blockscout_v2', 'ethereum'))
+
+        pool = ChainscanPool([v1, v2], clock=clock)
+
+        assert pool.providers == ('blockscout v1/ethereum', 'blockscout v2/ethereum')
+        assert len(pool.provider_states()) == 2
+
+    def test_distinct_members_keep_the_documented_format(self, pool: ChainscanPool) -> None:
+        assert pool.providers == ('etherscan/ethereum', 'blockscout/ethereum')
+
+    async def test_every_member_failure_reaches_attempts(self, clock: FakeClock) -> None:
+        v1 = ChainscanClient(resolve_scanner_target('blockscout', 'ethereum'))
+        v2 = ChainscanClient(resolve_scanner_target('blockscout_v2', 'ethereum'))
+        pool = ChainscanPool([v1, v2], clock=clock)
+        v1.call = AsyncMock(side_effect=rate_limit())  # type: ignore[assignment]
+        v2.call = AsyncMock(side_effect=rate_limit())  # type: ignore[assignment]
+
+        with (
+            pytest.warns(ChainscanProviderSwitchWarning),
+            pytest.raises(ProviderPoolExhaustedError) as excinfo,
+        ):
+            await pool.call(Method.ACCOUNT_BALANCE, address=ADDR)
+
+        assert [label for label, _ in excinfo.value.attempts] == [
+            'blockscout v1/ethereum',
+            'blockscout v2/ethereum',
+        ]
+
+
+class TestCapabilityRoutingIsSilent:
+    """Routing past a provider that never declared the method is not a switch.
+
+    The skipped provider was never asked, so the only reason the warning could
+    give ("provider selection changed") describes nothing that happened — and
+    the exception's own docstring promises capability routing is silent.
+    """
+
+    async def test_skipping_an_undeclaring_provider_emits_no_warning(
+        self, clock: FakeClock
+    ) -> None:
+        blockscout = make_blockscout_client()  # no GAS_ORACLE in SPECS
+        etherscan = make_etherscan_client()
+        pool = ChainscanPool([blockscout, etherscan], clock=clock)
+        bs_call = stub_client(blockscout)
+        stub_client(etherscan, {'SafeGasPrice': '10'})
+
+        with warnings.catch_warnings():
+            warnings.simplefilter('error', ChainscanProviderSwitchWarning)
+            result = await pool.call(Method.GAS_ORACLE)
+
+        assert result == {'SafeGasPrice': '10'}
+        assert bs_call.await_count == 0
+        assert pool.last_provider == 'etherscan/ethereum'
+
+    async def test_a_real_failure_before_the_skip_still_warns(self, clock: FakeClock) -> None:
+        """``pending`` wins: a genuine failure earlier in the walk is reported."""
+        etherscan = make_etherscan_client()
+        blockscout = make_blockscout_client()
+        second_etherscan = make_etherscan_client()
+        pool = ChainscanPool([etherscan, blockscout, second_etherscan], clock=clock)
+        stub_client(etherscan).side_effect = rate_limit()
+        stub_client(blockscout)  # undeclared method — never called
+        stub_client(second_etherscan, {'SafeGasPrice': '10'})
+
+        with pytest.warns(ChainscanProviderSwitchWarning, match='rate limit'):
+            assert await pool.call(Method.GAS_ORACLE) == {'SafeGasPrice': '10'}

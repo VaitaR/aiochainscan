@@ -263,7 +263,10 @@ SCANNER_RECORDS: dict[str, ScannerRecord] = {
             'op': 'main',
             'sonic': 'main',
         },
-        supported_networks=frozenset({'main', 'test', 'goerli', 'sepolia'}),
+        # Config-dialect networks the V2 endpoint actually serves. Every
+        # mainnet alias above collapses to 'main'; the testnets keep their own
+        # names. ('test' is absent because no chain resolves under it here.)
+        supported_networks=frozenset({'main', 'goerli', 'sepolia', 'holesky'}),
         custom_base_url=True,
     ),
     'blockscout': ScannerRecord(
@@ -522,6 +525,16 @@ _validate_scanner_topology(
     BLOCKSCOUT_HOSTS,
     BLOCKSCOUT_DISPLAY_NAMES,
     DROPPED_INSTANCE_ALIASES,
+)
+
+#: Network names both BlockScout scanners declare as supported: the host table
+#: minus the aliases deliberately not wired into UrlBuilder host ids. One
+#: derivation for both legs, so a new instance registers for both at once and
+#: neither leg can declare a network it cannot resolve to an instance. Both
+#: dialect spellings of Ethereum mainnet ('eth' for v1, 'ethereum' for v2) are
+#: in it — see :func:`_scanner_network_name`.
+BLOCKSCOUT_SCANNER_NETWORKS: frozenset[str] = (
+    frozenset(BLOCKSCOUT_INSTANCE_HOSTS) - DROPPED_INSTANCE_ALIASES
 )
 
 
@@ -855,15 +868,13 @@ def _resolve_scanner_identity(scanner: str, scanner_version: str | None) -> tupl
     return scanner, version
 
 
-def _lookup_api_key(scanner_id: str, config_network: str) -> str:
-    """Resolve the credential for ``scanner_id`` from the configuration manager.
+def _validate_config_network(scanner_id: str, config_network: str) -> None:
+    """Apply the registry's network-validity oracle for ``scanner_id``.
 
-    The registry owns the network-validity oracle for its builtin scanner ids
-    (:data:`SCANNER_CONFIG_NETWORKS`); the configuration manager owns
-    credentials only (env vars / ``.env`` / config files). Ids unknown to the
-    table — dynamically registered scanners — are served by the configuration
-    manager alone, which raises the honest ``Unknown scanner`` error for names
-    that exist nowhere.
+    Runs for every construction, whatever the key source: an explicit
+    ``api_key`` skips the credential lookup, never the oracle. Ids unknown to
+    :data:`SCANNER_CONFIG_NETWORKS` — dynamically registered scanners — have no
+    oracle here and are left to the scanner class.
     """
     supported = SCANNER_CONFIG_NETWORKS.get(scanner_id)
     if supported is not None and config_network not in supported:
@@ -872,6 +883,14 @@ def _lookup_api_key(scanner_id: str, config_network: str) -> str:
             f'Network "{config_network}" not supported by {display_name}. '
             f'Available networks: {", ".join(sorted(supported))}'
         )
+
+
+def _lookup_api_key(scanner_id: str) -> str:
+    """Resolve the credential for ``scanner_id`` from the configuration manager.
+
+    The configuration manager owns credentials only (env vars / ``.env`` /
+    config files); network validity is :func:`_validate_config_network`.
+    """
     return get_config_manager().get_api_key(scanner_id)
 
 
@@ -1000,14 +1019,17 @@ def resolve_scanner_target(
     else:
         scanner_id = SCANNER_CONFIG_IDS.get(scanner, scanner)
 
-    # Resolve the API key (registry-side network validation first — the
-    # configuration manager is a credential store, not a network oracle)
+    # Network validity is a registry fact, so it is checked before the key is
+    # resolved and regardless of where the key comes from; the configuration
+    # manager is a credential store, not a network oracle.
+    _validate_config_network(scanner_id, config_network)
+
     if scanner == 'blockscout_v2':
         resolved_api_key = ''  # BlockScout V2 doesn't require API key
     elif api_key is not None:
         resolved_api_key = api_key
     else:
-        resolved_api_key = _lookup_api_key(scanner_id, config_network)
+        resolved_api_key = _lookup_api_key(scanner_id)
 
     # UrlBuilder api_kind (BlockScout v1 uses the network-specific scanner id)
     api_kind = scanner_id if scanner == 'blockscout' else SCANNER_API_KINDS.get(scanner, scanner)
@@ -1070,7 +1092,7 @@ def _resolve_custom_base_url_target(
                 'the V2 multichain API routes every request by chainid'
             )
         # Credential lookup for the unified Etherscan endpoint
-        resolved_api_key = api_key if api_key is not None else _lookup_api_key('eth', 'main')
+        resolved_api_key = api_key if api_key is not None else _lookup_api_key('eth')
 
     if resolved_api_key and base_url.startswith('http://'):
         warnings.warn(

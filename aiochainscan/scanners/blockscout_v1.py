@@ -13,7 +13,7 @@ Supports multiple blockchain networks through different BlockScout instances:
 
 from typing import TYPE_CHECKING, Any
 
-from ..chain_registry import BLOCKSCOUT_INSTANCE_HOSTS
+from ..chain_registry import BLOCKSCOUT_INSTANCE_HOSTS, BLOCKSCOUT_SCANNER_NETWORKS
 from ..constants import API_MAX_OFFSET_ETHERSCAN, API_MAX_OFFSET_LOGS
 from ..core.endpoint import EndpointSpec
 from ..core.url_builder import UrlBuilder
@@ -81,19 +81,10 @@ class BlockScoutV1(EtherscanLikeScanner):
     name = 'blockscout'
     version = 'v1'
 
-    # BlockScout supports many networks through different instances
-    supported_networks = {
-        'eth',  # Ethereum mainnet - ADDED!
-        'sepolia',  # Ethereum Sepolia testnet
-        'gnosis',  # Gnosis Chain
-        'polygon',  # Polygon mainnet
-        'optimism',  # Optimism mainnet
-        'arbitrum',  # Arbitrum One
-        'base',  # Base mainnet
-        'scroll',  # Scroll mainnet
-        'linea',  # Linea mainnet
-        'bsc',  # BNB Smart Chain
-    }
+    # Every alias the shared host table maps: an instance this scanner can
+    # reach is an instance it declares, so a new entry in the record registers
+    # for both BlockScout legs at once instead of drifting per leg.
+    supported_networks = set(BLOCKSCOUT_SCANNER_NETWORKS)
 
     # Unlike Etherscan, BlockScout V1 does serve a 10_000-item page — but it
     # clamps anything above that silently (``offset=10001`` → 10_000 items,
@@ -164,6 +155,10 @@ class BlockScoutV1(EtherscanLikeScanner):
             self.NETWORK_INSTANCES, 'BlockScout instance'
         )
         self._instance_root = f'https://{self.instance_domain}'
+        # The resolved instance IS this scanner's base URL — callers that probe
+        # the instance (chain info / validation) read ``base_url``, and leaving
+        # it None on the registry path made those work for custom URLs only.
+        self.base_url = self._instance_root
 
     # ------------------------------------------------------------------
     # Provider dialect (the base owns the ladder, dispatch and params)

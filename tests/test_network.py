@@ -1,5 +1,6 @@
 """Tests for Network transport layer using httpx/tenacity/aiolimiter."""
 
+import asyncio
 import logging
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -25,6 +26,9 @@ from aiochainscan.exceptions import (
 )
 from aiochainscan.network import (
     Network,
+    _extract_envelope_payload,
+    _raise_if_etherscan_error,
+    _raise_if_jsonrpc_error,
     _redact_headers,
     _redact_payload,
     _redact_url,
@@ -664,3 +668,178 @@ class TestFirstRequestGuardFailureMemory:
             # The guard runs only once — the error is remembered, not re-probed.
         finally:
             await self._close(network)
+
+    async def test_cancellation_during_the_probe_is_not_remembered(self, ub: UrlBuilder) -> None:
+        """Cancelling the task that ran the probe must not brick the client.
+
+        ``CancelledError`` is a ``BaseException``, not a configuration verdict.
+        Caching it re-raised ONE task's cancellation from every later,
+        unrelated request — marking those tasks cancelled for the client's
+        whole lifetime, so ``asyncio.gather`` reported cancellation and
+        ``except asyncio.CancelledError`` fired on healthy calls.
+        """
+        guard_calls = 0
+        probing = asyncio.Event()
+
+        async def guard() -> None:
+            nonlocal guard_calls
+            guard_calls += 1
+            if guard_calls == 1:
+                probing.set()
+                await asyncio.sleep(3600)
+
+        network = self._guarded_network(ub, guard)
+        try:
+            victim = asyncio.create_task(network.get(params={'module': 'proxy', 'action': 'a'}))
+            await probing.wait()
+            victim.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await victim
+
+            # An unrelated request re-probes and succeeds.
+            assert await network.get(params={'module': 'proxy', 'action': 'b'}) == 'ok'
+            assert guard_calls == 2
+        finally:
+            await self._close(network)
+
+
+# ---------------------------------------------------------------------------
+# Etherscan envelope: the empty result set is a success, not an error
+# ---------------------------------------------------------------------------
+
+
+class TestEmptyResultEnvelope:
+    """``status=0`` + "No … found" + a list ``result`` is a complete answer.
+
+    Etherscan and its compatibility layers answer a query that matched nothing
+    with a FAILING status. Raising there made ``get_logs`` return an error
+    instead of ``[]`` and dropped ``get_all_logs`` mid-stream on any empty
+    sub-range; the pool classified it as the caller's fault, so no failover
+    either.
+    """
+
+    @pytest.mark.parametrize(
+        'message',
+        [
+            'No logs found',
+            'No transactions found',
+            'No records found',
+            'No internal transactions found',
+        ],
+    )
+    def test_empty_result_sets_pass_through(self, message: str) -> None:
+        payload = {'status': '0', 'message': message, 'result': []}
+
+        _raise_if_etherscan_error(payload)  # must not raise
+
+        assert _extract_envelope_payload(payload) == []
+
+    def test_a_string_result_is_still_an_error(self) -> None:
+        """A genuine error carries its detail as a string, whatever the message."""
+        with pytest.raises(ChainscanClientApiError):
+            _raise_if_etherscan_error(
+                {'status': '0', 'message': 'No records found', 'result': 'Invalid address format'}
+            )
+
+    def test_other_failing_messages_still_raise(self) -> None:
+        with pytest.raises(ChainscanClientApiError):
+            _raise_if_etherscan_error({'status': '0', 'message': 'NOTOK', 'result': []})
+
+
+class TestRateLimitTextPlacement:
+    def test_rate_limit_text_in_message_is_a_rate_limit(self) -> None:
+        """Some deployments put the text in ``message`` and ``NOTOK`` in ``result``."""
+        with pytest.raises(ChainscanRateLimitError):
+            _raise_if_etherscan_error(
+                {
+                    'status': '0',
+                    'message': 'Max calls rate limit reached',
+                    'result': 'NOTOK',
+                }
+            )
+
+
+class TestRetryAfterHeader:
+    @pytest.mark.parametrize(
+        ('header', 'expected'),
+        [(None, 5), ('120', 120), ('   90 ', 90), ('not-a-number', 5), ('-3', 0)],
+    )
+    def test_http_429_carries_the_advertised_delay(
+        self, ub: UrlBuilder, header: str | None, expected: int
+    ) -> None:
+        network = Network(ub, timeout=10.0)
+        headers = {'content-type': 'application/json'}
+        if header is not None:
+            headers['retry-after'] = header
+        response = httpx.Response(
+            429, headers=headers, content=b'{}', request=httpx.Request('GET', 'https://x/api')
+        )
+
+        with pytest.raises(ChainscanRateLimitError) as excinfo:
+            network._handle_response(response)
+
+        assert excinfo.value.retry_after == expected
+
+
+class TestJsonRpcEnvelopeEdges:
+    def test_null_error_beside_a_valid_result_is_not_an_error(self) -> None:
+        payload = {'jsonrpc': '2.0', 'id': 1, 'error': None, 'result': '0x1'}
+
+        _raise_if_jsonrpc_error(payload)  # must not raise
+
+        assert _extract_envelope_payload(payload) == '0x1'
+
+
+class TestContentTypeGate:
+    @pytest.mark.parametrize(
+        'content_type',
+        [
+            'application/json',
+            'application/json; charset=utf-8',
+            'application/vnd.api+json',
+            'text/json',
+        ],
+    )
+    def test_json_media_types_are_parsed(self, ub: UrlBuilder, content_type: str) -> None:
+        network = Network(ub, timeout=10.0)
+        response = httpx.Response(
+            200,
+            headers={'content-type': content_type},
+            content=b'{"result": "0x1"}',
+            request=httpx.Request('GET', 'https://x/api'),
+        )
+
+        assert network._handle_response(response) == '0x1'
+
+    def test_non_json_is_still_refused(self, ub: UrlBuilder) -> None:
+        network = Network(ub, timeout=10.0)
+        response = httpx.Response(
+            200,
+            headers={'content-type': 'text/html'},
+            content=b'<html>blocked</html>',
+            request=httpx.Request('GET', 'https://x/api'),
+        )
+
+        with pytest.raises(ChainscanClientContentTypeError):
+            network._handle_response(response)
+
+
+class TestUnsupportedVerb:
+    async def test_unsupported_method_is_refused_before_the_rate_limiter(
+        self, ub: UrlBuilder
+    ) -> None:
+        """A caller bug must not spend a limiter token per retry attempt."""
+        acquired = 0
+
+        class CountingLimiter:
+            async def acquire(self, key: str) -> None:
+                nonlocal acquired
+                acquired += 1
+
+        network = Network(ub, timeout=10.0, rate_limiter=CountingLimiter())
+        try:
+            with pytest.raises(ValueError, match='Unsupported HTTP method'):
+                await network.request('DELETE', 'https://x/api')
+            assert acquired == 0
+        finally:
+            await network.close()

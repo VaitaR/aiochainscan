@@ -333,6 +333,61 @@ class TestDecodeTransactionInputGuardBeforeAbiIndex:
         assert result['decoded_data'] == {}
 
 
+class TestCalldataPrefixNormalization:
+    """The hex prefix is optional and case-insensitive, on every tier.
+
+    The Rust tier reaches ``bytes.fromhex`` either way, so calldata that
+    decodes there must decode on the pure floor too: the floor used to cut its
+    selector from a ``0x``-prefixed string and matched neither a prefixless
+    input nor an uppercase ``0X``.
+    """
+
+    ABI = [
+        {
+            'type': 'function',
+            'name': 'transfer',
+            'inputs': [
+                {'type': 'address', 'name': 'to'},
+                {'type': 'uint256', 'name': 'amount'},
+            ],
+            'outputs': [],
+        }
+    ]
+    BODY = 'a9059cbb' + '0' * 24 + '11' * 20 + f'{1500:064x}'
+
+    @pytest.mark.parametrize(
+        'raw_input',
+        [
+            pytest.param('0x' + BODY, id='prefixed'),
+            pytest.param(BODY, id='prefixless'),
+            pytest.param('0X' + BODY, id='uppercase-prefix'),
+            pytest.param('0x' + BODY.upper(), id='uppercase-body'),
+        ],
+    )
+    @pytest.mark.parametrize(
+        'entry_point',
+        [decode_transaction_input, _decode_transaction_input_python],
+        ids=['public', 'pure'],
+    )
+    def test_every_spelling_decodes_identically(self, entry_point, raw_input):
+        result = entry_point({'input': raw_input}, self.ABI)
+
+        assert result['decoded_func'] == 'transfer'
+        assert result['decoded_data'] == {
+            'to': '0x1111111111111111111111111111111111111111',
+            'amount': 1500,
+        }
+
+    def test_prefixless_zero_argument_calldata_is_not_rejected_as_too_short(self):
+        abi = [{'type': 'function', 'name': 'ping', 'inputs': [], 'outputs': []}]
+        selector = keccak_hash('ping()')[:8]
+
+        result = decode_transaction_input({'input': selector}, abi)
+
+        assert result['decoded_func'] == 'ping'
+        assert result['decoded_data'] == {}
+
+
 @pytest.mark.skipif(not ETH_HASH_AVAILABLE, reason='eth-hash backend not installed')
 class TestDecodeTransactionInputWithFunctionName:
     """Test transaction decoding using function name signature."""

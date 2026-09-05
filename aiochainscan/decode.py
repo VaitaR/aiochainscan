@@ -153,6 +153,18 @@ except ImportError:
     ARROW_AVAILABLE = False
 
 FUNCTION_SELECTOR_LENGTH = 10  # '0x' + 4 bytes
+SELECTOR_BODY_LENGTH = 8  # 4 bytes of hex, prefix excluded
+
+
+def _hex_body(raw_input: str) -> str:
+    """Calldata without its optional hex prefix.
+
+    The prefix is optional and case-insensitive on the Rust tier (it reaches
+    ``bytes.fromhex`` either way), so the pure floor measures lengths and cuts
+    selectors on the body alone — otherwise the same calldata decodes on one
+    tier and comes back empty on the other.
+    """
+    return raw_input[2:] if raw_input[:2] in ('0x', '0X') else raw_input
 
 
 def _split_array_suffix(type_name: str) -> tuple[str, str]:
@@ -341,7 +353,12 @@ def _declares_selector(index: _AbiIndex, raw_input: str) -> bool:
     Takes the index (not the ABI list) because every caller already holds it:
     the seam must not re-derive the index just to ask this.
     """
-    return raw_input[:FUNCTION_SELECTOR_LENGTH] in index.function_map
+    return _selector_of(raw_input) in index.function_map
+
+
+def _selector_of(raw_input: str) -> str:
+    """The ``function_map`` key selected by ``raw_input`` (prefix-normalized)."""
+    return '0x' + _hex_body(raw_input)[:SELECTOR_BODY_LENGTH].lower()
 
 
 def _mark_empty(transaction: dict[str, Any]) -> dict[str, Any]:
@@ -362,7 +379,7 @@ def _rejects_input(transaction: dict[str, Any]) -> bool:
     raise for input that would never reach it (the pre-C6 order).
     """
     raw_input: str = transaction.get('input') or ''
-    return not raw_input or len(raw_input) < FUNCTION_SELECTOR_LENGTH
+    return not raw_input or len(_hex_body(raw_input)) < SELECTOR_BODY_LENGTH
 
 
 def _decode_one(
@@ -410,7 +427,7 @@ def _decode_one(
 
     elif fast is not None:
         try:
-            hex_body = raw_input[2:] if raw_input.startswith('0x') else raw_input
+            hex_body = _hex_body(raw_input)
             # Re-enter with the fetched answer: fall-through and marking live
             # in the fast_result branch above, so the rule is written once.
             return _decode_one(
@@ -420,7 +437,7 @@ def _decode_one(
             pass
 
     # Pure floor: decode against the plan memoised in the index.
-    func_selector = raw_input[:FUNCTION_SELECTOR_LENGTH]
+    func_selector = _selector_of(raw_input)
     function = index.function_map.get(func_selector)
 
     if function:
@@ -428,7 +445,7 @@ def _decode_one(
         try:
             decoded_input = _abi_decode_params(
                 input_params,
-                bytes.fromhex(raw_input[FUNCTION_SELECTOR_LENGTH:]),
+                bytes.fromhex(_hex_body(raw_input)[SELECTOR_BODY_LENGTH:]),
                 index,
                 func_selector,
             )
@@ -756,10 +773,7 @@ def decode_transaction_inputs_batch(
 
         for i, tx in enumerate(transactions):
             if not _rejects_input(tx):
-                input_hex = tx['input']
-                if input_hex.startswith('0x'):
-                    input_hex = input_hex[2:]
-                calldatas.append(bytes.fromhex(input_hex))
+                calldatas.append(bytes.fromhex(_hex_body(tx['input'])))
                 valid_indices.append(i)
             else:
                 # Mark invalid transactions

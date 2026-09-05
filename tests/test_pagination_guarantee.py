@@ -220,9 +220,12 @@ async def test_whale_block_raises_pagination_data_loss() -> None:
     assert error.block_number == 7
     assert error.api_limit == WINDOW
     assert error.items_fetched == WINDOW
-    assert error.confirmed is True
+    # A page/offset explorer cannot confirm the loss: its cursor is synthesized
+    # after any full page, and the record past the cap is the one it refuses to
+    # serve. Unproven, therefore reported as unproven.
+    assert error.confirmed is False
     assert 'block 7' in str(error)
-    assert 'PAGINATION DATA LOSS' in str(error)
+    assert 'PAGINATION COMPLETENESS UNPROVEN' in str(error)
 
 
 @pytest.mark.asyncio
@@ -400,8 +403,8 @@ async def test_rangeless_exactly_at_cap_is_reported_as_unproven() -> None:
 
 
 @pytest.mark.asyncio
-async def test_confirmed_overflow_is_distinguished_from_at_cap() -> None:
-    """A provider that offers a continuation at the cap is a confirmed loss."""
+async def test_page_offset_cursor_at_the_cap_is_never_confirmed() -> None:
+    """A synthesized page/offset cursor proves nothing about records past the cap."""
     explorer = TruncatingExplorer({7: WINDOW + 10})  # offset 10 divides 50
 
     with pytest.raises(PaginationDataLossError) as excinfo:
@@ -414,7 +417,58 @@ async def test_confirmed_overflow_is_distinguished_from_at_cap() -> None:
             )
         )
 
+    assert excinfo.value.confirmed is False
+    assert 'POSSIBLY' in str(excinfo.value)
+
+
+@pytest.mark.asyncio
+async def test_provider_issued_cursor_at_the_cap_is_confirmed() -> None:
+    """A cursor the PROVIDER issued at the cap does confirm the loss."""
+
+    async def fetch(params: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+        token = params.get('next_page_token')
+        index = int(token) if token is not None else 0
+        items = [{'blockNumber': '7', 'id': f'7-{index * 10 + n}'} for n in range(10)]
+        return items, {'next_page_token': str(index + 1)}
+
+    with pytest.raises(PaginationDataLossError) as excinfo:
+        await drain(
+            iter_pages(
+                fetch,
+                dict(BASE_PARAMS),
+                guarantee_complete=True,
+                result_window=WINDOW,
+            )
+        )
+
     assert excinfo.value.confirmed is True
+    assert 'PAGINATION DATA LOSS' in str(excinfo.value)
+
+
+@pytest.mark.asyncio
+async def test_batch_size_not_dividing_the_window_stays_inside_the_cap() -> None:
+    """A page whose ``page * offset`` exceeds the cap is never requested.
+
+    The provider answers such a request with a window error classified FATAL —
+    no failover, no split, a dead end where the data is in fact reachable by
+    narrowing the range.
+    """
+    explorer = TruncatingExplorer({7: 5, 8: WINDOW})
+    params = {**BASE_PARAMS, 'offset': 9}  # 9 does not divide the 50-record window
+
+    with pytest.raises(PaginationDataLossError):
+        await drain(
+            iter_pages(
+                explorer.fetch,
+                params,
+                guarantee_complete=True,
+                result_window=explorer.result_window,
+            )
+        )
+
+    assert all(
+        page * 9 <= explorer.result_window for _, _, page in explorer.requests
+    ), explorer.requests
 
 
 # ---------------------------------------------------------------------------
