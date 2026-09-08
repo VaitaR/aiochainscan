@@ -4,6 +4,44 @@ All notable changes to this project are documented in this file. The format is
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions
 follow [Semantic Versioning](https://semver.org/).
 
+## [1.0.1] — 2026-09-08
+
+Defect fixes from two post-release audits, plus internal consolidation. No
+public API change.
+
+### Fixed
+
+- **ABI decode could abort the interpreter** on a malformed ABI type: the Rust
+  tier now unwinds the parser instead of aborting, one input-naming convention
+  covers both tiers (unnamed inputs keyed `param_{i}`, duplicates suffixed),
+  fixed-point values serialize as JSON-safe strings, and a zero-size array
+  element with a non-zero count is treated as a corrupted length word rather
+  than looping. `aiochainscan-fastabi` below 1.0.1 is refused.
+- **MCP token curation read an integer `0` as a missing field** and fell
+  through to the next provider alias, so a zero balance could be reported as
+  another field's value. Curation now reads the declared provider field
+  dialect, which also settles nested-vs-flat keys in one place.
+- **`.env` handling**: undecodable lines are skipped with a warning instead of
+  being fatal, dotenv dialect and `.env.local` precedence are honoured, and a
+  second `ConfigurationManager(config_dir=...)` warns instead of silently
+  keeping the first directory. `ConfigurationManager.create_isolated()` builds
+  a hermetic manager for tests without touching the process-wide singleton.
+- **Registry**: declared scanner-network aliases all construct
+  (`scanner_network` canonicalization), BlockScout v2 currency is resolved per
+  network, stale instance hosts dropped.
+- **NodeReal's result-window refusal** (`-32005` carrying a size limit) is
+  classified as a window overflow and split, not retried as throttling.
+- Various MCP envelope fixes: normalized pending is not an error, hex balance
+  normalization, cursor hardening, `format_units` bounds.
+
+### Changed
+
+- One row per scanner id: the config manager's presentation rows are derived
+  from the chain registry instead of a second table keyed by the same ids.
+- One owner for failure classification — HTTP status and provider message →
+  `FailureKind` now lives in `exceptions.py` and the network layer only picks
+  the exception class.
+
 ## [1.0.0] — 2026-09-04
 
 First stable release, and the first PyPI release since 0.2.3. The public API is

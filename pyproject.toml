@@ -1,6 +1,6 @@
 [project]
 name = "aiochainscan"
-version = "1.0.0"
+version = "1.0.1"
 description = "Async Python client for Etherscan-compatible and Blockscout APIs"
 authors = [
     { name = "VaitaR", email = "andrey.shivalin@gmail.com" }

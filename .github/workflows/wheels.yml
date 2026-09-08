@@ -148,6 +148,15 @@ jobs:
       actions: read    # Download artifacts from another run in completion mode
       contents: read
 
+    # Without this key GitHub records no deployment at all, so the repo's
+    # Deployments panel kept showing the v0.2.3 upload from 2025-10-09 as the
+    # latest one while 1.0.0 was already on PyPI — the panel reflects
+    # deployment records, not uploads. The `pypi` environment already exists
+    # (it is what those 2025 records were created against).
+    environment:
+      name: pypi
+      url: https://pypi.org/p/aiochainscan
+
     steps:
       - name: Download distributions
         uses: actions/download-artifact@v4
