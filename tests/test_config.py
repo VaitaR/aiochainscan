@@ -431,11 +431,7 @@ class TestLazyLoading:
 
     def test_no_config_loaded_at_import(self):
         """Test that configurations are not loaded until first access."""
-        # Reset to get a fresh instance
-        ConfigurationManager.reset_instance()
-
-        # Create fresh instance
-        manager = ConfigurationManager()
+        manager = ConfigurationManager.create_isolated()
 
         # Verify nothing is loaded at instantiation
         assert manager._builtin_loaded is False
@@ -445,10 +441,7 @@ class TestLazyLoading:
 
     def test_single_scanner_lazy_load(self):
         """Test that accessing a single scanner only loads that scanner."""
-        # Reset to get a fresh instance
-        ConfigurationManager.reset_instance()
-
-        manager = ConfigurationManager()
+        manager = ConfigurationManager.create_isolated()
 
         # Access single scanner config
         config = manager.get_scanner_config('eth')
@@ -469,14 +462,11 @@ class TestLazyLoading:
         required".
         """
         (tmp_path / '.env').write_text('ETHERSCAN_KEY=from_dotenv_only\n')
-        ConfigurationManager.reset_instance()
-        manager = ConfigurationManager(tmp_path)
+        manager = ConfigurationManager.create_isolated(tmp_path)
 
         with patch.dict(os.environ, {}, clear=True):
             assert manager.get_api_key('eth') == 'from_dotenv_only'
             assert manager._builtin_loaded is False  # still the lazy path
-
-        ConfigurationManager.reset_instance()
 
     def test_registered_scanner_sees_a_key_that_exists_only_in_a_dotenv_file(self, tmp_path):
         """Registration is a valid first call, and it resolves a credential.
@@ -486,8 +476,7 @@ class TestLazyLoading:
         happened to trigger full initialization first.
         """
         (tmp_path / '.env').write_text('CUSTOMSCAN_KEY=from_dotenv_only\n')
-        ConfigurationManager.reset_instance()
-        manager = ConfigurationManager(tmp_path)
+        manager = ConfigurationManager.create_isolated(tmp_path)
 
         with patch.dict(os.environ, {}, clear=True):
             manager.register_scanner(
@@ -496,22 +485,16 @@ class TestLazyLoading:
             )
             assert manager.get_api_key('customscan') == 'from_dotenv_only'
 
-        ConfigurationManager.reset_instance()
-
     def test_os_environ_overrides_the_dotenv_key(self, tmp_path):
         (tmp_path / '.env').write_text('ETHERSCAN_KEY=from_dotenv\n')
-        ConfigurationManager.reset_instance()
-        manager = ConfigurationManager(tmp_path)
+        manager = ConfigurationManager.create_isolated(tmp_path)
 
         with patch.dict(os.environ, {'ETHERSCAN_KEY': 'from_environ'}, clear=True):
             assert manager.get_api_key('eth') == 'from_environ'
 
-        ConfigurationManager.reset_instance()
-
     def test_get_supported_scanners_triggers_full_init(self):
         """Test that get_supported_scanners() triggers full initialization."""
-        ConfigurationManager.reset_instance()
-        manager = ConfigurationManager()
+        manager = ConfigurationManager.create_isolated()
 
         # This should trigger full initialization
         scanners = manager.get_supported_scanners()
@@ -629,10 +612,9 @@ class TestCredentialEnvNamePattern:
 
     def test_v2_fallback_and_suggestions_come_from_the_pattern(self, tmp_path, monkeypatch):
         """The V2 family fallback is the eth scanner's primary candidate."""
-        ConfigurationManager.reset_instance()
         # Hermetic: no host .env file may inject the fallback into _env_state
         monkeypatch.setattr(Path, 'home', lambda: tmp_path)
-        manager = ConfigurationManager(tmp_path)
+        manager = ConfigurationManager.create_isolated(tmp_path)
         manager.get_scanner_config('bsc')  # ensure the lazy definition is loaded
 
         with patch.dict(os.environ, {'ETHERSCAN_KEY': 'family_key'}, clear=True):
@@ -646,25 +628,21 @@ class TestCredentialEnvNamePattern:
             with pytest.raises(ValueError, match='ETHERSCAN_KEY, BSCSCAN_KEY'):
                 manager.get_api_key('bsc')
 
-        ConfigurationManager.reset_instance()
-
 
 # ─────────────────────────── fixtures and helpers ──────────────────────────
 
 
 @pytest.fixture
 def isolated_manager(tmp_path, monkeypatch):
-    """A fresh ConfigurationManager bound to tmp_path with a fake HOME.
+    """A ConfigurationManager bound to tmp_path with a fake HOME.
 
-    Hermetic by construction: no machine-level ``~/.aiochainscan`` state and
-    no cwd-dependent config files can leak into (or out of) the test.
+    Hermetic by construction (:meth:`ConfigurationManager.create_isolated`):
+    it is not the shared instance, so no machine-level ``~/.aiochainscan``
+    state and no cwd-dependent config file can leak into — or out of — the
+    test.
     """
     monkeypatch.setattr(Path, 'home', lambda: tmp_path)
-    ConfigurationManager.reset_instance()
-    try:
-        yield ConfigurationManager(tmp_path)
-    finally:
-        ConfigurationManager.reset_instance()
+    return ConfigurationManager.create_isolated(tmp_path)
 
 
 def _write(manager: ConfigurationManager, name: str, content) -> Path:
