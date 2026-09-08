@@ -61,7 +61,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-14, macos-13]  # macos-14 = arm64, macos-13 = x86_64
+        os: [ubuntu-latest, windows-latest, macos-14]  # macos-14 = arm64, cross-builds x86_64
 
     steps:
       - uses: actions/checkout@v4
@@ -83,6 +83,13 @@ jobs:
           # (pyo3 abi3-py312 — see fastabi/Cargo.toml), so only cp312 is built.
           CIBW_BUILD: "cp312-*"
           CIBW_SKIP: "pp* *-musllinux*"  # Skip PyPy and musllinux
+
+          # Intel macOS has no hosted runner any more (the macos-13 image was
+          # retired in December 2025), so the arm64 runner cross-builds it.
+          # Cross-built wheels cannot be imported here, hence the test skip.
+          CIBW_ARCHS_MACOS: "arm64 x86_64"
+          CIBW_TEST_SKIP: "*-macosx_x86_64"
+          CIBW_BEFORE_ALL_MACOS: "rustup target add x86_64-apple-darwin aarch64-apple-darwin"
 
           # Rust inside the manylinux container: rustup-init needs
           # libatomic.so.1, which some base images lack preinstalled.

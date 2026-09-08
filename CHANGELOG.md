@@ -4,7 +4,7 @@ All notable changes to this project are documented in this file. The format is
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions
 follow [Semantic Versioning](https://semver.org/).
 
-## [1.0.2] — 2026-09-08
+## [1.0.3] — 2026-09-08
 
 Packaging only. No library code changed.
 
@@ -13,9 +13,10 @@ Packaging only. No library code changed.
 - **`aiochainscan[fastabi]` was unusable on Python 3.14** and on Intel macOS:
   the accelerator shipped version-specific wheels for cp312/cp313 on arm64
   macOS, Linux and Windows only, so any other interpreter fell back to the
-  sdist and demanded a Rust toolchain. `aiochainscan-fastabi` 1.0.2 builds one
+  sdist and demanded a Rust toolchain. `aiochainscan-fastabi` 1.0.3 builds one
   `cp312-abi3` wheel per platform (pyo3 `abi3-py312`), which serves 3.12, 3.13,
-  3.14 and later CPythons, and `macos-13` joins the matrix for x86_64.
+  3.14 and later CPythons. Intel macOS is cross-built on the arm64 runner —
+  GitHub retired the last hosted x86_64 macOS image in December 2025.
 - The `fastabi` extra pinned `aiochainscan-fastabi>=0.2.0` while
   `decode.py:_MIN_FASTABI_VERSION` refuses anything below 1.0.1, so an
   incompatible extension resolved successfully and then failed at import. The
@@ -137,4 +138,4 @@ facade from the 0.2 series is long gone — see
 
 [1.0.0]: https://github.com/VaitaR/aiochainscan/releases/tag/v1.0.0
 [1.0.1]: https://github.com/VaitaR/aiochainscan/releases/tag/v1.0.1
-[1.0.2]: https://github.com/VaitaR/aiochainscan/releases/tag/v1.0.2
+[1.0.3]: https://github.com/VaitaR/aiochainscan/releases/tag/v1.0.3
