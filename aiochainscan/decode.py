@@ -38,7 +38,7 @@ def _abi_decode_params(
 
     Second and last tier of the decode chain — fastabi decodes whole calldata
     upstream and never reaches here. Returns native Python values (``int``,
-    ``bytes``, …), normalised to the fastabi JSON convention by
+    ``bytes``, …), normalised to the Tier convention by
     :func:`_to_rust_convention`.
 
     ``index`` + ``plan_key`` memoise the compiled decode plan across every
@@ -343,23 +343,27 @@ def _resolved_input_names(params: list[dict[str, Any]]) -> list[str]:
     return names
 
 
-def _to_rust_convention(data: Any) -> Any:
-    """Normalise decoded values to what the Rust backend serializes.
+_INT64_MAX: int = 9223372036854775807
+_INT64_MIN: int = -9223372036854775808
 
-    ``bytes`` become ``0x`` hex, ints outside i64 become strings, fixed-point
-    Decimals become fixed-point strings (never scientific notation — the same
-    rendering ``abi_pure.to_json_values`` uses, so ``orjson`` can serialize a
-    payload containing a ``fixedMxN`` argument), and arrays and tuples both
-    become ``list`` (the pure floor returns Python tuples) -- so a decoded
-    value does not change shape when a user adds or drops ``[fastabi]``. One
-    traversal, not one per rule: this runs on every pure-floor decode.
+
+def _to_rust_convention(data: Any) -> Any:
+    """Normalise decoded values to the Tier convention.
+
+    Implements the Tier convention: ints within int64 stay ``int``, ints outside
+    become strings, ``bytes`` become ``0x`` hex, fixed-point Decimals become
+    fixed-point strings (never scientific notation), and arrays and tuples both
+    become ``list`` (the pure floor returns Python tuples) — ensuring a decoded
+    value does not change shape when adding or dropping ``[fastabi]``. Differs
+    from the Agent-JSON convention (:func:`aiochainscan.abi_pure.to_json_values`),
+    which stringifies all integers and formats named tuples as dicts.
     """
     if isinstance(data, bytes):
         return '0x' + data.hex()
     if isinstance(data, int):
         # bool is an int subclass and always falls inside the range, so it
         # survives as a bool.
-        if data > 9223372036854775807 or data < -9223372036854775808:
+        if data > _INT64_MAX or data < _INT64_MIN:
             return str(data)
         return data
     if isinstance(data, Decimal):

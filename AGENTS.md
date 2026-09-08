@@ -920,12 +920,9 @@ transaction inputs, event logs, `SmartContract.iter_events` and the MCP
 `read_contract` / `get_transaction_info` tools with no extras installed.
 `eth-abi` is a **test oracle** in `[dev]`, never a runtime path.
 
-- **One output convention across both tiers** (the Rust one): ints above
-  `i64::MAX` as strings, `bytes`/`bytesN` as `0x` hex, arrays *and* tuples as
-  `list`, `fixedMxN`/`ufixedMxN` as a fixed-point string (`format(v,'f')`,
-  never scientific) so orjson/MCP never sees a `Decimal`.
-  `tests/test_abi_pure.py::TestTierParity` pins it — a decoded value
-  must not change shape when a user adds or drops `[fastabi]`.
+- **Two declared output conventions**:
+  - **Tier convention** (`decode_transaction_input`, `decode_log_data`, `SmartContract.iter_events`): ints within int64 stay `int`, ints outside become strings, `bytes` as `0x` hex, arrays and tuples as `list`, and fixed-point values as fixed-point strings. Contract: a decoded value must not change shape when a user adds or drops `[fastabi]` (`tests/test_abi_pure.py::TestTierParity` pins it).
+  - **Agent-JSON convention** (`decode_arguments`, used by MCP `read_contract`): output decoding for agent consumption; all integers become strings (no magnitude cliff), named tuples become dicts keyed by component name, and unnamed outputs are keyed by `str(index)`.
 - **Decoded-input naming is one convention on both tiers**
   (`decode.py:_resolved_input_names` mirrored by `lib.rs resolved_param_names`):
   unnamed inputs (missing/null/empty name) are keyed `param_{i}` by position;

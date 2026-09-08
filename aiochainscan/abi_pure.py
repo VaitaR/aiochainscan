@@ -10,10 +10,10 @@ Two output conventions, deliberately:
 
 - :func:`decode_values` returns *native* Python values (``int``, ``bytes``,
   ``bool``, ``str``, ``list``). :mod:`aiochainscan.decode` normalises those to
-  the fastabi JSON convention with its own converters, so the pure floor and
-  the Rust accelerator agree value for value.
-- :func:`decode_arguments` returns the fastabi JSON convention directly
-  (uint/int as strings, bytes as ``0x`` hex, fully-named tuples as dicts) —
+  the Tier convention with :func:`~aiochainscan.decode._to_rust_convention`,
+  so the pure floor and the Rust accelerator agree value for value.
+- :func:`decode_arguments` returns the Agent-JSON convention directly
+  (all integers as strings, bytes as ``0x`` hex, fully-named tuples as dicts) —
   what the MCP ``read_contract`` tool hands to an agent.
 
 Supported types: ``uintN``/``intN``, ``address``, ``bool``, ``bytesN``,
@@ -417,7 +417,7 @@ def decode_values(nodes: tuple[TypeNode, ...], data: bytes) -> list[Any]:
 
     uint/int stay ``int``, ``bytes``/``bytesN`` stay ``bytes``, arrays and
     tuples are ``list`` — the shape :mod:`aiochainscan.decode` normalises to
-    the fastabi JSON convention. Trailing bytes are ignored, matching what
+    the Tier convention. Trailing bytes are ignored, matching what
     real calldata carries.
     """
     return _decode_sequence(nodes, data, 0)
@@ -426,9 +426,11 @@ def decode_values(nodes: tuple[TypeNode, ...], data: bytes) -> list[Any]:
 def decode_arguments(outputs: list[dict[str, Any]], data: bytes | str) -> dict[str, Any]:
     """Decode raw ``eth_call`` output bytes into a name-keyed dict.
 
-    Unnamed outputs are keyed by their positional index (``'0'``, ``'1'`` …);
-    uint/int values become strings (fastabi JSON convention), addresses are
-    lowercased hex, bytes values are ``0x``-prefixed.
+    Implements the Agent-JSON convention for agent consumption: all integers
+    become strings (no magnitude cliff), named tuples become component-keyed
+    dicts, and unnamed outputs are keyed by positional index (``'0'``, ``'1'`` …).
+    Differs from the Tier convention, which preserves int64 integers and normalises
+    tuples to lists.
     """
     raw = _coerce_hex_bytes(data)
     nodes = compile_params(outputs)
@@ -444,11 +446,24 @@ def decode_arguments(outputs: list[dict[str, Any]], data: bytes | str) -> dict[s
 
 
 def to_json_values(nodes: tuple[TypeNode, ...], values: list[Any]) -> list[Any]:
-    """Convert native decoded values to the fastabi JSON convention."""
+    """Convert native decoded values to the Agent-JSON convention.
+
+    Implements the Agent-JSON convention: stringifies all integers and converts
+    named tuples to dicts. Differs from the Tier convention, which preserves
+    int64 integers and normalises tuples to lists.
+    """
     return [_to_json(node, value) for node, value in zip(nodes, values, strict=True)]
 
 
 def _to_json(node: TypeNode, value: Any) -> Any:
+    """Convert a single native decoded value to the Agent-JSON convention.
+
+    Implements the Agent-JSON convention: stringifies all integers (no
+    magnitude cliff for agents), renders fixed-point values without scientific
+    notation, converts bytes to ``0x`` hex, and maps named tuples to dicts.
+    Differs from the Tier convention, which preserves int64 integers and keeps
+    tuples to lists.
+    """
     kind = node.kind
     if kind in ('uint', 'int'):
         return str(value)
