@@ -211,10 +211,8 @@ jobs:
               if [ -f "$dir/$f" ]; then rm -v "$dir/$f"; fi
             done
           }
-          # TEMPORARY: pruning disabled for one dispatch so the publish steps
-          # actually authenticate against PyPI instead of being skipped.
-          : prune aiochainscan staging/base
-          : prune aiochainscan-fastabi staging/fastabi
+          prune aiochainscan staging/base
+          prune aiochainscan-fastabi staging/fastabi
 
           echo "base_count=$(ls -1 staging/base | wc -l | tr -d ' ')" >> "$GITHUB_OUTPUT"
           echo "fastabi_count=$(ls -1 staging/fastabi | wc -l | tr -d ' ')" >> "$GITHUB_OUTPUT"
