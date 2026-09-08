@@ -74,6 +74,8 @@ from aiochainscan.exceptions import (
     ChainscanResponseTooLargeError,
     FailureKind,
     api_error_failure_kind,
+    http_status_failure_kind,
+    mentions_rate_limit,
 )
 from aiochainscan.ports.rate_limiter import RateLimiter, RetryPolicy
 
@@ -115,8 +117,6 @@ class ResponseDialect(Protocol):
 # as ``[]``.
 _EMPTY_RESULT_MESSAGE = re.compile(r'^\s*no\b.*\bfound\b[.\s]*$', re.IGNORECASE)
 
-_RATE_LIMIT_MARKERS = ('rate limit', 'limit reached', 'too many requests')
-
 
 def _parse_retry_after(header: str | None) -> int | None:
     """Seconds advertised by an RFC 9110 ``Retry-After`` header, if any.
@@ -141,10 +141,6 @@ def _parse_retry_after(header: str | None) -> int | None:
         when = when.replace(tzinfo=UTC)
     delta = (when - datetime.now(UTC)).total_seconds()
     return int(delta) if delta > 0 else None
-
-
-def _mentions_rate_limit(text: Any) -> bool:
-    return isinstance(text, str) and any(marker in text.lower() for marker in _RATE_LIMIT_MARKERS)
 
 
 def _is_empty_result_envelope(message: Any, raw_result: Any) -> bool:
@@ -193,7 +189,7 @@ def _raise_if_etherscan_error(response_json: Any) -> None:
         message = _excerpt(raw_message)
         result = _excerpt(response_json.get('result'))
 
-        if _mentions_rate_limit(result) or _mentions_rate_limit(message):
+        if mentions_rate_limit(result) or mentions_rate_limit(message):
             raise ChainscanRateLimitError(message, result)
 
         raise ChainscanClientApiError(
@@ -752,33 +748,22 @@ class Network:
         # would create an httpx.HTTPStatusError containing the original request,
         # which can retain credentials in the exception chain.
         if status_code >= 400:
-            if status_code == 429:
+            # What the status MEANS for pool routing is decided by
+            # exceptions.http_status_failure_kind (the one classification
+            # module); this picks only the exception class that carries it.
+            kind = http_status_failure_kind(status_code)
+            if kind is FailureKind.RATE_LIMIT:
                 retry_after = _parse_retry_after(response.headers.get('retry-after'))
                 if retry_after is None:
                     raise ChainscanRateLimitError('HTTP 429', 'Too Many Requests')
                 raise ChainscanRateLimitError('HTTP 429', 'Too Many Requests', retry_after)
             safe_url = _redact_url(response.url)
-            if 500 <= status_code <= 599:
-                raise ChainscanNetworkError(
-                    f'HTTP {status_code} for {safe_url}: {response.reason_phrase}',
-                    retryable=True,
-                )
-            if status_code in (401, 403):
-                # Credential/authorization refusal at the HTTP layer: NodeReal
-                # answers an invalid path key with 401; WAF/geo-blocks and
-                # role-restricted proxies answer 403. In every observed flavour
-                # the refusal is THIS provider's — the pool should fail over
-                # and cool the provider (AUTH), not treat it as the caller's
-                # problem. No repo provider signals plan restriction at the
-                # HTTP layer (Etherscan rides 200-envelopes, NodeReal JSON-RPC
-                # codes), so 403 is not split into PLAN_RESTRICTED.
-                raise ChainscanClientError(
-                    f'HTTP {status_code} for {safe_url}: {response.reason_phrase}',
-                    failure_kind=FailureKind.AUTH,
-                )
-            raise ChainscanClientError(
-                f'HTTP {status_code} for {safe_url}: {response.reason_phrase}'
-            )
+            detail = f'HTTP {status_code} for {safe_url}: {response.reason_phrase}'
+            if kind is FailureKind.TRANSIENT:
+                raise ChainscanNetworkError(detail, retryable=True)
+            if kind is FailureKind.AUTH:
+                raise ChainscanClientError(detail, failure_kind=FailureKind.AUTH)
+            raise ChainscanClientError(detail)
 
         # Parse JSON response. The gate matches any JSON media type, not the
         # exact ``application/json`` string: structured suffixes

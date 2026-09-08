@@ -370,6 +370,48 @@ _PLAN_PATTERNS: tuple[re.Pattern[str], ...] = (
 )
 
 
+# Provider text meaning "you are being throttled", inside an HTTP 200
+# envelope (Etherscan answers a throttle with status=0 and this text).
+RATE_LIMIT_MESSAGE_MARKERS: tuple[str, ...] = (
+    'rate limit',
+    'limit reached',
+    'too many requests',
+)
+
+
+def mentions_rate_limit(text: Any) -> bool:
+    """Whether provider text carries a throttling marker."""
+    return isinstance(text, str) and any(
+        marker in text.lower() for marker in RATE_LIMIT_MESSAGE_MARKERS
+    )
+
+
+def http_status_failure_kind(status_code: int) -> FailureKind:
+    """Classify an HTTP error status.
+
+    The whole status ladder in one readable place — the transport picks the
+    exception CLASS per status, this decides what the failure MEANS for pool
+    routing:
+
+    - 429 → :attr:`FailureKind.RATE_LIMIT`
+    - 5xx → :attr:`FailureKind.TRANSIENT` (it survived transport retries)
+    - 401/403 → :attr:`FailureKind.AUTH`: NodeReal answers an invalid path
+      key with 401, WAF/geo-blocks and role-restricted proxies with 403. In
+      every observed flavour the refusal is THIS provider's, so the pool
+      should fail over and cool it. No repo provider signals plan
+      restriction at the HTTP layer (Etherscan rides 200-envelopes, NodeReal
+      JSON-RPC codes), so 403 is not split into ``PLAN_RESTRICTED``.
+    - anything else → :attr:`FailureKind.FATAL`
+    """
+    if status_code == 429:
+        return FailureKind.RATE_LIMIT
+    if 500 <= status_code <= 599:
+        return FailureKind.TRANSIENT
+    if status_code in (401, 403):
+        return FailureKind.AUTH
+    return FailureKind.FATAL
+
+
 def api_error_failure_kind(message: str | None, result: Any) -> FailureKind:
     """Classify an Etherscan-style API error envelope by its text.
 

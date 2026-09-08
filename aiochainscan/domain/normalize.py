@@ -118,15 +118,48 @@ LOG_TRANSACTION_HASH_KEYS: tuple[str, ...] = ('transactionHash', 'transaction_ha
 #: The item's own transaction hash (generic ``hash`` / V2 ``transaction_hash``).
 TRANSACTION_HASH_KEYS: tuple[str, ...] = ('hash', 'transaction_hash')
 LOG_INDEX_KEYS: tuple[str, ...] = ('logIndex', 'log_index', 'index')
+#: Token metadata as served flat by Etherscan and nested under ``token`` by
+#: BlockScout V2. One vocabulary for every reader (normalized mappers, MCP
+#: curation) so a new provider alias is added once.
+TOKEN_CONTRACT_KEYS: tuple[str, ...] = (
+    'contractAddress',
+    'token.address_hash',
+    'token.address',
+    'address',
+)
+TOKEN_SYMBOL_KEYS: tuple[str, ...] = ('tokenSymbol', 'token.symbol')
+TOKEN_NAME_KEYS: tuple[str, ...] = ('tokenName', 'token.name')
+TOKEN_DECIMALS_KEYS: tuple[str, ...] = ('tokenDecimal', 'tokenDecimals', 'token.decimals')
+#: A holding's raw quantity (portfolio items); ``total.value`` is the V2
+#: transfer shape, kept last so a holding never reads a transfer's amount.
+TOKEN_BALANCE_KEYS: tuple[str, ...] = ('balance', 'tokenBalance', 'value', 'total.value')
+#: A transfer's amount only — never a balance field.
+TOKEN_TRANSFER_VALUE_KEYS: tuple[str, ...] = ('value', 'total.value')
+NFT_CONTRACT_KEYS: tuple[str, ...] = (
+    'collection.address_hash',
+    'token.address_hash',
+    'contractAddress',
+    'address',
+)
+NFT_NAME_KEYS: tuple[str, ...] = ('collection.name', 'token.name', 'tokenName')
+NFT_AMOUNT_KEYS: tuple[str, ...] = ('value', 'tokenBalance')
 
 
 def first_field(item: Mapping[str, Any], *keys: str) -> Any:
     """Alias-first lookup: the first key whose value is not ``None``/``''``.
 
     A falsy ``0`` is data and survives — a genesis row keeps its block number.
+    A dotted key (``'token.symbol'``) reads one level of provider nesting,
+    which is how BlockScout V2 shapes token metadata; a non-dict at the
+    nesting key contributes nothing rather than raising.
     """
     for key in keys:
-        value = item.get(key)
+        if '.' in key:
+            outer, _, inner = key.partition('.')
+            container = item.get(outer)
+            value = container.get(inner) if isinstance(container, Mapping) else None
+        else:
+            value = item.get(key)
         if value is not None and value != '':
             return value
     return None
@@ -299,20 +332,9 @@ def normalize_internal_transaction(item: Mapping[str, Any]) -> InternalTransacti
 
 
 def normalize_token_transfer(item: Mapping[str, Any]) -> TokenTransfer:
-    token = item.get('token')
-    nested_token = token if isinstance(token, dict) else {}
-    total = item.get('total')
-    nested_total = total if isinstance(total, dict) else {}
-
-    contract = (
-        first_field(item, 'contractAddress')
-        or nested_token.get('address_hash')
-        or nested_token.get('address')
-    )
-    decimals_raw = first_field(item, 'tokenDecimal', 'tokenDecimals') or nested_token.get(
-        'decimals'
-    )
-    value_raw = first_field(item, 'value') or nested_total.get('value')
+    contract = first_field(item, *TOKEN_CONTRACT_KEYS)
+    decimals_raw = first_field(item, *TOKEN_DECIMALS_KEYS)
+    value_raw = first_field(item, *TOKEN_TRANSFER_VALUE_KEYS)
 
     return TokenTransfer(
         transaction_hash=first_field(item, *TRANSACTION_HASH_KEYS),
@@ -320,8 +342,8 @@ def normalize_token_transfer(item: Mapping[str, Any]) -> TokenTransfer:
         from_address=_checksum_or_none(item.get('from')),
         to_address=_checksum_or_none(item.get('to')),
         contract_address=_checksum_or_none(contract),
-        token_symbol=first_field(item, 'tokenSymbol') or nested_token.get('symbol'),
-        token_name=first_field(item, 'tokenName') or nested_token.get('name'),
+        token_symbol=first_field(item, *TOKEN_SYMBOL_KEYS),
+        token_name=first_field(item, *TOKEN_NAME_KEYS),
         token_decimals=int_or_default(decimals_raw),
         value_raw=_wei_int(value_raw),
         timestamp=_timestamp_or_none(first_field(item, *TIMESTAMP_KEYS)),

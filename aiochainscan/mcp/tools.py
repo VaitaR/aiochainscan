@@ -48,7 +48,15 @@ from ..domain.normalize import (
     BLOCK_NUMBER_KEYS,
     GAS_KEYS,
     GAS_PRICE_KEYS,
+    NFT_AMOUNT_KEYS,
+    NFT_CONTRACT_KEYS,
+    NFT_NAME_KEYS,
     TIMESTAMP_KEYS,
+    TOKEN_BALANCE_KEYS,
+    TOKEN_CONTRACT_KEYS,
+    TOKEN_DECIMALS_KEYS,
+    TOKEN_NAME_KEYS,
+    TOKEN_SYMBOL_KEYS,
     first_field,
     flat_address,
     int_or_default,
@@ -243,28 +251,22 @@ def _curate_transaction(item: dict[str, Any], currency: str) -> dict[str, Any]:
     }
 
 
-def _nested_dict(item: dict[str, Any], key: str) -> dict[str, Any]:
-    """Read an explorer object field as a dict ({} when missing/malformed)."""
-    value = item.get(key)
-    return value if isinstance(value, dict) else {}
-
-
 def _token_fields(item: dict[str, Any]) -> dict[str, Any]:
-    """Unify Etherscan-shaped and BlockScout-V2-shaped token holdings."""
-    nested = _nested_dict(item, 'token')
-    contract = (
-        item.get('contractAddress')
-        or first_field(nested, 'address_hash', 'address')
-        or item.get('address')
-    )
-    symbol = item.get('tokenSymbol') or nested.get('symbol')
-    name = item.get('tokenName') or nested.get('name')
-    raw_decimals = item.get('tokenDecimals', nested.get('decimals'))
+    """Curate one token holding, reading fields through the provider dialect.
+
+    Field aliases and the emptiness rule belong to ``domain/normalize.py``;
+    this function owns only which curated names the MCP envelope exposes.
+    """
+    contract = first_field(item, *TOKEN_CONTRACT_KEYS)
+    symbol = first_field(item, *TOKEN_SYMBOL_KEYS)
+    name = first_field(item, *TOKEN_NAME_KEYS)
+    raw_decimals = first_field(item, *TOKEN_DECIMALS_KEYS)
     try:
         decimals: int | None = int(raw_decimals) if raw_decimals is not None else None
     except (TypeError, ValueError):
         decimals = None
-    balance_raw = str(item.get('balance') or item.get('tokenBalance') or item.get('value') or '0')
+    raw_balance = first_field(item, *TOKEN_BALANCE_KEYS)
+    balance_raw = '0' if raw_balance is None else str(raw_balance)
     return {
         'contract_address': _checksum(_str_field(contract)),
         'symbol': symbol,
@@ -276,17 +278,11 @@ def _token_fields(item: dict[str, Any]) -> dict[str, Any]:
 
 
 def _nft_collection(item: dict[str, Any]) -> dict[str, Any]:
-    """Curate one NFT collection holding."""
-    nested = _nested_dict(item, 'token')
-    meta = _nested_dict(item, 'collection')
-    contract = (
-        meta.get('address_hash')
-        or nested.get('address_hash')
-        or item.get('contractAddress')
-        or item.get('address')
-    )
-    name = meta.get('name') or nested.get('name') or item.get('tokenName')
-    amount = str(item.get('value') or item.get('tokenBalance') or '0')
+    """Curate one NFT collection holding through the provider dialect."""
+    contract = first_field(item, *NFT_CONTRACT_KEYS)
+    name = first_field(item, *NFT_NAME_KEYS)
+    raw_amount = first_field(item, *NFT_AMOUNT_KEYS)
+    amount = '0' if raw_amount is None else str(raw_amount)
     return {
         'contract_address': _checksum(_str_field(contract)),
         'name': name,

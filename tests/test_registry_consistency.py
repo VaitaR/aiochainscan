@@ -39,6 +39,7 @@ from aiochainscan.chain_registry import (
     BLOCKSCOUT_INSTANCE_HOSTS,
     BLOCKSCOUT_SCANNER_NETWORKS,
     DEFAULT_SCANNER_VERSIONS,
+    SCANNER_CONFIG_DEFINITIONS,
     SCANNER_RECORDS,
     STANDARD_CHAINS,
     URL_BUILDER_CHAIN_IDS,
@@ -309,6 +310,38 @@ class TestBlockscoutInstanceAdvertisements:
                 continue
             with pytest.raises(ValueError, match='BlockScout not available'):
                 get_blockscout_instance(chain_id)
+
+
+class TestConfigDefinitionsAreRegistryRows:
+    """C18 guard: one scanner id is one row. The registry's config
+    definitions and the configuration manager's builtins must declare the
+    same id set and the same facts — a half-present id used to yield either a
+    chain with no config entry or a KeyError at construction."""
+
+    def test_id_sets_are_equal(self) -> None:
+        manager = ConfigurationManager()
+        builtins = manager._get_builtin_scanner_definitions()
+        assert set(builtins) == set(SCANNER_CONFIG_DEFINITIONS)
+
+    def test_every_scanner_record_resolves_to_a_config_row(self) -> None:
+        """A public scanner name whose credential lookup needs a config id
+        must find one — the failure mode C18 removed was a registry row with
+        no config entry, which raised a KeyError only at construction."""
+        missing: list[str] = []
+        for name, record in SCANNER_RECORDS.items():
+            candidates = set(record.config_ids_by_network.values())
+            if record.config_id is not None:
+                candidates.add(record.config_id)
+            missing.extend(
+                f'{name} -> {cid}' for cid in candidates if cid not in SCANNER_CONFIG_DEFINITIONS
+            )
+        assert not missing, missing
+
+    def test_every_config_row_declares_networks_and_currency(self) -> None:
+        for scanner_id, row in SCANNER_CONFIG_DEFINITIONS.items():
+            assert row.supported_networks, scanner_id
+            assert row.currency, scanner_id
+            assert row.base_domain and row.name, scanner_id
 
 
 class TestBlockscoutCurrencyParity:

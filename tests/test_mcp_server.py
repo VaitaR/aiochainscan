@@ -910,6 +910,62 @@ class TestTokenTools:
         assert holding['symbol'] == 'USDT'
         assert holding['balance'] == '2.5'
 
+    async def test_token_portfolio_integer_zero_balance_survives(self) -> None:
+        """A JSON-number ``0`` is a balance, not a missing field."""
+        client = StubClient()
+        client.support(Method.ACCOUNT_TOKEN_PORTFOLIO)
+        client.fetch_page.value = (
+            [
+                {
+                    'token': {'address_hash': TOKEN, 'symbol': 'USDT', 'decimals': 6},
+                    'balance': 0,
+                    'value': '2500000',
+                }
+            ],
+            None,
+        )
+        response = await mcp_tools.get_token_portfolio(client, WALLET)
+        assert response.data is not None
+        holding = response.data['tokens'][0]
+        assert holding['balance_raw'] == '0'
+        assert holding['balance'] == '0'
+
+    async def test_nft_collection_integer_zero_amount_survives(self) -> None:
+        client = StubClient()
+        client.support(Method.ACCOUNT_BALANCE)
+        client.support(Method.ACCOUNT_NFT_PORTFOLIO)
+        client.get_nft_portfolio.value = [
+            {'collection': {'address_hash': TOKEN, 'name': 'Punks'}, 'value': 0}
+        ]
+        response = await mcp_tools.get_address_overview(client, WALLET)
+        assert response.data is not None
+        assert response.data['nft_collections'][0]['amount'] == '0'
+
+
+class TestGetContractAbi:
+    async def test_signature_summary(self) -> None:
+        client = StubClient()
+        client.support(Method.CONTRACT_ABI)
+        client.get_contract_abi.value = json.dumps(TRANSFER_ABI)
+        response = await mcp_tools.get_contract_abi(client, TOKEN)
+        assert response.data is not None
+        assert response.data['function_count'] == 1
+        assert response.data['functions'] == ['transfer(address,uint256)']
+
+    async def test_unsupported_method_notes(self) -> None:
+        client = StubClient()
+        response = await mcp_tools.get_contract_abi(client, TOKEN)
+        assert response.data is None
+        assert response.notes is not None
+
+    async def test_unverified_contract_notes(self) -> None:
+        client = StubClient()
+        client.support(Method.CONTRACT_ABI)
+        client.get_contract_abi.error = ChainscanClientApiError('NOTOK', 'Contract not verified')
+        response = await mcp_tools.get_contract_abi(client, TOKEN)
+        assert response.data is None
+        assert response.notes is not None
+
 
 class TestReadContract:
     async def test_happy_path(self) -> None:

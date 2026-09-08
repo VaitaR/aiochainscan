@@ -242,6 +242,28 @@ class ConfigurationManager:
         pass
 
     @classmethod
+    def create_isolated(cls, config_dir: Path | None = None) -> ConfigurationManager:
+        """An independent manager that neither reads nor becomes the shared one.
+
+        The shared instance stays the public default (see
+        ``docs/adr/0002-configuration-manager-stays-a-singleton.md``): process-wide
+        configuration is the intended contract, and construction returning the
+        shared instance is public behaviour. This is the escape hatch for
+        callers that need a hermetic manager — tests above all, which
+        otherwise reset the singleton before and after every case and leak
+        state across modules when one forgets.
+        """
+        instance = super().__new__(cls)
+        instance._initialized = False
+        instance._scanners = {}
+        instance._env_loaded = False
+        instance._builtin_loaded = False
+        instance._config_files_loaded = False
+        instance._env_state = {}
+        instance.config_dir = config_dir if config_dir is not None else Path.cwd()
+        return instance
+
+    @classmethod
     def reset_instance(cls) -> None:
         """Reset singleton instance (useful for testing or reconfiguration)."""
         global _config_manager_instance
@@ -360,93 +382,30 @@ class ConfigurationManager:
     def _get_builtin_scanner_definitions(self) -> dict[str, ScannerConfig]:
         """Return all builtin scanner definitions (factory method, no side effects).
 
-        This module owns credentials and env resolution only. All topology —
-        currencies, supported networks, BlockScout instance hosts, BlockScout
-        display names and the V2 credential-family membership — is derived
-        from :mod:`aiochainscan.chain_registry` (whose ``ScannerRecord`` /
-        ``KindProfile`` tables are the single source), so no hand-maintained
-        mirror of it lives here. Etherscan-family names and non-BlockScout
-        domains stay local: they drive the primary env-var pattern (e.g.
-        'Etherscan' → ``ETHERSCAN_KEY``) and CLI display, which is credential
-        and presentation data, not registry topology. The registry import is
+        This module owns credentials and env resolution only. Every declared
+        fact about a scanner id — display name, base domain, currency,
+        supported networks, key requirement, special config and V2
+        credential-family membership — is ONE row in
+        :mod:`aiochainscan.chain_registry`
+        (``SCANNER_CONFIG_DEFINITIONS``), so a scanner id cannot exist in the
+        registry without a config entry or the reverse. The registry import is
         lazy because chain_registry imports this module for key lookups; at
         call time both modules are fully initialized.
         """
-        from .chain_registry import (
-            BLOCKSCOUT_DISPLAY_NAMES,
-            BLOCKSCOUT_HOSTS,
-            CONFIG_CREDENTIAL_FAMILY,
-            SCANNER_CONFIG_NETWORKS,
-            URL_BUILDER_CURRENCIES,
-        )
+        from .chain_registry import SCANNER_CONFIG_DEFINITIONS
 
-        def definition(
-            scanner_id: str,
-            name: str,
-            base_domain: str,
-            requires_api_key: bool = True,
-            special_config: dict[str, Any] | None = None,
-        ) -> ScannerConfig:
-            return ScannerConfig(
-                name=name,
-                base_domain=base_domain,
-                currency=URL_BUILDER_CURRENCIES[scanner_id],
-                supported_networks=set(SCANNER_CONFIG_NETWORKS[scanner_id]),
-                requires_api_key=requires_api_key,
-                special_config=special_config or {},
-                credential_family=CONFIG_CREDENTIAL_FAMILY.get(scanner_id),
+        return {
+            scanner_id: ScannerConfig(
+                name=row.name,
+                base_domain=row.base_domain,
+                currency=row.currency,
+                supported_networks=set(row.supported_networks),
+                requires_api_key=row.requires_api_key,
+                special_config=dict(row.special_config),
+                credential_family=row.credential_family,
             )
-
-        definitions: dict[str, ScannerConfig] = {
-            'eth': definition('eth', 'Etherscan', 'etherscan.io'),
-            'bsc': definition('bsc', 'BscScan', 'bscscan.com'),
-            'polygon': definition('polygon', 'PolygonScan', 'polygonscan.com'),
-            'optimism': definition(
-                'optimism',
-                'Optimism Etherscan',
-                'etherscan.io',
-                special_config={'subdomain_pattern': 'optimistic'},
-            ),
-            'arbitrum': definition('arbitrum', 'Arbiscan', 'arbiscan.io'),
-            'fantom': definition('fantom', 'FtmScan', 'ftmscan.com'),
-            'gnosis': definition('gnosis', 'GnosisScan', 'gnosisscan.io'),
-            'flare': definition(
-                'flare',
-                'Flare Explorer',
-                'flare.network',
-                requires_api_key=False,
-                special_config={'subdomain_pattern': 'flare-explorer'},
-            ),
-            'linea': definition('linea', 'LineaScan', 'lineascan.build'),
-            'blast': definition('blast', 'BlastScan', 'blastscan.io'),
-            'base': definition(
-                'base',
-                'Etherscan (Base)',
-                'etherscan.io',
-                special_config={'etherscan_v2': True},  # Use Etherscan V2 for Base
-            ),
-            'nodereal': definition(
-                'nodereal',
-                'NodeReal',
-                'nodereal.io',
-                special_config={'mega_node': True},
-            ),
+            for scanner_id, row in SCANNER_CONFIG_DEFINITIONS.items()
         }
-
-        # BlockScout instances: host, currency, served network and display
-        # name all derive from the registry record. The lookup cannot KeyError:
-        # chain_registry's import-time validation proves every derived host id
-        # has a display name.
-        for scanner_id, host in BLOCKSCOUT_HOSTS.items():
-            definitions[scanner_id] = definition(
-                scanner_id,
-                BLOCKSCOUT_DISPLAY_NAMES[scanner_id],
-                host,
-                requires_api_key=False,
-                special_config={'public_api': True},
-            )
-
-        return definitions
 
     def _load_env_files(self) -> None:
         """Load environment variables from .env files.

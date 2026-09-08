@@ -89,44 +89,71 @@ class KindProfile:
     #: Config id whose credential is the fallback when this kind's own key is
     #: absent (the V2 family: one Etherscan account serves several chains).
     credential_family: str | None = None
+    #: Configuration-manager presentation row for the config id named like the
+    #: kind. Declared here so one scanner id is ONE row: a kind carrying a
+    #: display name is a config-manager scanner, one without it (wemix/chiliz/
+    #: mode) has no config entry at all, and the two cannot drift apart.
+    display_name: str | None = None
+    base_domain: str | None = None
+    requires_api_key: bool = True
+    special_config: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if (self.testnet_base_url is None) != (self.testnet_api_url is None):
             raise ValueError('KindProfile: testnet_base_url and testnet_api_url are a pair')
+        if (self.display_name is None) != (self.base_domain is None):
+            raise ValueError('KindProfile: display_name and base_domain are a pair')
 
 
 _URL_KIND_PROFILES: dict[str, KindProfile] = {
     # Etherscan V2 family — one unified endpoint, chainid-routed, query auth.
-    'eth': KindProfile(currency='ETH', v2_query_auth=True),
+    'eth': KindProfile(
+        currency='ETH',
+        v2_query_auth=True,
+        display_name='Etherscan',
+        base_domain='etherscan.io',
+    ),
     'bsc': KindProfile(
         currency='BNB',
         v2_query_auth=True,
         config_networks=frozenset({'main', 'test'}),
         credential_family='eth',
+        display_name='BscScan',
+        base_domain='bscscan.com',
     ),
     'polygon': KindProfile(
         currency='MATIC',
         v2_query_auth=True,
         config_networks=frozenset({'main', 'mumbai', 'test'}),
         credential_family='eth',
+        display_name='PolygonScan',
+        base_domain='polygonscan.com',
     ),
     'optimism': KindProfile(
         currency='ETH',
         v2_query_auth=True,
         config_networks=frozenset({'main', 'goerli', 'test'}),
         credential_family='eth',
+        display_name='Optimism Etherscan',
+        base_domain='etherscan.io',
+        special_config={'subdomain_pattern': 'optimistic'},
     ),
     'arbitrum': KindProfile(
         currency='ETH',
         v2_query_auth=True,
         config_networks=frozenset({'main', 'nova', 'goerli', 'test'}),
         credential_family='eth',
+        display_name='Arbiscan',
+        base_domain='arbiscan.io',
     ),
     'base': KindProfile(
         currency='BASE',
         v2_query_auth=True,
         config_networks=frozenset({'main', 'goerli', 'sepolia'}),
         credential_family='eth',
+        display_name='Etherscan (Base)',
+        base_domain='etherscan.io',
+        special_config={'etherscan_v2': True},
     ),
     # v1-style per-explorer domains, query auth.
     'fantom': KindProfile(
@@ -136,18 +163,26 @@ _URL_KIND_PROFILES: dict[str, KindProfile] = {
         testnet_base_url='https://testnet.ftmscan.com',
         testnet_api_url='https://api-testnet.ftmscan.com/api',
         config_networks=frozenset({'main', 'test'}),
+        display_name='FtmScan',
+        base_domain='ftmscan.com',
     ),
     'gnosis': KindProfile(
         currency='GNO',
         base_url='https://gnosisscan.io',
         api_url='https://api.gnosisscan.io/api',
         config_networks=frozenset({'main', 'chiado'}),
+        display_name='GnosisScan',
+        base_domain='gnosisscan.io',
     ),
     'flare': KindProfile(
         currency='FLR',
         base_url='https://flare.network',
         api_url='https://flare-explorer.flare.network/api',
         config_networks=frozenset({'main', 'test'}),
+        display_name='Flare Explorer',
+        base_domain='flare.network',
+        requires_api_key=False,
+        special_config={'subdomain_pattern': 'flare-explorer'},
     ),
     'wemix': KindProfile(
         currency='WEMIX',
@@ -169,18 +204,25 @@ _URL_KIND_PROFILES: dict[str, KindProfile] = {
         base_url='https://lineascan.build',
         api_url='https://api.lineascan.build/api',
         config_networks=frozenset({'main', 'test'}),
+        display_name='LineaScan',
+        base_domain='lineascan.build',
     ),
     'blast': KindProfile(
         currency='BLAST',
         base_url='https://blastscan.io',
         api_url='https://api.blastscan.io/api',
         config_networks=frozenset({'main', 'sepolia'}),
+        display_name='BlastScan',
+        base_domain='blastscan.io',
     ),
     # NodeReal: currency and config networks here; URLs/chain id are dialect
     # (computed in get_url_builder_profile).
     'nodereal': KindProfile(
         currency='BNB',
         config_networks=frozenset({'bsc', 'bsc-testnet'}),
+        display_name='NodeReal',
+        base_domain='nodereal.io',
+        special_config={'mega_node': True},
     ),
 }
 
@@ -526,6 +568,63 @@ _validate_scanner_topology(
     BLOCKSCOUT_DISPLAY_NAMES,
     DROPPED_INSTANCE_ALIASES,
 )
+
+
+@dataclass(frozen=True)
+class ConfigDefinition:
+    """Everything the configuration manager declares about one scanner id.
+
+    One row per scanner id, in the module that owns scanner topology: the
+    manager builds its ``ScannerConfig`` objects from these and adds only
+    credential resolution. A scanner id therefore exists in both places or in
+    neither — it can no longer be half-present.
+    """
+
+    name: str
+    base_domain: str
+    currency: str
+    supported_networks: frozenset[str]
+    requires_api_key: bool
+    special_config: Mapping[str, Any]
+    credential_family: str | None
+
+
+def _build_config_definitions() -> dict[str, ConfigDefinition]:
+    """Presentation rows joined with the network/currency/family views."""
+    definitions: dict[str, ConfigDefinition] = {}
+    for kind, profile in _URL_KIND_PROFILES.items():
+        if profile.display_name is None or profile.base_domain is None:
+            # A kind with no presentation row is not a config-manager scanner
+            # (wemix/chiliz/mode: UrlBuilder-only).
+            continue
+        definitions[kind] = ConfigDefinition(
+            name=profile.display_name,
+            base_domain=profile.base_domain,
+            currency=URL_BUILDER_CURRENCIES[kind],
+            supported_networks=SCANNER_CONFIG_NETWORKS[kind],
+            requires_api_key=profile.requires_api_key,
+            special_config=dict(profile.special_config),
+            credential_family=CONFIG_CREDENTIAL_FAMILY.get(kind),
+        )
+
+    # BlockScout instances: host, currency, served network and display name
+    # all derive from the registry record, so a new instance registers once.
+    for scanner_id, host in BLOCKSCOUT_HOSTS.items():
+        definitions[scanner_id] = ConfigDefinition(
+            name=BLOCKSCOUT_DISPLAY_NAMES[scanner_id],
+            base_domain=host,
+            currency=URL_BUILDER_CURRENCIES[scanner_id],
+            supported_networks=SCANNER_CONFIG_NETWORKS[scanner_id],
+            requires_api_key=False,
+            special_config={'public_api': True},
+            credential_family=CONFIG_CREDENTIAL_FAMILY.get(scanner_id),
+        )
+    return definitions
+
+
+#: Config-manager scanner id → its one declared row. Read by
+#: ``ConfigurationManager._init_builtin_scanners``.
+SCANNER_CONFIG_DEFINITIONS: dict[str, ConfigDefinition] = _build_config_definitions()
 
 #: Network names both BlockScout scanners declare as supported: the host table
 #: minus the aliases deliberately not wired into UrlBuilder host ids. One
