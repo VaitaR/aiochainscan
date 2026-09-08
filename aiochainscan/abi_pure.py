@@ -446,23 +446,13 @@ def decode_arguments(outputs: list[dict[str, Any]], data: bytes | str) -> dict[s
 
 
 def to_json_values(nodes: tuple[TypeNode, ...], values: list[Any]) -> list[Any]:
-    """Convert native decoded values to the Agent-JSON convention.
-
-    Implements the Agent-JSON convention: stringifies all integers and converts
-    named tuples to dicts. Differs from the Tier convention, which preserves
-    int64 integers and normalises tuples to lists.
-    """
+    """Convert native decoded values to the Agent-JSON convention."""
     return [_to_json(node, value) for node, value in zip(nodes, values, strict=True)]
 
 
 def _to_json(node: TypeNode, value: Any) -> Any:
-    """Convert a single native decoded value to the Agent-JSON convention.
-
-    Implements the Agent-JSON convention: stringifies all integers (no
-    magnitude cliff for agents), renders fixed-point values without scientific
-    notation, converts bytes to ``0x`` hex, and maps named tuples to dicts.
-    Differs from the Tier convention, which preserves int64 integers and keeps
-    tuples to lists.
+    """One value in the Agent-JSON convention: every integer a string, bytes as
+    ``0x`` hex, fixed-point without scientific notation, named tuples as dicts.
     """
     kind = node.kind
     if kind in ('uint', 'int'):

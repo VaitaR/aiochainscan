@@ -920,9 +920,22 @@ transaction inputs, event logs, `SmartContract.iter_events` and the MCP
 `read_contract` / `get_transaction_info` tools with no extras installed.
 `eth-abi` is a **test oracle** in `[dev]`, never a runtime path.
 
-- **Two declared output conventions**:
-  - **Tier convention** (`decode_transaction_input`, `decode_log_data`, `SmartContract.iter_events`): ints within int64 stay `int`, ints outside become strings, `bytes` as `0x` hex, arrays and tuples as `list`, and fixed-point values as fixed-point strings. Contract: a decoded value must not change shape when a user adds or drops `[fastabi]` (`tests/test_abi_pure.py::TestTierParity` pins it).
-  - **Agent-JSON convention** (`decode_arguments`, used by MCP `read_contract`): output decoding for agent consumption; all integers become strings (no magnitude cliff), named tuples become dicts keyed by component name, and unnamed outputs are keyed by `str(index)`.
+- **Two declared output conventions**, one per entry point:
+  - **Tier convention** — calldata and log decoding (`decode_transaction_input`,
+    `decode_log_data`, `SmartContract.iter_events`), implemented in
+    `decode.py:_to_rust_convention` and `lib.rs:convert_token_to_json`: ints
+    inside int64 stay `int`, ints outside become strings, `bytes`/`bytesN` as
+    `0x` hex, arrays *and* tuples as `list`, `fixedMxN`/`ufixedMxN` as a
+    fixed-point string (`format(v,'f')`, never scientific) so orjson/MCP never
+    sees a `Decimal`. Contract: a decoded value must not change shape when a
+    user adds or drops `[fastabi]`. `TIER_CONVENTION_CASES` in
+    `tests/test_abi_pure.py` declares the rules once and drives both tiers
+    (the pure floor unconditionally, the Rust tier when built).
+  - **Agent-JSON convention** — `eth_call` output decoding
+    (`abi_pure.decode_arguments`, used by MCP `read_contract`): EVERY integer
+    becomes a string (no magnitude cliff for an agent), named tuples become
+    dicts keyed by component name, unnamed outputs are keyed by `str(index)`
+    (not `param_{i}` — that is the tier convention's input naming).
 - **Decoded-input naming is one convention on both tiers**
   (`decode.py:_resolved_input_names` mirrored by `lib.rs resolved_param_names`):
   unnamed inputs (missing/null/empty name) are keyed `param_{i}` by position;

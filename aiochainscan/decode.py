@@ -353,10 +353,11 @@ def _to_rust_convention(data: Any) -> Any:
     Implements the Tier convention: ints within int64 stay ``int``, ints outside
     become strings, ``bytes`` become ``0x`` hex, fixed-point Decimals become
     fixed-point strings (never scientific notation), and arrays and tuples both
-    become ``list`` (the pure floor returns Python tuples) — ensuring a decoded
-    value does not change shape when adding or dropping ``[fastabi]``. Differs
-    from the Agent-JSON convention (:func:`aiochainscan.abi_pure.to_json_values`),
-    which stringifies all integers and formats named tuples as dicts.
+    become ``list`` (the pure floor returns Python tuples) — so a decoded value
+    does not change shape when a user adds or drops ``[fastabi]``. One
+    traversal, not one per rule: this runs on every pure-floor decode. The
+    Agent-JSON convention (:func:`aiochainscan.abi_pure.to_json_values`)
+    stringifies every integer and keys named tuples as dicts instead.
     """
     if isinstance(data, bytes):
         return '0x' + data.hex()

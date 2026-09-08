@@ -246,10 +246,6 @@ def test_the_rust_tier_refuses_what_the_floor_refuses(abi_type, payload):
     )
 
 
-class RawAbiEncoded(bytes):
-    """Marker for pre-encoded ABI argument bytes."""
-
-
 # Module-level table of declared Tier-convention cases:
 # (solidity_type, abi_encoded_input_or_python_value, expected_tier_convention_value)
 TIER_CONVENTION_CASES: list[tuple[str | dict[str, Any], Any, Any]] = [
@@ -342,23 +338,15 @@ PARAM_NAMING_IDS: list[str] = [
 
 def _build_tier_case_calldata(
     solidity_type: str | dict[str, Any],
-    val_or_encoded: Any,
+    value: Any,
 ) -> tuple[str, list[dict[str, Any]], str]:
+    """Calldata for one declared case: (argument name, abi, hex calldata)."""
     param = {'type': solidity_type} if isinstance(solidity_type, str) else dict(solidity_type)
     param_name = str(param.get('name') or '') or 'arg'
     param_with_name = {**param, 'name': param_name}
     sig = f'f({canonical_abi_type(param_with_name)})'
     abi = [{'type': 'function', 'name': 'f', 'inputs': [param_with_name], 'outputs': []}]
-    if isinstance(val_or_encoded, RawAbiEncoded):
-        raw_args = bytes(val_or_encoded)
-    elif isinstance(val_or_encoded, bytes) and param.get('type') not in (
-        'bytes',
-        'fixed_bytes',
-        'bytes32',
-    ):
-        raw_args = val_or_encoded
-    else:
-        raw_args = encode_arguments([param_with_name], [val_or_encoded])
+    raw_args = encode_arguments([param_with_name], [value])
     calldata = '0x' + keccak_hash(sig)[:8] + raw_args.hex()
     return param_name, abi, calldata
 
@@ -499,25 +487,25 @@ class TestTierParity:
         }
 
     @pytest.mark.parametrize(
-        ('solidity_type', 'val_or_encoded', 'expected'),
+        ('solidity_type', 'value', 'expected'),
         TIER_CONVENTION_CASES,
         ids=TIER_CONVENTION_IDS,
     )
     def test_pure_floor_tier_convention_table(
         self,
         solidity_type: str | dict[str, Any],
-        val_or_encoded: Any,
+        value: Any,
         expected: Any,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """The pure-Python floor implements the Tier convention unconditionally."""
         monkeypatch.setattr(decode_module, 'FASTABI_AVAILABLE', False)
-        param_name, abi, calldata = _build_tier_case_calldata(solidity_type, val_or_encoded)
+        param_name, abi, calldata = _build_tier_case_calldata(solidity_type, value)
         decoded = decode_transaction_input({'input': calldata}, abi)['decoded_data']
         assert decoded[param_name] == expected
 
     @pytest.mark.parametrize(
-        ('solidity_type', 'val_or_encoded', 'expected'),
+        ('solidity_type', 'value', 'expected'),
         TIER_CONVENTION_CASES,
         ids=TIER_CONVENTION_IDS,
     )
@@ -525,11 +513,11 @@ class TestTierParity:
     def test_rust_tier_tier_convention_table(
         self,
         solidity_type: str | dict[str, Any],
-        val_or_encoded: Any,
+        value: Any,
         expected: Any,
     ) -> None:
         """The Rust tier implements the Tier convention and agrees with expected."""
-        param_name, abi, calldata = _build_tier_case_calldata(solidity_type, val_or_encoded)
+        param_name, abi, calldata = _build_tier_case_calldata(solidity_type, value)
         fast_decoded = decode_module._decode_transaction_input_fast({'input': calldata}, abi)[
             'decoded_data'
         ]
