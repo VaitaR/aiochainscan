@@ -161,8 +161,14 @@ jobs:
     # latest one while 1.0.0 was already on PyPI — the panel reflects
     # deployment records, not uploads. The `pypi` environment already exists
     # (it is what those 2025 records were created against).
-    # TEMPORARY (diagnostic): the environment claim is removed to test whether
-    # the aiochainscan publisher on PyPI is registered without one.
+    # No `environment:` key, deliberately. PyPI's trusted publisher for
+    # aiochainscan is registered WITHOUT an environment, and a token carrying an
+    # environment claim is then refused for that project ("OIDC scoped token is
+    # not valid for project 'aiochainscan'", measured 2026-09-08) — while the
+    # aiochainscan-fastabi publisher is registered WITH `pypi` and accepts it.
+    # The cost is that GitHub records no deployment for this job. Restoring the
+    # key requires adding the `pypi` environment to the aiochainscan publisher
+    # on PyPI first, so both projects agree on the claim.
 
     steps:
       - name: Download distributions
