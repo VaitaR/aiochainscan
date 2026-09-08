@@ -221,8 +221,12 @@ jobs:
         with:
           packages-dir: staging/base
 
+      # `!cancelled()` is what actually makes the two steps independent: a step
+      # whose `if` names no result function is skipped once an earlier step in
+      # the job has failed, so without it a base-publish failure silently takes
+      # the accelerator down with it (observed on v1.0.3).
       - name: Publish aiochainscan-fastabi
-        if: steps.files.outputs.fastabi_count != '0'
+        if: ${{ !cancelled() && steps.files.outputs.fastabi_count != '0' }}
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: staging/fastabi
