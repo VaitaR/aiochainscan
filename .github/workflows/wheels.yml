@@ -161,9 +161,8 @@ jobs:
     # latest one while 1.0.0 was already on PyPI — the panel reflects
     # deployment records, not uploads. The `pypi` environment already exists
     # (it is what those 2025 records were created against).
-    environment:
-      name: pypi
-      url: https://pypi.org/p/aiochainscan
+    # TEMPORARY (diagnostic): the environment claim is removed to test whether
+    # the aiochainscan publisher on PyPI is registered without one.
 
     steps:
       - name: Download distributions
