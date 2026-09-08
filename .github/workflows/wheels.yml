@@ -161,14 +161,13 @@ jobs:
     # latest one while 1.0.0 was already on PyPI — the panel reflects
     # deployment records, not uploads. The `pypi` environment already exists
     # (it is what those 2025 records were created against).
-    # No `environment:` key, deliberately. PyPI's trusted publisher for
-    # aiochainscan is registered WITHOUT an environment, and a token carrying an
-    # environment claim is then refused for that project ("OIDC scoped token is
-    # not valid for project 'aiochainscan'", measured 2026-09-08) — while the
-    # aiochainscan-fastabi publisher is registered WITH `pypi` and accepts it.
-    # The cost is that GitHub records no deployment for this job. Restoring the
-    # key requires adding the `pypi` environment to the aiochainscan publisher
-    # on PyPI first, so both projects agree on the claim.
+    # Both projects' PyPI publishers are registered for this workflow with the
+    # `pypi` environment, so the claim this key adds must keep matching on both:
+    # a publisher registered without an environment refuses a token that carries
+    # one (measured 2026-09-08). Without the key GitHub records no deployment.
+    environment:
+      name: pypi
+      url: https://pypi.org/p/aiochainscan
 
     steps:
       - name: Download distributions
@@ -212,8 +211,10 @@ jobs:
               if [ -f "$dir/$f" ]; then rm -v "$dir/$f"; fi
             done
           }
-          prune aiochainscan staging/base
-          prune aiochainscan-fastabi staging/fastabi
+          # TEMPORARY: pruning disabled for one dispatch so the publish steps
+          # actually authenticate against PyPI instead of being skipped.
+          : prune aiochainscan staging/base
+          : prune aiochainscan-fastabi staging/fastabi
 
           echo "base_count=$(ls -1 staging/base | wc -l | tr -d ' ')" >> "$GITHUB_OUTPUT"
           echo "fastabi_count=$(ls -1 staging/fastabi | wc -l | tr -d ' ')" >> "$GITHUB_OUTPUT"
