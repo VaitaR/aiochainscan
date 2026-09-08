@@ -246,6 +246,123 @@ def test_the_rust_tier_refuses_what_the_floor_refuses(abi_type, payload):
     )
 
 
+class RawAbiEncoded(bytes):
+    """Marker for pre-encoded ABI argument bytes."""
+
+
+# Module-level table of declared Tier-convention cases:
+# (solidity_type, abi_encoded_input_or_python_value, expected_tier_convention_value)
+TIER_CONVENTION_CASES: list[tuple[str | dict[str, Any], Any, Any]] = [
+    ('uint256', 9223372036854775807, 9223372036854775807),
+    ('uint256', 9223372036854775808, '9223372036854775808'),
+    ('int256', -9223372036854775808, -9223372036854775808),
+    ('int256', -9223372036854775809, '-9223372036854775809'),
+    ('bool', True, True),
+    ('address', '0x' + '11' * 20, '0x' + '11' * 20),
+    ('bytes32', b'\xaa' * 32, '0x' + 'aa' * 32),
+    ('bytes', b'\x01\x02\x03', '0x010203'),
+    ('string', 'hello world', 'hello world'),
+    ('uint8[]', [1, 2, 3], [1, 2, 3]),
+    (
+        {
+            'type': 'tuple',
+            'name': 'named_tuple',
+            'components': [{'type': 'uint256', 'name': 'a'}, {'type': 'bytes', 'name': 'b'}],
+        },
+        (42, b'\x01\x02'),
+        [42, '0x0102'],
+    ),
+    (
+        {
+            'type': 'tuple',
+            'components': [{'type': 'uint256'}, {'type': 'address'}],
+        },
+        (99, '0x' + '22' * 20),
+        [99, '0x' + '22' * 20],
+    ),
+    ('ufixed128x18', Decimal('1.5'), '1.500000000000000000'),
+]
+
+TIER_CONVENTION_IDS: list[str] = [
+    'uint256-int64-max',
+    'uint256-above-int64-max',
+    'int256-int64-min',
+    'int256-below-int64-min',
+    'bool',
+    'address',
+    'bytes32',
+    'bytes',
+    'string',
+    'uint8-array',
+    'named-tuple',
+    'unnamed-tuple',
+    'ufixed128x18',
+]
+
+PARAM_NAMING_CASES: list[tuple[list[dict[str, Any]], list[str]]] = [
+    (
+        [{'type': 'uint256', 'name': ''}, {'type': 'uint256', 'name': ''}],
+        ['param_0', 'param_1'],
+    ),
+    (
+        [{'type': 'uint256'}, {'type': 'uint256'}],
+        ['param_0', 'param_1'],
+    ),
+    (
+        [{'type': 'uint256', 'name': 'a'}, {'type': 'uint256', 'name': 'a'}],
+        ['a', 'a_2'],
+    ),
+    (
+        [
+            {'type': 'uint256', 'name': 'a'},
+            {'type': 'uint256', 'name': 'a'},
+            {'type': 'uint256', 'name': 'a'},
+        ],
+        ['a', 'a_2', 'a_3'],
+    ),
+    (
+        [
+            {'type': 'uint256', 'name': ''},
+            {'type': 'uint256', 'name': 'a'},
+            {'type': 'uint256', 'name': ''},
+            {'type': 'uint256', 'name': 'a'},
+        ],
+        ['param_0', 'a', 'param_2', 'a_2'],
+    ),
+]
+
+PARAM_NAMING_IDS: list[str] = [
+    'unnamed-empty-string',
+    'unnamed-missing-key',
+    'duplicate-names',
+    'triple-duplicate-names',
+    'mixed-named-unnamed-duplicate',
+]
+
+
+def _build_tier_case_calldata(
+    solidity_type: str | dict[str, Any],
+    val_or_encoded: Any,
+) -> tuple[str, list[dict[str, Any]], str]:
+    param = {'type': solidity_type} if isinstance(solidity_type, str) else dict(solidity_type)
+    param_name = str(param.get('name') or '') or 'arg'
+    param_with_name = {**param, 'name': param_name}
+    sig = f'f({canonical_abi_type(param_with_name)})'
+    abi = [{'type': 'function', 'name': 'f', 'inputs': [param_with_name], 'outputs': []}]
+    if isinstance(val_or_encoded, RawAbiEncoded):
+        raw_args = bytes(val_or_encoded)
+    elif isinstance(val_or_encoded, bytes) and param.get('type') not in (
+        'bytes',
+        'fixed_bytes',
+        'bytes32',
+    ):
+        raw_args = val_or_encoded
+    else:
+        raw_args = encode_arguments([param_with_name], [val_or_encoded])
+    calldata = '0x' + keccak_hash(sig)[:8] + raw_args.hex()
+    return param_name, abi, calldata
+
+
 class TestTierParity:
     """A base install and an ``[fastabi]`` install decode identically."""
 
@@ -380,6 +497,82 @@ class TestTierParity:
             'data': ['0x0102', '0x'],  # bytes as 0x hex
             'route': ['0x' + 'cd' * 20, [1, str(2**64)]],  # tuples as lists
         }
+
+    @pytest.mark.parametrize(
+        ('solidity_type', 'val_or_encoded', 'expected'),
+        TIER_CONVENTION_CASES,
+        ids=TIER_CONVENTION_IDS,
+    )
+    def test_pure_floor_tier_convention_table(
+        self,
+        solidity_type: str | dict[str, Any],
+        val_or_encoded: Any,
+        expected: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The pure-Python floor implements the Tier convention unconditionally."""
+        monkeypatch.setattr(decode_module, 'FASTABI_AVAILABLE', False)
+        param_name, abi, calldata = _build_tier_case_calldata(solidity_type, val_or_encoded)
+        decoded = decode_transaction_input({'input': calldata}, abi)['decoded_data']
+        assert decoded[param_name] == expected
+
+    @pytest.mark.parametrize(
+        ('solidity_type', 'val_or_encoded', 'expected'),
+        TIER_CONVENTION_CASES,
+        ids=TIER_CONVENTION_IDS,
+    )
+    @pytest.mark.skipif(not FASTABI_AVAILABLE, reason='fastabi extension not built')
+    def test_rust_tier_tier_convention_table(
+        self,
+        solidity_type: str | dict[str, Any],
+        val_or_encoded: Any,
+        expected: Any,
+    ) -> None:
+        """The Rust tier implements the Tier convention and agrees with expected."""
+        param_name, abi, calldata = _build_tier_case_calldata(solidity_type, val_or_encoded)
+        fast_decoded = decode_module._decode_transaction_input_fast({'input': calldata}, abi)[
+            'decoded_data'
+        ]
+        assert fast_decoded[param_name] == expected
+
+    @pytest.mark.parametrize(
+        ('params', 'expected_names'),
+        PARAM_NAMING_CASES,
+        ids=PARAM_NAMING_IDS,
+    )
+    def test_pure_floor_param_naming_table(
+        self,
+        params: list[dict[str, Any]],
+        expected_names: list[str],
+    ) -> None:
+        """The pure floor resolves input names according to the naming convention."""
+        assert decode_module._resolved_input_names(params) == expected_names
+
+    @pytest.mark.parametrize(
+        ('params', 'expected_names'),
+        PARAM_NAMING_CASES,
+        ids=PARAM_NAMING_IDS,
+    )
+    @pytest.mark.skipif(not FASTABI_AVAILABLE, reason='fastabi extension not built')
+    def test_rust_tier_param_naming_table(
+        self,
+        params: list[dict[str, Any]],
+        expected_names: list[str],
+    ) -> None:
+        """The Rust tier resolves input names identically to the pure floor."""
+        sig = f'f({",".join(canonical_abi_type(p) for p in params)})'
+        abi = [{'type': 'function', 'name': 'f', 'inputs': params, 'outputs': []}]
+        values = [1] * len(params)
+        calldata = '0x' + keccak_hash(sig)[:8] + encode_arguments(params, values).hex()
+        fast_decoded = decode_module._decode_transaction_input_fast({'input': calldata}, abi)[
+            'decoded_data'
+        ]
+        pure_decoded = decode_module._decode_transaction_input_python({'input': calldata}, abi)[
+            'decoded_data'
+        ]
+        assert fast_decoded == pure_decoded
+        assert set(fast_decoded.keys()) == set(expected_names)
+        assert len(fast_decoded) == len(expected_names)
 
 
 class TestUnnamedAndDuplicateInputNames:
