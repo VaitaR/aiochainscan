@@ -1,6 +1,6 @@
 [package]
 name = "aiochainscan_fastabi"
-version = "1.0.1"
+version = "1.0.2"
 edition = "2021"
 
 [lib]
@@ -8,7 +8,11 @@ name = "aiochainscan_fastabi"
 crate-type = ["cdylib"]
 
 [dependencies]
-pyo3 = { version = "0.22", features = ["extension-module"] }
+# abi3-py312: one wheel per platform serves 3.12 and every later CPython, so a
+# new interpreter release needs no rebuild. Measured cost against a
+# version-specific build: none outside noise (the work is ABI parsing and serde,
+# not C-API calls). Required here because pyo3 0.22 predates 3.14 support.
+pyo3 = { version = "0.22", features = ["extension-module", "abi3-py312"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 pythonize = "0.22"

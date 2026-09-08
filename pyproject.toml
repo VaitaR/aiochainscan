@@ -1,6 +1,6 @@
 [project]
 name = "aiochainscan"
-version = "1.0.1"
+version = "1.0.2"
 description = "Async Python client for Etherscan-compatible and Blockscout APIs"
 authors = [
     { name = "VaitaR", email = "andrey.shivalin@gmail.com" }
@@ -15,6 +15,7 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
 ]
 
 dependencies = [
@@ -62,7 +63,7 @@ data = [
 fastabi = [
     # Floor matches decode.py's _MIN_FASTABI_VERSION: older extensions decode by
     # the pre-strict rules and are refused at import, so let the resolver fail loudly.
-    "aiochainscan-fastabi>=0.2.0",
+    "aiochainscan-fastabi>=1.0.1",
 ]
 
 [project.scripts]
@@ -74,9 +75,9 @@ Repository = "https://github.com/VaitaR/aiochainscan"
 Issues = "https://github.com/VaitaR/aiochainscan/issues"
 
 [tool.uv.workspace]
-# aiochainscan-fastabi is not published anywhere; resolve it as a local
-# workspace member so `uv sync`/`uv lock` can satisfy the `fastabi` extra
-# during development without needing a PyPI entry.
+# aiochainscan-fastabi is published on PyPI (since 1.0.1); it stays a local
+# workspace member so `uv sync`/`uv lock` build the extra from this checkout
+# instead of resolving a release that may lag the source.
 members = ["aiochainscan/fastabi"]
 
 [tool.uv.sources]

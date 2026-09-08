@@ -61,7 +61,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-14]  # macos-14 = Apple Silicon
+        os: [ubuntu-latest, windows-latest, macos-14, macos-13]  # macos-14 = arm64, macos-13 = x86_64
 
     steps:
       - uses: actions/checkout@v4
@@ -79,8 +79,9 @@ jobs:
         with:
           package-dir: aiochainscan/fastabi
         env:
-          # Build for Python 3.12, 3.13 only (requires-python >= 3.12)
-          CIBW_BUILD: "cp312-* cp313-*"
+          # One cp312-abi3 wheel per platform covers 3.12, 3.13, 3.14 and later
+          # (pyo3 abi3-py312 — see fastabi/Cargo.toml), so only cp312 is built.
+          CIBW_BUILD: "cp312-*"
           CIBW_SKIP: "pp* *-musllinux*"  # Skip PyPy and musllinux
 
           # Rust inside the manylinux container: rustup-init needs

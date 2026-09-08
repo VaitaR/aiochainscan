@@ -57,6 +57,10 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
+        # 3.14 is absent deliberately: the runtime and the test suite pass on it
+        # (verified locally), but [dev] cannot be installed there — import-linter's
+        # grimp has no 3.14 wheel and its sdist build fails. Wheel installs are
+        # covered on 3.14 in test-install.yml instead.
         python-version: ["3.12", "3.13"]
 
     steps:
