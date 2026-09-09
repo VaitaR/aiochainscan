@@ -864,6 +864,13 @@ STANDARD_CHAINS = {
         'aliases': ['sonic'],
         'moralis_hex': '0x92',
     },
+    # Plasma — no Blockscout instance and no Etherscan-family scanner; identity there comes
+    # from Routescan, so this entry carries ids and aliases only.
+    9745: {
+        'name': 'plasma',
+        'aliases': ['plasma', 'xpl'],
+        'moralis_hex': '0x2611',
+    },
 }
 
 
