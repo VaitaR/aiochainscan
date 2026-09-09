@@ -4,6 +4,14 @@ All notable changes to this project are documented in this file. The format is
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions
 follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **Plasma (chain id 9745)** in `chain_registry.STANDARD_CHAINS`, aliases `plasma` / `xpl`.
+  Ids and aliases only: Plasma has no Blockscout instance and no Etherscan-family scanner,
+  so no scanner target or URL-builder profile is claimed for it.
+
 ## [1.0.3] — 2026-09-08
 
 Packaging only. No library code changed.
