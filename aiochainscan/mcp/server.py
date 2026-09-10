@@ -31,6 +31,8 @@ try:
 except ImportError:  # pragma: no cover - exercised via test_imports
     MCP_AVAILABLE = False
 
+from aiochainscan import __version__
+
 from . import tools
 from .envelope import ToolResponse
 
@@ -279,6 +281,10 @@ def create_mcp_server(pool: tools.ClientPool | None = None) -> Any:
         )
 
     mcp: Any = FastMCP('aiochainscan', instructions=_SERVER_INSTRUCTIONS)
+    # FastMCP 1.x takes no `version`, so the low-level server defaults
+    # `serverInfo.version` to the mcp SDK's own version — clients would read the
+    # SDK release as this server's. The wrapped server accepts it directly.
+    mcp._mcp_server.version = __version__
     client_pool = pool if pool is not None else tools.ClientPool()
     for spec in _TOOL_SPECS:
         _register_tool(mcp, client_pool, spec)
