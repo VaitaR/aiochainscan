@@ -368,13 +368,15 @@ class TestBlockscoutCurrencyParity:
             finally:
                 await client_v1.close()
                 await client_v2.close()
-        # Guard the guard: every BlockScout instance chain must be covered —
-        # the networks whose currency used to be wrong (bsc, polygon, gnosis)
-        # stay in the swept surface.
-        assert checked >= 10
+        # Guard the guard: the sweep must cover every chain both legs serve,
+        # so shrinking the host table cannot silently empty it.
+        assert checked == len(set(_declared_chains('blockscout')) & set(v2_chains))
+        assert checked >= 5
 
     async def test_formerly_wrong_currencies_pin_their_symbols(self) -> None:
-        for network, symbol in (('bsc', 'BNB'), ('polygon', 'MATIC'), ('gnosis', 'xDAI')):
+        # ('bsc', 'BNB') belonged here until BSC left the BlockScout surface
+        # entirely (no instance host) — see the host table's note.
+        for network, symbol in (('polygon', 'MATIC'), ('gnosis', 'xDAI')):
             client_v1 = _construct('blockscout', network)
             client_v2 = _construct('blockscout_v2', network)
             try:

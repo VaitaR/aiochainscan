@@ -21,7 +21,21 @@ Streaming approach:
 import asyncio
 import json
 
-from aiochainscan import ChainscanClient
+from aiochainscan import ChainscanClient, wei_to_ether
+
+
+def bounded_client() -> ChainscanClient:
+    """A client for the bounded-range demos.
+
+    A bounded block range needs a provider whose spec declares one, which rules
+    out BlockScout v2 (cursor-paginated, refuses bounds outright). Etherscan is
+    preferred where a key is configured: the keyless BlockScout v1 instance is
+    shared infrastructure and answers a burst of range queries with 429.
+    """
+    try:
+        return ChainscanClient.from_config('etherscan', 'ethereum')
+    except ValueError:
+        return ChainscanClient.from_config('blockscout', 'ethereum')
 
 
 async def example_stream_without_decoding():
@@ -30,7 +44,7 @@ async def example_stream_without_decoding():
 
     Use case: Just need raw transaction data, counting, filtering by block range.
     """
-    print('\\n' + '=' * 60)
+    print('\n' + '=' * 60)
     print('Example 1: Stream Without Decoding')
     print('=' * 60)
 
@@ -57,14 +71,14 @@ async def example_stream_without_decoding():
 
             # Print progress every 100 transactions
             if count % 100 == 0:
-                print(f'  Processed {count} transactions...', end='\\r')
+                print(f'  Processed {count} transactions...', end='\r')
 
             # Limit for demo purposes
             if count >= 500:
                 break
 
-        print(f'\\n✓ Processed {count} transactions')
-        print(f'✓ Total ETH transferred: {total_value / 1e18:.4f} ETH')
+        print(f'\n✓ Processed {count} transactions')
+        print(f'✓ Total ETH transferred: {wei_to_ether(total_value):.4f} ETH')
         print('✓ Memory usage: ~10MB (constant, regardless of total count)')
 
 
@@ -74,11 +88,11 @@ async def example_stream_with_decoding():
 
     Use case: Need to understand function calls, analyze contract interactions.
     """
-    print('\\n' + '=' * 60)
+    print('\n' + '=' * 60)
     print('Example 2: Stream With Decoding')
     print('=' * 60)
 
-    async with ChainscanClient.from_config('blockscout_v2', 'ethereum') as client:
+    async with bounded_client() as client:
         # USDT contract (lots of transactions)
         usdt_address = '0xdac17f958d2ee523a2206206994597c13d831ec7'
 
@@ -111,20 +125,20 @@ async def example_stream_with_decoding():
 
                 # Print first few decoded transactions
                 if count <= 3:
-                    print(f'\\n  Transaction #{count}:')
+                    print(f'\n  Transaction #{count}:')
                     print(f'    Hash: {tx.get("hash")}')
                     print(f'    Function: {func_name}')
                     print(f'    Args: {tx.get("decoded_data", {})}')
 
                 if count % 50 == 0:
-                    print(f'  Decoded {count} transactions...', end='\\r')
+                    print(f'  Decoded {count} transactions...', end='\r')
 
                 # Limit for demo
                 if count >= 200:
                     break
 
-            print(f'\\n\\n✓ Decoded {count} transactions')
-            print('\\n📊 Function Call Statistics:')
+            print(f'\n\n✓ Decoded {count} transactions')
+            print('\n📊 Function Call Statistics:')
             for func, count in sorted(function_calls.items(), key=lambda x: x[1], reverse=True):
                 print(f'  {func}: {count} calls')
 
@@ -139,11 +153,11 @@ async def example_stream_events():
 
     Use case: Monitor Transfer events, analyze DeFi activity, track NFT trades.
     """
-    print('\\n' + '=' * 60)
+    print('\n' + '=' * 60)
     print('Example 3: Stream Event Logs')
     print('=' * 60)
 
-    async with ChainscanClient.from_config('blockscout_v2', 'ethereum') as client:
+    async with bounded_client() as client:
         # WETH contract
         weth_address = '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2'
 
@@ -178,20 +192,20 @@ async def example_stream_events():
 
                 # Print first few events
                 if count <= 5:
-                    print(f'\\n  Event #{count}:')
+                    print(f'\n  Event #{count}:')
                     print(f'    Type: {event_name}')
                     print(f'    Block: {log.get("blockNumber")}')
                     print(f'    Data: {log.get("decoded_data", {})}')
 
                 if count % 20 == 0:
-                    print(f'  Processed {count} events...', end='\\r')
+                    print(f'  Processed {count} events...', end='\r')
 
                 # Limit for demo
                 if count >= 100:
                     break
 
-            print(f'\\n\\n✓ Processed {count} event logs')
-            print(f'✓ Total WETH deposited: {total_deposits / 1e18:.4f} WETH')
+            print(f'\n\n✓ Processed {count} event logs')
+            print(f'✓ Total WETH deposited: {wei_to_ether(total_deposits):.4f} WETH')
 
         except Exception as e:
             print(f'⚠️  Could not fetch ABI: {e}')
@@ -203,11 +217,11 @@ async def example_whale_address_processing():
 
     This would OOM with traditional bulk fetching, but streams efficiently.
     """
-    print('\\n' + '=' * 60)
+    print('\n' + '=' * 60)
     print('Example 4: Whale Address Processing')
     print('=' * 60)
 
-    async with ChainscanClient.from_config('blockscout_v2', 'ethereum') as client:
+    async with bounded_client() as client:
         # Binance hot wallet (millions of transactions)
         whale_address = '0x28c6c06298d514db089934071355e5743bf21d60'
 
@@ -219,7 +233,7 @@ async def example_whale_address_processing():
         block_range_start = None
         block_range_end = None
 
-        print('\\nStreaming transactions...')
+        print('\nStreaming transactions...')
 
         # Process in batches of 1000
         async for tx in client.iter_transactions(
@@ -241,16 +255,16 @@ async def example_whale_address_processing():
                 block_range_end = block_num
 
             if count % 100 == 0:
-                print(f'  Streamed {count} transactions...', end='\\r')
+                print(f'  Streamed {count} transactions...', end='\r')
 
             # Process more for whale demo
             if count >= 1000:
                 break
 
-        print(f'\\n\\n✓ Processed {count} transactions')
+        print(f'\n\n✓ Processed {count} transactions')
         print(f'✓ Block range: {block_range_start} to {block_range_end}')
         print('✓ Memory usage: ~10MB (would be GBs with traditional approach)')
-        print('\\n💡 This scales to MILLIONS of transactions with the same memory!')
+        print('\n💡 This scales to MILLIONS of transactions with the same memory!')
 
 
 async def example_smart_contract_streaming():
@@ -259,11 +273,11 @@ async def example_smart_contract_streaming():
 
     Best for: Clean API, automatic ABI fetching, proxy resolution.
     """
-    print('\\n' + '=' * 60)
+    print('\n' + '=' * 60)
     print('Example 5: SmartContract Streaming (High-Level API)')
     print('=' * 60)
 
-    async with ChainscanClient.from_config('blockscout_v2', 'ethereum') as client:
+    async with bounded_client() as client:
         try:
             # Create contract instance (auto-fetches ABI)
             print('Creating SmartContract instance for USDT...')
@@ -273,7 +287,7 @@ async def example_smart_contract_streaming():
             print(f'Is Proxy: {usdt.is_proxy}')
 
             # Stream decoded transactions using high-level API
-            print('\\nStreaming decoded transactions...')
+            print('\nStreaming decoded transactions...')
             count = 0
 
             async for tx in usdt.iter_transactions(
@@ -284,15 +298,15 @@ async def example_smart_contract_streaming():
                 count += 1
 
                 if count <= 3:
-                    print(f'\\n  Transaction #{count}:')
+                    print(f'\n  Transaction #{count}:')
                     print(f'    Function: {tx.function_name}')
                     print(f'    From: {tx.from_address}')
                     print(f'    Args: {tx.args}')
 
                 if count % 10 == 0:
-                    print(f'  Processed {count} transactions...', end='\\r')
+                    print(f'  Processed {count} transactions...', end='\r')
 
-            print(f'\\n\\n✓ Processed {count} decoded transactions')
+            print(f'\n\n✓ Processed {count} decoded transactions')
 
         except Exception as e:
             print(f'⚠️  Error: {e}')
@@ -300,9 +314,9 @@ async def example_smart_contract_streaming():
 
 async def main():
     """Run all examples."""
-    print('\\n🚀 Streaming Decoder Demo - Memory-Efficient Transaction Processing')
+    print('\n🚀 Streaming Decoder Demo - Memory-Efficient Transaction Processing')
     print('=' * 60)
-    print('\\nThis demo shows how to process large datasets with constant memory.')
+    print('\nThis demo shows how to process large datasets with constant memory.')
     print('Perfect for whale addresses, DeFi analytics, and bulk processing.')
 
     # Run examples
@@ -312,16 +326,16 @@ async def main():
     await example_whale_address_processing()
     await example_smart_contract_streaming()
 
-    print('\\n' + '=' * 60)
+    print('\n' + '=' * 60)
     print('✅ All examples completed!')
     print('=' * 60)
-    print('\\n💡 Key Takeaways:')
+    print('\n💡 Key Takeaways:')
     print('  1. Streaming uses constant memory (~10MB) regardless of dataset size')
     print('  2. Decoding happens in thread pool (no event loop blocking)')
     print('  3. Can process millions of transactions without OOM')
     print('  4. Supports backpressure (slow consumers)')
     print('  5. Clean async iteration with async for loops')
-    print('\\n📚 See docs for more advanced usage patterns!')
+    print('\n📚 See docs for more advanced usage patterns!')
 
 
 if __name__ == '__main__':

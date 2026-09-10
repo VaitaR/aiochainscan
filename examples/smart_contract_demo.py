@@ -11,8 +11,9 @@ Perfect for analyzing smart contracts without manual ABI management!
 """
 
 import asyncio
+from decimal import Decimal
 
-from aiochainscan.core.client import ChainscanClient
+from aiochainscan import ChainscanClient, to_decimal_amount, wei_to_ether
 
 
 async def demo_usdt_proxy_contract():
@@ -110,7 +111,7 @@ async def demo_uniswap_v2_router():
         async for tx in router.iter_transactions(limit=5):
             count += 1
             from_addr = tx.from_address[:10]
-            value_eth = tx.value_wei / 1e18
+            value_eth = wei_to_ether(tx.value_wei)
 
             print(f'   {count}. {tx.function_name}()')
             print(f'      From: {from_addr}... | Value: {value_eth:.4f} ETH')
@@ -156,18 +157,21 @@ async def demo_custom_event_filtering():
 
         print(f'\n🔎 Fetching Transfer events from blocks {from_block:,} to {to_block:,}...')
 
-        total_transferred = 0
+        total_transferred = Decimal(0)
         event_count = 0
 
         async for event in dai.iter_events(
             event_name='Transfer', from_block=from_block, to_block=to_block, limit=50
         ):
             event_count += 1
-            value = event.args.get('value', 0)
-
-            if isinstance(value, int):
-                # DAI has 18 decimals
-                total_transferred += value / 1e18
+            # Argument names come from the contract's own ABI, not from the
+            # ERC-20 prose: DAI declares Transfer(src, dst, wad), so a
+            # hardcoded 'value' key would read every event as zero. Decoded
+            # integers arrive as `int` inside int64 and as a decimal string
+            # outside it — an 18-decimal amount is usually outside, and
+            # to_decimal_amount takes both.
+            value = event.args.get('wad', event.args.get('value', 0))
+            total_transferred += to_decimal_amount(value, decimals=18)
 
         print('\n📊 Results:')
         print(f'   Events found: {event_count}')

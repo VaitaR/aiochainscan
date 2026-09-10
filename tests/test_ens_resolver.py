@@ -23,7 +23,10 @@ from aiochainscan.adapters.memory_cache import InMemoryCache
 from aiochainscan.constants import BATCH_DEFAULT_CONCURRENCY, ENS_MAX_NAME_LENGTH
 from aiochainscan.crypto import to_checksum_address
 from aiochainscan.domain.method import Method
+from aiochainscan.exceptions import MethodNotDeclaredError
 from aiochainscan.services.ens_resolver import ENS_PUBLIC_RESOLVER, ENSResolver
+
+REVERSE_TEST_ADDRESS = '0x1111111111111111111111111111111111111111'
 
 
 class UnitENSClient:
@@ -414,6 +417,34 @@ class TestENSResolver:
         assert await resolver.lookup_address('0x123') is None
         scanner.get_address_info.assert_not_awaited()
         client.call.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_absent_reverse_record_is_none_without_a_contract_call(self):
+        # An answered address-info request settles the reverse record: an
+        # address with no name is None, and asking the ENS registry again
+        # would only surface MethodNotDeclaredError on scanners (BlockScout
+        # V2) that serve address info but not eth_call.
+        client = UnitENSClient()
+        scanner = UnitAddressInfoScanner(None)
+        resolver = ENSResolver(client, address_info_scanner=scanner, enable_cache=False)
+
+        assert await resolver.lookup_address(REVERSE_TEST_ADDRESS) is None
+        scanner.get_address_info.assert_awaited_once()
+        client.call.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_batch_lookup_propagates_library_errors(self):
+        # A library-level failure is a property of the batch, not of one
+        # address: absorbing it would report "no name" for every input.
+        client = UnitENSClient()
+        client.call = AsyncMock(
+            side_effect=MethodNotDeclaredError('Method Proxy Eth Call not supported')
+        )
+        resolver = ENSResolver(client, enable_cache=False)
+
+        with pytest.raises(BaseExceptionGroup) as excinfo:
+            await resolver.lookup_addresses([REVERSE_TEST_ADDRESS])
+        assert excinfo.group_contains(MethodNotDeclaredError)
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(

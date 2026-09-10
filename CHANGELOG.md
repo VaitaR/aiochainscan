@@ -4,13 +4,81 @@ All notable changes to this project are documented in this file. The format is
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions
 follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.0.4] — 2026-09-10
 
 ### Added
 
 - **Plasma (chain id 9745)** in `chain_registry.STANDARD_CHAINS`, aliases `plasma` / `xpl`.
   Ids and aliases only: Plasma has no Blockscout instance and no Etherscan-family scanner,
   so no scanner target or URL-builder profile is claimed for it.
+- `docs/GETTING_STARTED.md` — a user entry path (install → first request →
+  provider choice → recipes → limits), linked first from `docs/README.md`, which
+  now separates user guides from engineering documents.
+- `SECURITY.md` and GitHub issue templates (bug report, provider/chain support,
+  feature request).
+- **MCPB bundle (`mcpb/`) and `make mcpb`** — the format Smithery distributes
+  local stdio MCP servers in (its current flow accepts a hosted HTTPS URL or a
+  `.mcpb` bundle; there is no `smithery.yaml` and no container build). The
+  bundle carries no library code: it pins the published `aiochainscan[mcp]`
+  release, which the host installs with uv, and exposes the two API keys and
+  the default scanner as client-prompted settings. Packing refuses to run while
+  the version stated in the bundle and in `server.json` disagrees.
+- README sections for the normalized cross-provider surface and for the command
+  line, plus PyPI badges and absolute links (relative README links 404 on PyPI).
+
+### Fixed
+
+- An empty `AIOCHAINSCAN_MCP_SCANNER` is treated as unset instead of as a
+  scanner id. Launchers that substitute an unset optional setting (the MCPB
+  bundle's `default_scanner` among them) export the variable as `''`, which
+  left the MCP server with no usable default scanner.
+
+### Changed
+
+- **BREAKING (behaviour): ENS resolution propagates library errors instead of
+  answering `None`.** A scanner that does not declare `eth_call` raises
+  `MethodNotDeclaredError`; rate limits, transport failures and data-contract
+  errors surface as themselves, in the batch helpers too. `None` now means only
+  what it says: the name (or the reverse record) does not exist. An answered
+  BlockScout address-info request is treated as authoritative for the reverse
+  record, so an address with no ENS name is `None` without a contract call.
+- **BREAKING: the BlockScout host table is live-verified** (2026-09-10). Gnosis,
+  Optimism and Scroll moved to chain-branded hostnames (`gnosisscan.io`,
+  `explorer.optimism.io`, `scrollscan.com`) and only 301 the `*.blockscout.com`
+  alias there; the transport does not follow redirects, so those three chains
+  answered `ChainscanClientContentTypeError` on every request. BSC and Linea have
+  no BlockScout instance at all (both hosts 404) and are gone from the BlockScout
+  topology — `from_config('blockscout'|'blockscout_v2', 'bsc'|'bnb'|'linea')` now
+  raises instead of failing at request time. Keyless BSC goes through `nodereal`.
+- **The CLI was rewritten against the real library.** It advertised 22 scanners
+  and 10 API keys that do not exist; it now derives every fact from the scanner
+  registry, the scanner classes and the configuration manager: `scanners`,
+  `chains`, `check`, `generate-env`, `test`, `mcp`. `add-scanner` and `export`
+  are gone — neither had an implementation behind it. Chain coverage passes both
+  construction gates (registry resolution *and* the scanner class's
+  `supported_networks`), so it cannot advertise a chain that cannot be built.
+- Examples 01–03 run against the published package alone (no checkout, no dev
+  environment, no key), and every example uses the public surface with exact
+  `Decimal` conversion instead of `int(wei) / 1e18`.
+- `pyproject.toml` declares Production/Stable, `Framework :: AsyncIO`,
+  `Typing :: Typed`, keywords, and separate Documentation/Changelog project URLs;
+  the sdist ships `docs`, `examples` and `CONTRIBUTING.md`.
+
+### Fixed
+
+- `examples/07_handling_whale_blocks.py` requested a bounded range from
+  BlockScout v2, which cannot carry one, and expected `CompletenessUnavailableError`
+  from an Etherscan holder endpoint that is PRO-only; both paths now run.
+- `examples/smart_contract_demo.py` summed DAI transfers under the key `value`
+  while DAI's ABI declares `wad`, and dropped every amount above int64 through an
+  `isinstance(value, int)` filter — it reported 0.00 DAI for 50 transfers.
+- `examples/ens_and_gas_dashboard.py` read `ETHERSCAN_KEY` from the environment
+  itself and so skipped the gas dashboard for keys the library resolves from
+  `.env` files.
+
+### Note
+
+- 1.0.2 was never released; the version was skipped.
 
 ## [1.0.3] — 2026-09-08
 
@@ -147,3 +215,4 @@ facade from the 0.2 series is long gone — see
 [1.0.0]: https://github.com/VaitaR/aiochainscan/releases/tag/v1.0.0
 [1.0.1]: https://github.com/VaitaR/aiochainscan/releases/tag/v1.0.1
 [1.0.3]: https://github.com/VaitaR/aiochainscan/releases/tag/v1.0.3
+[1.0.4]: https://github.com/VaitaR/aiochainscan/releases/tag/v1.0.4

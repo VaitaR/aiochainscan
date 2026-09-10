@@ -1,0 +1,61 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.VaitaR/aiochainscan",
+  "title": "aiochainscan",
+  "description": "Read-only blockchain data: balances, transactions, tokens, holders, contract ABIs, ENS.",
+  "version": "1.0.4",
+  "repository": {
+    "url": "https://github.com/VaitaR/aiochainscan",
+    "source": "github"
+  },
+  "websiteUrl": "https://github.com/VaitaR/aiochainscan#mcp-server",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
+      "identifier": "aiochainscan",
+      "version": "1.0.4",
+      "runtimeHint": "uvx",
+      "transport": {
+        "type": "stdio"
+      },
+      "runtimeArguments": [
+        {
+          "type": "named",
+          "name": "--from",
+          "value": "aiochainscan[mcp]==1.0.4",
+          "description": "The MCP server ships in the mcp extra of the aiochainscan distribution."
+        }
+      ],
+      "packageArguments": [
+        {
+          "type": "positional",
+          "valueHint": "subcommand",
+          "value": "mcp",
+          "description": "Starts the stdio MCP server."
+        }
+      ],
+      "environmentVariables": [
+        {
+          "name": "ETHERSCAN_KEY",
+          "description": "Etherscan v2 API key. Optional: without it the server uses the keyless BlockScout scanner, which covers fewer methods.",
+          "isRequired": false,
+          "isSecret": true
+        },
+        {
+          "name": "NODEREAL_KEY",
+          "description": "NodeReal API key, used only for BSC chains.",
+          "isRequired": false,
+          "isSecret": true
+        },
+        {
+          "name": "AIOCHAINSCAN_MCP_SCANNER",
+          "description": "Default scanner for tools that do not pass one: blockscout, blockscout_v2, etherscan or nodereal.",
+          "isRequired": false,
+          "isSecret": false,
+          "default": "blockscout"
+        }
+      ]
+    }
+  ]
+}

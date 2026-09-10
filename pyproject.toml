@@ -1,6 +1,6 @@
 [project]
 name = "aiochainscan"
-version = "1.0.3"
+version = "1.0.4"
 description = "Async Python client for Etherscan-compatible and Blockscout APIs"
 authors = [
     { name = "VaitaR", email = "andrey.shivalin@gmail.com" }
@@ -8,14 +8,30 @@ authors = [
 license = { text = "MIT" }
 readme = "README.md"
 requires-python = ">=3.12"
+keywords = [
+    "ethereum",
+    "blockchain",
+    "etherscan",
+    "blockscout",
+    "explorer",
+    "async",
+    "asyncio",
+    "web3",
+    "evm",
+    "abi",
+]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
+    "Framework :: AsyncIO",
     "Intended Audience :: Developers",
+    "Intended Audience :: Financial and Insurance Industry",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
 ]
 
 dependencies = [
@@ -53,7 +69,10 @@ http2 = [
     "httpx[http2]>=0.27.0",
 ]
 mcp = [
-    "mcp>=1.0.0",
+    # mcp 2.x renamed FastMCP to MCPServer and changed the tool API; a fresh
+    # `pip install aiochainscan[mcp]` resolving to 2.x leaves MCP_AVAILABLE
+    # False and no server. Lift the pin only together with mcp/server.py.
+    "mcp>=1.0.0,<2",
 ]
 data = [
     "polars>=1.0.0",
@@ -71,6 +90,8 @@ aiochainscan = "aiochainscan.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/VaitaR/aiochainscan"
+Documentation = "https://github.com/VaitaR/aiochainscan/blob/main/docs/README.md"
+Changelog = "https://github.com/VaitaR/aiochainscan/blob/main/CHANGELOG.md"
 Repository = "https://github.com/VaitaR/aiochainscan"
 Issues = "https://github.com/VaitaR/aiochainscan/issues"
 
@@ -95,8 +116,15 @@ include = [
     "aiochainscan",
     "aiochainscan/fastabi",
     "tests",
+    "docs",
+    "examples",
+    # tests/test_mcpb_bundle.py reads both: the shipped suite must be runnable.
+    "mcpb",
+    "server.json",
     "README.md",
     "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "SECURITY.md",
     "LICENSE",
 ]
 exclude = [

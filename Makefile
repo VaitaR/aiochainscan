@@ -68,6 +68,9 @@ preflight: ## Environment preflight — run BEFORE starting a task
 probe-caps: ## Re-measure declared pagination caps against the live APIs (needs keys; exit 1 = drift or unconfirmed)
 	uv run python scripts/agent/probe_provider_caps.py $(ARGS)
 
+mcpb: ## Pack mcpb/ into dist/aiochainscan-<version>.mcpb (the Smithery stdio bundle)
+	uv run python scripts/agent/build_mcpb.py $(ARGS)
+
 validate: ## The DONE gate — run BEFORE claiming a task finished
 	./scripts/agent/validate_fast.sh
 

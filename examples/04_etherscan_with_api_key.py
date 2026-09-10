@@ -1,114 +1,74 @@
 #!/usr/bin/env python3
-"""
-04_etherscan_with_api_key.py - Using Etherscan with API Key
+"""The Etherscan v2 surface: everything a keyless provider cannot serve.
 
-For production use and higher rate limits, use Etherscan with an API key.
-This example shows proper configuration for Data Engineering pipelines.
+    export ETHERSCAN_KEY='your-key'      # https://etherscan.io/apis
+    python 04_etherscan_with_api_key.py [address]
 
-Get your free API key at: https://etherscan.io/apis
+The key is resolved by the library (environment, ``./.env.local``, ``./.env``,
+``~/.aiochainscan/.env``) — this script never reads it itself. One Etherscan v2
+key serves every chain the scanner declares; `from_config('etherscan', 8453)`
+is the same account.
 """
+
+from __future__ import annotations
 
 import asyncio
-import os
+import json
+import sys
 
-from aiochainscan.core.client import ChainscanClient
-from aiochainscan.domain.method import Method
+from aiochainscan import ChainscanClient, to_decimal_amount, wei_to_ether
+
+VITALIK = '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045'
+USDC = '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'
 
 
-async def main():
-    """Example using Etherscan with API key for production workloads."""
-
-    # Get API key from environment
-    api_key = os.getenv('ETHERSCAN_KEY')
-
-    if not api_key:
-        print('⚠️  ETHERSCAN_KEY not set!')
-        print('   Get your free API key at: https://etherscan.io/apis')
-        print("   Then run: export ETHERSCAN_KEY='your_key_here'")
-        print('\n   Falling back to BlockScout V2 (no key needed)...')
-
-        # Fallback to BlockScout
-        client = ChainscanClient.from_config('blockscout_v2', 'ethereum')
-        is_etherscan = False
-    else:
-        # Use Etherscan with API key
-        print(f'✅ Using Etherscan API (key: {api_key[:8]}...)')
-        client = ChainscanClient.from_config('etherscan', 'ethereum', api_key=api_key)
-        is_etherscan = True
-
-    address = '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045'
-
+async def main(address: str) -> None:
     try:
-        print(f'\n📊 Fetching data for {address[:16]}...\n')
+        client = ChainscanClient.from_config('etherscan', 'ethereum')
+    except ValueError as exc:
+        print(f'Etherscan is not configured: {exc}')
+        print("Set ETHERSCAN_KEY, or use 'blockscout_v2' for keyless access.")
+        raise SystemExit(1) from exc
 
-        # 1. Account balance
-        balance_raw = await client.call(Method.ACCOUNT_BALANCE, address=address)
-        # Handle different response formats
-        balance_eth = int(balance_raw) / 1e18 if isinstance(balance_raw, str) else balance_raw
-        print(f'💰 Balance: {balance_eth:.4f} ETH')
+    async with client:
+        balance = await client.get_balance(address)
+        print(f'Balance: {wei_to_ether(balance):.6f} ETH')
 
-        # 2. Normal transactions - different params for each API
-        if is_etherscan:
-            txs = await client.call(
-                Method.ACCOUNT_TRANSACTIONS,
-                address=address,
-                startblock=0,
-                endblock=99999999,
-                page=1,
-                offset=10,
-                sort='desc',
-            )
-        else:
-            # BlockScout V2 doesn't use Etherscan-style pagination
-            txs = await client.call(Method.ACCOUNT_TRANSACTIONS, address=address)
-            txs = txs[:10]  # Limit manually
+        # A bounded range and explicit sort: parameters the Etherscan dialect
+        # carries and the Blockscout v2 dialect does not.
+        transactions = await client.get_transactions_normalized(
+            address, start_block=18_000_000, offset=5
+        )
+        print(f'\nTransactions from block 18,000,000 ({len(transactions)}):')
+        for tx in transactions:
+            print(f'  {tx.hash} {wei_to_ether(tx.value_wei):>12.6f} ETH')
 
-        if isinstance(txs, list):
-            print(f'\n📝 Last {len(txs)} transactions:')
-            for tx in txs[:5]:
-                tx_hash = tx.get('hash', '')[:16]
-                value_wei = int(tx.get('value', 0))
-                value_eth = value_wei / 1e18
-                print(f'   {tx_hash}... | {value_eth:.4f} ETH')
+        internal = await client.get_internal_transactions(address)
+        print(f'\nInternal transactions in this page: {len(internal)}')
 
-        # 3. Internal transactions (Etherscan specialty)
-        if is_etherscan:
-            internal_txs = await client.call(
-                Method.ACCOUNT_INTERNAL_TRANSACTIONS,
-                address=address,
-                startblock=0,
-                endblock=99999999,
-                page=1,
-                offset=5,
-            )
+        gas = await client.get_gas_oracle()
+        print(
+            '\nGas (gwei): '
+            f'safe {gas.get("SafeGasPrice")}, '
+            f'propose {gas.get("ProposeGasPrice")}, '
+            f'fast {gas.get("FastGasPrice")}'
+        )
 
-            if isinstance(internal_txs, list) and internal_txs:
-                print(f'\n🔄 Internal transactions ({len(internal_txs)}):')
-                for tx in internal_txs[:3]:
-                    from_addr = tx.get('from', '')[:12]
-                    to_addr = tx.get('to', '')[:12]
-                    value = int(tx.get('value', 0)) / 1e18
-                    print(f'   {from_addr}... → {to_addr}... | {value:.4f} ETH')
-        else:
-            print('\n🔄 Internal transactions: (Use Etherscan API key for this feature)')
+        price = await client.get_eth_price()
+        print(f'ETH price: ${price.get("ethusd")} ({price.get("ethbtc")} BTC)')
 
-        # 4. Gas Oracle (real-time gas prices)
-        if is_etherscan:
-            try:
-                gas = await client.call(Method.GAS_ORACLE)
-                if isinstance(gas, dict):
-                    print('\n⛽ Gas Prices (Gwei):')
-                    print(f'   Safe Low: {gas.get("SafeGasPrice", "N/A")}')
-                    print(f'   Standard: {gas.get("ProposeGasPrice", "N/A")}')
-                    print(f'   Fast: {gas.get("FastGasPrice", "N/A")}')
-            except Exception as e:
-                print(f'\n⛽ Gas Oracle: {e}')
-        else:
-            print('\n⛽ Gas Oracle: (Use Etherscan API key for real-time gas prices)')
+        supply = await client.get_eth_supply()
+        print(f'ETH supply: {wei_to_ether(supply):,.0f} ETH')
 
-    finally:
-        await client.close()
+        abi = json.loads(await client.get_contract_abi(USDC))
+        functions = [entry['name'] for entry in abi if entry.get('type') == 'function']
+        print(f'\nUSDC ABI: {len(abi)} entries, {len(functions)} functions')
+        print(f'  first five: {", ".join(functions[:5])}')
+
+        # Token holder endpoints are Etherscan PRO; supply is not.
+        supply_raw = await client.get_token_supply(USDC)
+        print(f'USDC supply: {to_decimal_amount(supply_raw, decimals=6):,.2f} USDC')
 
 
 if __name__ == '__main__':
-    asyncio.run(main())
+    asyncio.run(main(sys.argv[1] if len(sys.argv) > 1 else VITALIK))

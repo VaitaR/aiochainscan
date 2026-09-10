@@ -19,7 +19,7 @@ async def stream_to_csv(address: str, output_path: str) -> int:
     Uses iter_transactions_streaming (batch_size=500) so RAM usage stays
     constant regardless of wallet size.
 
-    Columns written: hash, from_addr, to_addr, value_eth, timestamp
+    Columns written: hash, from_addr, to_addr, value_wei, timestamp
 
     Returns the total number of transactions written.
     """
@@ -28,7 +28,7 @@ async def stream_to_csv(address: str, output_path: str) -> int:
     async with ChainscanClient.from_config('blockscout_v2', 'ethereum') as client:
         with open(output_path, 'w', newline='') as f:
             writer = csv.DictWriter(
-                f, fieldnames=['hash', 'from_addr', 'to_addr', 'value_eth', 'timestamp']
+                f, fieldnames=['hash', 'from_addr', 'to_addr', 'value_wei', 'timestamp']
             )
             writer.writeheader()
 
@@ -47,7 +47,9 @@ async def stream_to_csv(address: str, output_path: str) -> int:
                                 'to_addr': to_field.get('hash')
                                 if isinstance(to_field, dict)
                                 else to_field,
-                                'value_eth': int(tx.get('value', 0)) / 10**18,
+                                # Wei as an integer string: exact, and no
+                                # spreadsheet reads it back as a float.
+                                'value_wei': str(int(tx.get('value', 0) or 0)),
                                 'timestamp': tx.get('timestamp'),
                             }
                         )

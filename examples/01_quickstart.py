@@ -1,72 +1,52 @@
 #!/usr/bin/env python3
-"""
-01_quickstart.py - Getting Started with aiochainscan
+"""Quickstart: balance, transactions and token holdings for one address.
 
-This is the simplest way to start using aiochainscan for blockchain data extraction.
-Perfect for Data Analysts and Data Engineers who need quick access to on-chain data.
+Self-contained — needs nothing but the published package:
 
-No API key required when using BlockScout V2!
+    pip install aiochainscan
+    python 01_quickstart.py [address]
+
+Blockscout serves this without an API key. Public instances are shared
+infrastructure and may rate-limit or refuse a burst; for unattended work use
+Etherscan (ETHERSCAN_KEY) or a self-hosted instance.
 """
+
+from __future__ import annotations
 
 import asyncio
+import sys
 
-from aiochainscan.core.client import ChainscanClient
-from aiochainscan.domain.method import Method
+from aiochainscan import ChainscanClient, to_decimal_amount, wei_to_ether
+
+VITALIK = '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045'
 
 
-async def main():
-    """Basic example: Get wallet balance and recent transactions."""
+async def main(address: str) -> None:
+    async with ChainscanClient.from_config('blockscout_v2', 'ethereum') as client:
+        balance = await client.get_balance(address)
+        transactions = await client.get_transactions_normalized(address)
+        tokens = await client.get_token_portfolio(address)
 
-    # Vitalik's address (well-known public address)
-    address = '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045'
+    # Wei arrives as a base-unit string. wei_to_ether is exact Decimal math:
+    # int(wei) / 1e18 starts losing digits at ~9.2 ETH.
+    print(f'Address: {address}')
+    print(f'Balance: {wei_to_ether(balance):.6f} ETH')
 
-    # Create client for Ethereum mainnet using BlockScout V2 (free, no API key!)
-    client = ChainscanClient.from_config('blockscout_v2', 'ethereum')
-
-    try:
-        # 1. Get ETH balance
-        print('📊 Fetching wallet data...')
-        balance = await client.call(Method.ACCOUNT_BALANCE, address=address)
-
-        # Balance is returned as string in Wei, convert to ETH
-        balance_eth = int(balance) / 1e18
-        print(f'\n💰 Balance: {balance_eth:.4f} ETH')
-
-        # 2. Get recent transactions (last 10)
-        txs = await client.call(
-            Method.ACCOUNT_TRANSACTIONS,
-            address=address,
+    print(f'\nMost recent transactions ({len(transactions)} in this page):')
+    for tx in transactions[:5]:
+        when = tx.timestamp.date().isoformat() if tx.timestamp else 'unknown date'
+        print(
+            f'  {tx.hash[:18] if tx.hash else "?":<20} {wei_to_ether(tx.value_wei):>14.6f} ETH  {when}'
         )
 
-        # txs is a list of transactions
-        items = txs[:5] if isinstance(txs, list) else []
-
-        print(f'\n📝 Recent Transactions ({len(items)} shown):')
-        for tx in items:
-            tx_hash = tx.get('hash', '')[:16] + '...'
-            value_wei = int(tx.get('value', 0))
-            value_eth = value_wei / 1e18
-            tx_types = tx.get('transaction_types', ['transfer'])
-            tx_type = tx_types[0] if tx_types else 'transfer'
-            print(f'  • {tx_hash} | {value_eth:.4f} ETH | {tx_type}')
-
-        # 3. Get token portfolio (all ERC20 tokens)
-        print('\n🪙 Token Portfolio:')
-        tokens = await client.call(Method.ACCOUNT_TOKEN_PORTFOLIO, address=address)
-
-        # tokens is a list directly
-        token_items = tokens[:5] if isinstance(tokens, list) else []
-        for token in token_items:
-            symbol = token.get('token', {}).get('symbol', '???')
-            balance = token.get('value', '0')
-            decimals = int(token.get('token', {}).get('decimals', 18))
-            balance_human = int(balance) / (10**decimals) if decimals > 0 else 0
-            print(f'  • {symbol}: {balance_human:,.2f}')
-
-    finally:
-        # Always close the client to release resources
-        await client.close()
+    print(f'\nToken holdings ({len(tokens)}):')
+    for item in tokens[:5]:
+        token = item.get('token', {})
+        symbol = token.get('symbol') or '???'
+        decimals = int(token.get('decimals') or 18)
+        amount = to_decimal_amount(item.get('value', '0'), decimals=decimals)
+        print(f'  {symbol:<12} {amount:>24,.4f}')
 
 
 if __name__ == '__main__':
-    asyncio.run(main())
+    asyncio.run(main(sys.argv[1] if len(sys.argv) > 1 else VITALIK))

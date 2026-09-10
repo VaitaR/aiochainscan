@@ -37,6 +37,7 @@ from typing import Any, Protocol, runtime_checkable
 from ..constants import BATCH_DEFAULT_CONCURRENCY, ENS_MAX_NAME_LENGTH
 from ..domain.method import Method
 from ..domain.models import Address
+from ..exceptions import ChainscanClientError, MethodNotDeclaredError
 from ..ports.cache import Cache
 
 # ENS contract addresses on Ethereum mainnet
@@ -257,17 +258,31 @@ class ENSResolver:
         return name
 
     async def _safe_resolve(self, name: str) -> str | None:
-        """Resolve a single name, returning None on failure."""
+        """Resolve a single name; ``None`` when the name has no record.
+
+        A library-level failure (the scanner does not declare ``eth_call``,
+        the provider rate-limited, the transport gave up) propagates: it is a
+        property of the batch, not of this one name, and absorbing it would
+        report "no such name" for every input.
+        """
         try:
             return await self.resolve_name(name)
-        except Exception:  # noqa: BLE001
+        except (ChainscanClientError, MethodNotDeclaredError):
+            raise
+        except Exception:  # noqa: BLE001 - one malformed input must not void the batch
             return None
 
     async def _safe_lookup(self, address: str) -> str | None:
-        """Look up a single address, returning None on failure."""
+        """Look up a single address; ``None`` when it has no reverse record.
+
+        Library-level failures propagate for the same reason as
+        :meth:`_safe_resolve`.
+        """
         try:
             return await self.lookup_address(address)
-        except Exception:  # noqa: BLE001
+        except (ChainscanClientError, MethodNotDeclaredError):
+            raise
+        except Exception:  # noqa: BLE001 - one malformed input must not void the batch
             return None
 
     async def _resolve_batch(
@@ -360,12 +375,24 @@ class ENSResolver:
             try:
                 info = await self._address_info_scanner.get_address_info(address)
                 if isinstance(info, dict):
-                    ens_name = _normalize_ens_name(info.get('ens_domain_name'))
+                    raw_name = info.get('ens_domain_name')
+                    if raw_name is None:
+                        # An answered address-info request is authoritative for
+                        # the reverse record: an absent field means the address
+                        # has no name, which is `None` — not a reason to ask the
+                        # same question again over a contract path this scanner
+                        # may not even declare.
+                        return None
+                    ens_name = _normalize_ens_name(raw_name)
                     if ens_name is not None:
                         return ens_name
-            except Exception:
-                # Fall through to ENS contract fallback
-                # Catch all exceptions including 422 errors for invalid addresses
+                    # A present but unusable value is unanswered metadata, not
+                    # an absent record: the contract path decides.
+            except (ChainscanClientError, MethodNotDeclaredError):
+                # Deliberate: the address-info endpoint is an optimisation, so
+                # its failure (including a 422 for an address the instance
+                # rejects) falls through to the ENS contract path, which
+                # raises on its own if it cannot serve the lookup either.
                 pass
 
         # Fallback to ENS contract reverse lookup
@@ -404,40 +431,35 @@ class ENSResolver:
 
         Uses the ENS registry and resolver contracts via eth_call.
         """
-        try:
-            # Calculate namehash for the ENS name
-            node = self._namehash(name)
+        # Calculate namehash for the ENS name
+        node = self._namehash(name)
 
-            # Step 1: Get resolver address from ENS registry
-            resolver_address = await self._registry_resolver_address(node)
-            if resolver_address is None:
-                return None
-
-            # Step 2: Get address from resolver
-            # addr(bytes32 node) returns address
-            addr_data = f'0x3b3b57de{node}'  # addr(bytes32)
-
-            addr_result = await self.client.call(
-                Method.PROXY_ETH_CALL,
-                to=resolver_address,
-                data=addr_data,
-            )
-
-            if not addr_result or addr_result == '0x' or len(addr_result) < 66:
-                return None
-
-            # Extract address (last 40 chars)
-            address = '0x' + addr_result[-40:]
-
-            if address == '0x' + '0' * 40:
-                return None  # No address set
-
-            # Checksum the address
-            return self._to_checksum_address(address)
-
-        except Exception:
-            # If ENS contract calls fail, return None
+        # Step 1: Get resolver address from ENS registry
+        resolver_address = await self._registry_resolver_address(node)
+        if resolver_address is None:
             return None
+
+        # Step 2: Get address from resolver
+        # addr(bytes32 node) returns address
+        addr_data = f'0x3b3b57de{node}'  # addr(bytes32)
+
+        addr_result = await self.client.call(
+            Method.PROXY_ETH_CALL,
+            to=resolver_address,
+            data=addr_data,
+        )
+
+        if not addr_result or addr_result == '0x' or len(addr_result) < 66:
+            return None
+
+        # Extract address (last 40 chars)
+        address = '0x' + addr_result[-40:]
+
+        if address == '0x' + '0' * 40:
+            return None  # No address set
+
+        # Checksum the address
+        return self._to_checksum_address(address)
 
     async def _reverse_lookup_via_ens_contract(self, address: str) -> str | None:
         """
@@ -445,43 +467,39 @@ class ENSResolver:
 
         Uses addr.reverse format (e.g., "d8da...045.addr.reverse")
         """
-        try:
-            # Remove 0x prefix and convert to lowercase
-            addr_clean = address[2:].lower() if address.startswith('0x') else address.lower()
+        # Remove 0x prefix and convert to lowercase
+        addr_clean = address[2:].lower() if address.startswith('0x') else address.lower()
 
-            # Create reverse node (e.g., "d8da...045.addr.reverse")
-            reverse_name = f'{addr_clean}.addr.reverse'
-            node = self._namehash(reverse_name)
+        # Create reverse node (e.g., "d8da...045.addr.reverse")
+        reverse_name = f'{addr_clean}.addr.reverse'
+        node = self._namehash(reverse_name)
 
-            # Step 1: Get resolver from ENS registry
-            resolver_address = await self._registry_resolver_address(node)
-            if resolver_address is None:
-                return None
-
-            # Step 2: Get name from resolver
-            # name(bytes32 node) returns string
-            name_data = f'0x691f3431{node}'  # name(bytes32)
-
-            name_result = await self.client.call(
-                Method.PROXY_ETH_CALL,
-                to=resolver_address,
-                data=name_data,
-            )
-
-            if not name_result or name_result == '0x':
-                return None
-
-            # Decode string from ABI encoding
-            # String format: 0x + offset(32bytes) + length(32bytes) + data
-            name = self._decode_string(name_result)
-
-            if name and name.endswith('.eth'):
-                return name
-
+        # Step 1: Get resolver from ENS registry
+        resolver_address = await self._registry_resolver_address(node)
+        if resolver_address is None:
             return None
 
-        except Exception:
+        # Step 2: Get name from resolver
+        # name(bytes32 node) returns string
+        name_data = f'0x691f3431{node}'  # name(bytes32)
+
+        name_result = await self.client.call(
+            Method.PROXY_ETH_CALL,
+            to=resolver_address,
+            data=name_data,
+        )
+
+        if not name_result or name_result == '0x':
             return None
+
+        # Decode string from ABI encoding
+        # String format: 0x + offset(32bytes) + length(32bytes) + data
+        name = self._decode_string(name_result)
+
+        if name and name.endswith('.eth'):
+            return name
+
+        return None
 
     def _namehash(self, name: str) -> str:
         """
@@ -565,7 +583,8 @@ class ENSResolver:
             string_bytes = bytes.fromhex(string_hex)
             return string_bytes.decode('utf-8')
 
-        except Exception:
+        except (ValueError, UnicodeDecodeError):
+            # Not an ABI-encoded string: a garbage reverse record, not a fault.
             return None
 
     async def clear_cache(self) -> None:

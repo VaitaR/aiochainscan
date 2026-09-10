@@ -1,130 +1,96 @@
 #!/usr/bin/env python3
-"""
-03_multi_wallet_analysis.py - Analyze Multiple Wallets
+"""Compare several addresses concurrently.
 
-Advanced example for Data Analysts: Fetch data for multiple addresses
-concurrently and aggregate for portfolio analysis.
+Self-contained — needs nothing but the published package:
 
-Use case: Track whale wallets, compare holdings, build dashboards.
+    pip install aiochainscan
+    python 03_multi_wallet_analysis.py [address ...]
+
+One client serves every address: it holds the connection pool and the rate
+limiter, so concurrent calls through it are throttled as one stream instead of
+racing each other into a 429.
 """
+
+from __future__ import annotations
 
 import asyncio
+import sys
 from dataclasses import dataclass
+from decimal import Decimal
 
-from aiochainscan.core.client import ChainscanClient
-from aiochainscan.domain.method import Method
+from aiochainscan import ChainscanClient, to_decimal_amount, wei_to_ether
+
+WALLETS = (
+    '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045',  # vitalik.eth
+    '0x28C6c06298d514Db089934071355E5743bf21d60',  # Binance 14
+    '0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D',  # Uniswap V2 router
+)
 
 
-@dataclass
+@dataclass(frozen=True)
+class Holding:
+    symbol: str
+    amount: Decimal
+
+
+@dataclass(frozen=True)
 class WalletSummary:
-    """Summary of wallet holdings."""
-
     address: str
-    eth_balance: float
+    ether: Decimal
     token_count: int
-    top_tokens: list[tuple[str, float]]  # (symbol, balance)
-    tx_count: int
+    top_holdings: tuple[Holding, ...]
 
 
-async def analyze_wallet(client: ChainscanClient, address: str) -> WalletSummary:
-    """Fetch and analyze a single wallet."""
-
-    # Fetch all data concurrently
-    balance_task = client.call(Method.ACCOUNT_BALANCE, address=address)
-    tokens_task = client.call(Method.ACCOUNT_TOKEN_PORTFOLIO, address=address)
-
-    balance_data, tokens_data = await asyncio.gather(
-        balance_task, tokens_task, return_exceptions=True
+async def summarize(client: ChainscanClient, address: str) -> WalletSummary:
+    balance, portfolio = await asyncio.gather(
+        client.get_balance(address),
+        client.get_token_portfolio(address),
     )
 
-    # Parse balance - BlockScout V2 returns string (Wei value)
-    eth_balance = 0.0
-    if isinstance(balance_data, str):
-        eth_balance = int(balance_data) / 1e18
-    elif isinstance(balance_data, dict):
-        eth_balance = int(balance_data.get('coin_balance', 0)) / 1e18
-
-    # Parse tokens - BlockScout V2 returns list directly
-    top_tokens = []
-    token_count = 0
-
-    items = []
-    if isinstance(tokens_data, list):
-        items = tokens_data
-    elif isinstance(tokens_data, dict):
-        items = tokens_data.get('items', [])
-
-    token_count = len(items)
-
-    # Get top 5 tokens by value
-    for item in items[:5]:
+    holdings: list[Holding] = []
+    for item in portfolio:
         token = item.get('token', {})
-        symbol = token.get('symbol', '???')
-        decimals = int(token.get('decimals', 18))
-        balance = int(item.get('value', 0)) / (10**decimals) if decimals > 0 else 0
-        top_tokens.append((symbol, balance))
+        decimals = int(token.get('decimals') or 18)
+        holdings.append(
+            Holding(
+                symbol=token.get('symbol') or '???',
+                amount=to_decimal_amount(item.get('value', '0'), decimals=decimals),
+            )
+        )
+    holdings.sort(key=lambda holding: holding.amount, reverse=True)
 
     return WalletSummary(
         address=address,
-        eth_balance=eth_balance,
-        token_count=token_count,
-        top_tokens=top_tokens,
-        tx_count=0,  # Would need separate call
+        ether=wei_to_ether(balance),
+        token_count=len(holdings),
+        top_holdings=tuple(holdings[:3]),
     )
 
 
-async def main():
-    """Analyze multiple wallets and create summary report."""
+async def main(addresses: tuple[str, ...]) -> None:
+    async with ChainscanClient.from_config('blockscout_v2', 'ethereum') as client:
+        summaries = await asyncio.gather(
+            *(summarize(client, address) for address in addresses),
+            return_exceptions=True,
+        )
 
-    # Famous Ethereum wallets (public addresses)
-    wallets = [
-        ('Vitalik', '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045'),
-        ('Ethereum Foundation', '0xde0B295669a9FD93d5F28D9Ec85E40f4cb697BAe'),
-        ('Binance Hot Wallet', '0x28C6c06298d514Db089934071355E5743bf21d60'),
-    ]
+    for address, summary in zip(addresses, summaries, strict=True):
+        if isinstance(summary, BaseException):
+            print(f'{address}: failed — {type(summary).__name__}: {summary}')
+            continue
+        print(f'\n{summary.address}')
+        print(f'  balance : {summary.ether:,.6f} ETH')
+        print(f'  tokens  : {summary.token_count}')
+        for holding in summary.top_holdings:
+            print(f'    {holding.symbol:<12} {holding.amount:>24,.4f}')
 
-    print('🔍 Multi-Wallet Analysis')
-    print('=' * 60)
-
-    client = ChainscanClient.from_config('blockscout_v2', 'ethereum')
-
-    try:
-        # Analyze all wallets concurrently
-        tasks = [analyze_wallet(client, address) for name, address in wallets]
-
-        summaries = await asyncio.gather(*tasks, return_exceptions=True)
-
-        # Print results
-        for (name, _), summary in zip(wallets, summaries, strict=False):
-            print(f'\n📊 {name}')
-            print(f'   Address: {summary.address[:20]}...')
-
-            if isinstance(summary, WalletSummary):
-                print(f'   ETH Balance: {summary.eth_balance:,.4f} ETH')
-                print(f'   Token Types: {summary.token_count}')
-
-                if summary.top_tokens:
-                    print('   Top Tokens:')
-                    for symbol, balance in summary.top_tokens:
-                        print(f'     • {symbol}: {balance:,.2f}')
-            else:
-                print(f'   ⚠️ Error: {summary}')
-
-        # Summary statistics
-        print('\n' + '=' * 60)
-        print('📈 Portfolio Summary')
-
-        valid_summaries = [s for s in summaries if isinstance(s, WalletSummary)]
-        if valid_summaries:
-            total_eth = sum(s.eth_balance for s in valid_summaries)
-            total_tokens = sum(s.token_count for s in valid_summaries)
-
-            print(f'   Total ETH across {len(valid_summaries)} wallets: {total_eth:,.4f} ETH')
-            print(f'   Total unique token types: {total_tokens}')
-
-    finally:
-        await client.close()
+    ranked = [s for s in summaries if isinstance(s, WalletSummary)]
+    if ranked:
+        richest = max(ranked, key=lambda summary: summary.ether)
+        total = sum((summary.ether for summary in ranked), start=Decimal(0))
+        print(f'\nTotal across {len(ranked)} addresses: {total:,.6f} ETH')
+        print(f'Largest balance: {richest.address} ({richest.ether:,.6f} ETH)')
 
 
 if __name__ == '__main__':
-    asyncio.run(main())
+    asyncio.run(main(tuple(sys.argv[1:]) or WALLETS))

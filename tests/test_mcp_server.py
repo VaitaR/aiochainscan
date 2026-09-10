@@ -1238,6 +1238,20 @@ class TestDefaultScanner:
         monkeypatch.setenv('AIOCHAINSCAN_MCP_SCANNER', 'etherscan')
         assert mcp_tools.resolve_default_scanner() == 'etherscan'
 
+    def test_blank_env_value_counts_as_unset(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A launcher substituting an unset optional setting exports ``''``.
+
+        The MCPB bundle maps its optional ``default_scanner`` option into this
+        variable, so a user who leaves the field empty must still get the
+        keyless default rather than a scanner id of ``''``.
+        """
+        monkeypatch.setenv('AIOCHAINSCAN_MCP_SCANNER', '')
+        assert mcp_tools.resolve_default_scanner() == 'blockscout'
+        monkeypatch.setenv('AIOCHAINSCAN_MCP_SCANNER', '  ')
+        assert mcp_tools.resolve_default_scanner() == 'blockscout'
+        monkeypatch.setenv('AIOCHAINSCAN_MCP_SCANNER', ' etherscan ')
+        assert mcp_tools.resolve_default_scanner() == 'etherscan'
+
 
 class TestCursorKeyDerivation:
     """MCP cursor allow-lists DERIVE from scanner-declared vocabularies.

@@ -8,7 +8,9 @@ import pytest
 import aiochainscan.chain_registry as chain_registry
 from aiochainscan.chain_registry import (
     BLOCKSCOUT_HOSTS,
+    BLOCKSCOUT_SCANNER_NETWORKS,
     ScannerTarget,
+    get_chain_aliases,
     resolve_chain_id,
     resolve_scanner_target,
 )
@@ -28,6 +30,19 @@ KEY_ENV_VARS = (
     'NODEREAL_KEY',
     'NODEREAL_API_KEY',
 )
+
+
+def _blockscout_spellings() -> set[str]:
+    """Every registry spelling of every chain a BlockScout leg serves.
+
+    Derived, not listed: a host table edit must not leave a hand-written
+    parametrization advertising a chain no instance serves any more.
+    """
+    spellings = {'main'}  # scanner-level alias for the Ethereum instance
+    for network in BLOCKSCOUT_SCANNER_NETWORKS:
+        spellings.add(network)
+        spellings.update(get_chain_aliases(resolve_chain_id(network)))
+    return spellings
 
 
 @pytest.fixture(autouse=True)
@@ -111,16 +126,23 @@ class TestAliasResolution:
         assert target.network == 'polygon'
         assert target.chain_id == 137
 
-    def test_blockscout_bnb_alias_constructs_like_bsc(self):
-        # Formerly a pinned quirk: 'bnb' resolved to chain 56 but BlockScout's
-        # config validation only knew the 'bsc' network name, so it raised.
-        # Spelling canonicalization (H2 fix) made construction a function of
-        # the chain, not of the caller's spelling — the alias now constructs
-        # exactly like 'bsc' does.
-        target = resolve_scanner_target('blockscout', 'bnb')
-        assert target.chain_id == 56
-        assert target.api_kind == 'blockscout_bsc'
-        assert target.scanner_network == 'bsc'
+    def test_blockscout_alias_constructs_like_canonical_name(self):
+        # Formerly a pinned quirk: an alias spelling resolved to the chain id
+        # but BlockScout's config validation only knew the canonical network
+        # name, so it raised. Spelling canonicalization (H2 fix) made
+        # construction a function of the chain, not of the caller's spelling.
+        target = resolve_scanner_target('blockscout', 'xdai')
+        assert target.chain_id == 100
+        assert target.api_kind == 'blockscout_gnosis'
+        assert target.scanner_network == 'gnosis'
+
+    def test_blockscout_refuses_chains_with_no_instance(self):
+        # BSC and Linea have no BlockScout deployment (both hosts 404 as of
+        # 2026-09-10), so neither leg may advertise them. Failing here is the
+        # honest outcome; NodeReal is the keyless BSC path.
+        for network in ('bsc', 'bnb', 'linea'):
+            with pytest.raises(ValueError):
+                resolve_scanner_target('blockscout', network)
 
     def test_etherscan_preserves_network_name(self):
         target = resolve_scanner_target('etherscan', 'ethereum', api_key='k')
@@ -243,29 +265,7 @@ class TestBlockscoutSpellingParity:
     lookup while 'gnosis' constructed; 'bnb'/'binance' died in the oracle
     while 'bsc' constructed)."""
 
-    @pytest.mark.parametrize(
-        'network',
-        [
-            'ethereum',
-            'eth',
-            'main',
-            'sepolia',
-            'gnosis',
-            'xdai',
-            'polygon',
-            'matic',
-            'optimism',
-            'op',
-            'arbitrum',
-            'arb',
-            'base',
-            'scroll',
-            'linea',
-            'bsc',
-            'bnb',
-            'binance',
-        ],
-    )
+    @pytest.mark.parametrize('network', sorted(_blockscout_spellings()))
     @pytest.mark.parametrize('scanner', ['blockscout', 'blockscout_v2'])
     async def test_every_spelling_constructs_on_both_legs(self, scanner: str, network: str):
         from aiochainscan import ChainscanClient
@@ -387,15 +387,17 @@ class TestFromConfigIntegration:
             await client.close()
 
     @pytest.mark.parametrize('scanner', ['blockscout', 'blockscout_v2'])
-    async def test_bsc_constructs_on_both_blockscout_legs(self, scanner: str) -> None:
-        # The registry resolves chain 56 for both legs, so neither may refuse
-        # it at construction after resolution succeeded.
+    async def test_gnosis_constructs_on_both_blockscout_legs(self, scanner: str) -> None:
+        # The registry resolves chain 100 for both legs, so neither may refuse
+        # it at construction after resolution succeeded. The host is the
+        # chain-branded one: BlockScout serves Gnosis from gnosisscan.io and
+        # only 301s the *.blockscout.com alias there.
         from aiochainscan import ChainscanClient
 
-        client = ChainscanClient.from_config(scanner, 'bsc')
+        client = ChainscanClient.from_config(scanner, 'gnosis')
         try:
-            assert client.chain_id == 56
-            assert client._scanner.base_url == 'https://bsc.blockscout.com'
+            assert client.chain_id == 100
+            assert client._scanner.base_url == 'https://gnosisscan.io'
         finally:
             await client.close()
 

@@ -1,0 +1,38 @@
+name: Bug report
+description: Something behaves differently from what the documentation says
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For a security issue, use private reporting instead — see SECURITY.md.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: "`pip show aiochainscan` (add the fastabi version if installed)"
+      placeholder: "1.0.3, Python 3.13, macOS 15"
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction
+      description: The smallest script that shows it. Redact your API key.
+      render: python
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected vs actual
+      description: What you expected, what happened, and the full traceback.
+    validations:
+      required: true
+  - type: input
+    id: provider
+    attributes:
+      label: Provider and chain
+      description: "The `from_config` arguments, e.g. `('blockscout_v2', 'ethereum')`"
+    validations:
+      required: true

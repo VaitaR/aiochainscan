@@ -79,6 +79,10 @@ async with ChainscanClient.from_config('etherscan', 'ethereum') as client:
 
     name    = await client.lookup_address('0x...')                 # ENS reverse
     address = await client.resolve_name('vitalik.eth')             # ENS forward
+    # `None` means the record does not exist. A scanner that does not declare
+    # eth_call raises MethodNotDeclaredError (forward resolution reads the ENS
+    # registry); rate limits and transport failures surface as themselves, in
+    # resolve_names()/lookup_addresses() too.
 
     # ── Streaming (large datasets, constant ~10MB RAM) ───────
     async for batch in client.iter_transactions_streaming('0x...', batch_size=1000):
@@ -328,6 +332,7 @@ Branch types: `feat | fix | chore | docs | arch | refactor` (2nd arg, default `f
 | `safe_commit.sh` | `git add` + commit with index.lock retry (worktree-aware; use `make commit`) |
 | `ci_watch.sh` | Bounded GH Actions poller; exit status is the verdict |
 | `probe_provider_caps.py` | Re-measures declared pagination caps live (`make probe-caps`); exit 1 on drift, rate-limited/inconclusive probes, or an unconstructible provider — in both output modes |
+| `build_mcpb.py` | Packs `mcpb/` into `dist/aiochainscan-<version>.mcpb` (`make mcpb`); refuses to pack while the version stated in the bundle and `server.json` disagrees |
 | `ruff_format_hook.py` | PostToolUse hook — auto-formats edited `*.py` |
 
 ### GitHub Actions
@@ -642,6 +647,16 @@ UrlBuilder kind (hence `client.currency`) per network through the same
 currency** for the same chain; its requests are still built from the scanner's
 own `BASE_URLS`, never the UrlBuilder profile.
 
+The host table is measured, not assumed (live-verified 2026-09-10: v1 `/api`,
+v2 `/api/v2` and `/api/eth-rpc` on every declared host). Two findings are
+encoded in it: Gnosis, Optimism and Scroll serve BlockScout from chain-branded
+hostnames (`gnosisscan.io`, `explorer.optimism.io`, `scrollscan.com`) and only
+301 the `*.blockscout.com` alias there — the transport does not follow
+redirects, so the branded host is the only spelling that works — and BSC and
+Linea have no BlockScout instance at all (both hosts 404), so they are absent
+from the BlockScout topology and `from_config('blockscout*', 'bsc'|'linea')`
+raises. Keyless BSC is NodeReal's job. Re-probe before trusting these rows.
+
 ### BlockScout v1 proxy fallback (`/api/eth-rpc`)
 
 BlockScout's Etherscan-compat REST answers `"Unknown module"` for
@@ -709,6 +724,7 @@ Agent adapter over `ChainscanClient` — **run**: `python -m aiochainscan.mcp_se
 | `mcp/tools.py` | 12 tools as plain `client -> ToolResponse` functions (**no mcp import** — offline-testable) + `ClientPool` (one client per `(scanner, chain)`, connection pooling across calls) |
 | `mcp/server.py` | FastMCP wiring: envelope → `CallToolResult` (text + structuredContent), tool registration |
 | `mcp_server.py` | Entry point (historical import path preserved) |
+| `mcpb/` (repo root) | MCPB bundle for Smithery's local-stdio listing: manifest + `pyproject.toml` pinning the published `aiochainscan[mcp]` release + `src/server.py`. Ships no library code; `server.type = "uv"`, so the host installs the pin |
 
 **Tools**: `get_wallet_balance`, `get_address_overview`, `get_transactions`,
 `get_transaction_info` (fastabi-decoded input via auto-ABI),

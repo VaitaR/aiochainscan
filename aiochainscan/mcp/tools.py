@@ -127,8 +127,14 @@ _SCANNER_HINTS: dict[Method, str] = {
 
 
 def resolve_default_scanner() -> str:
-    """Default MCP scanner: ``AIOCHAINSCAN_MCP_SCANNER`` env or blockscout v1."""
-    return os.environ.get(DEFAULT_SCANNER_ENV, DEFAULT_SCANNER)
+    """Default MCP scanner: ``AIOCHAINSCAN_MCP_SCANNER`` env or blockscout v1.
+
+    An empty or whitespace-only value counts as unset: a launcher that
+    substitutes an optional user setting (the MCPB bundle's ``default_scanner``)
+    exports the variable as an empty string rather than omitting it, and ``''``
+    is not a scanner id.
+    """
+    return os.environ.get(DEFAULT_SCANNER_ENV, '').strip() or DEFAULT_SCANNER
 
 
 # ---------------------------------------------------------------------------

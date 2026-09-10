@@ -114,6 +114,84 @@ Semantic versioning (MAJOR.MINOR.PATCH). Update `version =` in
 `pyproject.toml` (and `aiochainscan/fastabi/pyproject.toml` when the
 accelerator changes), then tag the release.
 
+## Publishing to the MCP Registry
+
+`server.json` at the repo root describes the stdio MCP server for
+[registry.modelcontextprotocol.io](https://registry.modelcontextprotocol.io).
+The registry verifies ownership by reading the `mcp-name:` comment out of the
+PyPI package description, so the order matters:
+
+1. Bump `version` in `pyproject.toml` **and** both `version` fields in
+   `server.json` (the top-level one and `packages[0].version`, which pins the
+   `--from aiochainscan[mcp]==X` argument) to the same number.
+2. Publish that version to PyPI first — the README it carries must already
+   contain `<!-- mcp-name: io.github.VaitaR/aiochainscan -->`.
+3. Publish the registry entry:
+
+```sh
+brew install mcp-publisher          # or download the release binary
+mcp-publisher login github          # device flow; the io.github.VaitaR/* namespace
+mcp-publisher validate
+mcp-publisher publish
+```
+
+The published entry resolves to `uvx --from "aiochainscan[mcp]==X"
+aiochainscan mcp`. Verify it end to end before publishing:
+
+```sh
+printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}' \
+  | uvx --isolated --from "aiochainscan[mcp]==X" aiochainscan mcp
+```
+
+A successful `initialize` result means the extra resolved and the entry point
+starts. An empty answer usually means the `mcp` extra resolved to a release
+this code does not support — the `<2` pin in `pyproject.toml` exists for that.
+
+## Publishing to Smithery
+
+Smithery lists servers two ways ([publish
+docs](https://smithery.ai/docs/build/publish)): a **URL** entry, which requires
+a public HTTPS endpoint speaking Streamable HTTP that Smithery proxies and
+scans, and a **local** entry, which is a prebuilt
+[MCPB bundle](https://github.com/modelcontextprotocol/mcpb) clients download
+and run over stdio. There is no `smithery.yaml` and no container build in the
+current flow. This server is stdio and self-hosts nothing, so it goes out as a
+bundle.
+
+`mcpb/` is that bundle: a `manifest.json`, a `pyproject.toml` pinning the
+published `aiochainscan[mcp]` release, and `src/server.py`, which starts the
+same server as `aiochainscan mcp`. It carries no library code — the host
+installs the pin with uv (`server.type = "uv"`), so the bundle works on every
+platform and needs no user Python.
+
+1. Publish the release to PyPI first: the bundle installs it by version.
+2. Pack it — `make mcpb` refuses to run while the version stated in
+   `mcpb/manifest.json`, `mcpb/pyproject.toml` (twice) and `server.json`
+   (three times) disagrees:
+
+```sh
+make mcpb                                        # dist/aiochainscan-X.mcpb
+npx @anthropic-ai/mcpb validate mcpb/manifest.json
+smithery mcp publish dist/aiochainscan-X.mcpb -n <namespace>/aiochainscan
+```
+
+`<namespace>` is the Smithery namespace that owns the listing; create it in the
+Smithery dashboard first. Vendor verification is a post-publish checklist under
+the server's Settings → Verification.
+
+Verify the artifact rather than the source directory — unpack it, point the pin
+at the published release, and speak MCP to it:
+
+```sh
+unzip -q dist/aiochainscan-X.mcpb -d /tmp/mcpb-check
+printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}' \
+  | uv run --directory /tmp/mcpb-check src/server.py
+```
+
+An `initialize` result means the pin resolved and the entry point starts. An
+empty answer has the same cause as in the registry section above: the `mcp`
+extra resolved to a release this code does not support.
+
 ## Troubleshooting
 
 ### "File already exists" error

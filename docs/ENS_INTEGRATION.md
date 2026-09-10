@@ -118,7 +118,8 @@ name = await client.lookup_address("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045")
 
 # Forward resolution is not supported with BlockScout V2
 address = await client.resolve_name("vitalik.eth")
-# Returns: None (requires eth_call)
+# Raises: MethodNotDeclaredError — the scanner does not declare eth_call.
+# `None` is reserved for a name that does not exist.
 
 # Use Etherscan for forward resolution
 client = ChainscanClient.from_config('etherscan', 'ethereum')
@@ -242,9 +243,16 @@ for addr, name in ens_names.items():
 
 ## Error Handling
 
-### Invalid Inputs
+### `None` versus an exception
 
-Invalid inputs return `None` instead of raising errors:
+`None` means the record does not exist. Everything else raises: a scanner that
+does not declare `eth_call` raises `MethodNotDeclaredError`, and rate limits,
+transport failures and data-contract errors surface as themselves — including
+inside `resolve_names()` / `lookup_addresses()`, where absorbing them would
+report "no such name" for every input.
+
+Input that cannot be an ENS name (or an ENS address) returns `None` without a
+request:
 
 ```python
 # Invalid name formats
@@ -336,10 +344,12 @@ Resolve ENS name to Ethereum address.
 - `name` (str): ENS name (e.g., "vitalik.eth")
 
 **Returns**:
-- `str | None`: Ethereum address or None if not found
+- `str | None`: Ethereum address, or `None` if the name does not exist
 
 **Raises**:
 - `ValueError`: If ENS not supported on this network
+- `MethodNotDeclaredError`: If the configured scanner does not declare `eth_call`
+- `ChainscanClientError`: Rate limits, transport and data-contract failures
 
 **Example**:
 ```python
@@ -354,10 +364,14 @@ Reverse lookup: Ethereum address to ENS name.
 - `address` (str): Ethereum address
 
 **Returns**:
-- `str | None`: ENS name or None if not found
+- `str | None`: ENS name, or `None` if the address has no reverse record
 
 **Raises**:
 - `ValueError`: If ENS not supported on this network
+- `MethodNotDeclaredError`: If the reverse record needs `eth_call` and the
+  scanner does not declare it (BlockScout V2 answers the reverse record from
+  its address-info payload, so it does not reach that path)
+- `ChainscanClientError`: Rate limits, transport and data-contract failures
 
 **Example**:
 ```python

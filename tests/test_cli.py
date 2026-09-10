@@ -1,678 +1,224 @@
+"""CLI tests.
+
+The CLI reports the library's own declarations, so these tests assert the
+derivation rather than a hand-written table: a scanner added to the registry
+must show up here without touching this file, and a chain the scanner class
+does not declare must not.
+"""
+
 import json
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from aiochainscan.chain_registry import SCANNER_RECORDS, resolve_scanner_target
 from aiochainscan.cli import (
-    cmd_add_scanner,
-    cmd_check_config,
-    cmd_export_config,
+    _chains,
+    _config_id,
+    _scanner_report,
+    build_parser,
+    cmd_chains,
+    cmd_check,
     cmd_generate_env,
-    cmd_list_scanners,
-    cmd_test_scanner,
+    cmd_scanners,
+    cmd_test,
     main,
 )
-
-
-class TestCmdListScanners:
-    """Test scanner listing functionality."""
-
-    @patch('aiochainscan.cli.config_manager')
-    @patch('builtins.print')
-    def test_list_scanners_with_configured_keys(self, mock_print, mock_config_manager):
-        """Test listing scanners with configured API keys."""
-        mock_config_manager.list_all_configurations.return_value = {
-            'eth': {
-                'name': 'Etherscan',
-                'domain': 'etherscan.io',
-                'currency': 'ETH',
-                'networks': ['main', 'goerli', 'sepolia'],
-                'api_key_configured': True,
-                'requires_api_key': True,
-                'api_key_sources': ['ETHERSCAN_KEY', 'ETH_KEY'],
-            },
-            'bsc': {
-                'name': 'BscScan',
-                'domain': 'bscscan.com',
-                'currency': 'BNB',
-                'networks': ['main', 'test'],
-                'api_key_configured': False,
-                'requires_api_key': True,
-                'api_key_sources': ['BSCSCAN_KEY', 'BSC_KEY'],
-            },
-        }
-
-        args = MagicMock()
-        cmd_list_scanners(args)
-
-        # Verify the function prints scanner information
-        mock_print.assert_called()
-        print_calls = [call[0][0] for call in mock_print.call_args_list]
-
-        # Check that scanner info is displayed
-        assert any('ETH: Etherscan' in call for call in print_calls)
-        assert any('BSC: BscScan' in call for call in print_calls)
-        assert any('✅ READY' in call for call in print_calls)
-        assert any('❌ NO API KEY' in call for call in print_calls)
-
-    @patch('aiochainscan.cli.config_manager')
-    @patch('builtins.print')
-    def test_list_scanners_empty_config(self, mock_print, mock_config_manager):
-        """Test listing scanners with empty configuration."""
-        mock_config_manager.list_all_configurations.return_value = {}
-
-        args = MagicMock()
-        cmd_list_scanners(args)
-
-        mock_print.assert_called()
-
-
-class TestCmdGenerateEnv:
-    """Test environment file generation."""
-
-    @patch('aiochainscan.cli.config_manager')
-    @patch('builtins.print')
-    def test_generate_env_default_output(self, mock_print, mock_config_manager):
-        """Test generating .env file with default output path."""
-        mock_config_manager.generate_env_template.return_value = '# Test template content'
-
-        args = MagicMock()
-        args.output = None
-        args.show = False
-
-        with patch('pathlib.Path.cwd') as mock_cwd:
-            mock_cwd.return_value = Path('/test/dir')
-            cmd_generate_env(args)
-
-        # Verify template generation was called
-        expected_path = Path('/test/dir') / '.env.example'
-        mock_config_manager.generate_env_template.assert_called_once_with(expected_path)
-
-        # Verify success message
-        mock_print.assert_called()
-
-    @patch('aiochainscan.cli.config_manager')
-    @patch('builtins.print')
-    def test_generate_env_custom_output(self, mock_print, mock_config_manager):
-        """Test generating .env file with custom output path."""
-        mock_config_manager.generate_env_template.return_value = '# Custom template'
-
-        args = MagicMock()
-        args.output = '/custom/path/.env.test'
-        args.show = False
-
-        cmd_generate_env(args)
-
-        expected_path = Path('/custom/path/.env.test')
-        mock_config_manager.generate_env_template.assert_called_once_with(expected_path)
-
-    @patch('aiochainscan.cli.config_manager')
-    @patch('builtins.print')
-    def test_generate_env_with_show(self, mock_print, mock_config_manager):
-        """Test generating .env file with show option."""
-        template_content = '# Template content\nETHERSCAN_KEY=your_key_here'
-        mock_config_manager.generate_env_template.return_value = template_content
-
-        args = MagicMock()
-        args.output = None
-        args.show = True
-
-        with patch('pathlib.Path.cwd') as mock_cwd:
-            mock_cwd.return_value = Path('/test/dir')
-            cmd_generate_env(args)
-
-        # Verify template content is printed
-        print_calls = [call[0][0] for call in mock_print.call_args_list]
-        assert any(template_content in call for call in print_calls)
-
-
-class TestCmdCheckConfig:
-    """Test configuration status checking."""
-
-    @patch('aiochainscan.cli.config_manager')
-    @patch('builtins.print')
-    def test_check_config_mixed_status(self, mock_print, mock_config_manager):
-        """Test checking configuration with mixed scanner statuses."""
-        mock_config_manager.list_all_configurations.return_value = {
-            'eth': {
-                'name': 'Etherscan',
-                'api_key_configured': True,
-                'requires_api_key': True,
-                'api_key_sources': ['ETHERSCAN_KEY'],
-            },
-            'bsc': {
-                'name': 'BscScan',
-                'api_key_configured': False,
-                'requires_api_key': True,
-                'api_key_sources': ['BSCSCAN_KEY'],
-            },
-            'flare': {
-                'name': 'Flare Explorer',
-                'api_key_configured': False,
-                'requires_api_key': False,
-                'api_key_sources': [],
-            },
-        }
-
-        args = MagicMock()
-
-        with patch('pathlib.Path.exists', return_value=False):
-            cmd_check_config(args)
-
-        # Verify summary and status information is printed
-        mock_print.assert_called()
-        print_calls = [call[0][0] for call in mock_print.call_args_list]
-
-        assert any('1/3 scanners configured' in call for call in print_calls)
-        assert any('Ready scanners' in call for call in print_calls)
-        assert any('Missing API keys' in call for call in print_calls)
-
-    @patch('aiochainscan.cli.config_manager')
-    @patch('builtins.print')
-    def test_check_config_with_env_files(self, mock_print, mock_config_manager):
-        """Test configuration check when .env files exist."""
-        mock_config_manager.list_all_configurations.return_value = {}
-
-        args = MagicMock()
-
-        def mock_exists():
-            return True
-
-        with patch('pathlib.Path.exists', side_effect=mock_exists):
-            cmd_check_config(args)
-
-        # Verify env file detection
-        print_calls = [call[0][0] for call in mock_print.call_args_list]
-        assert any('Found .env files' in call for call in print_calls)
-
-
-class TestCmdAddScanner:
-    """Test adding custom scanners."""
-
-    @patch('aiochainscan.cli.config_manager')
-    @patch('builtins.print')
-    def test_add_scanner_success(self, mock_print, mock_config_manager):
-        """Test successfully adding a custom scanner."""
-        mock_config_manager.register_scanner.return_value = None
-        mock_config_manager._get_api_key_suggestions.return_value = ['CUSTOM_KEY']
-
-        args = MagicMock()
-        args.id = 'custom'
-        args.name = 'Custom Chain'
-        args.domain = 'customscan.io'
-        args.currency = 'CUSTOM'
-        args.networks = 'main,test'
-        args.no_api_key = False
-        args.save = None
-
-        cmd_add_scanner(args)
-
-        # Verify scanner registration
-        expected_data = {
-            'name': 'Custom Chain',
-            'base_domain': 'customscan.io',
-            'currency': 'CUSTOM',
-            'supported_networks': ['main', 'test'],
-            'requires_api_key': True,
-            'special_config': {},
-        }
-        mock_config_manager.register_scanner.assert_called_once_with('custom', expected_data)
-
-        # Without --save nothing reaches disk, and the output must say so
-        mock_config_manager.persist_scanner.assert_not_called()
-        print_calls = [call[0][0] for call in mock_print.call_args_list]
-        assert any('for this process only: custom' in call for call in print_calls)
-        assert any('Nothing was written to disk' in call for call in print_calls)
-
-    @patch('aiochainscan.cli.config_manager')
-    @patch('builtins.print')
-    def test_add_scanner_networks_stripped_and_empties_dropped(
-        self, mock_print, mock_config_manager
-    ):
-        """'main, test,,x' means three networks — not one named ' test'."""
-        mock_config_manager._get_api_key_suggestions.return_value = ['CUSTOM_KEY']
-
-        args = MagicMock()
-        args.id = 'custom'
-        args.name = 'Custom Chain'
-        args.domain = 'customscan.io'
-        args.currency = 'CUSTOM'
-        args.networks = 'main, test,,x'
-        args.no_api_key = True
-        args.save = None
-
-        cmd_add_scanner(args)
-
-        data = mock_config_manager.register_scanner.call_args[0][1]
-        assert data['supported_networks'] == ['main', 'test', 'x']
-
-    @patch('aiochainscan.cli.config_manager')
-    @patch('builtins.print')
-    def test_add_scanner_all_blank_networks_fall_back_to_main(
-        self, mock_print, mock_config_manager
-    ):
-        mock_config_manager._get_api_key_suggestions.return_value = ['CUSTOM_KEY']
-
-        args = MagicMock()
-        args.id = 'custom'
-        args.name = 'Custom Chain'
-        args.domain = 'customscan.io'
-        args.currency = 'CUSTOM'
-        args.networks = ', ,'
-        args.no_api_key = True
-        args.save = None
-
-        cmd_add_scanner(args)
-
-        data = mock_config_manager.register_scanner.call_args[0][1]
-        assert data['supported_networks'] == ['main']
-
-    @patch('aiochainscan.cli.config_manager')
-    @patch('builtins.print')
-    def test_add_scanner_message_states_credentials_only(self, mock_print, mock_config_manager):
-        """The registration carries credentials/display for a separately-
-        registered scanner class — the message must say exactly that, so a
-        user does not expect from_config() to construct a client from it."""
-        mock_config_manager._get_api_key_suggestions.return_value = ['CUSTOM_KEY']
-
-        args = MagicMock()
-        args.id = 'custom'
-        args.name = 'Custom Chain'
-        args.domain = 'customscan.io'
-        args.currency = 'CUSTOM'
-        args.networks = 'main'
-        args.no_api_key = True
-        args.save = None
-
-        cmd_add_scanner(args)
-
-        print_calls = [call[0][0] for call in mock_print.call_args_list]
-        assert any('separately-registered scanner class' in call for call in print_calls)
-        assert any('ChainscanClient.from_config' in call for call in print_calls)
-
-    def test_add_scanner_save_writes_a_loadable_config_file(self, tmp_path):
-        """--save persists the scanner where ConfigurationManager reads it back."""
-        from aiochainscan.config import ConfigurationManager
-
-        manager = ConfigurationManager.__new__(ConfigurationManager)
-        manager.config_dir = tmp_path
-        manager._scanners = {}
-        manager._env_state = {}
-        manager._initialized = True
-        manager._env_loaded = True
-
-        config_file = tmp_path / 'aiochainscan.json'
-        kept = {
-            'name': 'Kept',
-            'base_domain': 'kept.io',
-            'currency': 'KPT',
-            'supported_networks': ['main'],
-            'requires_api_key': False,
-            'special_config': {},
-        }
-        config_file.write_text(json.dumps({'scanners': {'kept': kept}}))
-
-        args = MagicMock()
-        args.id = 'custom'
-        args.name = 'Custom Chain'
-        args.domain = 'customscan.io'
-        args.currency = 'CUSTOM'
-        args.networks = 'main,test'
-        args.no_api_key = True
-        args.save = str(config_file)
-
-        with patch('aiochainscan.cli.config_manager', manager):
-            cmd_add_scanner(args)
-
-        written = json.loads(config_file.read_text())
-        assert written['scanners']['kept'] == kept
-        assert written['scanners']['custom'] == {
-            'name': 'Custom Chain',
-            'base_domain': 'customscan.io',
-            'currency': 'CUSTOM',
-            'supported_networks': ['main', 'test'],
-            'requires_api_key': False,
-            'special_config': {},
-        }
-
-        # A fresh manager over the same directory picks the scanner up.
-        reloaded = ConfigurationManager.__new__(ConfigurationManager)
-        reloaded.config_dir = tmp_path
-        reloaded._scanners = {}
-        reloaded._env_state = {}
-        reloaded._env_loaded = True
-        reloaded._load_config_file(config_file)
-        assert reloaded._scanners['custom'].base_domain == 'customscan.io'
-
-    @patch('aiochainscan.cli.config_manager')
-    @patch('builtins.print')
-    @patch('sys.exit')
-    def test_add_scanner_failure(self, mock_exit, mock_print, mock_config_manager):
-        """Test handling scanner addition failure."""
-        mock_config_manager.register_scanner.side_effect = ValueError('Scanner already exists')
-
-        args = MagicMock()
-        args.id = 'existing'
-        args.name = 'Existing Scanner'
-        args.domain = 'existing.com'
-        args.currency = 'EXT'
-        args.networks = None
-        args.no_api_key = True
-        args.save = None
-
-        cmd_add_scanner(args)
-
-        # Verify error handling
-        print_calls = [call[0][0] for call in mock_print.call_args_list]
-        assert any('Error adding scanner' in call for call in print_calls)
-        mock_exit.assert_called_once_with(1)
-
-
-class TestCmdExportConfig:
-    """Test configuration export."""
-
-    @patch('aiochainscan.cli.config_manager')
-    @patch('builtins.print')
-    def test_export_config_success(self, mock_print, mock_config_manager):
-        """Test successful configuration export."""
-        mock_config_manager.export_config.return_value = None
-
-        args = MagicMock()
-        args.output = '/path/to/config.json'
-
-        cmd_export_config(args)
-
-        expected_path = Path('/path/to/config.json')
-        mock_config_manager.export_config.assert_called_once_with(expected_path)
-
-        # Verify success message
-        print_calls = [call[0][0] for call in mock_print.call_args_list]
-        assert any('Configuration exported to' in call for call in print_calls)
-
-    @patch('aiochainscan.cli.config_manager')
-    @patch('builtins.print')
-    @patch('sys.exit')
-    def test_export_config_failure(self, mock_exit, mock_print, mock_config_manager):
-        """Test export configuration failure."""
-        mock_config_manager.export_config.side_effect = Exception('Write error')
-
-        args = MagicMock()
-        args.output = '/invalid/path/config.json'
-
-        cmd_export_config(args)
-
-        # Verify error handling
-        print_calls = [call[0][0] for call in mock_print.call_args_list]
-        assert any('Export failed' in call for call in print_calls)
-        mock_exit.assert_called_once_with(1)
-
-
-class TestCmdTestScanner:
-    """Test scanner testing functionality."""
-
-    @patch('builtins.print')
-    @patch('asyncio.run')
-    def test_test_scanner_success(self, mock_run, mock_print):
-        """Test successful scanner testing."""
-        mock_run.side_effect = lambda coro: coro.close()
-
-        args = MagicMock()
-        args.scanner = 'eth'
-        args.network = 'main'
-
-        cmd_test_scanner(args)
-
-        # Verify asyncio.run was called
-        mock_run.assert_called_once()
-
-    @patch('builtins.print')
-    @patch('sys.exit')
-    @patch('asyncio.run')
-    def test_test_scanner_basic(self, mock_run, mock_exit, mock_print):
-        """Test basic scanner test functionality."""
-        mock_run.side_effect = lambda coro: coro.close()
-
-        args = MagicMock()
-        args.scanner = 'eth'
-        args.network = 'main'
-
-        cmd_test_scanner(args)
-
-        # Verify asyncio.run was called
-        mock_run.assert_called_once()
-
-    def test_test_scanner_api_failure_exits_and_closes_client(self):
-        """An API failure is diagnostic, nonzero, and still closes the client."""
-        from aiochainscan import ChainscanClient
-
+from aiochainscan.domain.method import Method
+from aiochainscan.scanners import get_scanner_class
+
+
+def _args(**kwargs):
+    namespace = MagicMock()
+    namespace.__dict__.update(kwargs)
+    for key, value in kwargs.items():
+        setattr(namespace, key, value)
+    return namespace
+
+
+class TestDerivation:
+    def test_every_registered_scanner_is_reported(self):
+        reported = {report['scanner'] for report in map(_scanner_report, SCANNER_RECORDS)}
+        assert reported == set(SCANNER_RECORDS)
+
+    @pytest.mark.parametrize('scanner', sorted(SCANNER_RECORDS))
+    def test_method_count_matches_the_scanner_class(self, scanner):
+        report = _scanner_report(scanner)
+        target = resolve_scanner_target(
+            scanner, sorted(report['chains'])[0] if report['chains'] else 'ethereum', api_key=''
+        )
+        scanner_class = get_scanner_class(target.scanner_name, target.scanner_version)
+        assert report['methods_declared'] == len(scanner_class.SPECS)
+        assert report['methods_total'] == len(Method)
+
+    @pytest.mark.parametrize('scanner', sorted(SCANNER_RECORDS))
+    def test_reported_chains_are_constructible(self, scanner):
+        """Every chain the CLI names must pass both construction gates."""
+        for chain in _chains(scanner):
+            target = resolve_scanner_target(scanner, chain, api_key='')
+            scanner_class = get_scanner_class(target.scanner_name, target.scanner_version)
+            assert target.scanner_network in scanner_class.supported_networks
+
+    def test_registry_resolution_alone_is_not_enough(self):
+        """Avalanche resolves in the registry but no BlockScout instance serves it."""
+        resolve_scanner_target('blockscout', 'avalanche', api_key='')  # does not raise
+        assert 'avalanche' not in _chains('blockscout')
+        assert 'avalanche' not in _chains('blockscout_v2')
+
+    def test_blockscout_is_keyless_and_etherscan_is_not(self):
+        assert _scanner_report('blockscout')['keyless'] is True
+        assert _scanner_report('blockscout_v2')['keyless'] is True
+        assert _scanner_report('etherscan')['keyless'] is False
+        assert _scanner_report('nodereal')['keyless'] is False
+
+    def test_config_id_per_scanner(self):
+        assert _config_id('etherscan') == 'eth'
+        assert _config_id('nodereal') == 'nodereal'
+        assert _config_id('blockscout').startswith('blockscout')
+
+
+class TestScannersCommand:
+    def test_json_output_lists_every_scanner(self, capsys):
+        cmd_scanners(_args(json=True))
+        payload = json.loads(capsys.readouterr().out)
+        assert {row['scanner'] for row in payload} == set(SCANNER_RECORDS)
+        assert all(row['methods_declared'] > 0 for row in payload)
+
+    def test_text_output_names_the_public_factory(self, capsys):
+        cmd_scanners(_args(json=False))
+        out = capsys.readouterr().out
+        assert 'ChainscanClient.from_config' in out
+        for scanner in SCANNER_RECORDS:
+            assert scanner in out
+
+    def test_no_legacy_per_chain_scanners(self, capsys):
+        """The pre-1.0 registry (BscScan, PolygonScan, one key per chain) is gone."""
+        cmd_scanners(_args(json=False))
+        out = capsys.readouterr().out
+        for legacy in ('BscScan', 'PolygonScan', 'BSCSCAN_KEY', 'POLYGONSCAN_KEY', 'mumbai'):
+            assert legacy not in out
+
+
+class TestCheckCommand:
+    def test_json_shape(self, capsys):
+        cmd_check(_args(json=True))
+        payload = json.loads(capsys.readouterr().out)
+        assert set(payload) == {'keyless', 'configured', 'missing', 'env_files'}
+        assert 'blockscout' in payload['keyless']
+
+    def test_missing_key_names_the_env_var(self, capsys):
+        config = MagicMock(requires_api_key=True)
+        config.name = 'Etherscan'  # MagicMock(name=...) names the mock, not the field
+        with patch('aiochainscan.cli.config_manager') as manager:
+            manager.get_scanner_config.return_value = config
+            manager.get_api_key.return_value = ''
+            cmd_check(_args(json=False))
+        out = capsys.readouterr().out
+        assert 'Key missing' in out
+        assert 'ETHERSCAN_KEY' in out
+
+
+class TestChainsCommand:
+    def test_filter_narrows_the_listing(self, capsys):
+        cmd_chains(_args(filter='ethereum', json=True))
+        payload = json.loads(capsys.readouterr().out)
+        assert payload
+        assert all('ethereum' in row['name'] or 'ethereum' in row['aliases'] for row in payload)
+
+    def test_unknown_filter_says_so(self, capsys):
+        cmd_chains(_args(filter='no-such-chain', json=False))
+        assert 'No chain matches' in capsys.readouterr().out
+
+    def test_rows_carry_the_serving_scanners(self, capsys):
+        cmd_chains(_args(filter='1', json=True))
+        payload = json.loads(capsys.readouterr().out)
+        ethereum = next(row for row in payload if row['chain_id'] == 1)
+        assert 'etherscan' in ethereum['scanners']
+        assert 'blockscout' in ethereum['scanners']
+
+
+class TestGenerateEnv:
+    def test_template_covers_only_keys_in_use(self, capsys):
+        cmd_generate_env(_args(output=None))
+        out = capsys.readouterr().out
+        assert 'ETHERSCAN_KEY=' in out
+        assert 'NODEREAL_KEY=' in out
+        assert 'BSCSCAN_KEY' not in out
+        assert 'BLOCKSCOUT' not in out
+
+    def test_writes_to_file(self, tmp_path, capsys):
+        target = tmp_path / '.env.template'
+        cmd_generate_env(_args(output=str(target)))
+        capsys.readouterr()
+        assert 'ETHERSCAN_KEY=' in target.read_text()
+
+
+class TestTestCommand:
+    def test_success_reports_the_value_and_closes_the_client(self, capsys):
         client = MagicMock()
-        client.call = AsyncMock(side_effect=RuntimeError('provider unavailable'))
+        client.get_balance = AsyncMock(return_value='123')
         client.close = AsyncMock()
-        args = MagicMock(scanner='etherscan', network='main')
+        with patch('aiochainscan.ChainscanClient.from_config', return_value=client):
+            cmd_test(_args(scanner='blockscout_v2', network='ethereum', address=None))
+        out = capsys.readouterr().out
+        assert '123' in out
+        client.close.assert_awaited_once()
 
+    def test_failure_exits_non_zero_and_closes_the_client(self, capsys):
+        client = MagicMock()
+        client.get_balance = AsyncMock(side_effect=RuntimeError('boom'))
+        client.close = AsyncMock()
         with (
-            patch.object(ChainscanClient, 'from_config', return_value=client),
-            pytest.raises(SystemExit) as exc_info,
+            patch('aiochainscan.ChainscanClient.from_config', return_value=client),
+            pytest.raises(SystemExit) as exit_info,
         ):
-            cmd_test_scanner(args)
+            cmd_test(_args(scanner='etherscan', network='ethereum', address=None))
+        assert exit_info.value.code == 1
+        assert 'boom' in capsys.readouterr().err
+        client.close.assert_awaited_once()
 
-        assert exc_info.value.code == 1
-        client.close.assert_awaited_once_with()
-
-    def test_test_scanner_failure_prints_error_once(self):
-        """The same failure must not be printed twice."""
-        from aiochainscan import ChainscanClient
-
-        client = MagicMock()
-        client.call = AsyncMock(side_effect=RuntimeError('provider unavailable'))
-        client.close = AsyncMock()
-        args = MagicMock(scanner='etherscan', network='main')
-
-        with (
-            patch.object(ChainscanClient, 'from_config', return_value=client),
-            patch('builtins.print') as mock_print,
-            pytest.raises(SystemExit),
-        ):
-            cmd_test_scanner(args)
-
-        printed = ' '.join(str(call.args[0]) for call in mock_print.call_args_list if call.args)
-        assert printed.count('provider unavailable') == 1
-
-    def test_test_scanner_success_closes_client(self):
-        """A successful diagnostic also closes the created client."""
-        from aiochainscan import ChainscanClient
-
-        client = MagicMock()
-        client.call = AsyncMock(return_value='100')
-        client.close = AsyncMock()
-        args = MagicMock(scanner='etherscan', network='main')
-
-        with patch.object(ChainscanClient, 'from_config', return_value=client):
-            cmd_test_scanner(args)
-
-        client.close.assert_awaited_once_with()
-
-    def test_test_scanner_uses_universal_method(self):
-        """Test that test_scanner function uses a universal method (ACCOUNT_BALANCE).
-
-        This is a regression test for the bug where ETH_PRICE was used,
-        which is not supported by all scanners (e.g., BlockScout V2).
-        """
-        import inspect
-
-        from aiochainscan.cli import cmd_test_scanner
-
-        # Get the source code of cmd_test_scanner
-        source = inspect.getsource(cmd_test_scanner)
-
-        # Verify it uses ACCOUNT_BALANCE, not ETH_PRICE
-        assert (
-            'Method.ACCOUNT_BALANCE' in source
-        ), 'cmd_test_scanner should use Method.ACCOUNT_BALANCE (universal method)'
-        assert (
-            'Method.ETH_PRICE' not in source
-        ), 'cmd_test_scanner should NOT use Method.ETH_PRICE (not supported by all scanners)'
-        # Verify it uses a real address for testing
-        assert (
-            '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045' in source
-        ), 'cmd_test_scanner should use a valid test address'
+    def test_unconstructible_target_exits_non_zero(self, capsys):
+        with pytest.raises(SystemExit) as exit_info:
+            cmd_test(_args(scanner='nodereal', network='ethereum', address=None))
+        assert exit_info.value.code == 1
+        assert 'not supported by NodeReal' in capsys.readouterr().err
 
 
-class TestMainFunction:
-    """Test main CLI entry point."""
+class TestParser:
+    def test_scanners_has_the_legacy_list_alias(self):
+        parser = build_parser()
+        assert parser.parse_args(['list']).func is parser.parse_args(['scanners']).func
 
-    @patch('sys.argv', ['aiochainscan', 'list'])
-    @patch('aiochainscan.cli.cmd_list_scanners')
-    def test_main_list_command(self, mock_cmd_list):
-        """Test main function with list command."""
-        main()
-        mock_cmd_list.assert_called_once()
+    def test_test_network_defaults_to_ethereum(self):
+        args = build_parser().parse_args(['test', 'blockscout_v2'])
+        assert args.network == 'ethereum'
+        assert args.address is None
 
-    @patch('sys.argv', ['aiochainscan', 'check'])
-    @patch('aiochainscan.cli.cmd_check_config')
-    def test_main_check_command(self, mock_cmd_check):
-        """Test main function with check command."""
-        main()
-        mock_cmd_check.assert_called_once()
+    @pytest.mark.parametrize('command', ['add-scanner', 'export'])
+    def test_legacy_commands_are_gone(self, command):
+        with pytest.raises(SystemExit):
+            build_parser().parse_args([command, 'x'])
 
-    @patch('sys.argv', ['aiochainscan', 'generate-env', '--output', '.env.test'])
-    @patch('aiochainscan.cli.cmd_generate_env')
-    def test_main_generate_env_command(self, mock_cmd_generate):
-        """Test main function with generate-env command."""
-        main()
-        mock_cmd_generate.assert_called_once()
-
-    @patch('sys.argv', ['aiochainscan'])
-    @patch('builtins.print')
-    @patch('sys.exit')
-    def test_main_no_command(self, mock_exit, mock_print):
-        """Test main function with no command provided."""
-        with patch('argparse.ArgumentParser.print_help') as mock_help:
+    def test_no_command_prints_help_and_exits(self, capsys):
+        with patch('sys.argv', ['aiochainscan']), pytest.raises(SystemExit) as exit_info:
             main()
-            mock_help.assert_called_once()
-            # Check that exit was called at least once with 1
-            mock_exit.assert_called_with(1)
+        assert exit_info.value.code == 1
+        assert 'usage' in capsys.readouterr().out
 
-    @patch('sys.argv', ['aiochainscan', 'list'])
-    @patch('aiochainscan.cli.cmd_list_scanners')
-    @patch('builtins.print')
-    @patch('sys.exit')
-    def test_main_keyboard_interrupt(self, mock_exit, mock_print, mock_cmd_list):
-        """Test main function handling keyboard interrupt."""
-        mock_cmd_list.side_effect = KeyboardInterrupt()
-
-        main()
-
-        mock_exit.assert_called_once_with(1)
-        print_calls = [call[0][0] for call in mock_print.call_args_list]
-        assert any('Operation cancelled' in call for call in print_calls)
-
-    @patch('sys.argv', ['aiochainscan', 'list'])
-    @patch('aiochainscan.cli.cmd_list_scanners')
-    @patch('builtins.print')
-    @patch('sys.exit')
-    def test_main_unexpected_error(self, mock_exit, mock_print, mock_cmd_list):
-        """Test main function handling unexpected errors."""
-        mock_cmd_list.side_effect = Exception('Unexpected error')
-
-        main()
-
-        mock_exit.assert_called_once_with(1)
-        print_calls = [call[0][0] for call in mock_print.call_args_list]
-        assert any('Unexpected error' in call for call in print_calls)
-
-    @patch(
-        'sys.argv',
-        [
-            'aiochainscan',
-            'add-scanner',
-            'test',
-            '--name',
-            'Test Scanner',
-            '--domain',
-            'test.com',
-            '--currency',
-            'TEST',
-        ],
-    )
-    @patch('aiochainscan.cli.cmd_add_scanner')
-    def test_main_add_scanner_command(self, mock_cmd_add):
-        """Test main function with add-scanner command."""
-        main()
-        mock_cmd_add.assert_called_once()
-
-    @patch('sys.argv', ['aiochainscan', 'export', 'config.json'])
-    @patch('aiochainscan.cli.cmd_export_config')
-    def test_main_export_command(self, mock_cmd_export):
-        """Test main function with export command."""
-        main()
-        mock_cmd_export.assert_called_once()
-
-    @patch('sys.argv', ['aiochainscan', 'test', 'eth', '--network', 'goerli'])
-    @patch('aiochainscan.cli.cmd_test_scanner')
-    def test_main_test_command(self, mock_cmd_test):
-        """Test main function with test command."""
-        main()
-        mock_cmd_test.assert_called_once()
-
-
-class TestCLIArgumentParsing:
-    """Test command-line argument parsing."""
-
-    def test_list_command_args(self):
-        """Test list command argument parsing."""
-        from aiochainscan.cli import main
-
+    def test_dispatches_to_the_selected_command(self):
         with (
-            patch('sys.argv', ['aiochainscan', 'list']),
-            patch('aiochainscan.cli.cmd_list_scanners') as mock_cmd,
+            patch('sys.argv', ['aiochainscan', 'check', '--json']),
+            patch('aiochainscan.cli.cmd_check') as command,
         ):
             main()
-            mock_cmd.assert_called_once()
+        command.assert_called_once()
 
-    def test_generate_env_args(self):
-        """Test generate-env command with various arguments."""
-        test_cases = [
-            ['aiochainscan', 'generate-env'],
-            ['aiochainscan', 'generate-env', '--output', 'custom.env'],
-            ['aiochainscan', 'generate-env', '--show'],
-            ['aiochainscan', 'generate-env', '-o', 'test.env', '-s'],
-        ]
-
-        for argv in test_cases:
-            with patch('sys.argv', argv), patch('aiochainscan.cli.cmd_generate_env') as mock_cmd:
-                main()
-                mock_cmd.assert_called_once()
-
-    def test_add_scanner_args(self):
-        """Test add-scanner command argument parsing."""
+    def test_keyboard_interrupt_is_not_a_traceback(self, capsys):
         with (
-            patch(
-                'sys.argv',
-                [
-                    'aiochainscan',
-                    'add-scanner',
-                    'test_chain',
-                    '--name',
-                    'Test Chain',
-                    '--domain',
-                    'testchain.com',
-                    '--currency',
-                    'TEST',
-                    '--networks',
-                    'main,test',
-                    '--no-api-key',
-                ],
-            ),
-            patch('aiochainscan.cli.cmd_add_scanner') as mock_cmd,
+            patch('sys.argv', ['aiochainscan', 'check']),
+            patch('aiochainscan.cli.cmd_check', side_effect=KeyboardInterrupt),
+            pytest.raises(SystemExit) as exit_info,
         ):
             main()
-            mock_cmd.assert_called_once()
-            args = mock_cmd.call_args[0][0]
-            assert args.id == 'test_chain'
-            assert args.name == 'Test Chain'
-            assert args.domain == 'testchain.com'
-            assert args.currency == 'TEST'
-            assert args.networks == 'main,test'
-            assert args.no_api_key is True
+        assert exit_info.value.code == 130
+        assert 'Interrupted' in capsys.readouterr().err

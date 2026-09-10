@@ -315,18 +315,23 @@ SCANNER_RECORDS: dict[str, ScannerRecord] = {
         kind='blockscout',
         # Family owner: the per-instance topology both BlockScout legs serve.
         network_aliases={'ethereum': 'eth', 'main': 'eth'},
+        # Hosts are live-verified (2026-09-10: v1 `/api`, v2 `/api/v2` and
+        # `/api/eth-rpc` on each). Gnosis, Optimism and Scroll serve their
+        # BlockScout deployment under a chain-branded hostname and 301 the
+        # `*.blockscout.com` alias there; the transport does not follow
+        # redirects, so the branded host is the only working spelling.
+        # Linea and BSC have no BlockScout instance at all (404) and are
+        # therefore absent from the whole BlockScout topology.
         instance_hosts={
             'eth': 'eth.blockscout.com',
             'ethereum': 'eth.blockscout.com',
             'sepolia': 'eth-sepolia.blockscout.com',
-            'gnosis': 'gnosis.blockscout.com',
+            'gnosis': 'gnosisscan.io',
             'polygon': 'polygon.blockscout.com',
-            'optimism': 'optimism.blockscout.com',
+            'optimism': 'explorer.optimism.io',
             'arbitrum': 'arbitrum.blockscout.com',
             'base': 'base.blockscout.com',
-            'scroll': 'scroll.blockscout.com',
-            'linea': 'linea.blockscout.com',
-            'bsc': 'bsc.blockscout.com',
+            'scroll': 'scrollscan.com',
             'zksync': 'zksync.blockscout.com',
         },
         instance_currencies={
@@ -335,11 +340,9 @@ SCANNER_RECORDS: dict[str, ScannerRecord] = {
             'blockscout_gnosis': 'xDAI',
             'blockscout_polygon': 'MATIC',
             'blockscout_base': 'ETH',
-            'blockscout_bsc': 'BNB',
             'blockscout_optimism': 'ETH',
             'blockscout_arbitrum': 'ETH',
             'blockscout_scroll': 'ETH',
-            'blockscout_linea': 'ETH',
         },
         config_ids_by_network={
             'ethereum': 'blockscout_eth',
@@ -348,10 +351,7 @@ SCANNER_RECORDS: dict[str, ScannerRecord] = {
             'gnosis': 'blockscout_gnosis',
             'optimism': 'blockscout_optimism',
             'base': 'blockscout_base',
-            'bsc': 'blockscout_bsc',
-            'bnb': 'blockscout_bsc',
             'scroll': 'blockscout_scroll',
-            'linea': 'blockscout_linea',
         },
         display_names={
             'blockscout_eth': 'BlockScout Ethereum',
@@ -359,11 +359,9 @@ SCANNER_RECORDS: dict[str, ScannerRecord] = {
             'blockscout_gnosis': 'BlockScout Gnosis',
             'blockscout_polygon': 'BlockScout Polygon',
             'blockscout_base': 'BlockScout Base',
-            'blockscout_bsc': 'BlockScout BSC',
             'blockscout_optimism': 'BlockScout Optimism',
             'blockscout_arbitrum': 'BlockScout Arbitrum',
             'blockscout_scroll': 'BlockScout Scroll',
-            'blockscout_linea': 'BlockScout Linea',
         },
         custom_base_url=True,
     ),
@@ -762,7 +760,7 @@ STANDARD_CHAINS = {
     10: {
         'name': 'optimism',
         'aliases': ['optimism', 'op'],
-        'blockscout_instance': 'optimism.blockscout.com',
+        'blockscout_instance': 'explorer.optimism.io',
         'moralis_hex': '0xa',
     },
     420: {
@@ -782,7 +780,6 @@ STANDARD_CHAINS = {
     56: {
         'name': 'bsc',
         'aliases': ['bsc', 'binance', 'bnb'],
-        'blockscout_instance': 'bsc.blockscout.com',
         'moralis_hex': '0x38',
     },
     97: {'name': 'bsc-testnet', 'aliases': ['bsc-testnet', 'bnb-testnet'], 'moralis_hex': '0x61'},
@@ -810,7 +807,7 @@ STANDARD_CHAINS = {
     100: {
         'name': 'gnosis',
         'aliases': ['gnosis', 'xdai'],
-        'blockscout_instance': 'gnosis.blockscout.com',
+        'blockscout_instance': 'gnosisscan.io',
         'moralis_hex': '0x64',
     },
     10200: {
@@ -827,7 +824,6 @@ STANDARD_CHAINS = {
     59144: {
         'name': 'linea',
         'aliases': ['linea'],
-        'blockscout_instance': 'linea.blockscout.com',
         'moralis_hex': '0xe708',
     },
     59140: {'name': 'linea-testnet', 'aliases': ['linea-testnet'], 'moralis_hex': '0xe704'},
@@ -854,7 +850,7 @@ STANDARD_CHAINS = {
     534352: {
         'name': 'scroll',
         'aliases': ['scroll'],
-        'blockscout_instance': 'scroll.blockscout.com',
+        'blockscout_instance': 'scrollscan.com',
         'moralis_hex': '0x82750',
     },
     534351: {'name': 'scroll-sepolia', 'aliases': ['scroll-sepolia'], 'moralis_hex': '0x8274f'},

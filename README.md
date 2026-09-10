@@ -1,5 +1,9 @@
 # aiochainscan
 
+[![PyPI](https://img.shields.io/pypi/v/aiochainscan.svg)](https://pypi.org/project/aiochainscan/)
+[![Python](https://img.shields.io/pypi/pyversions/aiochainscan.svg)](https://pypi.org/project/aiochainscan/)
+[![License](https://img.shields.io/pypi/l/aiochainscan.svg)](https://github.com/VaitaR/aiochainscan/blob/main/LICENSE)
+
 `aiochainscan` is an asynchronous Python client for Etherscan-compatible and
 Blockscout blockchain explorer APIs. It exposes one public client,
 `ChainscanClient`, across account, transaction, block, contract, token, log,
@@ -10,8 +14,9 @@ without coupling request code to one provider. It includes pagination helpers,
 streaming iteration, rate limiting, retries, optional Polars exports, ENS
 resolution, and ABI decoding.
 
-> Status: 1.0.0 — stable public API. The public surface is `ChainscanClient`;
-> provider coverage differs by scanner and endpoint.
+> Status: stable public API (1.x). The public surface is `ChainscanClient`;
+> provider coverage differs by scanner and endpoint. Released changes are
+> listed in the [changelog](https://github.com/VaitaR/aiochainscan/blob/main/CHANGELOG.md).
 
 ## Installation
 
@@ -48,7 +53,11 @@ server's default keyless scanner — see the extras table for the accelerators.
 
 ## Quick start
 
-Blockscout can be used without an API key:
+Blockscout is used without an API key. Its public instances are shared
+infrastructure: they apply their own rate limiting and may answer a burst of
+requests with `403` or a bot-protection page. For unattended or high-volume
+work, configure Etherscan (or a self-hosted Blockscout instance) instead — or
+put both behind [`ChainscanPool`](https://github.com/VaitaR/aiochainscan#multi-provider-failover-pool).
 
 ```python
 import asyncio
@@ -57,7 +66,7 @@ from aiochainscan import ChainscanClient
 
 
 async def main() -> None:
-    address = '0x742d35Cc6634C0532925a3b8D9fa7a3D91D1e9b3'
+    address = '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045'  # vitalik.eth
 
     async with ChainscanClient.from_config('blockscout_v2', 'ethereum') as client:
         balance = await client.get_balance(address)
@@ -196,6 +205,29 @@ habit of returning the same field as `'0x1a'` or `'26'`. Invalid input (empty
 strings, fractional wei, bare hex like `'1a'`) raises `ValueError` instead of
 guessing.
 
+## One shape across providers
+
+Provider payloads differ field by field (`blockNumber` vs `block_number`,
+nested `from` objects vs flat strings). The normalized surface returns the same
+frozen dataclasses whichever provider answered:
+
+```python
+from aiochainscan import ChainscanClient
+
+async with ChainscanClient.from_config('blockscout_v2', 'ethereum') as client:
+    txs = await client.get_transactions_normalized(address)
+    txs[0].hash, txs[0].block_number, txs[0].value_wei   # str, int, int (wei)
+```
+
+`get_*_normalized` (one page), `get_all_*_normalized` (everything) and
+`iter_*_normalized` (batches) exist for transactions, token transfers,
+internal transactions and logs; a single block converts with
+`get_block_normalized`. The dataclasses live in
+[`aiochainscan.domain.normalized`](https://github.com/VaitaR/aiochainscan/blob/main/aiochainscan/domain/normalized.py)
+and keep `raw` for the provider-specific fields. Everything else stays
+provider-native, so switching providers on a raw method means expecting that
+provider's field names.
+
 ## Pagination and streaming
 
 Page-returning methods do not fetch an entire history:
@@ -281,26 +313,41 @@ async with ChainscanClient.from_config('etherscan', 'ethereum') as client:
 ```
 
 ENS methods are available for Ethereum mainnet. Provider capabilities differ:
-Blockscout v2 supports reverse lookup, while forward resolution requires a
-scanner that exposes `eth_call`.
+Blockscout v2 serves reverse lookup from its own address metadata, while
+forward resolution reads the ENS registry over `eth_call` and therefore needs
+a scanner that declares it (`etherscan`, `blockscout` v1). A scanner that does
+not raises `MethodNotDeclaredError` rather than returning `None` — `None`
+means the name (or the reverse record) does not exist.
 
 ```python
 name = await client.lookup_address(address)
 address = await client.resolve_name('vitalik.eth')
 ```
 
-See the [SmartContract guide](docs/SMART_CONTRACT_API.md) and
-[ENS guide](docs/ENS_INTEGRATION.md).
+See the [SmartContract guide](https://github.com/VaitaR/aiochainscan/blob/main/docs/SMART_CONTRACT_API.md) and
+[ENS guide](https://github.com/VaitaR/aiochainscan/blob/main/docs/ENS_INTEGRATION.md).
 
 ## MCP server
+
+<!-- mcp-name: io.github.VaitaR/aiochainscan -->
 
 The `mcp` extra exposes the client to AI agents (Claude Desktop, Cursor, …)
 over stdio with 12 read-only tools and an agent-friendly response contract:
 
 ```bash
-pip install "aiochainscan[mcp]"
-python -m aiochainscan.mcp_server
+pip install "aiochainscan[mcp]" && aiochainscan mcp   # installed
+uvx --from "aiochainscan[mcp]" aiochainscan mcp       # without installing
 ```
+
+In a client's config file that means `"command": "uvx"`, `"args":
+["--from", "aiochainscan[mcp]", "aiochainscan", "mcp"]`.
+`python -m aiochainscan.mcp_server` still works and starts the same server.
+
+For clients that install extensions instead of editing config, `mcpb/` builds
+an [MCPB bundle](https://github.com/modelcontextprotocol/mcpb) (`make mcpb`)
+— the format [Smithery](https://smithery.ai/docs/build/publish) distributes
+local stdio servers in. The bundle installs the pinned release with uv and
+asks for the optional API keys in the client's UI.
 
 | Tool | What it does |
 |---|---|
@@ -326,6 +373,43 @@ Tools take a `chain` parameter (name, numeric ID, or a self-hosted instance
 URL) and an optional `scanner` override. The default scanner is keyless
 `blockscout` (`AIOCHAINSCAN_MCP_SCANNER` env override); `etherscan` covers
 every chain but needs `ETHERSCAN_KEY`.
+
+## Command line
+
+The package installs an `aiochainscan` command for inspecting what the current
+environment can reach — which scanners are available, which need a key, and
+whether a chosen provider actually answers:
+
+```bash
+aiochainscan scanners                  # providers, versions, auth, method coverage
+aiochainscan check                     # credential status + which .env files were read
+aiochainscan chains --filter base      # chains the registry resolves
+aiochainscan generate-env > .env       # template with the keys that are actually used
+aiochainscan test blockscout_v2 ethereum   # one real request through the configured client
+```
+
+`scanners` and `chains` need no network access and no credentials; `test`
+performs a single balance request with the resolved configuration and exits
+non-zero when the provider cannot serve it.
+
+## Writing code with an AI agent
+
+Three ways to give an agent the library, from thinnest to fullest:
+
+```bash
+npx skills add VaitaR/aiochainscan      # installs the packaged Agent Skill
+```
+
+The skill ([`skills/aiochainscan/`](https://github.com/VaitaR/aiochainscan/tree/main/skills/aiochainscan))
+carries the rules that decide whether generated code is correct — single-page
+versus complete history, exact Wei math, provider coverage — plus a provider
+matrix and recipes as reference files. Agents that read
+[Context7](https://context7.com) get the same guidance from
+[`context7.json`](https://github.com/VaitaR/aiochainscan/blob/main/context7.json)
+without installing anything.
+
+For an agent that should *query chains* rather than write code, run the
+[MCP server](#mcp-server) — 12 read-only tools over stdio.
 
 ## Error handling
 
@@ -362,12 +446,15 @@ filter it if the diagnostics are noisy).
 
 ## Documentation
 
-- [Documentation index](docs/README.md)
-- [SmartContract API](docs/SMART_CONTRACT_API.md)
-- [ENS integration](docs/ENS_INTEGRATION.md)
-- [Progress callbacks](docs/PROGRESS_CALLBACKS.md)
-- [Migration guide](docs/MIGRATION_GUIDE.md)
-- [Examples](examples/README.md)
+- [Getting started](https://github.com/VaitaR/aiochainscan/blob/main/docs/GETTING_STARTED.md) — install, provider choice, recipes, limits
+- [Documentation index](https://github.com/VaitaR/aiochainscan/blob/main/docs/README.md)
+- [SmartContract API](https://github.com/VaitaR/aiochainscan/blob/main/docs/SMART_CONTRACT_API.md)
+- [ENS integration](https://github.com/VaitaR/aiochainscan/blob/main/docs/ENS_INTEGRATION.md)
+- [Progress callbacks](https://github.com/VaitaR/aiochainscan/blob/main/docs/PROGRESS_CALLBACKS.md)
+- [Migration guide](https://github.com/VaitaR/aiochainscan/blob/main/docs/MIGRATION_GUIDE.md)
+- [Examples](https://github.com/VaitaR/aiochainscan/blob/main/examples/README.md)
+- [Changelog](https://github.com/VaitaR/aiochainscan/blob/main/CHANGELOG.md)
+- [Security policy](https://github.com/VaitaR/aiochainscan/blob/main/SECURITY.md)
 
 ## Development
 
@@ -380,8 +467,8 @@ uv run mypy aiochainscan --strict
 uv run pre-commit run --all-files
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the contribution workflow.
+See [CONTRIBUTING.md](https://github.com/VaitaR/aiochainscan/blob/main/CONTRIBUTING.md) for the contribution workflow.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [LICENSE](https://github.com/VaitaR/aiochainscan/blob/main/LICENSE).

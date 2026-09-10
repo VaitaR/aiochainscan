@@ -276,7 +276,7 @@ class TestScannerInitialization:
         """Scanner should initialize for various supported networks."""
         networks_and_urls = [
             ('sepolia', 'https://eth-sepolia.blockscout.com'),
-            ('gnosis', 'https://gnosis.blockscout.com'),
+            ('gnosis', 'https://gnosisscan.io'),
             ('polygon', 'https://polygon.blockscout.com'),
             ('base', 'https://base.blockscout.com'),
         ]

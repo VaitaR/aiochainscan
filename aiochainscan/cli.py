@@ -1,310 +1,404 @@
 #!/usr/bin/env python3
-"""
-Command Line Interface for aiochainscan configuration management.
+"""Command line interface for aiochainscan.
 
-This CLI tool helps developers and users manage their blockchain scanner configurations,
-API keys, and generate necessary configuration files.
+Answers the questions a user has before writing code: which providers this
+installation can reach, which of them need a credential and whether it is
+present, which chains resolve, and whether a chosen provider actually answers.
+
+Every fact printed here is derived from the same declarations the library uses
+at runtime — :data:`aiochainscan.chain_registry.SCANNER_RECORDS`, the scanner
+classes' ``SPECS``, and the configuration manager's credential resolution — so
+the CLI cannot describe a provider surface the client does not have.
 """
+
+from __future__ import annotations
 
 import argparse
+import asyncio
+import json
 import sys
 from pathlib import Path
+from typing import Any
 
-from aiochainscan.config import config_manager
+from aiochainscan.chain_registry import (
+    BLOCKSCOUT_CONFIG_IDS,
+    CUSTOM_BASE_URL_SCANNERS,
+    SCANNER_CONFIG_IDS,
+    SCANNER_RECORDS,
+    ScannerTarget,
+    get_chain_aliases,
+    get_chain_name,
+    list_supported_chains,
+    resolve_scanner_target,
+)
+from aiochainscan.config import config_manager, credential_env_names
+from aiochainscan.domain.method import Method
+from aiochainscan.scanners import get_scanner_class
 
-# One of the files ConfigurationManager loads scanners from at startup.
-DEFAULT_SCANNER_CONFIG_FILE = 'aiochainscan.json'
+#: Address used by ``test`` when the caller names none (vitalik.eth).
+PROBE_ADDRESS = '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045'
+
+#: Files ``ConfigurationManager`` reads credentials from, in load order.
+ENV_FILE_CANDIDATES = ('.env.local', '.env')
 
 
-def _parse_networks_arg(raw: str | None) -> list[str]:
-    """Split the ``--networks`` value into a clean list of network names.
+def _env_files() -> list[Path]:
+    """The credential files present right now, in the order they are read."""
+    paths = [Path.home() / '.aiochainscan' / '.env']
+    paths += [Path.cwd() / name for name in ENV_FILE_CANDIDATES]
+    return [path for path in paths if path.exists()]
 
-    Whitespace around names is stripped and empty items are dropped:
-    ``'main, test,,x'`` registers ``['main', 'test', 'x']`` — not networks
-    literally named ``' test'`` or ``''``. A blank value (missing or all
-    separators) falls back to the documented default ``['main']``.
+
+def _identity(scanner: str) -> ScannerTarget:
+    """Resolve a public scanner name to its construction target.
+
+    ``api_key=''`` keeps credential lookup out of it: this asks what the
+    scanner *is*, not whether it is configured. The candidate networks come
+    from the scanner's own record, so a chain-restricted provider (NodeReal is
+    BSC-only) resolves on a network it actually serves.
     """
-    if not raw:
-        return ['main']
-    networks = [item.strip() for item in raw.split(',')]
-    return [item for item in networks if item] or ['main']
+    record = SCANNER_RECORDS[scanner]
+    candidates = sorted(record.supported_networks or ()) or ['ethereum']
+    errors: list[str] = []
+    for network in candidates:
+        try:
+            return resolve_scanner_target(scanner, network, api_key='')
+        except ValueError as exc:  # noqa: PERF203 - candidate list is 1-2 long
+            errors.append(f'{network}: {exc}')
+    raise ValueError(f'Cannot resolve scanner {scanner!r}: {"; ".join(errors)}')
 
 
-def cmd_list_scanners(args: argparse.Namespace) -> None:
-    """List all available scanners and their status."""
-    print('🔍 Available Blockchain Scanners')
-    print('=' * 50)
+def _config_id(scanner: str) -> str:
+    """Configuration-manager id whose credential this scanner uses."""
+    explicit = SCANNER_CONFIG_IDS.get(scanner)
+    if explicit is not None:
+        return explicit
+    if SCANNER_RECORDS[scanner].kind == 'blockscout':
+        return BLOCKSCOUT_CONFIG_IDS.get('ethereum', scanner)
+    return scanner
 
-    configs = config_manager.list_all_configurations()
 
-    for scanner_id, info in configs.items():
-        status = '✅ READY' if info['api_key_configured'] else '❌ NO API KEY'
-        networks = ', '.join(info['networks'][:3])
-        if len(info['networks']) > 3:
-            networks += f' (+{len(info["networks"]) - 3} more)'
+def _credential_state(scanner: str) -> dict[str, Any]:
+    """Whether *scanner* needs a credential, and whether one is resolvable."""
+    config_id = _config_id(scanner)
+    try:
+        config = config_manager.get_scanner_config(config_id)
+    except (ValueError, KeyError):
+        return {'requires_api_key': True, 'configured': False, 'env_vars': []}
 
-        print(f'\n📋 {scanner_id.upper()}: {info["name"]}')
-        print(f'   Domain: {info["domain"]}')
-        print(f'   Currency: {info["currency"]}')
-        print(f'   Networks: {networks}')
-        print(f'   Status: {status}')
+    try:
+        configured = bool(config_manager.get_api_key(config_id))
+    except Exception:  # noqa: BLE001 - a missing key is an answer, not a failure
+        configured = False
 
-        if not info['api_key_configured'] and info['requires_api_key']:
-            print(f'   💡 Set one of: {", ".join(info["api_key_sources"][:2])}')
+    return {
+        'requires_api_key': config.requires_api_key,
+        'configured': configured,
+        'env_vars': list(credential_env_names(config_id, config.name)),
+    }
+
+
+def _chains(scanner: str) -> list[str]:
+    """Canonical chain names this scanner serves, asked one chain at a time.
+
+    Two gates, because construction has two: the registry must resolve the
+    chain for this scanner, and the scanner class must declare the resulting
+    scanner-dialect network. Registry resolution alone passes chains the
+    BlockScout legs have no instance for.
+    """
+    served: list[str] = []
+    for chain_id in list_supported_chains():
+        try:
+            target = resolve_scanner_target(scanner, chain_id, api_key='')
+        except ValueError:
+            continue
+        scanner_class = get_scanner_class(target.scanner_name, target.scanner_version)
+        if target.scanner_network not in scanner_class.supported_networks:
+            continue
+        served.append(get_chain_name(chain_id))
+    return sorted(served)
+
+
+def _scanner_report(scanner: str) -> dict[str, Any]:
+    """Everything the CLI knows about one public scanner name."""
+    target = _identity(scanner)
+    scanner_class = get_scanner_class(target.scanner_name, target.scanner_version)
+    credentials = _credential_state(scanner)
+    return {
+        'scanner': scanner,
+        'version': target.scanner_version,
+        'keyless': not credentials['requires_api_key'],
+        'api_key_configured': credentials['configured'],
+        'api_key_env_vars': credentials['env_vars'],
+        'methods_declared': len(scanner_class.SPECS),
+        'methods_total': len(Method),
+        'chains': _chains(scanner),
+        'custom_base_url': scanner in CUSTOM_BASE_URL_SCANNERS,
+        'result_window': scanner_class.result_window,
+        'max_page_size': scanner_class.max_page_size,
+    }
+
+
+def _all_reports() -> list[dict[str, Any]]:
+    return [_scanner_report(name) for name in sorted(SCANNER_RECORDS)]
+
+
+def _credential_line(report: dict[str, Any]) -> str:
+    if report['keyless']:
+        return 'no API key required'
+    primary = report['api_key_env_vars'][0] if report['api_key_env_vars'] else 'API key'
+    state = 'configured' if report['api_key_configured'] else 'MISSING'
+    return f'{primary} ({state})'
+
+
+def cmd_scanners(args: argparse.Namespace) -> None:
+    """List the providers this installation can construct."""
+    reports = _all_reports()
+    if args.json:
+        json.dump(reports, sys.stdout, indent=2)
+        sys.stdout.write('\n')
+        return
+
+    print('Providers available to ChainscanClient.from_config()')
+    print('=' * 62)
+    for report in reports:
+        chains = report['chains']
+        shown = ', '.join(chains[:6])
+        if len(chains) > 6:
+            shown += f' (+{len(chains) - 6} more)'
+        print(f'\n{report["scanner"]}  ({report["version"]})')
+        print(f'  credentials : {_credential_line(report)}')
+        print(f'  methods     : {report["methods_declared"]}/{report["methods_total"]} declared')
+        print(f'  chains      : {len(chains) or "-"}{"  " + shown if chains else ""}')
+        window = report['result_window']
+        page = report['max_page_size']
+        print(
+            '  pagination  : '
+            + (f'result window {window}' if window else 'cursor-paginated, no result window')
+            + (f', {page} items per page' if page else '')
+        )
+        if report['custom_base_url']:
+            print('  custom URL  : accepts a self-hosted instance / proxy base URL')
+
+    print('\nUsage: ChainscanClient.from_config(<scanner>, <chain>)')
+    print('Chains: aiochainscan chains        Credentials: aiochainscan check')
+
+
+def cmd_check(args: argparse.Namespace) -> None:
+    """Report credential state, and where credentials were read from."""
+    reports = _all_reports()
+    keyless = [r for r in reports if r['keyless']]
+    ready = [r for r in reports if not r['keyless'] and r['api_key_configured']]
+    missing = [r for r in reports if not r['keyless'] and not r['api_key_configured']]
+    env_files = _env_files()
+
+    if args.json:
+        json.dump(
+            {
+                'keyless': [r['scanner'] for r in keyless],
+                'configured': [r['scanner'] for r in ready],
+                'missing': {r['scanner']: r['api_key_env_vars'] for r in missing},
+                'env_files': [str(path) for path in env_files],
+            },
+            sys.stdout,
+            indent=2,
+        )
+        sys.stdout.write('\n')
+        return
+
+    print('Credential status')
+    print('=' * 62)
+    print(f'\nUsable without a key ({len(keyless)}):')
+    for report in keyless:
+        print(f'  {report["scanner"]} ({report["version"]})')
+    if ready:
+        print(f'\nKey configured ({len(ready)}):')
+        for report in ready:
+            print(f'  {report["scanner"]}: {report["api_key_env_vars"][0]}')
+    if missing:
+        print(f'\nKey missing ({len(missing)}):')
+        for report in missing:
+            names = ', '.join(report['api_key_env_vars'][:2])
+            print(f'  {report["scanner"]}: set one of {names}')
+
+    if env_files:
+        print('\nCredential files read (later entries override earlier ones):')
+        for path in env_files:
+            print(f'  {path}')
+    else:
+        print('\nNo credential files found. Environment variables still apply;')
+        print("'aiochainscan generate-env' writes a template.")
+
+    if not missing:
+        print('\nEvery provider this installation knows is usable.')
+
+
+def cmd_chains(args: argparse.Namespace) -> None:
+    """List the chains the registry resolves, with the providers serving them."""
+    coverage = {report['scanner']: set(report['chains']) for report in _all_reports()}
+    rows: list[dict[str, Any]] = []
+    for chain_id in sorted(list_supported_chains()):
+        name = get_chain_name(chain_id)
+        aliases = [alias for alias in get_chain_aliases(chain_id) if alias != name]
+        providers = sorted(scanner for scanner, served in coverage.items() if name in served)
+        row: dict[str, Any] = {
+            'chain_id': chain_id,
+            'name': name,
+            'aliases': aliases,
+            'scanners': providers,
+        }
+        if args.filter:
+            needle = args.filter.lower()
+            haystack = ' '.join([name, *aliases, str(chain_id)]).lower()
+            if needle not in haystack:
+                continue
+        rows.append(row)
+
+    if args.json:
+        json.dump(rows, sys.stdout, indent=2)
+        sys.stdout.write('\n')
+        return
+
+    if not rows:
+        print(f'No chain matches {args.filter!r}.')
+        return
+
+    print(f'{"chain id":>9}  {"name":<14}  scanners')
+    print('-' * 62)
+    for row in rows:
+        scanners = ', '.join(row['scanners']) or '(no built-in provider)'
+        print(f'{row["chain_id"]:>9}  {row["name"]:<14}  {scanners}')
+        if row['aliases']:
+            print(f'{"":>9}  aliases: {", ".join(row["aliases"])}')
 
 
 def cmd_generate_env(args: argparse.Namespace) -> None:
-    """Generate .env template file."""
-    output_file = Path(args.output) if args.output else Path.cwd() / '.env.example'
-
-    template = config_manager.generate_env_template(output_file)
-
-    print(f'✅ Generated .env template at: {output_file}')
-    print('\n📝 Next steps:')
-    print(f'1. Copy {output_file.name} to .env')
-    print('2. Fill in your API keys')
-    print('3. Make sure .env is in your .gitignore')
-
-    if args.show:
-        print('\n📄 Template content:')
-        print('-' * 40)
-        print(template)
-
-
-def cmd_check_config(args: argparse.Namespace) -> None:
-    """Check current configuration status."""
-    print('🔧 Configuration Status Check')
-    print('=' * 50)
-
-    configs = config_manager.list_all_configurations()
-
-    # Count statistics
-    total_scanners = len(configs)
-    configured_scanners = sum(1 for c in configs.values() if c['api_key_configured'])
-
-    print(f'\n📊 Summary: {configured_scanners}/{total_scanners} scanners configured')
-
-    # Group by status
-    ready_scanners = []
-    missing_scanners = []
-
-    for scanner_id, info in configs.items():
-        if info['api_key_configured']:
-            ready_scanners.append((scanner_id, info))
-        elif info['requires_api_key']:
-            missing_scanners.append((scanner_id, info))
-
-    if ready_scanners:
-        print(f'\n✅ Ready scanners ({len(ready_scanners)}):')
-        for scanner_id, info in ready_scanners:
-            print(f'   • {scanner_id}: {info["name"]}')
-
-    if missing_scanners:
-        print(f'\n❌ Missing API keys ({len(missing_scanners)}):')
-        for scanner_id, info in missing_scanners:
-            primary_env = (
-                info['api_key_sources'][0]
-                if info['api_key_sources']
-                else f'{scanner_id.upper()}_KEY'
-            )
-            print(f'   • {scanner_id}: Set {primary_env}')
-
-    # Check for .env files
-    env_files = [
-        Path.cwd() / '.env',
-        Path.cwd() / '.env.local',
-        Path.home() / '.aiochainscan' / '.env',
+    """Write a credential template covering only the keys that are used."""
+    lines = [
+        '# aiochainscan credentials',
+        '# Only the providers that need a key appear here; the BlockScout',
+        '# scanners work without one.',
+        '',
     ]
+    for report in _all_reports():
+        if report['keyless'] or not report['api_key_env_vars']:
+            continue
+        chains = report['chains']
+        served = ', '.join(chains[:8]) + (' …' if len(chains) > 8 else '')
+        lines += [
+            f'# {report["scanner"]} ({report["version"]}) — chains: {served}',
+            f'{report["api_key_env_vars"][0]}=',
+            '',
+        ]
+    template = '\n'.join(lines)
 
-    existing_env_files = [f for f in env_files if f.exists()]
-
-    if existing_env_files:
-        print('\n📁 Found .env files:')
-        for env_file in existing_env_files:
-            print(f'   • {env_file}')
+    if args.output:
+        output = Path(args.output)
+        output.write_text(template)
+        print(f'Wrote {output}', file=sys.stderr)
     else:
-        print("\n💡 No .env files found. Use 'aiochainscan generate-env' to create one.")
+        sys.stdout.write(template)
 
 
-def cmd_add_scanner(args: argparse.Namespace) -> None:
-    """Add a custom scanner configuration."""
-    networks = _parse_networks_arg(args.networks)
-    scanner_data = {
-        'name': args.name,
-        'base_domain': args.domain,
-        'currency': args.currency,
-        'supported_networks': networks,
-        'requires_api_key': not args.no_api_key,
-        'special_config': {},
-    }
+def cmd_test(args: argparse.Namespace) -> None:
+    """Perform one real request with the resolved configuration."""
+    from aiochainscan import ChainscanClient
 
-    try:
-        config_manager.register_scanner(args.id, scanner_data)
+    address = args.address or PROBE_ADDRESS
 
-        if args.save is not None:
-            config_file = Path(args.save)
-            config_manager.persist_scanner(args.id, config_file)
-            print(f'✅ Registered scanner (credentials/display entry): {args.id}')
-            print(f'   Saved to: {config_file}')
-        else:
-            print(f'✅ Registered scanner for this process only: {args.id}')
-
-        print(f'   Name: {scanner_data["name"]}')
-        print(f'   Domain: {scanner_data["base_domain"]}')
-        print(f'   Networks: {", ".join(scanner_data["supported_networks"])}')
-
-        # Honest scope statement: this registration lives in the configuration
-        # manager, which owns credentials and display data only. It does NOT
-        # add a scanner class, so ChainscanClient.from_config() — which
-        # resolves scanner classes from the aiochainscan scanner registry —
-        # will not construct a client from this entry alone.
-        print('   ℹ️  This entry carries credentials and display data for a')
-        print('      separately-registered scanner class. ChainscanClient.from_config()')
-        print('      resolves scanner classes from the aiochainscan scanner registry')
-        print('      and will not construct a client from this registration alone.')
-
-        if args.save is None:
-            print('   💡 Nothing was written to disk. Pass --save to persist it,')
-            print(f'      e.g. --save {DEFAULT_SCANNER_CONFIG_FILE}')
-
-        if scanner_data['requires_api_key']:
-            suggestions = config_manager._get_api_key_suggestions(args.id)
-            print(f'   💡 Set API key with: {suggestions[0]}=your_api_key')
-
-    except (ValueError, OSError) as e:
-        print(f'❌ Error adding scanner: {e}')
-        sys.exit(1)
-
-
-def cmd_export_config(args: argparse.Namespace) -> None:
-    """Export current configuration to JSON."""
-    output_file = Path(args.output)
-
-    try:
-        config_manager.export_config(output_file)
-        print(f'✅ Configuration exported to: {output_file}')
-    except Exception as e:
-        print(f'❌ Export failed: {e}')
-        sys.exit(1)
-
-
-def cmd_test_scanner(args: argparse.Namespace) -> None:
-    """Test a scanner configuration."""
-    import asyncio
-
-    from aiochainscan import ChainscanClient, Method
-
-    async def test_scanner() -> None:
-        print(f'🧪 Testing {args.scanner} scanner...')
-        client = None
-
+    async def run() -> None:
+        client = ChainscanClient.from_config(args.scanner, args.network)
         try:
-            client = ChainscanClient.from_config(args.scanner, args.network)
-            print('✅ Client created successfully')
-
-            # Test a simple API call using a universally supported method
-            # Use ACCOUNT_BALANCE as it's supported by all scanners
-            # Use a well-known address (Vitalik's) for consistent testing
-            result = await client.call(
-                Method.ACCOUNT_BALANCE,
-                address='0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045',
-            )
-            print(f'✅ API test successful - got response: {type(result)}')
-            print(f'✅ Scanner {args.scanner} is working correctly')
-
-        except Exception as e:
-            print(f'❌ Scanner test failed: {e}')
-            sys.exit(1)
+            balance = await client.get_balance(address)
         finally:
-            if client is not None:
-                await client.close()
+            await client.close()
+        print(f'{args.scanner}/{args.network}: get_balance({address}) -> {balance}')
 
-    asyncio.run(test_scanner())
+    try:
+        asyncio.run(run())
+    except Exception as exc:
+        print(
+            f'{args.scanner}/{args.network} failed: {type(exc).__name__}: {exc}', file=sys.stderr
+        )
+        sys.exit(1)
 
 
-def main() -> None:
-    """Main CLI entry point."""
+def cmd_mcp(args: argparse.Namespace) -> None:
+    """Run the MCP stdio server.
+
+    Nothing may be written to stdout here: it is the transport.
+    """
+    from aiochainscan.mcp_server import MCP_AVAILABLE, create_mcp_server
+
+    if not MCP_AVAILABLE:
+        print('MCP not installed. Run: pip install "aiochainscan[mcp]"', file=sys.stderr)
+        sys.exit(1)
+
+    create_mcp_server().run()
+
+
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description='aiochainscan configuration management CLI',
+        prog='aiochainscan',
+        description='Inspect what this aiochainscan installation can reach.',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  %(prog)s list                              # List all scanners
-  %(prog)s check                             # Check configuration status
-  %(prog)s generate-env                      # Generate .env template
-  %(prog)s generate-env --output .env.dev    # Generate custom .env file
-  %(prog)s test etherscan                    # Test Ethereum scanner
-  %(prog)s add-scanner custom_chain --name "Custom Chain" --domain "customscan.io"
+  %(prog)s scanners                       # providers, credentials, coverage
+  %(prog)s check                          # credential status
+  %(prog)s chains --filter base           # chains the registry resolves
+  %(prog)s generate-env > .env            # template for the keys in use
+  %(prog)s test blockscout_v2 ethereum    # one real request
         """,
     )
+    subparsers = parser.add_subparsers(dest='command')
 
-    subparsers = parser.add_subparsers(dest='command', help='Available commands')
-
-    # List scanners command
-    list_parser = subparsers.add_parser('list', help='List all available scanners')
-    list_parser.set_defaults(func=cmd_list_scanners)
-
-    # Check configuration command
-    check_parser = subparsers.add_parser('check', help='Check configuration status')
-    check_parser.set_defaults(func=cmd_check_config)
-
-    # Generate .env template command
-    env_parser = subparsers.add_parser('generate-env', help='Generate .env template')
-    env_parser.add_argument('--output', '-o', help='Output file path (default: .env.example)')
-    env_parser.add_argument('--show', '-s', action='store_true', help='Show template content')
-    env_parser.set_defaults(func=cmd_generate_env)
-
-    # Add custom scanner command
-    add_parser = subparsers.add_parser('add-scanner', help='Add custom scanner')
-    add_parser.add_argument('id', help='Scanner ID (e.g., "custom_chain")')
-    add_parser.add_argument('--name', required=True, help='Scanner display name')
-    add_parser.add_argument('--domain', required=True, help='Base domain')
-    add_parser.add_argument('--currency', required=True, help='Currency symbol')
-    add_parser.add_argument('--networks', help='Comma-separated networks (default: main)')
-    add_parser.add_argument(
-        '--no-api-key', action='store_true', help='Scanner does not require API key'
+    scanners = subparsers.add_parser(
+        'scanners', aliases=['list'], help='List available providers and their coverage'
     )
-    add_parser.add_argument(
-        '--save',
-        nargs='?',
-        const=DEFAULT_SCANNER_CONFIG_FILE,
-        default=None,
-        metavar='PATH',
-        help=(
-            'Persist the scanner into a JSON config file '
-            f'(default: {DEFAULT_SCANNER_CONFIG_FILE}); without it the registration '
-            'lives only for this process'
-        ),
+    scanners.add_argument('--json', action='store_true', help='Machine-readable output')
+    scanners.set_defaults(func=cmd_scanners)
+
+    check = subparsers.add_parser('check', help='Check credential status')
+    check.add_argument('--json', action='store_true', help='Machine-readable output')
+    check.set_defaults(func=cmd_check)
+
+    chains = subparsers.add_parser('chains', help='List chains the registry resolves')
+    chains.add_argument('--filter', help='Substring match on name, alias or chain id')
+    chains.add_argument('--json', action='store_true', help='Machine-readable output')
+    chains.set_defaults(func=cmd_chains)
+
+    env = subparsers.add_parser('generate-env', help='Print a credential template')
+    env.add_argument('--output', '-o', help='Write to this file instead of stdout')
+    env.set_defaults(func=cmd_generate_env)
+
+    test = subparsers.add_parser('test', help='Perform one real request with the current config')
+    test.add_argument('scanner', help="Scanner name (e.g. 'etherscan', 'blockscout_v2')")
+    test.add_argument(
+        'network', nargs='?', default='ethereum', help="Chain name or id (default: 'ethereum')"
     )
-    add_parser.set_defaults(func=cmd_add_scanner)
+    test.add_argument('--address', help=f'Address to query (default: {PROBE_ADDRESS})')
+    test.set_defaults(func=cmd_test)
 
-    # Export configuration command
-    export_parser = subparsers.add_parser('export', help='Export configuration to JSON')
-    export_parser.add_argument('output', help='Output JSON file path')
-    export_parser.set_defaults(func=cmd_export_config)
+    mcp = subparsers.add_parser('mcp', help='Run the MCP stdio server')
+    mcp.set_defaults(func=cmd_mcp)
 
-    # Test scanner command
-    test_parser = subparsers.add_parser('test', help='Test scanner configuration')
-    test_parser.add_argument('scanner', help='Scanner ID to test')
-    test_parser.add_argument('--network', default='main', help='Network to test (default: main)')
-    test_parser.set_defaults(func=cmd_test_scanner)
+    return parser
 
-    # Parse arguments
+
+def main() -> None:
+    parser = build_parser()
     args = parser.parse_args()
 
-    if not args.command:
+    if not getattr(args, 'func', None):
         parser.print_help()
         sys.exit(1)
 
-    # Execute command
     try:
         args.func(args)
     except KeyboardInterrupt:
-        print('\n🛑 Operation cancelled')
-        sys.exit(1)
-    except Exception as e:
-        print(f'❌ Unexpected error: {e}')
-        sys.exit(1)
+        print('Interrupted', file=sys.stderr)
+        sys.exit(130)
 
 
 if __name__ == '__main__':

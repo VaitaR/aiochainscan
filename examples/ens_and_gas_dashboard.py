@@ -5,9 +5,9 @@ Uses only the public aiochainscan ChainscanClient API.
 
 import asyncio
 import logging
-import os
+from decimal import Decimal
 
-from aiochainscan import ChainscanClient
+from aiochainscan import ChainscanClient, wei_to_ether
 from aiochainscan.exceptions import ChainscanNetworkError
 
 logger = logging.getLogger(__name__)
@@ -41,12 +41,12 @@ async def resolve_ens_and_balances(ens_name: str) -> dict:
     logger.info('Resolved %s → %s', ens_name, address)
 
     # 2. Balances across chains (blockscout_v2, no API key needed)
-    balances: dict[str, float] = {}
+    balances: dict[str, Decimal] = {}
     for network in _BALANCE_NETWORKS:
         async with ChainscanClient.from_config('blockscout_v2', network) as client:
             try:
                 raw = await client.get_balance(address)
-                balances[network] = int(raw) / 10**18
+                balances[network] = wei_to_ether(raw)
             except ChainscanNetworkError as exc:
                 logger.error('Network error on %s: %s — skipping', network, exc)
 
@@ -75,12 +75,17 @@ async def gas_dashboard() -> dict:
         }
 
     Raises:
-        RuntimeError: if ETHERSCAN_KEY is not set in the environment.
+        RuntimeError: if no Etherscan credential can be resolved.
     """
-    if not os.environ.get('ETHERSCAN_KEY'):
-        raise RuntimeError('ETHERSCAN_KEY not set')
+    # The library resolves the credential (environment, ./.env.local, ./.env,
+    # ~/.aiochainscan/.env), so reading the environment here would miss the
+    # files it also reads.
+    try:
+        client = ChainscanClient.from_config('etherscan', 'ethereum')
+    except ValueError as exc:
+        raise RuntimeError(f'Etherscan is not configured: {exc}') from exc
 
-    async with ChainscanClient.from_config('etherscan', 'ethereum') as client:
+    async with client:
         price = await client.get_eth_price()
         gas = await client.get_gas_oracle()
 

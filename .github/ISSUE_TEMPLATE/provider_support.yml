@@ -1,0 +1,39 @@
+name: Provider or chain support
+description: Ask for a new explorer, a new chain, or a method a provider does not declare
+labels: [provider]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Run `aiochainscan scanners` and `aiochainscan chains` first — they print
+        what the installed version actually serves.
+  - type: input
+    id: target
+    attributes:
+      label: Provider / chain
+      description: Name and chain id
+    validations:
+      required: true
+  - type: input
+    id: endpoint
+    attributes:
+      label: API documentation URL
+      description: Link to the endpoint documentation, plus a working request if you have one
+    validations:
+      required: true
+  - type: textarea
+    id: access
+    attributes:
+      label: Access conditions
+      description: |
+        Is a key required? Free tier limits? Is there a public instance, and does
+        it answer without a key?
+    validations:
+      required: true
+  - type: textarea
+    id: pagination
+    attributes:
+      label: Pagination and limits
+      description: |
+        How does it paginate (page/offset, opaque cursor)? Any documented or
+        measured result-window cap? Completeness guarantees depend on this.

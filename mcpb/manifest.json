@@ -1,0 +1,83 @@
+{
+  "manifest_version": "0.4",
+  "name": "aiochainscan",
+  "display_name": "aiochainscan",
+  "version": "1.0.4",
+  "description": "Read-only blockchain data: balances, transactions, tokens, holders, contract ABIs, ENS.",
+  "long_description": "Twelve read-only tools over Etherscan, BlockScout and NodeReal, served by the `aiochainscan` Python client. Works keylessly against BlockScout; an Etherscan or NodeReal key widens coverage. Every tool answers an envelope of `{data, notes, instructions, pagination}` with opaque pagination cursors, exact Wei math (no float division) and EIP-55 addresses, and transaction input decoded against the verified ABI.",
+  "author": {
+    "name": "VaitaR",
+    "email": "andrey.shivalin@gmail.com",
+    "url": "https://github.com/VaitaR"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/VaitaR/aiochainscan.git"
+  },
+  "homepage": "https://github.com/VaitaR/aiochainscan#mcp-server",
+  "documentation": "https://github.com/VaitaR/aiochainscan/blob/main/docs/README.md",
+  "support": "https://github.com/VaitaR/aiochainscan/issues",
+  "license": "MIT",
+  "keywords": ["blockchain", "ethereum", "etherscan", "blockscout", "erc20", "ens", "evm"],
+  "privacy_policies": [
+    "https://etherscan.io/privacyPolicy",
+    "https://eaas.blockscout.com/privacy-notice",
+    "https://nodereal.io/privacy-policy"
+  ],
+  "server": {
+    "type": "uv",
+    "entry_point": "src/server.py",
+    "mcp_config": {
+      "command": "uv",
+      "args": ["run", "--directory", "${__dirname}", "src/server.py"],
+      "env": {
+        "ETHERSCAN_KEY": "${user_config.etherscan_key}",
+        "NODEREAL_KEY": "${user_config.nodereal_key}",
+        "AIOCHAINSCAN_MCP_SCANNER": "${user_config.default_scanner}"
+      }
+    }
+  },
+  "compatibility": {
+    "platforms": ["darwin", "linux", "win32"],
+    "runtimes": {
+      "python": ">=3.12"
+    }
+  },
+  "user_config": {
+    "etherscan_key": {
+      "type": "string",
+      "title": "Etherscan API key",
+      "description": "Optional. Without it the server uses the keyless BlockScout scanner, which serves fewer methods.",
+      "sensitive": true,
+      "required": false
+    },
+    "nodereal_key": {
+      "type": "string",
+      "title": "NodeReal API key",
+      "description": "Optional. Used only for BSC chains, which have no BlockScout instance.",
+      "sensitive": true,
+      "required": false
+    },
+    "default_scanner": {
+      "type": "string",
+      "title": "Default scanner",
+      "description": "Scanner for tools that do not pass one: blockscout, blockscout_v2, etherscan or nodereal. Empty means blockscout.",
+      "required": false,
+      "default": "blockscout"
+    }
+  },
+  "tools": [
+    { "name": "get_wallet_balance", "description": "Native-coin balance as a Wei string plus a human-readable amount" },
+    { "name": "get_address_overview", "description": "Composite snapshot: balance, newest transactions, ERC-20 and NFT holdings" },
+    { "name": "get_transactions", "description": "Curated transaction pages with opaque cursors" },
+    { "name": "get_transaction_info", "description": "Transaction details with the call input decoded against the verified ABI" },
+    { "name": "get_token_portfolio", "description": "ERC-20 holdings of an address, curated and paginated" },
+    { "name": "get_token_info", "description": "Token metadata, supply (raw and formatted) and holder count" },
+    { "name": "get_token_holders", "description": "Token holder pages with totals and human-readable balances" },
+    { "name": "get_top_token_holders", "description": "Largest token holders by balance" },
+    { "name": "get_contract_abi", "description": "Verified-ABI summary: function and event signatures" },
+    { "name": "read_contract", "description": "eth_call against a verified contract, ABI fetched automatically, outputs decoded" },
+    { "name": "resolve_ens", "description": "ENS resolution in both directions" },
+    { "name": "list_chains", "description": "Chains this installation can serve, with a substring filter" }
+  ]
+}

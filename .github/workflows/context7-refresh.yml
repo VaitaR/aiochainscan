@@ -1,0 +1,35 @@
+name: Refresh Context7 docs
+
+# Context7 re-indexes popular libraries on its own schedule; this makes the
+# refresh follow main instead. Needs the CONTEXT7_API_KEY repository secret
+# (Context7 dashboard). Without the secret the job is skipped, not failed.
+# One-time prerequisite: the library must be registered once at
+# https://context7.com/add-library — the refresh API only re-parses an
+# existing entry.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'README.md'
+      - 'docs/**'
+      - 'examples/**'
+      - 'skills/**'
+      - 'context7.json'
+  workflow_dispatch:
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Context7 refresh
+        env:
+          CONTEXT7_API_KEY: ${{ secrets.CONTEXT7_API_KEY }}
+        run: |
+          if [ -z "$CONTEXT7_API_KEY" ]; then
+            echo "CONTEXT7_API_KEY not set - skipping refresh."
+            exit 0
+          fi
+          curl -sS -X POST https://context7.com/api/v1/refresh \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $CONTEXT7_API_KEY" \
+            -d '{"libraryName": "/${{ github.repository }}"}'

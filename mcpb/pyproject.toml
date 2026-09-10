@@ -1,0 +1,18 @@
+# Dependency declaration for the MCPB bundle: the host application (Claude
+# Desktop and other MCPB clients) installs this with uv and runs
+# ``src/server.py``. Nothing here is published to PyPI — ``package = false``
+# keeps uv from trying to build the bundle directory as a distribution.
+#
+# The pin must equal the ``version`` in ``mcpb/manifest.json`` and in
+# ``server.json``; ``tests/test_mcpb_bundle.py`` enforces that.
+[project]
+name = "aiochainscan-mcpb"
+version = "1.0.4"
+description = "MCPB bundle wrapper for the aiochainscan MCP server"
+requires-python = ">=3.12"
+dependencies = [
+    "aiochainscan[mcp]==1.0.4",
+]
+
+[tool.uv]
+package = false

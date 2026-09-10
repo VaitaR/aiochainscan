@@ -1,0 +1,38 @@
+{
+  "$schema": "https://context7.com/schema/context7.json",
+  "projectTitle": "aiochainscan",
+  "description": "Async Python client for blockchain explorer APIs (Etherscan, BlockScout, NodeReal) with one interface, guaranteed-complete pagination and exact Wei math.",
+  "branch": "main",
+  "excludeFolders": [
+    "tests",
+    "scripts",
+    "docs/adr",
+    "docs/architecture",
+    "docs/reviews",
+    "aiochainscan/fastabi",
+    ".claude",
+    ".github"
+  ],
+  "excludeFiles": [
+    "AGENTS.md",
+    "CLAUDE.md",
+    "CONTEXT.md",
+    "CONTRIBUTING.md",
+    "V1_PLAN.md",
+    "ROADMAP.md",
+    "PYPI_PUBLISHING.md",
+    "BUG_HUNT_2026-09-05.md",
+    "BUG_HUNT_2026-09-05_round2.md"
+  ],
+  "rules": [
+    "The public API is ChainscanClient only. Construct it with ChainscanClient.from_config(scanner, network) inside an 'async with' block. There is no legacy Client class, facade, or URL builder.",
+    "get_* methods return ONE page. For complete data call get_all_* (materialized) or iter_*_streaming (constant memory). A transactions page holds ~50-100 items; a logs page is capped at ~1000.",
+    "Balances, values and supplies are Wei strings. Convert with wei_to_ether() or to_decimal_amount() for exact Decimal math. Never write int(wei) / 10**18 - float division loses precision.",
+    "get_all_* and iter_*_streaming default to guarantee_complete=True: they return every matching record or raise (PaginationDataLossError, CompletenessUnavailableError). Do not implement manual page/offset loops to work around provider caps.",
+    "Scanner coverage differs: etherscan v2 declares all 33 methods (needs ETHERSCAN_KEY), blockscout v1 declares 31 keyless, blockscout_v2 declares 11 keyless with cursor pagination, nodereal declares 25 on BSC only. An undeclared method raises MethodNotDeclaredError.",
+    "API keys are resolved from the environment or .env by ConfigurationManager. Do not hardcode keys or pass them as literals in example code.",
+    "Raw responses are provider-native. Code that must run against several providers should use the *_normalized variants (get_all_transactions_normalized, iter_logs_normalized, ...), which return typed frozen dataclasses from aiochainscan.domain.normalized.",
+    "For provider failover use ChainscanPool.from_config([(scanner, network), ...]) - it exposes the full ChainscanClient surface and switches providers only on fallback-eligible failures.",
+    "Use Utf8 (string) columns for Wei in DataFrames. Int64 overflows above ~9.2 ETH."
+  ]
+}

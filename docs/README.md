@@ -1,40 +1,56 @@
 # Documentation
 
-User guides, plans, and reference material for `aiochainscan`. The canonical
-project guide is [`AGENTS.md`](../AGENTS.md) at the repo root; the scanner
-method declarations in `aiochainscan/scanners/` are authoritative when a doc
-and the implementation differ.
+## Start here
 
-## User guides
+1. [Getting started](GETTING_STARTED.md): install, first request, choosing a
+   provider, the common recipes, and the limits to know before building on
+   them.
+2. [Examples](../examples/README.md): runnable scripts — the first three run
+   against the published package with no checkout and no dev environment.
+3. [Migration guide](MIGRATION_GUIDE.md): moving from the removed pre-1.0
+   entrypoints to `ChainscanClient`.
+
+## Guides
 
 - [SmartContract API](SMART_CONTRACT_API.md): verified ABI loading, proxy
   metadata, and decoded event or transaction iteration.
 - [ENS integration](ENS_INTEGRATION.md): forward resolution, reverse lookup,
   caching, and provider limitations.
-- [Progress callbacks](PROGRESS_CALLBACKS.md): reporting progress during
-  paginated operations.
 - [Streaming pattern](STREAMING_PATTERN.md): processing large histories without
   collecting every item in memory.
-- [Migration guide](MIGRATION_GUIDE.md): moving from removed legacy entrypoints
-  to `ChainscanClient`.
-- [PyPI publishing](PYPI_PUBLISHING.md): maintainer release procedure for the
-  two distributions (`aiochainscan` + `aiochainscan-fastabi`).
-
-## Plans
-
-- [V1_PLAN.md](V1_PLAN.md): v1 track plan — ground truth, decisions, and open
-  items (referenced from `AGENTS.md`).
-- [ROADMAP.md](ROADMAP.md): forward-looking feature plan.
+- [Progress callbacks](PROGRESS_CALLBACKS.md): reporting progress during
+  paginated operations.
 
 ## Reference
 
-- [skill.md](skill.md): AI-agent skill card — scanner matrix, method surface,
-  and usage rules in one compressed page.
+- [README](../README.md): public API surface, method table, provider matrix,
+  error taxonomy.
+- [Changelog](../CHANGELOG.md): released changes.
+- [`skills/aiochainscan/`](../skills/aiochainscan/SKILL.md): the packaged
+  Agent Skill — usage rules, [provider
+  matrix](../skills/aiochainscan/references/provider-selection.md) and
+  [recipes](../skills/aiochainscan/references/recipes.md). Install it with
+  `npx skills add VaitaR/aiochainscan`; [skill.md](skill.md) is the pointer
+  left behind by the move.
+- [`context7.json`](../context7.json): what Context7 indexes for this
+  repository and the API rules it hands to coding agents.
 
-## Review log
+## Engineering and maintenance
 
-[`reviews/`](reviews/): review artifacts appended by tooling
-(`INDEX.md` is generated — do not edit by hand).
+These describe how the project is built and released, not how to use it.
+
+- [`AGENTS.md`](../AGENTS.md): the contract for agents and contributors working
+  *on* the codebase — architecture rules, provider measurements, invariants.
+  The scanner declarations in `aiochainscan/scanners/` are authoritative when a
+  doc and the implementation differ.
+- [`CONTRIBUTING.md`](../CONTRIBUTING.md): contribution workflow.
+- [PyPI publishing](PYPI_PUBLISHING.md): maintainer release procedure for the
+  two distributions (`aiochainscan` + `aiochainscan-fastabi`).
+- [V1_PLAN.md](V1_PLAN.md): v1 track plan — ground truth, decisions, open
+  items.
+- [ROADMAP.md](ROADMAP.md): forward-looking feature plan.
+- `reviews/`: review artifacts appended by tooling; `INDEX.md` there is
+  generated — do not edit by hand.
 
 ---
 
