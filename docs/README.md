@@ -30,8 +30,8 @@
   Agent Skill — usage rules, [provider
   matrix](../skills/aiochainscan/references/provider-selection.md) and
   [recipes](../skills/aiochainscan/references/recipes.md). Install it with
-  `npx skills add VaitaR/aiochainscan`; [skill.md](skill.md) is the pointer
-  left behind by the move.
+  `npx skills add VaitaR/aiochainscan`; [SKILL_POINTER.md](SKILL_POINTER.md) is
+  the pointer left behind by the move.
 - [`context7.json`](../context7.json): what Context7 indexes for this
   repository and the API rules it hands to coding agents.
 

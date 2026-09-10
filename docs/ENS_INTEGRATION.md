@@ -489,7 +489,7 @@ python examples/ens_demo.py
 ## Related Documentation
 
 - [SMART_CONTRACT_API.md](SMART_CONTRACT_API.md) - SmartContract integration
-- [skill.md](skill.md) - AI-agent skill card (full method surface)
+- [SKILL_POINTER.md](SKILL_POINTER.md) - AI-agent skill card (full method surface)
 
 ## Future Enhancements
 
