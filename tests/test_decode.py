@@ -51,7 +51,7 @@ class TestKeccakHash:
 
     def test_keccak_hash_unicode(self):
         """Test keccak hash with unicode characters."""
-        result = keccak_hash('тест')
+        result = keccak_hash('テスト')
         assert len(result) == 64
 
     def test_keccak_hash_consistency(self):

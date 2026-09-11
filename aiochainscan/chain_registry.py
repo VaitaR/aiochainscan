@@ -919,7 +919,7 @@ def get_url_builder_profile(api_kind: str, network: str) -> dict[str, str | None
     raise ValueError(f'Unsupported api_kind for url profile: {kind!r}')
 
 
-# Стандартизированные chain_id с алиасами и provider mappings
+# Canonical chain ids with their aliases and per-provider mappings
 STANDARD_CHAINS = {
     # Ethereum ecosystem
     1: {

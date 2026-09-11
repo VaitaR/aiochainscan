@@ -302,7 +302,7 @@ class TestHexToStr:
         assert hex_to_str('') == ''
 
     def test_multibyte_utf8(self) -> None:
-        assert hex_to_str('0xd09ed0b9') == 'Ой'
+        assert hex_to_str('0xe697a5e69cac') == '日本'
 
     def test_error_odd_length(self) -> None:
         with pytest.raises(ValueError, match='Invalid hex-encoded UTF-8 data'):

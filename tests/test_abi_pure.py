@@ -65,7 +65,7 @@ VECTORS: list[tuple[str, list[dict[str, Any]], list[Any]]] = [
             Decimal(-(2**255)).scaleb(-80, Context(prec=256)),
         ],
     ),
-    ('unicode_string', [{'type': 'string'}], ['ключ ' * 20]),
+    ('unicode_string', [{'type': 'string'}], ['キー ' * 20]),
     ('empty_string', [{'type': 'string'}], ['']),
     ('dynamic_array', [{'type': 'uint256[]'}], [[1, 2, 3, 2**200]]),
     ('empty_array', [{'type': 'uint256[]'}], [[]]),
