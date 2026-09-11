@@ -4,21 +4,46 @@
 [![Python](https://img.shields.io/pypi/pyversions/aiochainscan.svg)](https://pypi.org/project/aiochainscan/)
 [![License](https://img.shields.io/pypi/l/aiochainscan.svg)](https://github.com/VaitaR/aiochainscan/blob/main/LICENSE)
 
-`aiochainscan` is an asynchronous Python client for Etherscan-compatible,
-Blockscout and NodeReal blockchain explorer APIs, covering 36 chains. It
-exposes one public client, `ChainscanClient`, across account, transaction,
-block, contract, token, log, gas, and JSON-RPC endpoints.
+`aiochainscan` reads on-chain history from public block explorers across 13
+chains through one async client — and hands it back usable, not raw. Ask for an
+address's transactions and you get the complete history, not the first page of
+provider JSON that you then have to stitch, decode and wrap in retries
+yourself.
 
-The library is intended for applications that need a consistent explorer API
-without coupling request code to one provider. History reads are
-[guaranteed-complete](#pagination-and-streaming) by default: every matching
-record, or an exception — never a silently truncated page. It also includes
-streaming iteration, rate limiting, retries, optional Polars exports, ENS
-resolution, and ABI decoding.
+```python
+async with ChainscanClient.from_config('blockscout', 'ethereum') as client:
+    transactions = await client.get_all_transactions(address)   # every page, or an exception
+```
+
+Three things it does for you instead of leaving them as homework:
+
+- **Pagination.** `get_all_*` walks to the end. By default the result is
+  [guaranteed complete](#pagination-and-streaming): every matching record, or
+  an exception — never a silently truncated page.
+- **Decoding.** ABI decoding of calldata and event logs is built in and needs
+  no extra dependency — no `eth-abi`, no `web3`. See
+  [Decoding](#decoding-calls-and-events).
+- **Failures.** Rate limiting, retries, one shape across providers, and
+  optional [failover](#multi-provider-failover-pool) between them.
+
+It runs on free access: 8 chains need no API key at all, BSC works on
+NodeReal's free tier, and the base install pulls four dependencies.
 
 > Status: stable public API (1.x). The public surface is `ChainscanClient`;
 > provider coverage differs by scanner and endpoint. Released changes are
 > listed in the [changelog](https://github.com/VaitaR/aiochainscan/blob/main/CHANGELOG.md).
+
+## Is this the right tool?
+
+- **Reading history** — every transaction, transfer, internal call or log an
+  address ever touched, decoded, without running an indexer or paying for one:
+  this library.
+- **Reading live state or sending transactions** — contract calls in a hot
+  path, signing, nonces, mempool: use an RPC client such as `web3.py`.
+  `eth_call` exists here, but as a convenience on top of an explorer, not as a
+  node client.
+- **Arbitrary queries over a whole chain** — "every address that did X in
+  2024": that is an indexer or a warehouse, not an explorer API.
 
 ## Installation
 
@@ -98,12 +123,23 @@ async with ChainscanClient.from_config('etherscan', 'ethereum') as client:
 `ethereum`, `base`, `polygon`, `arbitrum`, and `optimism`, or a numeric chain
 ID. The built-in scanner names are:
 
-| Scanner | Default version | Authentication | Coverage |
-|---|---:|---|---|
-| `etherscan` | v2 | API key | Etherscan-compatible endpoint set |
-| `blockscout` | v1 | None for public instances | Etherscan-compatible endpoint set |
-| `blockscout_v2` | v2 | None for public instances | Native Blockscout v2 subset |
-| `nodereal` | v1 | API key (`NODEREAL_KEY`), free tier | BSC-only subset — the only free route to BSC: Blockscout runs no BSC instance, and Etherscan serves BSC on paid plans only |
+| Scanner | Default version | Authentication | Chains | Methods |
+|---|---:|---|---:|---:|
+| `etherscan` | v2 | API key | 10 | 33/33 |
+| `blockscout` | v1 | None for public instances | 8 | 31/33 |
+| `blockscout_v2` | v2 | None for public instances | 8 | 11/33 |
+| `nodereal` | v1 | API key (`NODEREAL_KEY`), free tier | BSC only | 25/33 |
+
+Thirteen chains are served in total; a self-hosted Blockscout or an Etherscan
+proxy adds any other (see below). Eight of the thirteen need no API key at
+all, served by both Blockscout legs:
+Ethereum, Optimism, Gnosis, Polygon, Base, Arbitrum, Scroll and Sepolia. BSC
+has no Blockscout instance and Etherscan serves it on paid plans only, so
+NodeReal's free tier is the free route there. The remaining chains in the
+registry need an Etherscan key with the matching plan.
+
+`aiochainscan scanners` prints this table for your own environment, including
+which keys are configured.
 
 Scanner support is checked at call time. A convenience method that is not
 declared by the selected scanner raises `ValueError`.
@@ -322,18 +358,45 @@ pool object only. The pool exposes the full `ChainscanClient` surface, plus
 `last_provider`, `provider_states()` and `reset_cooldowns()` for
 observability.
 
-## Contracts and ENS
+## Decoding calls and events
 
-`get_contract()` fetches a verified ABI and returns a `SmartContract` object for
-decoded event and transaction iteration:
+Explorers return calldata as an opaque hex blob. Decoding it into a function
+name and named arguments is part of the base install — `abi_pure.py` implements
+the whole ABI spec in pure Python, so nothing beyond the four runtime
+dependencies is needed. `pip install "aiochainscan[fastabi]"` swaps in a Rust
+backend for the same results, faster; it is worth it for bulk work and
+irrelevant for single decodes.
+
+With a contract address, the ABI is fetched for you:
 
 ```python
 async with ChainscanClient.from_config('etherscan', 'ethereum') as client:
-    contract = await client.get_contract(contract_address)
+    contract = await client.get_contract(token_address)
 
     async for event in contract.iter_events('Transfer', limit=100):
-        print(event.block_number, event.args)
+        print(event.args['from'], event.args['to'], event.args['value'])
+
+    async for tx in contract.iter_transactions(limit=100):
+        print(tx.function_name, tx.args)
 ```
+
+With an ABI you already hold, decode directly — no client, no network:
+
+```python
+from aiochainscan.decode import decode_transaction_input
+
+decoded = decode_transaction_input(transaction, abi)
+decoded['decoded_func']   # 'transfer'
+decoded['decoded_data']   # {'to': '0x…', 'amount': 1000000000000}
+```
+
+Two things worth knowing. `get_transaction()` returns the provider's raw
+payload — it does not decode on its own; use `get_contract()` or pass an `abi=`
+to `iter_transactions()` when you want decoded output. And a type this library
+cannot decode raises `AbiTypeNotSupportedError` rather than returning an empty
+result, so a gap never looks like undecodable calldata.
+
+## ENS
 
 ENS methods are available for Ethereum mainnet. Provider capabilities differ:
 Blockscout v2 serves reverse lookup from its own address metadata, while
