@@ -40,6 +40,38 @@ _JSON_RPC_ACTIONS: dict[Method, str] = {
     Method.PROXY_GET_BALANCE: 'eth_getBalance',
 }
 
+#: Methods inherited from ``EtherscanLikeScanner.SPECS`` that BlockScout's
+#: Etherscan-compat REST does NOT implement — each answers
+#: ``{"status":"0","message":"Unknown action"}`` or
+#: ``{"status":"0","message":"Unknown module"}`` with HTTP 400 instead of
+#: serving the method. Declaring them anyway is worse than not declaring
+#: them: a pool that falls through to BlockScout for one of these gets an
+#: HTTP/data failure, not the clean ``MethodNotDeclaredError`` (see
+#: ``scanners/base.py::_spec_for``) a router needs to classify it as
+#: capability routing and move on. Verified live 2026-09-11 against
+#: independent public BlockScout instances (same backend, so a single
+#: host's outage cannot explain the shared shape):
+#:   TOKEN_INFO                (module=token, action=tokeninfo)
+#:     -> gnosis.blockscout.com: 400 "Unknown action" (originally reported
+#:        against eth.blockscout.com, same shape)
+#:   GAS_ESTIMATE, GAS_ORACLE   (module=gastracker)
+#:     -> polygon/eth-sepolia/base/arbitrum.blockscout.com: 400 "Unknown
+#:        module" — the whole ``gastracker`` module is absent, not just one
+#:        action in it.
+#:   ACCOUNT_TOKEN_PORTFOLIO    (module=account, action=addresstokenbalance)
+#:     -> base/eth-sepolia.blockscout.com: 400 "Unknown action"
+#:   ACCOUNT_NFT_PORTFOLIO      (module=account, action=addresstokennftinventory)
+#:     -> arbitrum/polygon.blockscout.com: 400 "Unknown action"
+_UNSERVED_METHODS: frozenset[Method] = frozenset(
+    {
+        Method.TOKEN_INFO,
+        Method.GAS_ESTIMATE,
+        Method.GAS_ORACLE,
+        Method.ACCOUNT_TOKEN_PORTFOLIO,
+        Method.ACCOUNT_NFT_PORTFOLIO,
+    }
+)
+
 
 def _parse_token_holders(response: Any) -> list[dict[str, Any]]:
     """Normalize BlockScout V1 ``token/getTokenHolders`` items.
@@ -230,10 +262,18 @@ class BlockScoutV1(EtherscanLikeScanner):
     # Most SPECS are inherited from the shared Etherscan-like implementation.
     # BlockScout supports the same endpoints:
     # - ACCOUNT_BALANCE, ACCOUNT_TRANSACTIONS, ACCOUNT_INTERNAL_TXS
-    # - ACCOUNT_ERC20_TRANSFERS, TX_BY_HASH, TX_RECEIPT_STATUS
-    # - BLOCK_BY_NUMBER, BLOCK_REWARD, CONTRACT_ABI, CONTRACT_SOURCE
-    # - TOKEN_BALANCE, TOKEN_SUPPLY, GAS_ORACLE, EVENT_LOGS
-    # - ETH_SUPPLY, ETH_PRICE, PROXY_ETH_CALL
+    # - ACCOUNT_ERC20_TRANSFERS, ACCOUNT_ERC721_TRANSFERS, ACCOUNT_ERC1155_TRANSFERS
+    # - TX_BY_HASH, TX_RECEIPT_STATUS, TX_STATUS_CHECK
+    # - BLOCK_BY_NUMBER, BLOCK_REWARD, BLOCK_COUNTDOWN, BLOCK_NUMBER_BY_TIMESTAMP
+    # - CONTRACT_ABI, CONTRACT_SOURCE, CONTRACT_CREATION
+    # - TOKEN_BALANCE, TOKEN_SUPPLY, EVENT_LOGS
+    # - ETH_SUPPLY, ETH_PRICE, PROXY_ETH_CALL, PROXY_GET_BALANCE
+    # (each independently probed live 2026-09-11 against a public BlockScout
+    # instance and answered ``status=1``/``"OK"`` or a data-shaped error —
+    # never "Unknown action"/"Unknown module".)
+    #
+    # The module-level ``_UNSERVED_METHODS`` above is removed from the
+    # inherited SPECS below (evidence in that constant's docstring).
     #
     # TOKEN_HOLDERS is the one override below: Etherscan's action name
     # (``tokenholderlist``) really does answer "Unknown action" on
@@ -242,7 +282,11 @@ class BlockScoutV1(EtherscanLikeScanner):
     # (``module=token&action=getTokenHolders``) works and paginates for real
     # (verified live 2026-09-02 against eth.blockscout.com).
     SPECS = {
-        **EtherscanLikeScanner.SPECS,
+        **{
+            method: spec
+            for method, spec in EtherscanLikeScanner.SPECS.items()
+            if method not in _UNSERVED_METHODS
+        },
         Method.TOKEN_HOLDERS: EndpointSpec(
             http_method='GET',
             path='/api',
