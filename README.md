@@ -4,13 +4,15 @@
 [![Python](https://img.shields.io/pypi/pyversions/aiochainscan.svg)](https://pypi.org/project/aiochainscan/)
 [![License](https://img.shields.io/pypi/l/aiochainscan.svg)](https://github.com/VaitaR/aiochainscan/blob/main/LICENSE)
 
-`aiochainscan` is an asynchronous Python client for Etherscan-compatible and
-Blockscout blockchain explorer APIs. It exposes one public client,
-`ChainscanClient`, across account, transaction, block, contract, token, log,
-gas, and JSON-RPC endpoints.
+`aiochainscan` is an asynchronous Python client for Etherscan-compatible,
+Blockscout and NodeReal blockchain explorer APIs, covering 36 chains. It
+exposes one public client, `ChainscanClient`, across account, transaction,
+block, contract, token, log, gas, and JSON-RPC endpoints.
 
 The library is intended for applications that need a consistent explorer API
-without coupling request code to one provider. It includes pagination helpers,
+without coupling request code to one provider. History reads are
+[guaranteed-complete](#pagination-and-streaming) by default: every matching
+record, or an exception — never a silently truncated page. It also includes
 streaming iteration, rate limiting, retries, optional Polars exports, ENS
 resolution, and ABI decoding.
 
@@ -101,7 +103,7 @@ ID. The built-in scanner names are:
 | `etherscan` | v2 | API key | Etherscan-compatible endpoint set |
 | `blockscout` | v1 | None for public instances | Etherscan-compatible endpoint set |
 | `blockscout_v2` | v2 | None for public instances | Native Blockscout v2 subset |
-| `nodereal` | v1 | API key (`NODEREAL_KEY`) | BSC-only subset (free tier) — see AGENTS.md for details |
+| `nodereal` | v1 | API key (`NODEREAL_KEY`), free tier | BSC-only subset — the only route to BSC here, Blockscout runs no BSC instance |
 
 Scanner support is checked at call time. A convenience method that is not
 declared by the selected scanner raises `ValueError`.
@@ -237,6 +239,27 @@ Page-returning methods do not fetch an entire history:
 - `get_token_holders()` returns one page.
 - `get_all_*()` collects all pages into a list.
 - `iter_*_streaming()` yields batches and avoids materializing the full result.
+
+`get_all_*()` and `iter_*_streaming()` take `guarantee_complete`, which
+defaults to `True`: the call returns every matching record or raises. Explorers
+cap a result window (Etherscan and Blockscout v1 both at `page * offset`
+10 000) and answer a capped query with a short page that is indistinguishable
+from the end of the data, so the library detects the cap and splits the block
+range until every part fits.
+
+```python
+# Complete, or an exception — the default.
+transfers = await client.get_all_token_transfers(address)
+
+# Opt out: fewer requests on wide ranges, truncation possible and silent.
+transfers = await client.get_all_token_transfers(address, guarantee_complete=False)
+```
+
+Two failures can surface: `PaginationDataLossError` when a *single block*
+still exceeds the cap (splitting worked and ran out) and
+`CompletenessUnavailableError` when the endpoint has no block range to split
+at all — the holder list on Etherscan — in which case the exception names the
+providers that can serve it completely.
 
 Use streaming for large histories:
 
