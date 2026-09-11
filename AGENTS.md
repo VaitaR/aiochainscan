@@ -332,6 +332,7 @@ Branch types: `feat | fix | chore | docs | arch | refactor` (2nd arg, default `f
 | `safe_commit.sh` | `git add` + commit with index.lock retry (worktree-aware; use `make commit`) |
 | `ci_watch.sh` | Bounded GH Actions poller; exit status is the verdict |
 | `probe_provider_caps.py` | Re-measures declared pagination caps live (`make probe-caps`); exit 1 on drift, rate-limited/inconclusive probes, or an unconstructible provider — in both output modes |
+| `probe_blockscout_hosts.py` | Re-verifies BlockScout instance hosts live (`make probe-hosts`); exit 1 on a failed or rate-limited probe — a 429 is reported INCONCLUSIVE, never as a dead host |
 | `build_mcpb.py` | Packs `mcpb/` into `dist/aiochainscan-<version>.mcpb` (`make mcpb`); refuses to pack while the version stated in the bundle and `server.json` disagrees |
 | `ruff_format_hook.py` | PostToolUse hook — auto-formats edited `*.py` |
 
@@ -679,8 +680,27 @@ UrlBuilder kind (hence `client.currency`) per network through the same
 currency** for the same chain; its requests are still built from the scanner's
 own `BASE_URLS`, never the UrlBuilder profile.
 
-The host table is measured, not assumed (live-verified 2026-09-10: v1 `/api`,
-v2 `/api/v2` and `/api/eth-rpc` on every declared host). Two findings are
+The host table is measured, not assumed, and
+`scripts/agent/probe_blockscout_hosts.py` (`make probe-hosts`) is how a row
+earns its place or is re-verified — the `chains.blockscout.com` directory is
+not evidence. It lists 747 chains, but only 92 explorers (49 mainnet) are
+hosted by BlockScout itself; the rest are RaaS or self-hosted deployments
+operated by someone else, with none of the availability these rows assert, so
+the sweep covers the self-hosted mainnet set only.
+
+**`/api/eth-rpc` is rate-limited per client IP across every instance at once.**
+A sweep can leave it answering 429 even for hosts declared here while their
+REST surfaces answer 200 (measured 2026-09-11, `eth.blockscout.com` and
+`gnosisscan.io` among them, for well over 45 minutes). A throttled probe is
+INCONCLUSIVE — re-run it later; never record a 429 as a dead host, and never
+declare a host whose eth-rpc went unverified, since that endpoint backs
+`TX_BY_HASH` and both `PROXY_*` methods.
+
+Last full sweep 2026-09-11: v1 `/api`, v2 `/api/v2` and `/api/eth-rpc` confirmed
+on every declared host except ten directory candidates (Ethereum Classic, Celo,
+Unichain, Filecoin, Arbitrum Nova, Neon, Creditcoin, Eden, BlackFort, DATA/Cross)
+whose REST surfaces answered but whose eth-rpc probe never got past the IP
+limit — they stay undeclared. Two findings are
 encoded in it: Gnosis, Optimism and Scroll serve BlockScout from chain-branded
 hostnames (`gnosisscan.io`, `explorer.optimism.io`, `scrollscan.com`) and only
 301 the `*.blockscout.com` alias there — the transport does not follow
