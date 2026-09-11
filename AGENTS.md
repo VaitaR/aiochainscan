@@ -655,7 +655,11 @@ hostnames (`gnosisscan.io`, `explorer.optimism.io`, `scrollscan.com`) and only
 redirects, so the branded host is the only spelling that works — and BSC and
 Linea have no BlockScout instance at all (both hosts 404), so they are absent
 from the BlockScout topology and `from_config('blockscout*', 'bsc'|'linea')`
-raises. Keyless BSC is NodeReal's job. Re-probe before trusting these rows.
+raises. Keyless BSC is NodeReal's job. Etherscan is not an alternative there on a free
+key: measured 2026-09-11 with a live key, `bsc` and `base` both answer `[NOTOK]
+Free API access is not supported for this chain` while `ethereum` serves
+normally — so NodeReal's free tier is the only free route to BSC in this
+library. Re-probe before trusting these rows.
 
 ### BlockScout v1 proxy fallback (`/api/eth-rpc`)
 
