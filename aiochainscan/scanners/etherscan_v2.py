@@ -92,7 +92,9 @@ class EtherscanV2(EtherscanLikeScanner):
     # ``offset=10000`` returns 1000, while ``page * offset > 10000`` is the only
     # thing it answers with an error.
     max_page_size = API_MAX_PAGE_SIZE_ETHERSCAN
-    supported_networks = set(ETHERSCAN_SCANNER_NETWORKS)
+    # Bound to the registry's live set, deliberately not copied: an opt-in
+    # registry sync must reach this class after it was imported.
+    supported_networks = ETHERSCAN_SCANNER_NETWORKS
 
     # Build SPECS from parent with chainid injection, plus V2-specific overrides.
     SPECS: dict[Method, EndpointSpec] = {

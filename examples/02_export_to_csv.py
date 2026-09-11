@@ -26,6 +26,10 @@ from pathlib import Path
 
 from aiochainscan import ChainscanClient
 from aiochainscan.domain.normalized import Transaction
+from aiochainscan.exceptions import ChainscanClientError, ChainscanRateLimitError
+
+SCANNER = 'blockscout_v2'
+CHAIN = 'ethereum'
 
 VITALIK = '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045'
 
@@ -62,7 +66,7 @@ async def export(address: str, output: Path, *, complete: bool) -> int:
         writer = csv.DictWriter(handle, fieldnames=COLUMNS)
         writer.writeheader()
 
-        async with ChainscanClient.from_config('blockscout_v2', 'ethereum') as client:
+        async with ChainscanClient.from_config(SCANNER, CHAIN) as client:
             if complete:
                 # Complete history or an exception — never a silent partial
                 # result (guarantee_complete defaults to True).
@@ -88,9 +92,25 @@ def main() -> None:
     args = parser.parse_args()
 
     output = args.output or Path(f'{args.address[:10]}_transactions.csv')
+    scope = 'complete history (guaranteed)' if args.all else 'one provider page'
     print(f'Exporting {args.address} -> {output}')
-    written = asyncio.run(export(args.address, output, complete=args.all))
+    print(f'  {SCANNER}/{CHAIN}, {scope}')
+
+    try:
+        written = asyncio.run(export(args.address, output, complete=args.all))
+    except ChainscanRateLimitError:
+        raise SystemExit(
+            f'{SCANNER} rate-limited this export. Retry later, or set ETHERSCAN_KEY '
+            f"and switch SCANNER to 'etherscan'."
+        ) from None
+    except ChainscanClientError as exc:
+        # Public Blockscout instances answer a burst with 403 or a
+        # bot-protection page; both arrive here, not as a traceback.
+        raise SystemExit(f'{SCANNER} refused the export: {exc}') from None
+
     print(f'Done: {written} rows in {output}')
+    if not args.all:
+        print('This is ONE page. Re-run with --all for the complete history.')
 
 
 if __name__ == '__main__':

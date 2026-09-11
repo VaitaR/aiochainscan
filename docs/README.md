@@ -12,6 +12,14 @@
 
 ## Guides
 
+- [API reference](API_REFERENCE.md): providers, every common call, the
+  normalized surface, self-hosted instances, value conversions, the CLI and the
+  error taxonomy.
+- [Pagination, completeness and failover](PAGINATION_AND_FAILOVER.md): what
+  `guarantee_complete` promises, how ranges are split, and how `ChainscanPool`
+  routes around a failing provider.
+- [MCP server](MCP_SERVER.md): the 12 read-only agent tools and their response
+  contract.
 - [SmartContract API](SMART_CONTRACT_API.md): verified ABI loading, proxy
   metadata, and decoded event or transaction iteration.
 - [ENS integration](ENS_INTEGRATION.md): forward resolution, reverse lookup,
@@ -23,8 +31,8 @@
 
 ## Reference
 
-- [README](../README.md): public API surface, method table, provider matrix,
-  error taxonomy.
+- [README](../README.md): what the library is for, installation, and the
+  shortest end-to-end run.
 - [Changelog](../CHANGELOG.md): released changes.
 - [`skills/aiochainscan/`](../skills/aiochainscan/SKILL.md): the packaged
   Agent Skill — usage rules, [provider
@@ -54,7 +62,6 @@ These describe how the project is built and released, not how to use it.
 
 ---
 
-One-time engineering records (February 2026 implementation summaries, bug-fix
-reports, audits, QA snapshots) were removed in the 2026-09-02 docs
-consolidation: their durable facts live in `AGENTS.md` and the guides above,
-and the originals remain recoverable from git history.
+One-time engineering records (implementation summaries, bug-fix reports,
+audits, QA snapshots) are removed once their findings land in the code and in
+`AGENTS.md`; the originals remain recoverable from git history.

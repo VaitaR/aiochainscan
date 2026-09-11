@@ -1,5 +1,63 @@
 # Examples
 
+## Recipe: an address's transaction history as CSV
+
+The shortest useful thing this library does, start to finish. No checkout, no
+API key, no pagination code of your own.
+
+```bash
+pip install 'aiochainscan==1.0.4'
+curl -O https://raw.githubusercontent.com/VaitaR/aiochainscan/main/examples/02_export_to_csv.py
+
+python 02_export_to_csv.py 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045          # one page
+python 02_export_to_csv.py 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045 --all    # full history
+```
+
+```text
+Exporting 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045 -> 0xd8dA6BF2_transactions.csv
+  blockscout_v2/ethereum, one provider page
+Done: 50 rows in 0xd8dA6BF2_transactions.csv
+This is ONE page. Re-run with --all for the complete history.
+```
+
+```csv
+hash,block_number,timestamp,from_address,to_address,value_wei,gas_used,gas_price_wei,is_error
+0x18fbf479…,25882055,2026-09-01T11:12:59+00:00,0xFD8d9047…,0xd8dA6BF2…,0,30880,143361614,0
+```
+
+**Chain and provider.** Ethereum mainnet through Blockscout v2, keyless. Change
+the pair in the one `ChainscanClient.from_config('blockscout_v2', 'ethereum')`
+call; nothing else in the script is provider-specific, because the rows come
+from the normalized transaction model rather than from raw provider JSON.
+
+**What `--all` covers.** External transactions only — the `ACCOUNT_TRANSACTIONS`
+endpoint. Internal transactions and ERC-20/721/1155 transfers are separate
+endpoints (`get_all_internal_transactions`, `get_all_token_transfers`), so this
+CSV is not a wallet's full economic history: an address that only ever received
+tokens exports almost nothing here.
+
+**What is handled for you.** Paging runs to exhaustion, and a provider's
+`page * offset` window is worked around, not merely reported: where the endpoint
+has a block range, the range is split at the last served record and the halves
+re-fetched. Completeness is a guarantee, not an effort — there is no silently
+truncated result. Where completeness cannot be reached the call raises instead
+of returning part of the data: `PaginationDataLossError` when a single block
+exceeds the provider's cap, `CompletenessUnavailableError` when the endpoint has
+no range to split on this provider (the message names providers that serve it
+whole). Pass `guarantee_complete=False` to accept truncation deliberately.
+
+**Memory.** `--all` streams batches straight to the file, so a large account
+costs no more memory than a small one.
+
+**Rate limits.** Public Blockscout instances are shared infrastructure: they
+apply their own rate limiting and may answer a burst of requests with `403` or a
+bot-protection page. For unattended or high-volume work configure Etherscan (or
+a self-hosted Blockscout instance) instead, or put both behind
+[`ChainscanPool`](https://github.com/VaitaR/aiochainscan#multi-provider-failover-pool). The script catches those
+refusals and exits with a message instead of a traceback;
+[08_provider_failover.py](08_provider_failover.py) shows the pool routing
+around them.
+
 ## Run the first three with nothing but the package
 
 `01`–`03` are self-contained: no repository checkout, no development
@@ -35,6 +93,7 @@ uv run python examples/05_typed_responses.py
 | [05_typed_responses.py](05_typed_responses.py) | Exact typing through the `convert` helpers | none |
 | [06_multichain_comparison.py](06_multichain_comparison.py) | The same address across chains | none |
 | [07_handling_whale_blocks.py](07_handling_whale_blocks.py) | Provider pagination limits and the completeness guarantee | none |
+| [08_provider_failover.py](08_provider_failover.py) | `ChainscanPool`: two explorers, automatic failover, visible routing | none (`ETHERSCAN_KEY` for two members) |
 
 ### Streaming and exports
 
@@ -69,6 +128,5 @@ paginated operations.
 - One `async with` client per script; a method the configured scanner does not
   declare raises `MethodNotDeclaredError` rather than returning empty data.
 
-Public Blockscout instances are keyless but shared: they rate-limit, and a
-burst can come back as `403`. Examples that need reliability use
-`ETHERSCAN_KEY`.
+Public Blockscout instances are keyless but shared — see the rate-limit note
+in the recipe above. Examples that need reliability use `ETHERSCAN_KEY`.

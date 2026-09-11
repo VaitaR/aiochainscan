@@ -1,6 +1,6 @@
 ---
 name: aiochainscan
-description: Query blockchain explorer APIs (Etherscan, BlockScout, NodeReal) from async Python with the aiochainscan library — balances, full transaction/transfer/log history, token holders, contract ABIs and decoded calls, across 13 chains (8 of them keyless). Use when writing or reviewing code that reads on-chain data through a block explorer, exports a wallet or token history, or needs provider failover and exact Wei/token amounts.
+description: Query blockchain explorer APIs (Etherscan, BlockScout, NodeReal) from async Python with the aiochainscan library — balances, full transaction/transfer/log history, token holders, contract ABIs and decoded calls, across 85 chains (33 of them keyless). Use when writing or reviewing code that reads on-chain data through a block explorer, exports a wallet or token history, or needs provider failover and exact Wei/token amounts.
 license: MIT
 ---
 

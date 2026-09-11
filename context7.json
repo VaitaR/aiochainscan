@@ -20,9 +20,7 @@
     "CONTRIBUTING.md",
     "V1_PLAN.md",
     "ROADMAP.md",
-    "PYPI_PUBLISHING.md",
-    "BUG_HUNT_2026-09-05.md",
-    "BUG_HUNT_2026-09-05_round2.md"
+    "PYPI_PUBLISHING.md"
   ],
   "rules": [
     "The public API is ChainscanClient only. Construct it with ChainscanClient.from_config(scanner, network) inside an 'async with' block. There is no legacy Client class, facade, or URL builder.",

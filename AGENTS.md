@@ -633,6 +633,38 @@ BscScan-compatible verified-contract REST on `open-platform.nodereal.io`. Networ
   `scanners_serving_completely(EVENT_LOGS)` stops naming NodeReal as a
   remedy it cannot be.
 
+### Chain topology and the optional registry sync
+
+`STANDARD_CHAINS` is static and is the shipped truth: a fresh install resolves
+every chain offline, with no request. Etherscan declares the 61 chains its
+keyless `GET /v2/chainlist` returned on 2026-09-11; `EtherscanV2.supported_networks`
+is bound to `ETHERSCAN_SCANNER_NETWORKS` (the registry record's alias table),
+not hand-listed, so the scanner cannot advertise a name `resolve_chain_id`
+would not answer.
+
+`goerli` and `holesky` were declared until 2026-09-11 and are now refused at
+construction: they are absent from the chainlist and the live endpoint answers
+them `[NOTOK] Missing or unsupported chainid parameter (required for v2 api)`.
+Accepting them only moved the failure to the first request. Their
+`URL_BUILDER_CHAIN_IDS` rows stay — the ids remain resolvable, the endpoint
+just does not route them.
+
+`aiochainscan.registry_sync.sync_etherscan_chains()` is the opt-in refresh:
+it re-reads the live chainlist and registers anything the static tables lack,
+so a chain added between releases is constructible without one. Additive and
+idempotent — a known chain keeps its declared spelling and a taken name is
+never repointed (a caller who resolved `ethereum` must not start getting
+another chain's data). Chains the list marks offline are skipped. `chainlist_alias`
+is the one naming rule both paths use, so a synced chain and a shipped chain
+are spelled identically.
+
+**Only Etherscan syncs.** Its chains share one unified endpoint, so "listed"
+and "reachable" are the same fact. A BlockScout instance is a separate host per
+chain and the instance directory lists hosts that 404, only redirect, or serve
+a partial surface — measured, not assumed — so registering from it would trade
+a missing chain for a broken one. BlockScout instances stay live-probed and
+static.
+
 ### BlockScout networks and instance probing
 
 Both legs derive `supported_networks` from `BLOCKSCOUT_SCANNER_NETWORKS` (the
@@ -656,10 +688,22 @@ redirects, so the branded host is the only spelling that works — and BSC and
 Linea have no BlockScout instance at all (both hosts 404), so they are absent
 from the BlockScout topology and `from_config('blockscout*', 'bsc'|'linea')`
 raises. Keyless BSC is NodeReal's job. Etherscan is not an alternative there on a free
-key: measured 2026-09-11 with a live key, `bsc` and `base` both answer `[NOTOK]
-Free API access is not supported for this chain` while `ethereum` serves
-normally — so NodeReal's free tier is the only free route to BSC in this
-library. Re-probe before trusting these rows.
+key. Measured 2026-09-11 with a live free key, across all ten declared
+`etherscan` networks: `ethereum`/`main`, `arbitrum`, `polygon`, `sepolia` and
+`sonic` serve normally; `base`, `bsc` and `optimism` answer `[NOTOK] Free API
+access is not supported for this chain`; and `goerli`/`holesky` answer `[NOTOK]
+Missing or unsupported chainid parameter (required for v2 api)` — those two are
+dead entries in `supported_networks`, refused by the provider regardless of
+plan, and `from_config` accepts them, so the failure only surfaces on the first
+request.
+
+**Plan availability is per ENDPOINT, not per chain.** Etherscan documents that
+"source code and ABI endpoints are available on all chains for every API plan,
+including the Free Tier", and that is measured: with the same free key that is
+refused `get_balance` on base/bsc/optimism, `get_contract_abi` succeeds on all
+three (2026-09-11). So a free key is not "ethereum-only" — it is "every chain
+for ABI/source, five chains for the rest". NodeReal's free tier remains the
+free route to BSC *balances and history*, not to BSC ABIs. Re-probe before trusting these rows.
 
 ### BlockScout v1 proxy fallback (`/api/eth-rpc`)
 

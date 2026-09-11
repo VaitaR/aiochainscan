@@ -3,7 +3,7 @@ Chain Registry - unified chain information and provider mappings.
 """
 
 import warnings
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -790,9 +790,49 @@ BLOCKSCOUT_SCANNER_NETWORKS: frozenset[str] = (
 #: would not answer; every entry is a chain the keyless ``GET /v2/chainlist``
 #: registry listed on 2026-09-11 (goerli and holesky are not in it — the live
 #: endpoint answers them "Missing or unsupported chainid parameter").
-ETHERSCAN_SCANNER_NETWORKS: frozenset[str] = frozenset(
-    SCANNER_RECORDS['etherscan'].network_aliases
-) | frozenset(SCANNER_RECORDS['etherscan'].supported_networks or ())
+#:
+#: Mutable, and the scanner class binds this very object rather than a copy:
+#: :func:`register_etherscan_chain` adds to it so an opt-in registry sync
+#: (:mod:`aiochainscan.registry_sync`) reaches a scanner class that was already
+#: imported. Nothing else may mutate it.
+ETHERSCAN_SCANNER_NETWORKS: set[str] = set(SCANNER_RECORDS['etherscan'].network_aliases) | set(
+    SCANNER_RECORDS['etherscan'].supported_networks or ()
+)
+
+
+def register_etherscan_chain(chain_id: int, name: str, *, aliases: Sequence[str] = ()) -> bool:
+    """Register a chain the Etherscan v2 endpoint serves, at runtime.
+
+    The static tables are the shipped truth; this is the seam an opt-in
+    registry sync writes through so a chain Etherscan added after the last
+    release becomes constructible without one. Registration is additive and
+    idempotent: a ``chain_id`` already known keeps its declared spelling, and a
+    ``name`` already taken by a different chain is refused rather than
+    silently repointed — a caller that resolved that alias must not start
+    getting another chain's data.
+
+    Returns:
+        ``True`` when this call added the chain, ``False`` when it was already
+        known (either id or name).
+    """
+    if chain_id in STANDARD_CHAINS:
+        return False
+    spellings = [name, *aliases]
+    known = {alias for info in STANDARD_CHAINS.values() for alias in info['aliases']}
+    if known.intersection(spellings):
+        return False
+
+    STANDARD_CHAINS[chain_id] = {
+        'name': name,
+        'aliases': list(dict.fromkeys(spellings)),
+        'moralis_hex': hex(chain_id),
+    }
+    # Every v2 chain routes through the one unified endpoint, so each spelling
+    # collapses to the 'main' config network exactly like the static entries.
+    for spelling in spellings:
+        SCANNER_NETWORK_ALIASES['etherscan'][spelling] = 'main'
+        ETHERSCAN_SCANNER_NETWORKS.add(spelling)
+    return True
 
 
 def get_url_builder_profile(api_kind: str, network: str) -> dict[str, str | None]:
