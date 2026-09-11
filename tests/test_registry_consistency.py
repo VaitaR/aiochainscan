@@ -418,7 +418,12 @@ class TestUrlBuilderChainIdCrossCheck:
 
     async def test_etherscan_serves_its_url_builder_chains(self) -> None:
         etherscan_rows = {net for (kind, net) in URL_BUILDER_CHAIN_IDS if kind == 'eth'}
-        for network in sorted(etherscan_rows):
+        # goerli and holesky keep their UrlBuilder rows (chain ids stay
+        # resolvable) but the v2 endpoint no longer routes them — measured
+        # 2026-09-11 and corroborated by their absence from `GET /v2/chainlist`.
+        retired = {'goerli', 'holesky'}
+        assert retired <= etherscan_rows
+        for network in sorted(etherscan_rows - retired):
             if not _is_resolvable(network):
                 continue  # config-dialect name of the v1 family, not a chain
             client = _construct('etherscan', network)

@@ -1175,9 +1175,11 @@ class TestListChains:
         class's declared supported_networks."""
         coverage = mcp_tools.chain_scanner_coverage()
         assert 'ethereum' in coverage['etherscan']
-        assert 'goerli' in coverage['etherscan']
+        assert 'goerli' not in coverage['etherscan']  # retired 2026-09-11
+        assert 'mantle' in coverage['etherscan']  # from the v2 chainlist
         assert 'moonbeam' not in coverage['etherscan']
-        assert 'linea' not in coverage['etherscan']
+        assert 'linea' in coverage['etherscan']  # etherscan routes it; blockscout has no instance
+        assert 'linea' not in coverage['blockscout']
         assert 'ethereum' in coverage['blockscout']
         assert 'goerli' not in coverage['blockscout']
         assert 'mode' in coverage['blockscout']  # declared 2026-09-11, instance live-probed

@@ -304,11 +304,66 @@ SCANNER_RECORDS: dict[str, ScannerRecord] = {
             'optimism': 'main',
             'op': 'main',
             'sonic': 'main',
+            'bsc-testnet': 'main',
+            'gnosis': 'main',
+            'megaeth': 'main',
+            'plasma': 'main',
+            'avalanche-fuji': 'main',
+            'avalanche': 'main',
+            'linea': 'main',
+            'blast': 'main',
+            'base-sepolia': 'main',
+            'arbitrum-sepolia': 'main',
+            'blast-sepolia': 'main',
+            # Remaining chains from the v2 chainlist (2026-09-11); all route
+            # through the same unified endpoint, so all collapse to 'main'.
+            'xdc': 'main',
+            'xdc-apothem-testnet': 'main',
+            'unichain': 'main',
+            'monad': 'main',
+            'bittorrent-chain': 'main',
+            'opbnb': 'main',
+            'fraxtal': 'main',
+            'world': 'main',
+            'stable': 'main',
+            'hyperevm': 'main',
+            'bittorrent-chain-testnet': 'main',
+            'unichain-sepolia': 'main',
+            'sei-testnet': 'main',
+            'sei': 'main',
+            'stable-testnet': 'main',
+            'fraxtal-hoodi': 'main',
+            'abstract': 'main',
+            'memecore': 'main',
+            'world-sepolia': 'main',
+            'mantle': 'main',
+            'mantle-sepolia': 'main',
+            'opbnb-testnet': 'main',
+            'megaeth-testnet': 'main',
+            'plasma-testnet': 'main',
+            'monad-testnet': 'main',
+            'abstract-sepolia': 'main',
+            'sonic-testnet': 'main',
+            'apechain-curtis-testnet': 'main',
+            'apechain': 'main',
+            'celo': 'main',
+            'memecore-insectarium-testnet': 'main',
+            'linea-sepolia': 'main',
+            'polygon-amoy': 'main',
+            'berachain-bepolia-testnet': 'main',
+            'berachain': 'main',
+            'taiko': 'main',
+            'taiko-hoodi': 'main',
+            'hoodi-testnet': 'main',
+            'katana-bokuto': 'main',
+            'katana': 'main',
+            'celo-sepolia': 'main',
+            'op-sepolia': 'main',
         },
         # Config-dialect networks the V2 endpoint actually serves. Every
         # mainnet alias above collapses to 'main'; the testnets keep their own
         # names. ('test' is absent because no chain resolves under it here.)
-        supported_networks=frozenset({'main', 'goerli', 'sepolia', 'holesky'}),
+        supported_networks=frozenset({'main', 'sepolia'}),
         custom_base_url=True,
     ),
     'blockscout': ScannerRecord(
@@ -730,6 +785,16 @@ BLOCKSCOUT_SCANNER_NETWORKS: frozenset[str] = (
 )
 
 
+#: Network names the Etherscan v2 scanner declares. Derived from the record's
+#: alias table so the scanner cannot advertise a name ``resolve_chain_id``
+#: would not answer; every entry is a chain the keyless ``GET /v2/chainlist``
+#: registry listed on 2026-09-11 (goerli and holesky are not in it — the live
+#: endpoint answers them "Missing or unsupported chainid parameter").
+ETHERSCAN_SCANNER_NETWORKS: frozenset[str] = frozenset(
+    SCANNER_RECORDS['etherscan'].network_aliases
+) | frozenset(SCANNER_RECORDS['etherscan'].supported_networks or ())
+
+
 def get_url_builder_profile(api_kind: str, network: str) -> dict[str, str | None]:
     """Resolve URL builder profile for ``(api_kind, network)``.
 
@@ -1103,6 +1168,220 @@ STANDARD_CHAINS = {
         'aliases': ['hpp'],
         'blockscout_instance': 'explorer.hpp.io',
         'moralis_hex': '0x2e7cf',
+    },
+    # --- Etherscan v2 chainlist (GET /v2/chainlist, fetched 2026-09-11) ---
+    # Every chain the unified endpoint routes. Free-tier availability is
+    # per endpoint, not per chain: ABI/source serve everywhere, the rest on a
+    # subset. See AGENTS.md for the measured split.
+    50: {
+        'name': 'xdc',
+        'aliases': ['xdc'],
+        'moralis_hex': '0x32',
+    },
+    51: {
+        'name': 'xdc-apothem-testnet',
+        'aliases': ['xdc-apothem-testnet'],
+        'moralis_hex': '0x33',
+    },
+    130: {
+        'name': 'unichain',
+        'aliases': ['unichain'],
+        'moralis_hex': '0x82',
+    },
+    143: {
+        'name': 'monad',
+        'aliases': ['monad'],
+        'moralis_hex': '0x8f',
+    },
+    199: {
+        'name': 'bittorrent-chain',
+        'aliases': ['bittorrent-chain'],
+        'moralis_hex': '0xc7',
+    },
+    204: {
+        'name': 'opbnb',
+        'aliases': ['opbnb'],
+        'moralis_hex': '0xcc',
+    },
+    252: {
+        'name': 'fraxtal',
+        'aliases': ['fraxtal'],
+        'moralis_hex': '0xfc',
+    },
+    480: {
+        'name': 'world',
+        'aliases': ['world'],
+        'moralis_hex': '0x1e0',
+    },
+    988: {
+        'name': 'stable',
+        'aliases': ['stable'],
+        'moralis_hex': '0x3dc',
+    },
+    999: {
+        'name': 'hyperevm',
+        'aliases': ['hyperevm'],
+        'moralis_hex': '0x3e7',
+    },
+    1029: {
+        'name': 'bittorrent-chain-testnet',
+        'aliases': ['bittorrent-chain-testnet'],
+        'moralis_hex': '0x405',
+    },
+    1301: {
+        'name': 'unichain-sepolia',
+        'aliases': ['unichain-sepolia'],
+        'moralis_hex': '0x515',
+    },
+    1328: {
+        'name': 'sei-testnet',
+        'aliases': ['sei-testnet'],
+        'moralis_hex': '0x530',
+    },
+    1329: {
+        'name': 'sei',
+        'aliases': ['sei'],
+        'moralis_hex': '0x531',
+    },
+    2201: {
+        'name': 'stable-testnet',
+        'aliases': ['stable-testnet'],
+        'moralis_hex': '0x899',
+    },
+    2523: {
+        'name': 'fraxtal-hoodi',
+        'aliases': ['fraxtal-hoodi'],
+        'moralis_hex': '0x9db',
+    },
+    2741: {
+        'name': 'abstract',
+        'aliases': ['abstract'],
+        'moralis_hex': '0xab5',
+    },
+    4352: {
+        'name': 'memecore',
+        'aliases': ['memecore'],
+        'moralis_hex': '0x1100',
+    },
+    4801: {
+        'name': 'world-sepolia',
+        'aliases': ['world-sepolia'],
+        'moralis_hex': '0x12c1',
+    },
+    5000: {
+        'name': 'mantle',
+        'aliases': ['mantle'],
+        'moralis_hex': '0x1388',
+    },
+    5003: {
+        'name': 'mantle-sepolia',
+        'aliases': ['mantle-sepolia'],
+        'moralis_hex': '0x138b',
+    },
+    5611: {
+        'name': 'opbnb-testnet',
+        'aliases': ['opbnb-testnet'],
+        'moralis_hex': '0x15eb',
+    },
+    6343: {
+        'name': 'megaeth-testnet',
+        'aliases': ['megaeth-testnet'],
+        'moralis_hex': '0x18c7',
+    },
+    9746: {
+        'name': 'plasma-testnet',
+        'aliases': ['plasma-testnet'],
+        'moralis_hex': '0x2612',
+    },
+    10143: {
+        'name': 'monad-testnet',
+        'aliases': ['monad-testnet'],
+        'moralis_hex': '0x279f',
+    },
+    11124: {
+        'name': 'abstract-sepolia',
+        'aliases': ['abstract-sepolia'],
+        'moralis_hex': '0x2b74',
+    },
+    14601: {
+        'name': 'sonic-testnet',
+        'aliases': ['sonic-testnet'],
+        'moralis_hex': '0x3909',
+    },
+    33111: {
+        'name': 'apechain-curtis-testnet',
+        'aliases': ['apechain-curtis-testnet'],
+        'moralis_hex': '0x8157',
+    },
+    33139: {
+        'name': 'apechain',
+        'aliases': ['apechain'],
+        'moralis_hex': '0x8173',
+    },
+    42220: {
+        'name': 'celo',
+        'aliases': ['celo'],
+        'moralis_hex': '0xa4ec',
+    },
+    43522: {
+        'name': 'memecore-insectarium-testnet',
+        'aliases': ['memecore-insectarium-testnet'],
+        'moralis_hex': '0xaa02',
+    },
+    59141: {
+        'name': 'linea-sepolia',
+        'aliases': ['linea-sepolia'],
+        'moralis_hex': '0xe705',
+    },
+    80002: {
+        'name': 'polygon-amoy',
+        'aliases': ['polygon-amoy'],
+        'moralis_hex': '0x13882',
+    },
+    80069: {
+        'name': 'berachain-bepolia-testnet',
+        'aliases': ['berachain-bepolia-testnet'],
+        'moralis_hex': '0x138c5',
+    },
+    80094: {
+        'name': 'berachain',
+        'aliases': ['berachain'],
+        'moralis_hex': '0x138de',
+    },
+    167000: {
+        'name': 'taiko',
+        'aliases': ['taiko'],
+        'moralis_hex': '0x28c58',
+    },
+    167013: {
+        'name': 'taiko-hoodi',
+        'aliases': ['taiko-hoodi'],
+        'moralis_hex': '0x28c65',
+    },
+    560048: {
+        'name': 'hoodi-testnet',
+        'aliases': ['hoodi-testnet'],
+        'moralis_hex': '0x88bb0',
+    },
+    737373: {
+        'name': 'katana-bokuto',
+        'aliases': ['katana-bokuto'],
+        'moralis_hex': '0xb405d',
+    },
+    747474: {
+        'name': 'katana',
+        'aliases': ['katana'],
+        'moralis_hex': '0xb67d2',
+    },
+    11142220: {
+        'name': 'celo-sepolia',
+        'aliases': ['celo-sepolia'],
+        'moralis_hex': '0xaa044c',
+    },
+    11155420: {
+        'name': 'op-sepolia',
+        'aliases': ['op-sepolia'],
+        'moralis_hex': '0xaa37dc',
     },
 }
 

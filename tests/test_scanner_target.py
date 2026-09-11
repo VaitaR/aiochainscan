@@ -323,7 +323,7 @@ class TestErrorBehavior:
     def test_etherscan_unsupported_network_raises(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setenv('ETHERSCAN_KEY', 'envkey123456')
         with pytest.raises(ValueError, match='not supported by Etherscan'):
-            resolve_scanner_target('etherscan', 'gnosis')
+            resolve_scanner_target('etherscan', 'goerli')
 
     @pytest.mark.parametrize('key', [None, 'explicit'])
     def test_network_validity_does_not_depend_on_the_key_source(
@@ -331,17 +331,19 @@ class TestErrorBehavior:
     ):
         monkeypatch.setenv('ETHERSCAN_KEY', 'envkey123456')
         with pytest.raises(ValueError, match='not supported by Etherscan'):
-            resolve_scanner_target('etherscan', 'gnosis', api_key=key)
+            resolve_scanner_target('etherscan', 'goerli', api_key=key)
 
-    @pytest.mark.parametrize('key', [None, 'explicit'])
-    def test_holesky_is_served_on_both_key_paths(
-        self, monkeypatch: pytest.MonkeyPatch, key: str | None
+    @pytest.mark.parametrize('network', ['goerli', 'holesky'])
+    def test_deprecated_testnets_are_refused_at_construction(
+        self, monkeypatch: pytest.MonkeyPatch, network: str
     ):
-        # Etherscan V2 routes chain 17000 and the scanner declares holesky, so
-        # the registry oracle must not be the one thing that refuses it.
+        # Both were declared until 2026-09-11, when the live endpoint was
+        # measured answering them "Missing or unsupported chainid parameter"
+        # and the keyless `GET /v2/chainlist` registry was found not to list
+        # them. Accepting them only moved the failure to the first request.
         monkeypatch.setenv('ETHERSCAN_KEY', 'envkey123456')
-        target = resolve_scanner_target('etherscan', 'holesky', api_key=key)
-        assert target.chain_id == 17000
+        with pytest.raises(ValueError, match='not supported by Etherscan'):
+            resolve_scanner_target('etherscan', network)
 
 
 class TestFromConfigIntegration:
