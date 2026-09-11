@@ -172,6 +172,15 @@ def _failure_description(kind: FailureKind) -> str:
     return _FAILURE_DESCRIPTIONS[kind]
 
 
+#: Reserved key :meth:`ChainscanPool.fetch_page` stitches into the
+#: ``next_cursor`` it returns, naming the pool member that minted the rest
+#: of the cursor's (provider-specific, opaque) contents. Double-underscore
+#: wrapping keeps it out of the way of real scanner params (``page``,
+#: ``offset``, ``next_page_params`` etc. never look like this) — see
+#: ``fetch_page``'s "Cursor binding" docstring section for the contract.
+_CURSOR_PROVIDER_KEY = '__pool_provider__'
+
+
 # ---------------------------------------------------------------------------
 # Per-provider state
 # ---------------------------------------------------------------------------
@@ -553,6 +562,22 @@ class ChainscanPool(
         method: Method | None = None,
     ) -> Any:
         """Run ``invoke`` with failover across providers (single request)."""
+        result, _state = await self._execute_tracked(operation, invoke, method=method)
+        return result
+
+    async def _execute_tracked(
+        self,
+        operation: str,
+        invoke: Callable[[ChainscanClient], Any],
+        method: Method | None = None,
+    ) -> tuple[Any, _ProviderState]:
+        """As :meth:`_execute`, but also returns the state that served it.
+
+        :meth:`fetch_page` needs to know WHICH member answered a
+        cursor-less (first-page) request, so it can bind the cursor that
+        member returns to it — see the "Cursor binding" note on
+        :meth:`fetch_page`.
+        """
         attempts: list[tuple[str, Exception]] = []
         pending: tuple[str, float] | None = None
         skipped_for_capability = False
@@ -587,7 +612,7 @@ class ChainscanPool(
                 pending = (_failure_description(kind), cooldown)
                 continue
             self._mark_success(state)
-            return result
+            return result, state
         if attempts:
             raise ProviderPoolExhaustedError(operation, attempts)
         raise ValueError(
@@ -792,19 +817,81 @@ class ChainscanPool(
     async def fetch_page(
         self, method: Method, params: dict[str, Any]
     ) -> tuple[list[JSONDict], dict[str, Any] | None]:
-        """Fetch one page with per-call failover (the MCP cursor seam).
+        """Fetch one page with per-call failover for an UNCURSORED request.
 
         Each call is an independent request, so failover is safe per call —
-        but opaque cursors are provider-specific: callers driving their own
-        cursor loops should prefer the pool's ``iter_*`` methods, which pin
-        a provider for the whole pagination.
+        but only while there is no cursor in play. Opaque cursors are
+        provider-specific (BlockScout's opaque continuation token and
+        Etherscan's ``page``/``offset`` share nothing); callers driving their
+        own cursor loops should prefer the pool's ``iter_*`` methods, which
+        pin a provider for the whole pagination. This seam exists for callers
+        (e.g. the MCP tools) that must drive ``fetch_page`` themselves.
+
+        Cursor binding:
+
+        - A first call (``params`` carries no cursor) fails over normally
+          across the pool, exactly as before. The ``next_cursor`` returned
+          is stitched with an internal marker naming the provider that
+          produced it — invisible to the caller (the cursor stays opaque:
+          "merge it into ``params`` for the next call" still holds), but
+          read back by this method on the following call.
+        - A call whose ``params`` carries that marker is PINNED to the
+          provider that minted the cursor: no failover is attempted. If that
+          provider is unreachable (in cooldown, no longer declares the
+          method, or — defensively — no longer in the pool),
+          :class:`ProviderPoolExhaustedError` is raised immediately rather
+          than silently asking a different provider to interpret a cursor
+          dialect it never produced. If the pinned provider itself raises,
+          that error propagates unchanged (mirroring the ``iter_*`` pinned
+          streams: switching mid-pagination would corrupt the cursor either
+          way), though a fallback-eligible failure still cools the provider
+          so unrelated, cursor-less calls route around it afterwards.
         """
-        result: tuple[list[JSONDict], dict[str, Any] | None] = await self._execute(
-            f'fetch_page:{method}',
-            lambda client: client.fetch_page(method, params),
-            method=method,
-        )
-        return result
+        bound_label = params.get(_CURSOR_PROVIDER_KEY)
+        if bound_label is None:
+            (items, next_cursor), state = await self._execute_tracked(
+                f'fetch_page:{method}',
+                lambda client: client.fetch_page(method, params),
+                method=method,
+            )
+            if next_cursor is not None:
+                next_cursor = {**next_cursor, _CURSOR_PROVIDER_KEY: state.label}
+            return items, next_cursor
+
+        call_params = {k: v for k, v in params.items() if k != _CURSOR_PROVIDER_KEY}
+        bound_state = next((s for s in self._providers if s.label == bound_label), None)
+        operation = f'fetch_page:{method} (cursor bound to {bound_label})'
+        if bound_state is None:
+            raise ProviderPoolExhaustedError(
+                operation,
+                [(bound_label, ValueError(f'{bound_label!r} is no longer part of this pool'))],
+            )
+        state = bound_state
+        if not state.client.supports_method(method):
+            raise ProviderPoolExhaustedError(
+                operation,
+                [(state.label, ValueError(f'{state.label} no longer declares {method}'))],
+            )
+        now = self._clock()
+        if state.in_cooldown(now):
+            attempts: list[tuple[str, Exception]] = []
+            if state.last_error is not None:
+                _record_attempt(attempts, state.label, state.last_error)
+            else:  # pragma: no cover - defensive, cooldown always sets last_error
+                attempts.append((state.label, RuntimeError(f'{state.label} is in cooldown')))
+            raise ProviderPoolExhaustedError(operation, attempts)
+
+        try:
+            items, next_cursor = await state.client.fetch_page(method, call_params)
+        except Exception as exc:
+            kind = classify_failure(exc)
+            if kind not in (FailureKind.FATAL, FailureKind.METHOD_UNDECLARED):
+                state.enter_cooldown(self._clock() + self._cooldown_for(kind, exc), exc, kind)
+            raise
+        self._mark_success(state)
+        if next_cursor is not None:
+            next_cursor = {**next_cursor, _CURSOR_PROVIDER_KEY: state.label}
+        return items, next_cursor
 
     def supports_method(self, method: Method) -> bool:
         """True if at least one pool provider declares ``method`` (union)."""

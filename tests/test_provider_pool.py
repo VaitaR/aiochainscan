@@ -743,6 +743,46 @@ class TestPaginationBinding:
         assert items == [{'hash': '0xB1'}]
         assert cursor is None
 
+    async def test_fetch_page_cursor_is_not_handed_to_a_different_provider(
+        self, pool: ChainscanPool, clock: FakeClock
+    ) -> None:
+        """A cursor minted by provider A must never be replayed against B.
+
+        Page 1 is served by etherscan (p1), which returns an opaque,
+        etherscan-specific cursor. By the time the caller merges that cursor
+        into ``params`` and asks for page 2, etherscan has gone into
+        cooldown (e.g. it rate-limited on an unrelated call in between).
+        Per-call failover for a CURSORED request must not silently hand
+        etherscan's cursor to blockscout (p2) — that provider's pagination
+        dialect is different and the cursor is meaningless to it. The pool
+        must either keep the request pinned to etherscan (and fail loudly
+        while it is unreachable) or refuse outright; it must never let p2
+        serve the request.
+        """
+        p1, p2 = pool._providers
+        etherscan_cursor = {'page': 2, 'offset': 100}
+        p1.client.fetch_page = AsyncMock(  # type: ignore[assignment]
+            return_value=([{'hash': '0xA1'}], etherscan_cursor)
+        )
+        p2.client.fetch_page = AsyncMock(return_value=([{'hash': '0xB1'}], None))  # type: ignore[assignment]
+
+        page1_params = {'address': ADDR, 'page': 1, 'offset': 100}
+        items1, next_cursor = await pool.fetch_page(Method.ACCOUNT_TRANSACTIONS, page1_params)
+        assert items1 == [{'hash': '0xA1'}]
+        assert next_cursor is not None
+
+        # etherscan enters cooldown before the caller drives page 2 (e.g. it
+        # rate-limited on some other request in between).
+        p1.enter_cooldown(clock.now + 30.0, rate_limit(retry_after=30), FailureKind.RATE_LIMIT)
+
+        page2_params = {**page1_params, **next_cursor}
+        with pytest.raises(ChainscanClientError):
+            await pool.fetch_page(Method.ACCOUNT_TRANSACTIONS, page2_params)
+
+        assert (
+            p2.client.fetch_page.call_count == 0
+        ), 'blockscout must never receive a cursor minted by etherscan'
+
 
 # ---------------------------------------------------------------------------
 # Regression: the get_all_*_normalized aggregators must work through the pool
