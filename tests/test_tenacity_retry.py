@@ -169,6 +169,7 @@ class TestRetryOnException:
         adapter = TenacityRetryAdapter(
             max_attempts=5,
             min_wait=0.01,
+            jitter=0.0,
             retry_exceptions=(ConnectionError, TimeoutError),
         )
 
@@ -261,6 +262,7 @@ class TestCallbacks:
         adapter = TenacityRetryAdapter(
             max_attempts=5,
             min_wait=0.01,
+            jitter=0.0,
             before_sleep_callback=track_callback,
         )
 
@@ -293,6 +295,7 @@ class TestCallbacks:
         adapter = TenacityRetryAdapter(
             max_attempts=5,
             min_wait=0.01,
+            jitter=0.0,
             before_sleep_callback=capture_callback,
         )
 
@@ -313,6 +316,7 @@ class TestWrapDecorator:
         adapter = TenacityRetryAdapter(
             max_attempts=5,
             min_wait=0.01,
+            jitter=0.0,
             retry_exceptions=(ValueError,),
         )
 
@@ -348,6 +352,7 @@ class TestWrapDecorator:
         adapter = TenacityRetryAdapter(
             max_attempts=2,
             min_wait=0.01,
+            jitter=0.0,
             retry_exceptions=(RuntimeError,),
         )
 
@@ -407,6 +412,7 @@ class TestWithExceptions:
         original = TenacityRetryAdapter(
             max_attempts=5,
             min_wait=0.01,
+            jitter=0.0,
             retry_exceptions=(ChainscanRateLimitError,),
         )
 
@@ -435,6 +441,7 @@ class TestRetryingContextManager:
         adapter = TenacityRetryAdapter(
             max_attempts=5,
             min_wait=0.01,
+            jitter=0.0,
             retry_exceptions=(ValueError,),
         )
 
@@ -469,6 +476,7 @@ class TestIntegrationWithRealExceptions:
         adapter = TenacityRetryAdapter(
             max_attempts=5,
             min_wait=0.01,
+            jitter=0.0,
             retry_exceptions=(ChainscanRateLimitError, ConnectionError),
         )
 

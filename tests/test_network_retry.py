@@ -127,6 +127,7 @@ async def test_retry_policy_integration() -> None:
         await network.close()
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_custom_timeout() -> None:
     """Test that custom timeout is applied to httpx client."""

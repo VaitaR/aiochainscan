@@ -103,6 +103,7 @@ class TestENSResolver:
         assert await client.resolve_name('invalid') is None
         assert await client.resolve_name('not-ens-name.com') is None
 
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_lookup_address_reverse(self):
         """Test reverse lookup: address → name."""
@@ -146,6 +147,7 @@ class TestENSResolver:
         assert address1 == address2
         assert address1 is not None
 
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_caching_reverse_lookup(self):
         """Test that reverse lookup uses cache."""
@@ -201,6 +203,7 @@ class TestENSResolver:
         # Invalid names might not be in result
         # (depends on whether they exist)
 
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_batch_lookup_addresses(self):
         """Test batch reverse lookup of multiple addresses."""
@@ -252,6 +255,7 @@ class TestENSResolver:
         address = await resolver.resolve_name('vitalik.eth')
         assert address is not None
 
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_ens_cache_clear(self):
         """Test clearing ENS cache."""
@@ -466,6 +470,7 @@ class TestENSResolver:
 class TestENSIntegration:
     """Integration tests requiring actual API calls."""
 
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_blockscout_v2_ens_integration(self):
         """Test ENS integration with BlockScout V2."""

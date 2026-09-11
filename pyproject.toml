@@ -139,12 +139,12 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 addopts = [
   "-m",
-  "not benchmark and not slow",
+  "not benchmark and not slow and not integration",
 ]
 markers = [
     "benchmark: marks tests as benchmarks (deselect with '-m \"not benchmark\"')",
     "slow: marks tests as slow (e.g. E2E tests, deselect with '-m \"not slow\"')",
-    "integration: marks tests as integration tests requiring network access",
+    "integration: marks tests that hit live third-party APIs (deselect with '-m \"not integration\"')",
   "memory: marks tests as memory-focused benchmarks",
 ]
 
