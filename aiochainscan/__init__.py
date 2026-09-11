@@ -41,7 +41,7 @@ from aiochainscan.services.chain_info import ChainInfo
 try:
     __version__ = _dist_version('aiochainscan')
 except PackageNotFoundError:  # pragma: no cover - source checkout without install
-    __version__ = '1.0.4'
+    __version__ = '1.0.5'
 
 __all__ = [
     'AbiTypeNotSupportedError',

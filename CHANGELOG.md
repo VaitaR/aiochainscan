@@ -4,6 +4,30 @@ All notable changes to this project are documented in this file. The format is
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions
 follow [Semantic Versioning](https://semver.org/).
 
+## [1.0.5] — 2026-09-11
+
+### Fixed
+
+- **`ChainscanPool.fetch_page` no longer hands one provider's cursor to another.**
+  The pool fails over per call, so a member that cooled between pages used to receive a
+  cursor it never minted — silently wrong rows where both members share the page/offset
+  dialect, a meaningless request where they do not. `fetch_page` now tags the cursor it
+  returns with the member that produced it and serves a cursored request only from that
+  member, raising `ProviderPoolExhaustedError` instead of substituting a sibling. An
+  uncursored first page keeps per-call failover; the `iter_*` streams are unchanged.
+- **BlockScout V1 no longer declares REST actions it does not implement.**
+  `TOKEN_INFO`, `GAS_ESTIMATE`, `GAS_ORACLE`, `ACCOUNT_TOKEN_PORTFOLIO` and
+  `ACCOUNT_NFT_PORTFOLIO` were inherited wholesale from the Etherscan-like SPECS; BlockScout
+  answers each with HTTP 400 `Unknown action`/`Unknown module`, so a pool falling through to
+  it reported a data failure where the truth was a capability gap. Verified live against
+  independent BlockScout instances on 2026-09-11.
+
+### Changed
+
+- Plasma (9745) is served by the Etherscan family after all, contrary to the note in 1.0.4:
+  account transactions and balances answer on `etherscan/plasma`. BlockScout still has no
+  Plasma instance, so the pool runs there on its Etherscan member alone.
+
 ## [1.0.4] — 2026-09-10
 
 ### Added

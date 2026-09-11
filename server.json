@@ -3,7 +3,7 @@
   "name": "io.github.VaitaR/aiochainscan",
   "title": "aiochainscan",
   "description": "Read-only blockchain data: balances, transactions, tokens, holders, contract ABIs, ENS.",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "repository": {
     "url": "https://github.com/VaitaR/aiochainscan",
     "source": "github"
@@ -14,7 +14,7 @@
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "aiochainscan",
-      "version": "1.0.4",
+      "version": "1.0.5",
       "runtimeHint": "uvx",
       "transport": {
         "type": "stdio"
@@ -23,7 +23,7 @@
         {
           "type": "named",
           "name": "--from",
-          "value": "aiochainscan[mcp]==1.0.4",
+          "value": "aiochainscan[mcp]==1.0.5",
           "description": "The MCP server ships in the mcp extra of the aiochainscan distribution."
         }
       ],

@@ -7,11 +7,11 @@
 # ``server.json``; ``tests/test_mcpb_bundle.py`` enforces that.
 [project]
 name = "aiochainscan-mcpb"
-version = "1.0.4"
+version = "1.0.5"
 description = "MCPB bundle wrapper for the aiochainscan MCP server"
 requires-python = ">=3.12"
 dependencies = [
-    "aiochainscan[mcp]==1.0.4",
+    "aiochainscan[mcp]==1.0.5",
 ]
 
 [tool.uv]

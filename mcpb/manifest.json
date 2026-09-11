@@ -2,7 +2,7 @@
   "manifest_version": "0.4",
   "name": "aiochainscan",
   "display_name": "aiochainscan",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "Read-only blockchain data: balances, transactions, tokens, holders, contract ABIs, ENS.",
   "long_description": "Twelve read-only tools over Etherscan, BlockScout and NodeReal, served by the `aiochainscan` Python client. Works keylessly against BlockScout; an Etherscan or NodeReal key widens coverage. Every tool answers an envelope of `{data, notes, instructions, pagination}` with opaque pagination cursors, exact Wei math (no float division) and EIP-55 addresses, and transaction input decoded against the verified ABI.",
   "author": {

@@ -6,7 +6,7 @@ The shortest useful thing this library does, start to finish. No checkout, no
 API key, no pagination code of your own.
 
 ```bash
-pip install 'aiochainscan==1.0.4'
+pip install 'aiochainscan==1.0.5'
 curl -O https://raw.githubusercontent.com/VaitaR/aiochainscan/main/examples/02_export_to_csv.py
 
 python 02_export_to_csv.py 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045          # one page
