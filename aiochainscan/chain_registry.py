@@ -411,9 +411,17 @@ SCANNER_RECORDS: dict[str, ScannerRecord] = {
             'plume': 'explorer.plume.org',
             'plume-testnet': 'testnet-explorer.plume.org',
             'hpp': 'explorer.hpp.io',
+            'mizuhiki': 'mizuhiki.blockscout.com',
+            'numine': 'numine.blockscout.com',
+            'mocachain': 'scan.mocachain.org',
+            'stability': 'explorer.stabilityprotocol.com',
         },
         instance_currencies={
             'blockscout_eth': 'ETH',
+            'blockscout_mizuhiki': 'MIZU',
+            'blockscout_numine': 'NUMINE',
+            'blockscout_mocachain': 'MOCA',
+            'blockscout_stability': 'FREE',
             'blockscout_sepolia': 'ETH',
             'blockscout_gnosis': 'xDAI',
             'blockscout_polygon': 'MATIC',
@@ -448,6 +456,10 @@ SCANNER_RECORDS: dict[str, ScannerRecord] = {
         },
         config_ids_by_network={
             'ethereum': 'blockscout_eth',
+            'mizuhiki': 'blockscout_mizuhiki',
+            'numine': 'blockscout_numine',
+            'mocachain': 'blockscout_mocachain',
+            'stability': 'blockscout_stability',
             'eth': 'blockscout_eth',
             'polygon': 'blockscout_polygon',
             'gnosis': 'blockscout_gnosis',
@@ -481,6 +493,10 @@ SCANNER_RECORDS: dict[str, ScannerRecord] = {
         },
         display_names={
             'blockscout_eth': 'BlockScout Ethereum',
+            'blockscout_mizuhiki': 'BlockScout Mizuhiki',
+            'blockscout_numine': 'BlockScout Numine',
+            'blockscout_mocachain': 'BlockScout Moca Chain',
+            'blockscout_stability': 'BlockScout Stability',
             'blockscout_sepolia': 'BlockScout Sepolia',
             'blockscout_gnosis': 'BlockScout Gnosis',
             'blockscout_polygon': 'BlockScout Polygon',
@@ -1208,6 +1224,31 @@ STANDARD_CHAINS = {
         'aliases': ['hpp'],
         'blockscout_instance': 'explorer.hpp.io',
         'moralis_hex': '0x2e7cf',
+    },
+    # --- BlockScout official mainnet instances, live-probed 2026-09-11 ---
+    6498: {
+        'name': 'mizuhiki',
+        'aliases': ['mizuhiki'],
+        'blockscout_instance': 'mizuhiki.blockscout.com',
+        'moralis_hex': '0x1962',
+    },
+    8021: {
+        'name': 'numine',
+        'aliases': ['numine'],
+        'blockscout_instance': 'numine.blockscout.com',
+        'moralis_hex': '0x1f55',
+    },
+    2288: {
+        'name': 'mocachain',
+        'aliases': ['mocachain'],
+        'blockscout_instance': 'scan.mocachain.org',
+        'moralis_hex': '0x8f0',
+    },
+    101010: {
+        'name': 'stability',
+        'aliases': ['stability'],
+        'blockscout_instance': 'explorer.stabilityprotocol.com',
+        'moralis_hex': '0x18a92',
     },
     # --- Etherscan v2 chainlist (GET /v2/chainlist, fetched 2026-09-11) ---
     # Every chain the unified endpoint routes. Free-tier availability is
