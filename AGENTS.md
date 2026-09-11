@@ -749,6 +749,15 @@ Agent adapter over `ChainscanClient` — **run**: `python -m aiochainscan.mcp_se
   crash; primary-call failures still raise (clean MCP error).
 - Default scanner `blockscout` (keyless, v1); override per call (`scanner=`)
   or via `AIOCHAINSCAN_MCP_SCANNER`.
+- `mcp/cursors.py` and `mcp/envelope.py` import WITHOUT the `mcp` extra, and
+  that is a contract, not a coincidence: the FastMCP dependency lives only in
+  `mcp/server.py`, so `mcp/__init__.py` must never import it (nor `tools.py`,
+  which pulls the client). An external consumer (the sibling `onchain-research`
+  router imports `encode_cursor`/`decode_cursor` for legs that have nothing
+  else to do with this SDK) depends on that. Enforced by
+  `test_lightweight_mcp_imports_need_no_extra`. The cursor format stays this
+  library's: a consumer needing its own fields forks the codec on its side
+  rather than widening this one.
 - Tests: `tests/test_mcp_server.py` (offline stubs; FastMCP registration
   tests need `uv run --extra mcp pytest`), `tests/test_blockscout_v1_ethrpc.py`.
 

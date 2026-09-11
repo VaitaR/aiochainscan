@@ -1408,3 +1408,33 @@ def _stub_pool() -> Any:
         return StubClient()
 
     return mcp_tools.ClientPool(factory=factory)  # type: ignore[arg-type]
+
+
+def test_lightweight_mcp_imports_need_no_extra() -> None:
+    """``mcp.cursors`` / ``mcp.envelope`` must import with the ``mcp`` extra absent.
+
+    External consumers (the ``onchain-research`` router) import the cursor codec
+    alone. Run in a subprocess with the ``mcp`` package blocked, so the result does
+    not depend on whether this environment happens to have the extra installed.
+    """
+    import subprocess
+    import sys
+
+    program = """
+import sys
+class _Block:
+    def find_module(self, name, path=None):
+        return self.find_spec(name, path)
+    def find_spec(self, name, path=None, target=None):
+        if name == 'mcp' or name.startswith('mcp.'):
+            raise ImportError('blocked: aiochainscan.mcp.cursors must not need the mcp extra')
+        return None
+sys.meta_path.insert(0, _Block())
+import aiochainscan.mcp.cursors as c
+import aiochainscan.mcp.envelope as e
+assert c.decode_cursor(c.encode_cursor({'page': 2}))['page'] == 2
+assert e.ToolResponse is not None
+assert 'mcp' not in sys.modules
+"""
+    proc = subprocess.run([sys.executable, '-c', program], capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stderr
