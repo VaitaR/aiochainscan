@@ -570,8 +570,11 @@ class TestDerivedInstanceTopology:
             f'{sorted(set(names) - set(chain_registry.BLOCKSCOUT_HOSTS))}'
         )
 
-    def test_zksync_stays_declared_dropped(self) -> None:
-        # Public-surface pin: today's drop keeps today's behaviour — declared,
-        # not resurrected and not silently extended.
-        assert frozenset({'zksync'}) == chain_registry.DROPPED_INSTANCE_ALIASES
-        assert 'blockscout_zksync' not in chain_registry.BLOCKSCOUT_HOSTS
+    def test_no_instance_alias_is_silently_dropped(self) -> None:
+        # Public-surface pin: an instance alias either serves or is declared
+        # dropped. zksync was the one drop until its instance was live-probed
+        # on 2026-09-11 (REST, v2 and eth-rpc all answered), so it now serves
+        # and the dropped set is empty. A future drop must be declared here,
+        # never left implicit.
+        assert frozenset() == chain_registry.DROPPED_INSTANCE_ALIASES
+        assert 'blockscout_zksync' in chain_registry.BLOCKSCOUT_HOSTS

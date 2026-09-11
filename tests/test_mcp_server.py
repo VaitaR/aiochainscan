@@ -1156,12 +1156,16 @@ class TestListChains:
             assert entry['blockscout'] == BLOCKSCOUT_INSTANCE_HOSTS.get(name)
 
     def test_stale_instance_chains_are_not_advertised(self) -> None:
-        """goerli/fantom/blast/mode carry (or carried) registry instance hosts
-        no scanner can serve — they must read as unavailable here."""
+        """goerli/fantom/blast carry registry instance hosts no scanner can
+        serve — they must read as unavailable here.
+
+        'mode' used to belong here and no longer does: its BlockScout instance
+        was live-probed on 2026-09-11 and is now a declared network.
+        """
         response = mcp_tools.list_chains()
         assert response.data is not None
         by_name = {c['name']: c for c in response.data['chains']}
-        for stale in ('goerli', 'fantom', 'blast', 'mode'):
+        for stale in ('goerli', 'fantom', 'blast'):
             if stale in by_name:
                 assert by_name[stale]['blockscout'] is None, stale
 
@@ -1176,7 +1180,7 @@ class TestListChains:
         assert 'linea' not in coverage['etherscan']
         assert 'ethereum' in coverage['blockscout']
         assert 'goerli' not in coverage['blockscout']
-        assert 'mode' not in coverage['blockscout']
+        assert 'mode' in coverage['blockscout']  # declared 2026-09-11, instance live-probed
         assert coverage['nodereal'] == frozenset({'bsc', 'bsc-testnet'})
         assert coverage['blockscout'] == coverage['blockscout_v2']
         # Every chain the tool lists as covered must actually construct.
