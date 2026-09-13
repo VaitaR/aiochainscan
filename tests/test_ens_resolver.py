@@ -23,7 +23,7 @@ from aiochainscan.adapters.memory_cache import InMemoryCache
 from aiochainscan.constants import BATCH_DEFAULT_CONCURRENCY, ENS_MAX_NAME_LENGTH
 from aiochainscan.crypto import to_checksum_address
 from aiochainscan.domain.method import Method
-from aiochainscan.exceptions import MethodNotDeclaredError
+from aiochainscan.exceptions import ENSScannerUnavailableError, MethodNotDeclaredError
 from aiochainscan.services.ens_resolver import ENS_PUBLIC_RESOLVER, ENSResolver
 
 REVERSE_TEST_ADDRESS = '0x1111111111111111111111111111111111111111'
@@ -574,3 +574,170 @@ async def test_unsupported_network_error_raises_for_client_missing_network_attr(
         await resolver.resolve_name('vitalik.eth')
     with pytest.raises(AttributeError):
         await resolver.lookup_address('0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045')
+
+
+class UnsupportedENSClient:
+    """A host on a non-mainnet chain — ENS cannot be served there at all."""
+
+    chain_id = 137
+    network = 'polygon'
+
+    def __init__(self) -> None:
+        self.call = AsyncMock(return_value='0x')
+
+
+class TestENSUnavailabilityContract:
+    """C29: ONE unavailability signal, honored by singles and batch alike.
+
+    The ENS error contract is three-way:
+
+    - ``None`` — the record does not exist;
+    - ``MethodNotDeclaredError`` — the scanner lacks ``eth_call`` entirely;
+    - ``ENSScannerUnavailableError`` — this scanner/network combination
+      cannot serve ENS whatever the record.
+    """
+
+    @pytest.mark.asyncio
+    async def test_singles_raise_the_dedicated_unavailability_type(self):
+        client = UnsupportedENSClient()
+        resolver = ENSResolver(client, enable_cache=False)
+
+        with pytest.raises(ENSScannerUnavailableError) as name_exc:
+            await resolver.resolve_name('vitalik.eth')
+        with pytest.raises(ENSScannerUnavailableError) as addr_exc:
+            await resolver.lookup_address(REVERSE_TEST_ADDRESS)
+
+        # Same signal content on both singles: current network + chain_id.
+        for excinfo in (name_exc, addr_exc):
+            assert 'ENS is only supported on Ethereum mainnet' in str(excinfo.value)
+            assert 'polygon' in str(excinfo.value)
+            assert 'chain_id=137' in str(excinfo.value)
+        client.call.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_batch_raises_the_same_signal_the_singles_raise(self):
+        """The batch paths raise the SAME signal — never ``{}`` for a
+        condition the singles raise on."""
+        client = UnsupportedENSClient()
+        resolver = ENSResolver(client, enable_cache=False)
+
+        with pytest.raises(ENSScannerUnavailableError) as single_exc:
+            await resolver.resolve_name('vitalik.eth')
+        with pytest.raises(ENSScannerUnavailableError) as names_exc:
+            await resolver.resolve_names(['vitalik.eth', 'uniswap.eth'])
+        with pytest.raises(ENSScannerUnavailableError) as addrs_exc:
+            await resolver.lookup_addresses([REVERSE_TEST_ADDRESS])
+
+        assert str(names_exc.value) == str(single_exc.value)
+        assert str(addrs_exc.value) == str(single_exc.value)
+        client.call.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_real_client_singles_and_batch_raise_the_dedicated_type(self):
+        """The same contract on a real client, on the public surface
+        (resolve_names/lookup_addresses used to return ``{}`` here)."""
+        client = ChainscanClient.from_config('blockscout_v2', 'polygon')
+
+        with pytest.raises(ENSScannerUnavailableError):
+            await client.resolve_name('vitalik.eth')
+        with pytest.raises(ENSScannerUnavailableError):
+            await client.lookup_address(REVERSE_TEST_ADDRESS)
+        with pytest.raises(ENSScannerUnavailableError):
+            await client.resolve_names(['vitalik.eth'])
+        with pytest.raises(ENSScannerUnavailableError):
+            await client.lookup_addresses([REVERSE_TEST_ADDRESS])
+
+    @pytest.mark.asyncio
+    async def test_safe_seams_do_not_swallow_the_unavailability_signal(self):
+        """``_safe_resolve``/``_safe_lookup`` re-raise the signal: it is a
+        property of the batch, not of one input."""
+        resolver = ENSResolver(UnsupportedENSClient(), enable_cache=False)
+
+        with pytest.raises(ENSScannerUnavailableError):
+            await resolver._safe_resolve('vitalik.eth')
+        with pytest.raises(ENSScannerUnavailableError):
+            await resolver._safe_lookup(REVERSE_TEST_ADDRESS)
+
+    def test_signal_is_value_error_but_not_method_not_declared(self):
+        """Catchability invariant, type level: the new signal subclasses
+        ``ValueError`` (the historical contract of the raise sites) and is
+        NOT a ``MethodNotDeclaredError``."""
+        assert issubclass(ENSScannerUnavailableError, ValueError)
+        assert not issubclass(ENSScannerUnavailableError, MethodNotDeclaredError)
+
+        exc = ENSScannerUnavailableError('ENS is only supported on Ethereum mainnet.')
+        assert isinstance(exc, ValueError)
+        assert not isinstance(exc, MethodNotDeclaredError)
+
+    def test_cannot_do_ens_here_catches_exactly_the_two_declared_signals(self):
+        """A caller's ``except (MethodNotDeclaredError, ENSScannerUnavailableError)``
+        pair absorbs every "cannot do ENS here" outcome — and the pair is
+        exhaustive because no other outcome carries those types."""
+        signals = (
+            ENSScannerUnavailableError('network cannot serve ENS'),
+            MethodNotDeclaredError('Method Proxy Eth Call not supported'),
+        )
+        caught: list[type[Exception]] = []
+        for signal in signals:
+            try:  # noqa: SIM105 - the pair itself is the contract under test
+                raise signal
+            except (MethodNotDeclaredError, ENSScannerUnavailableError) as caught_exc:
+                caught.append(type(caught_exc))
+        assert caught == [ENSScannerUnavailableError, MethodNotDeclaredError]
+
+    def test_method_not_declared_is_not_absorbed_as_unsupported_network(self):
+        """The two signals are distinguishable by type in BOTH directions."""
+        with pytest.raises(MethodNotDeclaredError):
+            try:
+                raise MethodNotDeclaredError('Method Proxy Eth Call not supported')
+            except ENSScannerUnavailableError:
+                pytest.fail('MethodNotDeclaredError must not read as ENS unavailability')
+
+        with pytest.raises(ENSScannerUnavailableError):
+            try:
+                raise ENSScannerUnavailableError('network cannot serve ENS')
+            except MethodNotDeclaredError:
+                pytest.fail('ENSScannerUnavailableError must not read as an undeclared method')
+
+    @pytest.mark.asyncio
+    async def test_method_not_declared_on_mainnet_is_not_reported_as_unsupported_network(self):
+        """chain_id == 1 passes the availability gate; a scanner without
+        ``eth_call`` surfaces MethodNotDeclaredError itself."""
+        client = UnitENSClient()
+        client.call = AsyncMock(
+            side_effect=MethodNotDeclaredError('Method Proxy Eth Call not supported')
+        )
+        resolver = ENSResolver(client, enable_cache=False)
+
+        with pytest.raises(MethodNotDeclaredError) as excinfo:
+            await resolver.resolve_name('vitalik.eth')
+
+        assert not isinstance(excinfo.value, ENSScannerUnavailableError)
+
+    @pytest.mark.asyncio
+    async def test_pool_propagates_the_unavailability_signal_without_failover(self):
+        """Pool parity: the pre-signal bare ``ValueError`` propagated out of
+        ``pool.resolve_name`` unchanged (the resolver raises above the pool's
+        attempt machinery, before any request). The signal keeps exactly that
+        propagation — one raise, no failover, no cooldown, no
+        ProviderPoolExhaustedError."""
+        from aiochainscan.chain_registry import resolve_scanner_target
+        from aiochainscan.core.pool import ChainscanPool
+
+        pool = ChainscanPool(
+            [
+                ChainscanClient(resolve_scanner_target('blockscout_v2', 'polygon')),
+                ChainscanClient(resolve_scanner_target('blockscout_v2', 'polygon')),
+            ]
+        )
+
+        with pytest.raises(
+            ENSScannerUnavailableError, match='ENS is only supported on Ethereum mainnet'
+        ):
+            await pool.resolve_name('vitalik.eth')
+
+    def test_signal_is_exported_from_the_package_root(self):
+        import aiochainscan
+
+        assert aiochainscan.ENSScannerUnavailableError is ENSScannerUnavailableError
+        assert 'ENSScannerUnavailableError' in aiochainscan.__all__

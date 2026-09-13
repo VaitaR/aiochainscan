@@ -16,7 +16,7 @@ from ...domain.normalized import InternalTransaction, TokenTransfer, Transaction
 from ...services.pagination import normalize_items
 from ...types import JSONList
 from ..host import ClientHost
-from ..streaming import collect_stream
+from ..streaming import collect_for_aggregate
 
 if TYPE_CHECKING:
     from ...ports.progress import ProgressCallback
@@ -234,17 +234,14 @@ class AccountMixin:
         ``PaginationDataLossError`` is raised if it cannot be. Pass ``False``
         for the cheaper pre-1.0 behaviour.
         """
-        return await collect_stream(
-            self.iter_transactions_streaming(
-                address=address,
-                from_block=from_block,
-                to_block=to_block,
-                batch_size=1000,
-                on_progress=on_progress,
-                guarantee_complete=guarantee_complete,
-            ),
-            stream_name='iter_transactions_streaming',
-            noun='transactions',
+        return await collect_for_aggregate(
+            self,
+            'get_all_transactions',
+            address=address,
+            from_block=from_block,
+            to_block=to_block,
+            on_progress=on_progress,
+            guarantee_complete=guarantee_complete,
             logger=logger,
         )
 
@@ -264,18 +261,15 @@ class AccountMixin:
         ``PaginationDataLossError`` is raised if it cannot be. Pass ``False``
         for the cheaper pre-1.0 behaviour.
         """
-        return await collect_stream(
-            self.iter_token_transfers_streaming(
-                address=address,
-                from_block=from_block,
-                to_block=to_block,
-                contract_address=contract_address,
-                batch_size=1000,
-                on_progress=on_progress,
-                guarantee_complete=guarantee_complete,
-            ),
-            stream_name='iter_token_transfers_streaming',
-            noun='token transfers',
+        return await collect_for_aggregate(
+            self,
+            'get_all_token_transfers',
+            address=address,
+            contract_address=contract_address,
+            from_block=from_block,
+            to_block=to_block,
+            on_progress=on_progress,
+            guarantee_complete=guarantee_complete,
             logger=logger,
         )
 
@@ -294,17 +288,14 @@ class AccountMixin:
         ``PaginationDataLossError`` is raised if it cannot be. Pass ``False``
         for the cheaper pre-1.0 behaviour.
         """
-        return await collect_stream(
-            self.iter_internal_transactions_streaming(
-                address=address,
-                from_block=from_block,
-                to_block=to_block,
-                batch_size=1000,
-                on_progress=on_progress,
-                guarantee_complete=guarantee_complete,
-            ),
-            stream_name='iter_internal_transactions_streaming',
-            noun='internal transactions',
+        return await collect_for_aggregate(
+            self,
+            'get_all_internal_transactions',
+            address=address,
+            from_block=from_block,
+            to_block=to_block,
+            on_progress=on_progress,
+            guarantee_complete=guarantee_complete,
             logger=logger,
         )
 
@@ -333,17 +324,14 @@ class AccountMixin:
         Same completeness guarantee as :meth:`get_all_transactions`; the only
         difference is the item type (``Transaction`` instead of ``dict``).
         """
-        return await collect_stream(
-            self.iter_transactions_normalized(
-                address=address,
-                from_block=from_block,
-                to_block=to_block,
-                batch_size=1000,
-                on_progress=on_progress,
-                guarantee_complete=guarantee_complete,
-            ),
-            stream_name='iter_transactions_normalized',
-            noun='normalized transactions',
+        return await collect_for_aggregate(
+            self,
+            'get_all_transactions_normalized',
+            address=address,
+            from_block=from_block,
+            to_block=to_block,
+            on_progress=on_progress,
+            guarantee_complete=guarantee_complete,
             logger=logger,
         )
 
@@ -357,18 +345,15 @@ class AccountMixin:
         guarantee_complete: bool = True,
     ) -> list[TokenTransfer]:
         """Materialize ``iter_token_transfers_normalized`` into one list."""
-        return await collect_stream(
-            self.iter_token_transfers_normalized(
-                address=address,
-                from_block=from_block,
-                to_block=to_block,
-                contract_address=contract_address,
-                batch_size=1000,
-                on_progress=on_progress,
-                guarantee_complete=guarantee_complete,
-            ),
-            stream_name='iter_token_transfers_normalized',
-            noun='normalized token transfers',
+        return await collect_for_aggregate(
+            self,
+            'get_all_token_transfers_normalized',
+            address=address,
+            contract_address=contract_address,
+            from_block=from_block,
+            to_block=to_block,
+            on_progress=on_progress,
+            guarantee_complete=guarantee_complete,
             logger=logger,
         )
 
@@ -381,16 +366,13 @@ class AccountMixin:
         guarantee_complete: bool = True,
     ) -> list[InternalTransaction]:
         """Materialize ``iter_internal_transactions_normalized`` into one list."""
-        return await collect_stream(
-            self.iter_internal_transactions_normalized(
-                address=address,
-                from_block=from_block,
-                to_block=to_block,
-                batch_size=1000,
-                on_progress=on_progress,
-                guarantee_complete=guarantee_complete,
-            ),
-            stream_name='iter_internal_transactions_normalized',
-            noun='normalized internal transactions',
+        return await collect_for_aggregate(
+            self,
+            'get_all_internal_transactions_normalized',
+            address=address,
+            from_block=from_block,
+            to_block=to_block,
+            on_progress=on_progress,
+            guarantee_complete=guarantee_complete,
             logger=logger,
         )

@@ -123,6 +123,20 @@ class Scanner(ABC):
     supported_networks: set[str]
     """Networks supported by this scanner (e.g., {'main', 'test'})"""
 
+    NETWORK_NAME_DIALECT: ClassVar[dict[str, str]] = {}
+    """Canonical registry chain name → the spelling this scanner's wire uses.
+
+    The one declaration of a scanner's network-name dialect, read through
+    :meth:`dialect_network` by the registry when it fills
+    ``ScannerTarget.scanner_network``. Only names whose scanner spelling
+    differs from the canonical registry chain name need an entry — everything
+    else passes through, so most scanners leave this empty. Every value must
+    be a spelling :attr:`supported_networks` validates: the constructor checks
+    the exact name this hook produces, so a dialect declared here can resolve
+    in the registry and still die in ``Scanner.__init__`` only if the two
+    disagree — which is why both live on this class.
+    """
+
     auth_mode: Literal['query', 'header'] = 'query'
     """How to authenticate - 'query' for URL params, 'header' for HTTP headers"""
 
@@ -266,6 +280,27 @@ class Scanner(ABC):
         else:
             self.chain_id = resolve_chain_id(network)
         self._network_client = network_client
+
+    @classmethod
+    def dialect_network(cls, canonical: str) -> str:
+        """Map a canonical registry chain name to this scanner's spelling.
+
+        The hook the registry asks when it fills
+        ``ScannerTarget.scanner_network`` — declared here, beside the
+        ``supported_networks`` check in ``__init__`` that validates the exact
+        name this returns, so a spelling cannot resolve in the registry while
+        dying at scanner construction (the two answers used to live in
+        different modules and drifted once). Default: the canonical name
+        passes through unchanged, per :attr:`NETWORK_NAME_DIALECT`.
+
+        Args:
+            canonical: Canonical registry chain name (e.g. ``'ethereum'``)
+
+        Returns:
+            The network name this scanner's constructor accepts (``'main'``
+            for Etherscan v2's Ethereum mainnet, ``'eth'`` for BlockScout v1)
+        """
+        return cls.NETWORK_NAME_DIALECT.get(canonical, canonical)
 
     async def fetch_page(
         self,

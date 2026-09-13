@@ -660,7 +660,11 @@ async def test_client_get_all_token_holders_names_a_working_provider() -> None:
 
     error = excinfo.value
     assert error.method == 'TOKEN_HOLDERS'
-    assert error.provider == 'etherscan/v2'
+    # The unified member label (scanner_name/network) — the same spelling
+    # ``ChainscanPool.last_provider`` uses for this member, so an error and
+    # the pool entry that raised it always agree about who spoke. (The
+    # ``alternatives`` below stay registry-level ``name/version`` labels.)
+    assert error.provider == 'etherscan/ethereum'
     # Computed from the registry, so every provider that can serve the list to
     # exhaustion is named — including the keyless one.
     assert error.alternatives == ('blockscout/v1', 'blockscout/v2', 'nodereal/v1')

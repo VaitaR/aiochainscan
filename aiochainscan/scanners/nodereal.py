@@ -71,7 +71,7 @@ from ..exceptions import (
     MethodNotDeclaredError,
     ScannerArgumentError,
 )
-from ..network import CompositeResponseDialect, EtherscanEnvelope, JsonRpcEnvelope
+from ..response_dialects import CompositeResponseDialect, EtherscanEnvelope, JsonRpcEnvelope
 from . import register_scanner
 from .base import (
     Scanner,

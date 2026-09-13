@@ -34,12 +34,10 @@ import orjson
 from ..abi_pure import canonical_signature, decode_arguments, encode_arguments, selector
 from ..chain_registry import (
     BLOCKSCOUT_INSTANCE_HOSTS,
-    DEFAULT_SCANNER_VERSIONS,
     SCANNER_RECORDS,
     get_chain_name,
     list_supported_chains,
     resolve_chain_id,
-    resolve_scanner_target,
 )
 from ..decode import decode_transaction_input
 from ..domain.method import Method
@@ -62,7 +60,7 @@ from ..domain.normalize import (
     int_or_default,
 )
 from ..exceptions import ChainscanClientError
-from ..scanners import SCANNER_REGISTRY, Scanner
+from ..scanners import SCANNER_REGISTRY, chains_served_by
 from .cursors import decode_tool_cursor, encode_cursor
 from .envelope import (
     STRING_TRUNCATION_LIMIT,
@@ -1193,61 +1191,22 @@ async def resolve_ens(client: ChainscanClient, name_or_address: str) -> ToolResp
     )
 
 
-def _scanner_class_for_public_name(scanner: str) -> type[Scanner] | None:
-    """The SCANNER_REGISTRY class a client construction picks for ``scanner``.
-
-    Mirrors the registry's version defaulting + the ``blockscout_v2`` alias
-    (``chain_registry._resolve_scanner_identity``): 'v2' where a record
-    declares it, 'v1' otherwise, and 'blockscout_v2' is the public name of the
-    ('blockscout', 'v2') pair.
-    """
-    version = DEFAULT_SCANNER_VERSIONS.get(scanner, 'v1')
-    name, version = ('blockscout', 'v2') if scanner == 'blockscout_v2' else (scanner, version)
-    return SCANNER_REGISTRY.get((name, version))
-
-
-def _scanner_serves_spelling(scanner: str, network: str | int) -> bool:
-    """Whether a client for ``(scanner, network)`` passes BOTH construction
-    gates: the registry's network-validity oracle (``resolve_scanner_target``)
-    and the scanner class's declared ``supported_networks`` (the check the
-    Scanner constructor itself applies). Reading the same declarations the
-    construction path reads — rather than raw chain-table fields — keeps the
-    answer correct whatever the registry later adds or removes.
-    """
-    try:
-        target = resolve_scanner_target(scanner, network, api_key='')
-    except (TypeError, ValueError):
-        return False
-    scanner_cls = _scanner_class_for_public_name(scanner)
-    if scanner_cls is None:
-        return False
-    return target.scanner_network in scanner_cls.supported_networks
-
-
 def chain_scanner_coverage() -> dict[str, frozenset[str]]:
     """Scanner name → canonical chain names a client actually constructs for.
 
-    A chain counts as served when ANY spelling the tool advertises (name,
-    alias or chain ID) passes both construction gates, since
-    ``list_chains`` advertises all of them. Derived live from the registry
-    declarations, so a scanner whose network table shrinks (or a chain whose
-    instance disappears) stops being claimed here without an edit to this
-    module.
+    The shared construction-gates query (:func:`chains_served_by`), so this
+    answers exactly what ``ChainscanClient.from_config`` allows — derived
+    live from the registry declarations, so a scanner whose network table
+    shrinks (or a chain whose instance disappears) stops being claimed here
+    without an edit to this module.
+
+    Asking once per chain with the canonical name is the whole derivation:
+    both gates read canonical-resolution outputs (the config-network alias
+    collapse and the scanner-dialect name are keyed on the canonical chain),
+    so no spelling a tool advertises — name, alias or chain ID — can pass
+    where the canonical name fails or the reverse.
     """
-    coverage: dict[str, frozenset[str]] = {}
-    for scanner in SCANNER_RECORDS:
-        served: set[str] = set()
-        for chain_id, info in list_supported_chains().items():
-            name = str(info.get('name'))
-            spellings: list[str | int] = [
-                name,
-                *(str(alias) for alias in info.get('aliases', [])),
-                chain_id,
-            ]
-            if any(_scanner_serves_spelling(scanner, spelling) for spelling in spellings):
-                served.add(name)
-        coverage[scanner] = frozenset(served)
-    return coverage
+    return {scanner: frozenset(chains_served_by(scanner)) for scanner in SCANNER_RECORDS}
 
 
 def _coverage_instructions(coverage: dict[str, frozenset[str]]) -> list[str]:

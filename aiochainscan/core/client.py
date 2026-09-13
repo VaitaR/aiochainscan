@@ -27,6 +27,7 @@ from ..scanners import get_scanner_class
 from ..scanners.base import Scanner
 from ..services.pagination import (
     BoundPageFetch,
+    Cursor,
     PaginationContext,
     normalize_items,
     page_fetcher,
@@ -422,7 +423,7 @@ class ChainscanClient(
 
     async def fetch_page(
         self, method: Method, params: dict[str, Any]
-    ) -> tuple[list[JSONDict], dict[str, Any] | None]:
+    ) -> tuple[list[JSONDict], Cursor]:
         """Fetch a single page via the scanner's public cursor seam.
 
         Thin passthrough to :meth:`aiochainscan.scanners.base.Scanner.fetch_page`
@@ -468,10 +469,38 @@ class ChainscanClient(
         """
         return self._scanner.get_supported_methods()
 
+    def result_window_for(self, method: Method) -> int | None:
+        """The provider's declared result window for ``method`` (public seam).
+
+        ``None`` means the provider paginates THIS endpoint by an exhaustible
+        server cursor (nothing can overflow it — the provider can serve it
+        completely); an ``int`` is the ``page * offset``-style cap the
+        completeness guarantee detects and splits on. One public accessor for
+        the completeness fact: the pagination engine's binding and the
+        failover pool both read it through here instead of reaching into the
+        scanner layer's privates.
+        """
+        return self._scanner.result_window_for(method)
+
     @property
     def scanner_info(self) -> str:
         """Get information about the current scanner."""
         return str(self._scanner)
+
+    @property
+    def provider_label(self) -> str:
+        """``scanner_name/network`` — the ONE user-facing name of this member.
+
+        The canonical spelling everywhere this provider is named to a user:
+        ``ChainscanPool.last_provider``, the ``provider=`` progress stamp and
+        the ``provider`` field of pagination errors all come from this one
+        formatter, so an error raised by a member and the pool entry that
+        answered can never disagree about who spoke. (The pool layers its
+        collision qualification on top for same-name members; the pagination
+        registry's ``name/version`` alternative labels are a different,
+        registry-level vocabulary.)
+        """
+        return f'{self.scanner_name}/{self.network}'
 
     @property
     def currency(self) -> str:
@@ -522,7 +551,7 @@ class ChainscanClient(
 
         return PaginationContext(
             method=method.name,
-            provider=f'{self.scanner_name}/{self.scanner_version}',
+            provider=self.provider_label,
             alternatives=scanners_serving_completely(method),
         )
 
@@ -586,7 +615,7 @@ class ChainscanClient(
     ) -> None:
         from ..scanners import scanners_serving_block_range
 
-        provider = f'{self.scanner_name}/{self.scanner_version}'
+        provider = self.provider_label
         alternatives = scanners_serving_block_range(method)
         if alternatives:
             remedy = f'Providers that declare a block range for it: {", ".join(alternatives)}.'

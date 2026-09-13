@@ -239,6 +239,17 @@ forbidden_modules = [
   "aiochainscan.scanners",
 ]
 
+[[tool.importlinter.contracts]]
+name = "Response dialects stay below the transport and scanners"
+type = "forbidden"
+source_modules = [
+  "aiochainscan.response_dialects",
+]
+forbidden_modules = [
+  "aiochainscan.network",
+  "aiochainscan.scanners",
+]
+
 [[tool.mypy.overrides]]
 module = [
  "aiochainscan.network",

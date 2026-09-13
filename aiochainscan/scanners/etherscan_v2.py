@@ -96,6 +96,11 @@ class EtherscanV2(EtherscanLikeScanner):
     # registry sync must reach this class after it was imported.
     supported_networks = ETHERSCAN_SCANNER_NETWORKS
 
+    # This family names Ethereum mainnet 'main' (a UrlBuilder/config dialect
+    # spelling ``supported_networks`` declares through the alias table's
+    # targets); the canonical registry name 'ethereum' maps onto it.
+    NETWORK_NAME_DIALECT = {'ethereum': 'main'}
+
     # Build SPECS from parent with chainid injection, plus V2-specific overrides.
     SPECS: dict[Method, EndpointSpec] = {
         **_inject_chain_id(EtherscanLikeScanner.SPECS, _V2_INHERITED_METHODS),

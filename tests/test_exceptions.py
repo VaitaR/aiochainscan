@@ -12,6 +12,7 @@ from aiochainscan.exceptions import (
     ChainscanRateLimitError,
     ChainscanResponseTooLargeError,
     CompletenessUnavailableError,
+    ENSScannerUnavailableError,
     FailureKind,
     MethodNotDeclaredError,
     PaginationDataLossError,
@@ -49,6 +50,16 @@ def test_all_exceptions_inherit_properly():
     assert isinstance(MethodNotDeclaredError('Method X not declared'), ValueError)
     assert not isinstance(MethodNotDeclaredError('Method X not declared'), ChainscanClientError)
 
+    # ENSScannerUnavailableError mirrors that placement: the historical
+    # ValueError contract of the ENS resolver's raise sites, deliberately
+    # outside the ChainscanClientError family AND outside the
+    # MethodNotDeclaredError family (the scanner may declare eth_call fine —
+    # the network cannot answer; the two must stay distinguishable by type).
+    unavailable = ENSScannerUnavailableError('ENS is only supported on Ethereum mainnet.')
+    assert isinstance(unavailable, ValueError)
+    assert not isinstance(unavailable, ChainscanClientError)
+    assert not isinstance(unavailable, MethodNotDeclaredError)
+
 
 def test_default_failure_kind_per_class():
     """Every exception class declares the failure_kind the pool's fallback
@@ -61,6 +72,9 @@ def test_default_failure_kind_per_class():
     assert MethodNotDeclaredError('Method X not declared').failure_kind is (
         FailureKind.METHOD_UNDECLARED
     )
+    assert ENSScannerUnavailableError(
+        'ENS is only supported on Ethereum mainnet.'
+    ).failure_kind is (FailureKind.FATAL)
     assert ChainscanDataError('missing field').failure_kind is FailureKind.FATAL
     assert ChainscanClientProxyError(-32000, 'missing value').failure_kind is FailureKind.FATAL
     assert ChainscanClientContentTypeError(200, 'html').failure_kind is FailureKind.FATAL

@@ -25,9 +25,13 @@ declaration source that replaces all of it:
 - **One shared host protocol** (:class:`SupportsStreaming`): the streaming
   surface every domain mixin needs from its host client, replacing the
   per-mixin protocol re-declarations.
-- **One aggregation helper** (:func:`collect_stream`): the single
-  ``collect_all`` call site behind every ``get_all_*`` (warning noun
-  parameter, threshold defined once in :mod:`aiochainscan.services.constants`).
+- **One aggregation helper** (:func:`collect_for_aggregate` →
+  :func:`collect_stream`): every ``get_all_*`` body routes through the row
+  named by its own public name — the spec's ``aggregate`` field is the
+  lookup key, so the stream, the warning noun and the page size are read
+  from the declaration instead of being restated per body
+  (:func:`collect_stream` stays the single ``collect_all`` call site, with
+  the threshold defined once in :mod:`aiochainscan.services.constants`).
 
 Adding a streaming method means ONE declaration row plus its public
 signature(s) — nothing else. The consistency sweep in
@@ -64,10 +68,12 @@ from ..services.pagination import (
 from ..types import JSONDict
 
 __all__ = [
+    'STREAMING_AGGREGATIONS',
     'STREAMING_SPECS',
     'STREAMING_SPECS_BY_NAME',
     'SupportsStreaming',
     'StreamSpec',
+    'collect_for_aggregate',
     'collect_stream',
     'stream_batches',
     'stream_items',
@@ -391,6 +397,15 @@ STREAMING_SPECS: tuple[StreamSpec, ...] = (
 
 STREAMING_SPECS_BY_NAME: dict[str, StreamSpec] = {spec.name: spec for spec in STREAMING_SPECS}
 
+#: The aggregator lookup: ``spec.aggregate`` is the key every ``get_all_*``
+#: body passes to :func:`collect_for_aggregate` — the field is load-bearing
+#: (the body's ONLY declaration fact), not consistency-sweep metadata.
+#: Dropping or renaming a row's ``aggregate`` fails the next aggregator call
+#: with a ``KeyError`` instead of silently orphaning the mapping.
+STREAMING_AGGREGATIONS: dict[str, StreamSpec] = {
+    spec.aggregate: spec for spec in STREAMING_SPECS if spec.aggregate is not None
+}
+
 
 # ---------------------------------------------------------------------------
 # The ONE streaming implementation
@@ -706,3 +721,66 @@ async def collect_stream(
         logger=logger,
     )
     return cast(list[T], items)
+
+
+def _aggregate_warning_noun(spec: StreamSpec) -> str:
+    """The large-aggregation warning noun for one aggregate row.
+
+    Derived, not declared per body: a raw row warns with its operation noun
+    (underscores become spaces — ``token_holders`` → ``token holders``), and
+    a row with a ``normalizer`` (the ``iter_*_normalized`` twins) prefixes
+    ``normalized ``. This reproduces exactly the nouns the hand-written
+    aggregator bodies passed to :func:`collect_stream` before they collapsed.
+    """
+    noun = spec.operation.replace('_', ' ')
+    if spec.normalizer is not None:
+        noun = f'normalized {noun}'
+    return noun
+
+
+async def collect_for_aggregate(
+    host: SupportsStreaming,
+    aggregate: str,
+    *,
+    logger: logging.Logger,
+    **kwargs: Any,
+) -> list[Any]:
+    """THE ``get_all_*`` body: resolve the row by aggregate, stream, materialize.
+
+    Every byte-identical ``get_all_*`` aggregator collapses to one call of
+    this helper keyed by its own public name — which is precisely the
+    ``aggregate`` field of its :class:`StreamSpec` row. The row supplies
+    everything the hand-written bodies used to restate:
+
+    - the stream to iterate (``spec.name``, resolved on the host — the
+      client's thin stream or the pool's pinned forward, so failover and
+      progress-stamping semantics are unchanged);
+    - the suggested constant-memory alternative in the warning (the same
+      name);
+    - the warning noun (:func:`_aggregate_warning_noun`);
+    - the page size: no ``batch_size`` is forwarded, so the stream
+      signature's declared default applies.
+
+    Args:
+        host: The client or pool whose streaming method serves the call.
+        aggregate: The caller's own public method name (== ``spec.aggregate``).
+        logger: Caller's module logger — the threshold warning is logged
+            under it, as before the collapse.
+        **kwargs: The aggregator's public parameters, forwarded verbatim to
+            the stream method (a ``batch_size`` key must not be among them).
+
+    Returns:
+        All items from all batches, in order (via :func:`collect_stream`).
+
+    Raises:
+        KeyError: If ``aggregate`` names no row — a declaration error the
+            consistency sweep catches, never a runtime condition.
+    """
+    spec = STREAMING_AGGREGATIONS[aggregate]
+    stream = getattr(host, spec.name)
+    return await collect_stream(
+        stream(**kwargs),
+        stream_name=spec.name,
+        noun=_aggregate_warning_noun(spec),
+        logger=logger,
+    )

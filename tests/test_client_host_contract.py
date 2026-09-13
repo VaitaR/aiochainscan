@@ -22,7 +22,7 @@ from aiochainscan.core.host import ClientHost
 from aiochainscan.core.pool import ChainscanPool
 from aiochainscan.domain.method import Method
 from aiochainscan.exceptions import ChainscanClientError
-from aiochainscan.services.ens_resolver import ENSResolver
+from aiochainscan.services.ens_resolver import ENSClient, ENSResolver
 
 # ``ClientHost`` members from the brief's table (async ``call`` excluded —
 # it is exercised elsewhere; calling it here would issue HTTP).
@@ -152,3 +152,31 @@ class TestClientCloseKeepsOneErrorShape:
 
         with pytest.raises(ChainscanClientError, match='Network is closed'):
             await client.fetch_page(Method.ACCOUNT_TRANSACTIONS, {'address': '0x0'})
+
+
+class TestENSClientProtocolStaysASubsetOfClientHost:
+    """C29: ``ENSClient`` is a hand-declared subset of ``ClientHost``.
+
+    ``services`` cannot import ``core`` (import-linter, ADR 0001), so the
+    protocol cannot subclass its authority — the sync is pinned here
+    instead, where both protocols are importable.
+    """
+
+    def test_ens_client_protocol_is_a_subset_of_client_host(self) -> None:
+        members = {name for name in vars(ENSClient) if not name.startswith('_')}
+        # Pins the protocol's declared surface itself, so the subset check
+        # cannot pass vacuously against an accidentally emptied protocol.
+        assert members == {'chain_id', 'network', 'call'}
+
+        for name in sorted(members):
+            host_member = getattr(ClientHost, name, None)
+            assert host_member is not None, f'ClientHost lost member {name!r}'
+
+            # Property-ness must survive the sync: the protocol declares
+            # read-only properties so that both a plain attribute on
+            # ChainscanClient and a forwarding property on ChainscanPool
+            # satisfy it.
+            if isinstance(getattr(ENSClient, name), property):
+                assert isinstance(
+                    host_member, property
+                ), f'ClientHost.{name} must stay a read-only property'

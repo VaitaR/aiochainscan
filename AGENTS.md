@@ -79,10 +79,13 @@ async with ChainscanClient.from_config('etherscan', 'ethereum') as client:
 
     name    = await client.lookup_address('0x...')                 # ENS reverse
     address = await client.resolve_name('vitalik.eth')             # ENS forward
-    # `None` means the record does not exist. A scanner that does not declare
-    # eth_call raises MethodNotDeclaredError (forward resolution reads the ENS
-    # registry); rate limits and transport failures surface as themselves, in
-    # resolve_names()/lookup_addresses() too.
+    # Three-way ENS contract: `None` means the record does not exist. A
+    # scanner that does not declare eth_call raises MethodNotDeclaredError
+    # (forward resolution reads the ENS registry). A scanner/network
+    # combination that cannot serve ENS at all (anything off Ethereum
+    # mainnet) raises ENSScannerUnavailableError (a ValueError subclass) —
+    # from resolve_names()/lookup_addresses() too, not just the singles.
+    # Rate limits and transport failures surface as themselves.
 
     # ── Streaming (large datasets, constant ~10MB RAM) ───────
     async for batch in client.iter_transactions_streaming('0x...', batch_size=1000):
@@ -491,7 +494,7 @@ Every `Method` enum value (33 total) maps to typed convenience methods on `Chain
 | `domain/method.py` | **Method** enum (33 values) | Supported operations |
 | `domain/contract.py` | **SmartContract** | High-level contract API |
 | `domain/models.py` | **Address`, **TxHash** | Data validation, EIP-55 |
-| `config.py` | **ConfigurationManager** | Credential/env resolution only (topology lives in `chain_registry.py`) |
+| `config.py` | **ConfigurationManager** | Credential/env resolution only (topology lives in the `registry/` package — `data.py` tables, `views.py` derivations, `resolve.py` target resolution — re-exported by `chain_registry.py`) |
 
 ### Services (Business Logic)
 | File | Purpose | Key Pattern |
@@ -873,7 +876,7 @@ Agent adapter over `ChainscanClient` — **run**: `python -m aiochainscan.mcp_se
 ### Modifying HTTP Behavior
 - Rate limiting: `adapters/aiolimiter_adapter.py` (burst=1 for APIs)
 - Retry logic: `network.py` — one admission path (`Network._send`: guard → rate-limit → dispatch → handle → finish → retry, written once) retrying `exceptions.TRANSIENT_EXCEPTIONS`, the single transient vocabulary shared with the first-request guard and `TenacityRetryAdapter.DEFAULT_RETRY_EXCEPTIONS`
-- Response envelopes: dialect seam in `network.py` (`ResponseDialect` protocol; `EtherscanEnvelope` + `JsonRpcEnvelope`, composed as the default since every path serves both dialects); an absent/empty content-type header is accepted as an opaque JSON attempt, an explicit non-JSON type (`text/html`) is refused before parsing
+- Response envelopes: dialect seam in `response_dialects.py` (`ResponseDialect` protocol; `EtherscanEnvelope` + `JsonRpcEnvelope`, composed as the default since every path serves both dialects); an absent/empty content-type header is accepted as an opaque JSON attempt, an explicit non-JSON type (`text/html`) is refused before parsing
 - JSON parsing: Always use `orjson.loads(response.content)` not `response.json()`
 - Credential redaction helpers live in `aiochainscan/_redaction.py` (re-exported from `network.py`)
 
@@ -973,6 +976,7 @@ from aiochainscan.exceptions import (
     PaginationDataLossError,      # Whale block: a single block over the API's cap
     CompletenessUnavailableError, # Endpoint has no splittable dimension here (.alternatives)
     ChainscanDataError,           # Data contract violation
+    ENSScannerUnavailableError,   # ValueError subclass: ENS cannot be served on this scanner/network (singles AND batch)
     InputLimitExceededError,      # ChainscanClientError, FailureKind.FATAL: caller passed more than the endpoint documents (see below)
     AbiTypeNotSupportedError,     # ValueError subclass: pure ABI codec has no rule for this Solidity type
     MethodNotDeclaredError,       # ValueError subclass: method not in SPECS

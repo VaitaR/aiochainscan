@@ -118,6 +118,12 @@ class BlockScoutV1(EtherscanLikeScanner):
     # for both BlockScout legs at once instead of drifting per leg.
     supported_networks = set(BLOCKSCOUT_SCANNER_NETWORKS)
 
+    # Ethereum mainnet is the 'eth' instance here — whatever canonical name
+    # the registry hands over ('ethereum', or its scanner-level alias 'main')
+    # must arrive as the spelling this class's supported_networks (the shared
+    # host table) declares and ``NETWORK_INSTANCES`` resolves.
+    NETWORK_NAME_DIALECT = {'ethereum': 'eth', 'main': 'eth'}
+
     # Unlike Etherscan, BlockScout V1 does serve a 10_000-item page — but it
     # clamps anything above that silently (``offset=10001`` → 10_000 items,
     # ``status=1``), so the page size still has to be declared. Verified live

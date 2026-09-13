@@ -23,16 +23,18 @@ from aiochainscan.exceptions import (
     ChainscanRateLimitError,
     ChainscanResponseTooLargeError,
     FailureKind,
+    api_error_failure_kind,
 )
 from aiochainscan.network import (
     Network,
-    _extract_envelope_payload,
-    _raise_if_etherscan_error,
-    _raise_if_jsonrpc_error,
     _redact_headers,
     _redact_payload,
     _redact_url,
-    api_error_failure_kind,
+)
+from aiochainscan.response_dialects import (
+    _extract_envelope_payload,
+    _raise_if_etherscan_error,
+    _raise_if_jsonrpc_error,
 )
 
 

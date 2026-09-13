@@ -92,6 +92,7 @@ __all__ = [
     'PaginationContext',
     'ItemDecode',
     'PageFetch',
+    'POOL_PROVIDER_CURSOR_KEY',
     'collect_all',
     'detect_block_range',
     'iter_items',
@@ -218,9 +219,11 @@ def page_fetcher(
         A :class:`BoundPageFetch` callable taking params and returning
         ``(items, next_cursor)``.
     """
-    # ``result_window_for`` is the per-method window (a scanner may bound one
-    # endpoint tighter than the rest); the plain attribute is the fallback for
-    # page providers that predate it, e.g. test doubles.
+    # The completeness fact has ONE public chain: Scanner.result_window_for
+    # (per-method — a scanner may bound one endpoint tighter than the rest),
+    # surfaced by ChainscanClient.result_window_for for the pool. The plain
+    # attribute below is only the fallback for page providers that predate
+    # the declared method, e.g. test doubles.
     per_method = getattr(provider, 'result_window_for', None)
     declared: Any = (
         per_method(method) if callable(per_method) else getattr(provider, 'result_window', None)
@@ -599,15 +602,29 @@ class PaginationContext:
     alternatives: tuple[str, ...] = ()
 
 
+#: Reserved key :meth:`aiochainscan.core.pool.ChainscanPool.fetch_page`
+#: stitches into the ``next_cursor`` it returns, naming the pool member that
+#: minted the rest of the cursor's (provider-specific, opaque) contents.
+#: Declared HERE, beside the provider-cursor test below, so the pool stamp and
+#: the "who vouched for this continuation" classification cannot drift apart:
+#: the stamp is pool bookkeeping, never a provider-vouched signal. The value
+#: is wire format (cursors are opaque to callers, never re-keyed), so it does
+#: not change.
+POOL_PROVIDER_CURSOR_KEY = '__pool_provider__'
+
+
 def _is_provider_cursor(cursor: Cursor) -> bool:
     """Whether ``cursor`` carries a continuation the PROVIDER vouched for.
 
     Page/offset cursors are synthesized locally after any full page, so they
     prove nothing about records past the cap. Anything else (BlockScout V2's
     ``next_page_params``, NodeReal's ``pageKey``) came back from the provider
-    and does.
+    and does — except the pool's own stamp, which is bookkeeping added AFTER
+    the provider answered and must never read as a provider signal.
     """
-    return cursor is not None and bool(cursor) and not set(cursor.keys()) <= {'page', 'offset'}
+    if cursor is None or not cursor:
+        return False
+    return not set(cursor.keys()) <= {'page', 'offset', POOL_PROVIDER_CURSOR_KEY}
 
 
 async def _fetch_window(
