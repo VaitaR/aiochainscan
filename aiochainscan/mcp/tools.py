@@ -1197,9 +1197,9 @@ def _scanner_class_for_public_name(scanner: str) -> type[Scanner] | None:
     """The SCANNER_REGISTRY class a client construction picks for ``scanner``.
 
     Mirrors the registry's version defaulting + the ``blockscout_v2`` alias
-    (``chain_registry._resolve_scanner_identity``): 'v2' where a record
-    declares it, 'v1' otherwise, and 'blockscout_v2' is the public name of the
-    ('blockscout', 'v2') pair.
+    (``aiochainscan.registry.resolve._resolve_scanner_identity``): 'v2' where
+    a record declares it, 'v1' otherwise, and 'blockscout_v2' is the public
+    name of the ('blockscout', 'v2') pair.
     """
     version = DEFAULT_SCANNER_VERSIONS.get(scanner, 'v1')
     name, version = ('blockscout', 'v2') if scanner == 'blockscout_v2' else (scanner, version)

@@ -491,7 +491,7 @@ Every `Method` enum value (33 total) maps to typed convenience methods on `Chain
 | `domain/method.py` | **Method** enum (33 values) | Supported operations |
 | `domain/contract.py` | **SmartContract** | High-level contract API |
 | `domain/models.py` | **Address`, **TxHash** | Data validation, EIP-55 |
-| `config.py` | **ConfigurationManager** | Credential/env resolution only (topology lives in `chain_registry.py`) |
+| `config.py` | **ConfigurationManager** | Credential/env resolution only (topology lives in the `registry/` package — `data.py` tables, `views.py` derivations, `resolve.py` target resolution — re-exported by `chain_registry.py`) |
 
 ### Services (Business Logic)
 | File | Purpose | Key Pattern |

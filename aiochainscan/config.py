@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, ClassVar, cast
 
+from .registry.views import SCANNER_CONFIG_DEFINITIONS
+
 # dotenv is optional - manual env file loading is implemented below
 
 logger = logging.getLogger(__name__)
@@ -386,14 +388,10 @@ class ConfigurationManager:
         fact about a scanner id — display name, base domain, currency,
         supported networks, key requirement, special config and V2
         credential-family membership — is ONE row in
-        :mod:`aiochainscan.chain_registry`
+        :mod:`aiochainscan.registry.views`
         (``SCANNER_CONFIG_DEFINITIONS``), so a scanner id cannot exist in the
-        registry without a config entry or the reverse. The registry import is
-        lazy because chain_registry imports this module for key lookups; at
-        call time both modules are fully initialized.
+        registry without a config entry or the reverse.
         """
-        from .chain_registry import SCANNER_CONFIG_DEFINITIONS
-
         return {
             scanner_id: ScannerConfig(
                 name=row.name,

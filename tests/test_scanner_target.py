@@ -440,7 +440,7 @@ class TestSingleResolutionSeam:
         # constructor), the registry-internal binding (used by the resolver
         # itself) and the Scanner fallback binding are all intercepted.
         monkeypatch.setattr('aiochainscan.core.client.resolve_scanner_target', counting_target)
-        monkeypatch.setattr(chain_registry, 'resolve_chain_id', counting_chain)
+        monkeypatch.setattr('aiochainscan.registry.resolve.resolve_chain_id', counting_chain)
         monkeypatch.setattr('aiochainscan.scanners.base.resolve_chain_id', counting_chain)
         return counts
 
