@@ -5,6 +5,7 @@ This module provides a unified interface for different blockchain scanner APIs
 through the Scanner base class and registry system.
 """
 
+from ..chain_registry import get_chain_name, list_supported_chains, resolve_scanner_target
 from ..domain.method import Method
 from .base import Scanner, spec_declares_block_range
 
@@ -70,6 +71,45 @@ def list_scanners() -> dict[tuple[str, str], type[Scanner]]:
     return dict(SCANNER_REGISTRY)
 
 
+def chains_served_by(scanner: str) -> list[str]:
+    """Canonical chain names a client for ``scanner`` actually constructs on.
+
+    The two construction gates as ONE query — the one the CLI's ``chains``
+    listing, ``ChainscanClient.from_config`` and anything else that must not
+    advertise an unconstructible chain all share:
+
+    1. the registry must resolve the chain for this scanner
+       (:func:`aiochainscan.chain_registry.resolve_scanner_target`), and
+    2. the scanner class must declare the resulting scanner-dialect network
+       (``supported_networks`` — the check the Scanner constructor itself
+       applies).
+
+    Gate 1 alone passes chains the BlockScout legs have no instance for,
+    which is why the second gate exists. ``api_key=''`` keeps credential
+    lookup out of it: this asks where a client can be constructed, not
+    whether it is configured.
+
+    Args:
+        scanner: Public scanner name (e.g. ``'etherscan'``,
+            ``'blockscout_v2'``). Unknown names fail exactly as walking the
+            gates by hand would.
+
+    Returns:
+        Sorted canonical chain names.
+    """
+    served: list[str] = []
+    for chain_id in list_supported_chains():
+        try:
+            target = resolve_scanner_target(scanner, chain_id, api_key='')
+        except ValueError:
+            continue
+        scanner_class = get_scanner_class(target.scanner_name, target.scanner_version)
+        if target.scanner_network not in scanner_class.supported_networks:
+            continue
+        served.append(get_chain_name(chain_id))
+    return sorted(served)
+
+
 def scanners_serving_completely(method: Method) -> tuple[str, ...]:
     """Labels of registered scanners that can serve ``method`` in full.
 
@@ -130,6 +170,7 @@ __all__ = [
     'register_scanner',
     'get_scanner_class',
     'list_scanners',
+    'chains_served_by',
     'scanners_serving_completely',
     'scanners_serving_block_range',
     'EtherscanV2',

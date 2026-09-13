@@ -405,6 +405,24 @@ class ConfigurationManager:
             for scanner_id, row in SCANNER_CONFIG_DEFINITIONS.items()
         }
 
+    def env_file_candidates(self) -> list[Path]:
+        """The credential files this manager reads, in load order.
+
+        The ONE statement of the ``.env`` search path: the ``config_dir``
+        pair first, then the machine-level file. :meth:`_load_env_files`
+        iterates exactly this list, so anything reporting where credentials
+        come from (the CLI's ``check`` command) asks here instead of
+        re-deriving the directories — the ``config_dir`` leg follows the
+        manager's rebindable directory, where a ``Path.cwd()`` guess does not.
+
+        ``Path.home()`` is read at call time, matching the loader.
+        """
+        return [
+            self.config_dir / '.env.local',
+            self.config_dir / '.env',
+            Path.home() / '.aiochainscan' / '.env',
+        ]
+
     def _load_env_files(self) -> None:
         """Load environment variables from .env files.
 
@@ -413,14 +431,11 @@ class ConfigurationManager:
         universal dotenv convention that the local, untracked file carries
         the more specific overrides. ``os.environ`` outranks every file
         regardless of order (enforced per key in :meth:`_load_env_file`).
-        """
-        env_files = [
-            self.config_dir / '.env.local',
-            self.config_dir / '.env',
-            Path.home() / '.aiochainscan' / '.env',
-        ]
 
-        for env_file in env_files:
+        The candidates come from :meth:`env_file_candidates` — the same list
+        a caller inspects, so the two cannot drift.
+        """
+        for env_file in self.env_file_candidates():
             if env_file.exists():
                 self._load_env_file(env_file)
                 logger.debug(f'Loaded environment from {env_file}')

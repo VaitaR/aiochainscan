@@ -140,5 +140,8 @@ from .registry.views import (
     _validate_scanner_topology as _validate_scanner_topology,
 )
 from .registry.views import (
+    config_id_for_scanner as config_id_for_scanner,
+)
+from .registry.views import (
     register_etherscan_chain as register_etherscan_chain,
 )

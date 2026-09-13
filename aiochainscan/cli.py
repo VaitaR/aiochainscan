@@ -21,32 +21,34 @@ from pathlib import Path
 from typing import Any
 
 from aiochainscan.chain_registry import (
-    BLOCKSCOUT_CONFIG_IDS,
     CUSTOM_BASE_URL_SCANNERS,
-    SCANNER_CONFIG_IDS,
     SCANNER_RECORDS,
     ScannerTarget,
+    config_id_for_scanner,
     get_chain_aliases,
     get_chain_name,
     list_supported_chains,
     resolve_scanner_target,
 )
-from aiochainscan.config import config_manager, credential_env_names
+from aiochainscan.config import ConfigurationManager, config_manager, credential_env_names
 from aiochainscan.domain.method import Method
-from aiochainscan.scanners import get_scanner_class
+from aiochainscan.scanners import chains_served_by, get_scanner_class
 
 #: Address used by ``test`` when the caller names none (vitalik.eth).
 PROBE_ADDRESS = '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045'
 
-#: Files ``ConfigurationManager`` reads credentials from, in load order.
-ENV_FILE_CANDIDATES = ('.env.local', '.env')
 
+def _env_files(manager: ConfigurationManager | None = None) -> list[Path]:
+    """The credential files present right now, in the order they are read.
 
-def _env_files() -> list[Path]:
-    """The credential files present right now, in the order they are read."""
-    paths = [Path.home() / '.aiochainscan' / '.env']
-    paths += [Path.cwd() / name for name in ENV_FILE_CANDIDATES]
-    return [path for path in paths if path.exists()]
+    Asked of the configuration manager's
+    :meth:`~aiochainscan.config.ConfigurationManager.env_file_candidates`
+    rather than guessed from ``Path.cwd()`` — the manager reads its own,
+    rebindable ``config_dir`` first, so this listing follows whatever
+    directory the manager was constructed with.
+    """
+    active = config_manager if manager is None else manager
+    return [path for path in active.env_file_candidates() if path.exists()]
 
 
 def _identity(scanner: str) -> ScannerTarget:
@@ -70,12 +72,7 @@ def _identity(scanner: str) -> ScannerTarget:
 
 def _config_id(scanner: str) -> str:
     """Configuration-manager id whose credential this scanner uses."""
-    explicit = SCANNER_CONFIG_IDS.get(scanner)
-    if explicit is not None:
-        return explicit
-    if SCANNER_RECORDS[scanner].kind == 'blockscout':
-        return BLOCKSCOUT_CONFIG_IDS.get('ethereum', scanner)
-    return scanner
+    return config_id_for_scanner(scanner)
 
 
 def _credential_state(scanner: str) -> dict[str, Any]:
@@ -99,24 +96,8 @@ def _credential_state(scanner: str) -> dict[str, Any]:
 
 
 def _chains(scanner: str) -> list[str]:
-    """Canonical chain names this scanner serves, asked one chain at a time.
-
-    Two gates, because construction has two: the registry must resolve the
-    chain for this scanner, and the scanner class must declare the resulting
-    scanner-dialect network. Registry resolution alone passes chains the
-    BlockScout legs have no instance for.
-    """
-    served: list[str] = []
-    for chain_id in list_supported_chains():
-        try:
-            target = resolve_scanner_target(scanner, chain_id, api_key='')
-        except ValueError:
-            continue
-        scanner_class = get_scanner_class(target.scanner_name, target.scanner_version)
-        if target.scanner_network not in scanner_class.supported_networks:
-            continue
-        served.append(get_chain_name(chain_id))
-    return sorted(served)
+    """Canonical chain names this scanner serves."""
+    return chains_served_by(scanner)
 
 
 def _scanner_report(scanner: str) -> dict[str, Any]:
@@ -222,7 +203,7 @@ def cmd_check(args: argparse.Namespace) -> None:
             print(f'  {report["scanner"]}: set one of {names}')
 
     if env_files:
-        print('\nCredential files read (later entries override earlier ones):')
+        print('\nCredential files read (earlier entries override later ones):')
         for path in env_files:
             print(f'  {path}')
     else:

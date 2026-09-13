@@ -68,6 +68,26 @@ SCANNER_CONFIG_IDS: dict[str, str] = {
     if record.config_id is not None
 }
 
+
+def config_id_for_scanner(scanner: str) -> str:
+    """Configuration-manager id whose credential *scanner* uses.
+
+    The ONE statement of the scanner→config-id mapping: an explicit
+    ``config_id`` on the scanner record wins; BlockScout-family scanners fall
+    back to the Ethereum instance's id (the keyless family shares one
+    presentation row); anything else is its own id. Derived from the same
+    tables that own the mapping, so a caller (the CLI's ``check`` command)
+    cannot re-derive it differently. Unknown scanner names raise ``KeyError``
+    — :data:`SCANNER_RECORDS` is the membership oracle.
+    """
+    explicit = SCANNER_CONFIG_IDS.get(scanner)
+    if explicit is not None:
+        return explicit
+    if SCANNER_RECORDS[scanner].kind == 'blockscout':
+        return BLOCKSCOUT_CONFIG_IDS.get('ethereum', scanner)
+    return scanner
+
+
 #: Config dialects the Etherscan v2 endpoint serves — the etherscan record's
 #: alias-table targets. The alias table is the ONE declared source of the
 #: scanner's network surface: its keys are the served spellings, its values
