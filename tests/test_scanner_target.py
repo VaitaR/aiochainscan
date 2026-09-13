@@ -107,7 +107,10 @@ class TestBlockscoutV2Rename:
 class TestAliasResolution:
     """Network alias handling and canonical network naming."""
 
-    def test_blockscout_v1_ethereum(self):
+    # clean_key_env: BlockScout is keyless by contract, but the generic
+    # credential ladder resolves names like BLOCKSCOUT_ETH_KEY dynamically, so
+    # a developer's ~/.aiochainscan/.env turns these =='' assertions red.
+    def test_blockscout_v1_ethereum(self, clean_key_env):
         target = resolve_scanner_target('blockscout', 'ethereum')
         assert target.scanner_name == 'blockscout'
         assert target.scanner_version == 'v1'
@@ -115,7 +118,7 @@ class TestAliasResolution:
         assert target.api_key == ''  # BlockScout needs no key
         assert target.network == 'ethereum'
 
-    def test_blockscout_main_alias_uses_ethereum_profile(self):
+    def test_blockscout_main_alias_uses_ethereum_profile(self, clean_key_env):
         target = resolve_scanner_target('blockscout', 'main')
         assert target.api_kind == 'blockscout_eth'
         assert target.api_key == ''
@@ -378,7 +381,7 @@ class TestFromConfigIntegration:
     @pytest.mark.parametrize(
         'network', sorted(host_id.removeprefix('blockscout_') for host_id in BLOCKSCOUT_HOSTS)
     )
-    async def test_from_config_all_blockscout_v1_networks(self, network: str):
+    async def test_from_config_all_blockscout_v1_networks(self, clean_key_env, network: str):
         from aiochainscan import ChainscanClient
 
         client = ChainscanClient.from_config('blockscout', network)
