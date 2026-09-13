@@ -4,6 +4,42 @@ All notable changes to this project are documented in this file. The format is
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions
 follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- **One ENS unavailability signal, honoured by the batch path.** The new
+  `ENSScannerUnavailableError` (a `ValueError` subclass, exported from the package root) is
+  raised by `resolve_name`/`lookup_address` when the scanner/network combination cannot
+  serve ENS — where they previously raised a bare `ValueError` that callers could not
+  distinguish from `MethodNotDeclaredError`. `resolve_names`/`lookup_addresses` now raise
+  the same signal instead of silently returning `{}`. Catching `ValueError` keeps working;
+  record-absent results remain `None` / omitted from batch dicts.
+- **Provider labels are one spelling everywhere.** Incompleteness errors and pagination
+  contexts named a pool member `scanner/version` while `last_provider` said
+  `scanner/network`; both now use the same label (`ChainscanClient.provider_label`), so an
+  error and the sticky-routing report agree about who answered.
+- `aioscan check` lists credential files by asking `ConfigurationManager` for its actual
+  candidates: a rebound `config_dir` is honoured (the listing used to guess `cwd`), and the
+  precedence caption matches the real load order (earlier entries override later — the old
+  caption said the opposite).
+
+### Internal
+
+- Architecture pass 2026-09-13 (`docs/architecture/2026-09-13-review.md`, C23–C30, merge
+  `5abd365`): `chain_registry.py` (1,869 lines) split into the `registry/` package (data /
+  views / resolution) behind a re-export facade, killing the circular import with
+  `config.py`; BlockScout instance hosts, `moralis_hex` and the Etherscan network surface
+  are single-sourced (the guard tests policing their duplicates became derivation pins);
+  network-name dialects (`'eth'`/`'ethereum'`/`'main'`) are declared on the scanner classes
+  (`Scanner.dialect_network`) instead of hardcoded in the registry; the pool's three
+  parallel failover walks collapsed into one engine with the cursor-stamp vocabulary
+  declared beside the pagination engine's provider-cursor check;
+  `get_all_*` aggregators route through their `StreamSpec` rows (`collect_for_aggregate`);
+  the response-dialect subsystem moved from `network.py` (794 → 582 lines) to
+  `response_dialects.py`; CLI/MCP re-use `chains_served_by` / `config_id_for_scanner`
+  instead of re-deriving the construction gates.
+
 ## [1.0.5] — 2026-09-11
 
 ### Fixed
