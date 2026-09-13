@@ -759,9 +759,13 @@ async def test_bounded_range_on_rangeless_spec_raises_honestly(family_label: str
         with pytest.raises(BlockRangeNotSupportedError) as excinfo:
             async for _batch in agen:
                 pass
-        assert stub.label in str(
+        # The unified member label (scanner_name/network, from
+        # ``ChainscanClient.provider_label``) — the same spelling
+        # ``ChainscanPool.last_provider`` uses, so the error and the pool
+        # entry that raised it always agree about who spoke.
+        assert client.provider_label in str(
             excinfo.value
-        ), f'{name}() bounded-range error must name the provider ({stub.label})'
+        ), f'{name}() bounded-range error must name the provider ({client.provider_label})'
         assert 'from_block=100' in str(excinfo.value)
 
 

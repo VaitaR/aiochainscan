@@ -38,6 +38,7 @@ import httpx
 import pytest
 
 from aiochainscan.chain_registry import ScannerTarget, resolve_scanner_target
+from aiochainscan.core import pool as pool_module
 from aiochainscan.core.client import ChainscanClient
 from aiochainscan.core.pool import (
     ChainscanPool,
@@ -69,6 +70,7 @@ from aiochainscan.exceptions import (
 from aiochainscan.network import Network
 from aiochainscan.scanners.blockscout_v2 import BlockScoutV2Scanner
 from aiochainscan.scanners.etherscan_v2 import EtherscanV2
+from aiochainscan.services.pagination import _is_provider_cursor
 
 ADDR = '0x742d35Cc6634C0532925a3b8D9Fa7a3D91aC0b6f'
 TOKEN = '0xDaC17f958D2ee523A2206208994597c13d831EC7'
@@ -782,6 +784,32 @@ class TestPaginationBinding:
         assert (
             p2.client.fetch_page.call_count == 0
         ), 'blockscout must never receive a cursor minted by etherscan'
+
+    def test_pool_stamp_is_never_mistaken_for_a_provider_cursor(self) -> None:
+        """The pool stamp and the provider-cursor test are one vocabulary.
+
+        ``POOL_PROVIDER_CURSOR_KEY`` is declared beside
+        ``_is_provider_cursor`` (services.pagination), and the stamp key must
+        be IDENTICAL to the one ``fetch_page`` stitches in — otherwise the
+        pool would stamp one key and pin on another. And a cursor carrying
+        ONLY page/offset bookkeeping plus the stamp must NOT read as a
+        provider-vouched continuation in the guarantee engine: the stamp was
+        added by the pool AFTER the provider answered, so it proves nothing
+        about records past a result window.
+        """
+        assert pool_module.POOL_PROVIDER_CURSOR_KEY == '__pool_provider__'
+
+        stamp = pool_module.POOL_PROVIDER_CURSOR_KEY
+
+        assert not _is_provider_cursor({'page': 2, 'offset': 100, stamp: 'etherscan/ethereum'})
+        assert not _is_provider_cursor({stamp: 'etherscan'})
+
+        # A genuine provider cursor is still provider-vouched — the stamp
+        # only exempts itself, never the provider's own keys.
+        assert _is_provider_cursor({'next_page_params': {'block_number': 2}})
+        assert _is_provider_cursor(
+            {'next_page_params': {'block_number': 2}, stamp: 'blockscout/ethereum'}
+        )
 
 
 # ---------------------------------------------------------------------------

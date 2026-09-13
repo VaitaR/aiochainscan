@@ -46,7 +46,7 @@ import inspect
 import time
 import warnings
 from collections import Counter
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 import httpx
@@ -72,6 +72,7 @@ from ..exceptions import (
 from ..exceptions import (
     FailureKind as FailureKind,
 )
+from ..services.pagination import POOL_PROVIDER_CURSOR_KEY, Cursor
 from ..types import JSONDict
 from .client import ChainscanClient
 from .mixins import (
@@ -172,13 +173,23 @@ def _failure_description(kind: FailureKind) -> str:
     return _FAILURE_DESCRIPTIONS[kind]
 
 
-#: Reserved key :meth:`ChainscanPool.fetch_page` stitches into the
-#: ``next_cursor`` it returns, naming the pool member that minted the rest
-#: of the cursor's (provider-specific, opaque) contents. Double-underscore
-#: wrapping keeps it out of the way of real scanner params (``page``,
-#: ``offset``, ``next_page_params`` etc. never look like this) — see
-#: ``fetch_page``'s "Cursor binding" docstring section for the contract.
-_CURSOR_PROVIDER_KEY = '__pool_provider__'
+def _bind_provider(cursor: Cursor, label: str) -> Cursor:
+    """Stitch the minting member's label into a non-``None`` cursor.
+
+    ``POOL_PROVIDER_CURSOR_KEY`` (declared beside the pagination engine's
+    provider-cursor vocabulary, so the two can never drift) names the pool
+    member that produced the cursor; :meth:`fetch_page` reads it back to pin
+    the replay. A ``None`` cursor means "no more pages" and is never stamped.
+    """
+    if cursor is None:
+        return None
+    return {**cursor, POOL_PROVIDER_CURSOR_KEY: label}
+
+
+#: Sentinel an exhausted stream returns from the walk's first-page attempt, so
+#: "clean empty answer" stays a SUCCESS (the member is marked sticky) without
+#: :class:`StopAsyncIteration` having to mean two things inside the engine.
+_STREAM_EXHAUSTED = object()
 
 
 # ---------------------------------------------------------------------------
@@ -225,7 +236,7 @@ def _provider_labels(members: list[ChainscanClient]) -> list[str]:
     provider twice — two keys rotating one quota) get an ordinal; everyone
     else keeps the documented format.
     """
-    base = [f'{client.scanner_name}/{client.network}' for client in members]
+    base = [client.provider_label for client in members]
     base_counts = Counter(base)
     qualified = [
         label
@@ -271,7 +282,7 @@ def _serves_completely(state: _ProviderState, method: Method) -> bool:
 
 
 def _window_for(state: _ProviderState, method: Method) -> int | None:
-    return state.client._scanner.result_window_for(method)
+    return state.client.result_window_for(method)
 
 
 def _inject_provider_progress(label: str, callback: ProgressCallback) -> ProgressCallback:
@@ -562,26 +573,80 @@ class ChainscanPool(
         method: Method | None = None,
     ) -> Any:
         """Run ``invoke`` with failover across providers (single request)."""
-        result, _state = await self._execute_tracked(operation, invoke, method=method)
+
+        async def run(state: _ProviderState) -> Any:
+            return await invoke(state.client)
+
+        result, _state = await self._failover_walk(operation, run, method=method)
         return result
 
-    async def _execute_tracked(
+    async def _failover_walk(
         self,
         operation: str,
-        invoke: Callable[[ChainscanClient], Any],
+        attempt: Callable[[_ProviderState], Awaitable[T]],
+        *,
         method: Method | None = None,
-    ) -> tuple[Any, _ProviderState]:
-        """As :meth:`_execute`, but also returns the state that served it.
+        candidates: Sequence[_ProviderState] | None = None,
+        failover: bool = True,
+        capability_routed: bool = False,
+    ) -> tuple[T, _ProviderState]:
+        """THE failover walk — every routing policy the pool has, written once.
 
-        :meth:`fetch_page` needs to know WHICH member answered a
-        cursor-less (first-page) request, so it can bind the cursor that
-        member returns to it — see the "Cursor binding" note on
-        :meth:`fetch_page`.
+        All three entry shapes express their differences as parameters of
+        this one engine:
+
+        - **uncoursored single shot** (:meth:`_execute`, and the first
+          request of :meth:`fetch_page`): ``candidates`` from
+          :meth:`_candidates`, ``failover=True`` — a fallback-eligible
+          failure moves to the next candidate;
+        - **pinned pagination** (:meth:`_pinned_stream`, which
+          :meth:`_guaranteed_pinned_stream` shares): the same walk serves the
+          first page, after which the stream is pinned — see that method;
+        - **cursor-bound replay** (:meth:`fetch_page` with a stamped
+          cursor): ``candidates=[the bound member]``, ``failover=False`` —
+          there is exactly one candidate, every failure propagates unchanged
+          (switching would corrupt the cursor dialect), but a
+          fallback-eligible one still cools the member so unrelated,
+          cursor-less calls route around it.
+
+        Per candidate, in order: capability skip (``method`` declared? —
+        silent, deterministic routing); cooldown skip (no HTTP attempt; the
+        stored error joins the exhaustion report); the switch warning
+        (``capability_routed`` silences the deterministic first transition);
+        the attempt; classification via :func:`classify_failure`; then either
+        failover (record the attempt, enter cooldown via
+        :meth:`_cooldown_for`, move on) or — with ``failover=False`` — cool
+        and propagate. Success marks the member sticky
+        (:meth:`_mark_success`) and returns ``(result, state)``.
+
+        Exhaustion raises :class:`ProviderPoolExhaustedError` with the
+        ordered ``(provider, exception)`` attempts; a ``failover=True`` walk
+        with NO attempts at all raises the single-client ``ValueError``
+        (method declared by nobody).
+
+        Args:
+            operation: Description used in errors and progress stamps.
+            attempt: The work performed on one member; receives its
+                :class:`_ProviderState` (the label is needed for progress
+                stamping), returns an awaitable of any result.
+            method: Logical method, for the upfront capability filter.
+                ``None`` on walks whose candidates carry no method filter
+                (pinned streams let the member's own not-declared error
+                classify as ``METHOD_UNDECLARED`` mid-walk instead).
+            candidates: Pre-filtered/ordered candidate list for THIS call,
+                overriding :meth:`_candidates` (completeness routing).
+            failover: Whether a fallback-eligible failure moves to the next
+                candidate (``True``) or propagates after cooling the member
+                (``False`` — the cursor-bound replay).
+            capability_routed: The candidate list was assembled by capability
+                (completeness) routing, so the transition onto its first
+                member is deterministic routing, not a switch — silent
+                unless a real failure earlier in the walk set ``pending``.
         """
         attempts: list[tuple[str, Exception]] = []
         pending: tuple[str, float] | None = None
         skipped_for_capability = False
-        for state in self._candidates():
+        for state in candidates if candidates is not None else self._candidates():
             if method is not None and not state.client.supports_method(method):
                 skipped_for_capability = True
                 continue  # capability routing — silent
@@ -591,16 +656,34 @@ class ChainscanPool(
                 # the provider for the exhaustion report.
                 if state.last_error is not None:
                     _record_attempt(attempts, state.label, state.last_error)
+                elif not failover:  # pragma: no cover - defensive, cooldown always sets last_error
+                    attempts.append((state.label, RuntimeError(f'{state.label} is in cooldown')))
                 continue
-            self._maybe_warn_switch(
-                state.label, pending, after_capability_skip=skipped_for_capability
-            )
+            if failover:
+                # The bound replay selects its member from the cursor's own
+                # stamp — deterministic, nothing switched, nothing to warn
+                # about.
+                self._maybe_warn_switch(
+                    state.label,
+                    pending,
+                    after_capability_skip=skipped_for_capability or capability_routed,
+                )
             pending = None
             skipped_for_capability = False
             try:
-                result = await invoke(state.client)
+                result = await attempt(state)
             except Exception as exc:
                 kind = classify_failure(exc)
+                if not failover:
+                    # Pinned replay: propagate unchanged (mirroring the
+                    # pinned streams — switching mid-pagination would corrupt
+                    # the cursor either way), but remember the failure so
+                    # unrelated cursor-less calls route around it.
+                    if kind not in (FailureKind.FATAL, FailureKind.METHOD_UNDECLARED):
+                        state.enter_cooldown(
+                            self._clock() + self._cooldown_for(kind, exc), exc, kind
+                        )
+                    raise
                 if kind is FailureKind.FATAL:
                     raise
                 _record_attempt(attempts, state.label, exc)
@@ -614,6 +697,8 @@ class ChainscanPool(
             self._mark_success(state)
             return result, state
         if attempts:
+            raise ProviderPoolExhaustedError(operation, attempts)
+        if not failover:  # pragma: no cover - the bound pre-checks raise first
             raise ProviderPoolExhaustedError(operation, attempts)
         raise ValueError(
             f'Method {method} not supported by any provider in the pool '
@@ -644,6 +729,12 @@ class ChainscanPool(
         never enters cooldown — is excluded from THIS operation for good
         instead of being re-selected in a tight loop.
 
+        The first page IS the shared engine (:meth:`_failover_walk` with
+        ``failover=True``): candidate iteration, cooldown skip, attempt
+        recording, classification and cooldown entry are that walk's, not
+        re-stated here. Only the pinned continuation below is pagination
+        specific.
+
         Args:
             candidates: Pre-filtered/ordered provider list for THIS call,
                 overriding :meth:`_candidates`. Used by completeness-aware
@@ -658,58 +749,38 @@ class ChainscanPool(
         """
 
         async def _generate() -> AsyncIterator[T]:
-            attempts: list[tuple[str, Exception]] = []
-            pending: tuple[str, float] | None = None
-            skipped_for_capability = False
-            for state in candidates if candidates is not None else self._candidates():
-                if state.in_cooldown(self._clock()):
-                    # Skip without any HTTP attempt; keep the error that
-                    # cooled the provider for the exhaustion report.
-                    if state.last_error is not None:
-                        _record_attempt(attempts, state.label, state.last_error)
-                    continue
-                self._maybe_warn_switch(
-                    state.label,
-                    pending,
-                    after_capability_skip=skipped_for_capability or capability_routed,
-                )
-                pending = None
-                skipped_for_capability = False
+            # The stream that produced the first page, kept for the pinned
+            # continuation (the engine only sees the first-page attempt).
+            streams: list[AsyncIterator[T]] = []
+
+            async def first_page(state: _ProviderState) -> Any:
                 stream = factory(state)
+                streams.append(stream)
                 try:
-                    first = await stream.__anext__()
+                    return await stream.__anext__()
                 except StopAsyncIteration:
                     # A clean empty answer is a success — never a failover.
-                    self._mark_success(state)
-                    return
-                except Exception as exc:
-                    kind = classify_failure(exc)
-                    if kind is FailureKind.FATAL:
-                        raise
-                    _record_attempt(attempts, state.label, exc)
-                    if kind is FailureKind.METHOD_UNDECLARED:
-                        skipped_for_capability = True
-                        continue
-                    cooldown = self._cooldown_for(kind, exc)
-                    state.enter_cooldown(self._clock() + cooldown, exc, kind)
-                    pending = (_failure_description(kind), cooldown)
-                    continue
-                self._mark_success(state)
-                yield first
-                try:
-                    async for item in stream:
-                        yield item
-                except Exception as exc:
-                    # Pinned continuation: propagate, but remember the
-                    # failure so the NEXT call does not repeat it.
-                    kind = classify_failure(exc)
-                    if kind not in (FailureKind.FATAL, FailureKind.METHOD_UNDECLARED):
-                        state.enter_cooldown(
-                            self._clock() + self._cooldown_for(kind, exc), exc, kind
-                        )
-                    raise
+                    return _STREAM_EXHAUSTED
+
+            first, state = await self._failover_walk(
+                operation,
+                first_page,
+                candidates=candidates,
+                capability_routed=capability_routed,
+            )
+            if first is _STREAM_EXHAUSTED:
                 return
-            raise ProviderPoolExhaustedError(operation, attempts)
+            yield first
+            try:
+                async for item in streams[-1]:
+                    yield item
+            except Exception as exc:
+                # Pinned continuation: propagate, but remember the
+                # failure so the NEXT call does not repeat it.
+                kind = classify_failure(exc)
+                if kind not in (FailureKind.FATAL, FailureKind.METHOD_UNDECLARED):
+                    state.enter_cooldown(self._clock() + self._cooldown_for(kind, exc), exc, kind)
+                raise
 
         return _generate()
 
@@ -816,7 +887,7 @@ class ChainscanPool(
 
     async def fetch_page(
         self, method: Method, params: dict[str, Any]
-    ) -> tuple[list[JSONDict], dict[str, Any] | None]:
+    ) -> tuple[list[JSONDict], Cursor]:
         """Fetch one page with per-call failover for an UNCURSORED request.
 
         Each call is an independent request, so failover is safe per call —
@@ -824,41 +895,56 @@ class ChainscanPool(
         provider-specific (BlockScout's opaque continuation token and
         Etherscan's ``page``/``offset`` share nothing); callers driving their
         own cursor loops should prefer the pool's ``iter_*`` methods, which
-        pin a provider for the whole pagination. This seam exists for callers
-        (e.g. the MCP tools) that must drive ``fetch_page`` themselves.
+        pin a provider for the whole pagination. This seam exists for
+        external embedders that must drive ``fetch_page`` themselves.
 
         Cursor binding:
 
         - A first call (``params`` carries no cursor) fails over normally
-          across the pool, exactly as before. The ``next_cursor`` returned
-          is stitched with an internal marker naming the provider that
+          across the pool via the shared engine (:meth:`_failover_walk`).
+          The ``next_cursor`` returned is stitched with
+          ``POOL_PROVIDER_CURSOR_KEY`` (declared beside the pagination
+          engine's provider-cursor vocabulary) naming the member that
           produced it — invisible to the caller (the cursor stays opaque:
-          "merge it into ``params`` for the next call" still holds), but
-          read back by this method on the following call.
-        - A call whose ``params`` carries that marker is PINNED to the
-          provider that minted the cursor: no failover is attempted. If that
-          provider is unreachable (in cooldown, no longer declares the
+          "merge it into ``params`` for the next call" still holds), but read
+          back by this method on the following call.
+        - A call whose ``params`` carries that stamp is PINNED to the member
+          that minted the cursor: the engine runs with ``failover=False``,
+          so that member is the one candidate and no failover is attempted.
+          If that member is unreachable (in cooldown, no longer declares the
           method, or — defensively — no longer in the pool),
           :class:`ProviderPoolExhaustedError` is raised immediately rather
           than silently asking a different provider to interpret a cursor
-          dialect it never produced. If the pinned provider itself raises,
-          that error propagates unchanged (mirroring the ``iter_*`` pinned
+          dialect it never produced. If the pinned member itself raises, that
+          error propagates unchanged (mirroring the ``iter_*`` pinned
           streams: switching mid-pagination would corrupt the cursor either
           way), though a fallback-eligible failure still cools the provider
           so unrelated, cursor-less calls route around it afterwards.
         """
-        bound_label = params.get(_CURSOR_PROVIDER_KEY)
+        bound_label = params.get(POOL_PROVIDER_CURSOR_KEY)
         if bound_label is None:
-            (items, next_cursor), state = await self._execute_tracked(
+            # Uncoursored first request: the normal failover walk, tracking
+            # WHICH member answered so the cursor it mints is bound to it.
+
+            async def first_request(state: _ProviderState) -> tuple[list[JSONDict], Cursor]:
+                return await state.client.fetch_page(method, params)
+
+            result, chosen = await self._failover_walk(
                 f'fetch_page:{method}',
-                lambda client: client.fetch_page(method, params),
+                first_request,
                 method=method,
             )
-            if next_cursor is not None:
-                next_cursor = {**next_cursor, _CURSOR_PROVIDER_KEY: state.label}
-            return items, next_cursor
+            items, next_cursor = result
+            return items, _bind_provider(next_cursor, chosen.label)
 
-        call_params = {k: v for k, v in params.items() if k != _CURSOR_PROVIDER_KEY}
+        # Cursor-bound replay: one candidate, no failover (the engine's
+        # ``failover=False`` mode). The two replay-specific pre-checks raise
+        # before the walk — their synthetic attempts name the exact problem.
+        call_params = {k: v for k, v in params.items() if k != POOL_PROVIDER_CURSOR_KEY}
+
+        async def replay(state: _ProviderState) -> tuple[list[JSONDict], Cursor]:
+            return await state.client.fetch_page(method, call_params)
+
         bound_state = next((s for s in self._providers if s.label == bound_label), None)
         operation = f'fetch_page:{method} (cursor bound to {bound_label})'
         if bound_state is None:
@@ -866,36 +952,37 @@ class ChainscanPool(
                 operation,
                 [(bound_label, ValueError(f'{bound_label!r} is no longer part of this pool'))],
             )
-        state = bound_state
-        if not state.client.supports_method(method):
+        if not bound_state.client.supports_method(method):
             raise ProviderPoolExhaustedError(
                 operation,
-                [(state.label, ValueError(f'{state.label} no longer declares {method}'))],
+                [
+                    (
+                        bound_state.label,
+                        ValueError(f'{bound_state.label} no longer declares {method}'),
+                    )
+                ],
             )
-        now = self._clock()
-        if state.in_cooldown(now):
-            attempts: list[tuple[str, Exception]] = []
-            if state.last_error is not None:
-                _record_attempt(attempts, state.label, state.last_error)
-            else:  # pragma: no cover - defensive, cooldown always sets last_error
-                attempts.append((state.label, RuntimeError(f'{state.label} is in cooldown')))
-            raise ProviderPoolExhaustedError(operation, attempts)
-
-        try:
-            items, next_cursor = await state.client.fetch_page(method, call_params)
-        except Exception as exc:
-            kind = classify_failure(exc)
-            if kind not in (FailureKind.FATAL, FailureKind.METHOD_UNDECLARED):
-                state.enter_cooldown(self._clock() + self._cooldown_for(kind, exc), exc, kind)
-            raise
-        self._mark_success(state)
-        if next_cursor is not None:
-            next_cursor = {**next_cursor, _CURSOR_PROVIDER_KEY: state.label}
-        return items, next_cursor
+        result, _ = await self._failover_walk(
+            operation,
+            replay,
+            candidates=[bound_state],
+            failover=False,
+        )
+        items, next_cursor = result
+        return items, _bind_provider(next_cursor, bound_state.label)
 
     def supports_method(self, method: Method) -> bool:
         """True if at least one pool provider declares ``method`` (union)."""
         return any(state.client.supports_method(method) for state in self._providers)
+
+    def result_window_for(self, method: Method) -> int | None:
+        """Result window of the active provider (see ``ChainscanClient``).
+
+        Completeness routing needs the question answered PER MEMBER (see
+        :func:`_serves_completely`), so the engine never uses this
+        pool-level view; it exists so the pool mirrors the client surface.
+        """
+        return self._active_client.result_window_for(method)
 
     def get_supported_methods(self) -> list[Method]:
         """Union of the methods declared by the pool providers, enum order."""
@@ -1290,6 +1377,16 @@ class ChainscanPool(
     @scanner_name.setter
     def scanner_name(self, value: str) -> None:
         self._active_client.scanner_name = value
+
+    @property
+    def provider_label(self) -> str:
+        """``scanner_name/network`` of the active provider (see ``ChainscanClient``).
+
+        This is the BASE label; per-member pool labels (``last_provider``,
+        ``providers``) layer collision qualification on top via
+        :func:`_provider_labels`.
+        """
+        return self._active_client.provider_label
 
     @property
     def scanner_version(self) -> str:
