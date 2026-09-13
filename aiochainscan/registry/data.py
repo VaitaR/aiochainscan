@@ -5,6 +5,14 @@ per-provider ids), the UrlBuilder chain-id table, the per-kind UrlBuilder
 profiles and the ``SCANNER_RECORDS`` every derived view is built from, plus
 the read accessors over the chain table. Pure data: this module imports
 nothing from :mod:`aiochainscan.config` and nothing above it anywhere else.
+
+Chain facts a scanner record already declares are derived at build, not
+re-spelled: ``moralis_hex`` is ``hex(chain_id)`` and a chain entry's
+``blockscout_instance`` comes from the blockscout record's instance-host
+table (see the derivation block under ``STANDARD_CHAINS``). The Etherscan
+network surface, likewise, is declared only by the etherscan record's alias
+table — its config dialects and the scanner's supported set are derived in
+:mod:`aiochainscan.registry.views`.
 """
 
 from collections.abc import Mapping
@@ -253,10 +261,15 @@ class ScannerRecord:
             ``config_ids_by_network``).
         api_kind: UrlBuilder api_kind; ``None`` means the scanner name.
         network_aliases: Network-name aliases applied for configuration
-            lookups only (the client-facing network name is preserved).
+            lookups only (the client-facing network name is preserved). For
+            the Etherscan record this table is also the one declared source
+            of the scanner's network surface: every spelling the v2 endpoint
+            serves is a key, and its target is the config dialect it
+            collapses to.
         supported_networks: Config-dialect networks of the scanner's own
-            config id (``None`` for BlockScout, whose ids derive from the
-            instance hosts).
+            config id (``None`` when they derive elsewhere: BlockScout's ids
+            derive from the instance hosts, and the Etherscan config dialects
+            derive from its alias table in registry.views).
         instance_hosts: BlockScout family only — network alias → public
             instance host.
         instance_currencies: BlockScout family only — UrlBuilder host id →
@@ -360,11 +373,14 @@ SCANNER_RECORDS: dict[str, ScannerRecord] = {
             'katana': 'main',
             'celo-sepolia': 'main',
             'op-sepolia': 'main',
+            # Sepolia is the one chain the v2 endpoint serves under its own
+            # config dialect (its own chain id) — it must not collapse to
+            # 'main'. Declaring the pass-through explicitly (it used to be
+            # implicit) makes this alias table the ONE declared source of the
+            # scanner's network surface; the config dialects and the scanner's
+            # supported set derive from it in registry.views.
+            'sepolia': 'sepolia',
         },
-        # Config-dialect networks the V2 endpoint actually serves. Every
-        # mainnet alias above collapses to 'main'; the testnets keep their own
-        # names. ('test' is absent because no chain resolves under it here.)
-        supported_networks=frozenset({'main', 'sepolia'}),
         custom_base_url=True,
     ),
     'blockscout': ScannerRecord(
@@ -561,153 +577,119 @@ STANDARD_CHAINS = {
     1: {
         'name': 'ethereum',
         'aliases': ['eth', 'ethereum', 'main'],  # 'main' kept for scanner compatibility
-        'blockscout_instance': 'eth.blockscout.com',
-        'moralis_hex': '0x1',
     },
     5: {
         'name': 'goerli',
         'aliases': ['goerli'],
-        'moralis_hex': '0x5',
     },
     11155111: {
         'name': 'sepolia',
         'aliases': ['sepolia'],
-        'blockscout_instance': 'eth-sepolia.blockscout.com',
-        'moralis_hex': '0xaa36a7',
     },
-    17000: {'name': 'holesky', 'aliases': ['holesky'], 'moralis_hex': '0x4268'},
+    17000: {'name': 'holesky', 'aliases': ['holesky']},
     # Layer 2 networks
     42161: {
         'name': 'arbitrum',
         'aliases': ['arbitrum', 'arb'],
-        'blockscout_instance': 'arbitrum.blockscout.com',
-        'moralis_hex': '0xa4b1',
     },
     421613: {
         'name': 'arbitrum-goerli',
         'aliases': ['arbitrum-goerli', 'arb-goerli'],
-        'moralis_hex': '0x66eed',
     },
     421614: {
         'name': 'arbitrum-sepolia',
         'aliases': ['arbitrum-sepolia', 'arb-sepolia'],
-        'moralis_hex': '0x66eee',
     },
     10: {
         'name': 'optimism',
         'aliases': ['optimism', 'op'],
-        'blockscout_instance': 'explorer.optimism.io',
-        'moralis_hex': '0xa',
     },
     420: {
         'name': 'optimism-goerli',
         'aliases': ['optimism-goerli', 'op-goerli'],
-        'moralis_hex': '0x1a4',
     },
     8453: {
         'name': 'base',
         'aliases': ['base'],
-        'blockscout_instance': 'base.blockscout.com',
-        'moralis_hex': '0x2105',
     },
-    84531: {'name': 'base-goerli', 'aliases': ['base-goerli'], 'moralis_hex': '0x14a33'},
-    84532: {'name': 'base-sepolia', 'aliases': ['base-sepolia'], 'moralis_hex': '0x14a34'},
+    84531: {'name': 'base-goerli', 'aliases': ['base-goerli']},
+    84532: {'name': 'base-sepolia', 'aliases': ['base-sepolia']},
     # Other networks
     56: {
         'name': 'bsc',
         'aliases': ['bsc', 'binance', 'bnb'],
-        'moralis_hex': '0x38',
     },
-    97: {'name': 'bsc-testnet', 'aliases': ['bsc-testnet', 'bnb-testnet'], 'moralis_hex': '0x61'},
+    97: {'name': 'bsc-testnet', 'aliases': ['bsc-testnet', 'bnb-testnet']},
     137: {
         'name': 'polygon',
         'aliases': ['polygon', 'matic'],
-        'blockscout_instance': 'polygon.blockscout.com',
-        'moralis_hex': '0x89',
     },
     80001: {
         'name': 'polygon-mumbai',
         'aliases': ['polygon-mumbai', 'matic-mumbai'],
-        'moralis_hex': '0x13881',
     },
     250: {
         'name': 'fantom',
         'aliases': ['fantom', 'ftm'],
-        'moralis_hex': '0xfa',
     },
     4002: {
         'name': 'fantom-testnet',
         'aliases': ['fantom-testnet', 'ftm-testnet'],
-        'moralis_hex': '0xfa2',
     },
     100: {
         'name': 'gnosis',
         'aliases': ['gnosis', 'xdai'],
-        'blockscout_instance': 'gnosisscan.io',
-        'moralis_hex': '0x64',
     },
     10200: {
         'name': 'gnosis-chiado',
         'aliases': ['gnosis-chiado', 'xdai-chiado'],
-        'moralis_hex': '0x27d8',
     },
-    43114: {'name': 'avalanche', 'aliases': ['avalanche', 'avax'], 'moralis_hex': '0xa86a'},
+    43114: {'name': 'avalanche', 'aliases': ['avalanche', 'avax']},
     43113: {
         'name': 'avalanche-fuji',
         'aliases': ['avalanche-fuji', 'avax-fuji'],
-        'moralis_hex': '0xa869',
     },
     59144: {
         'name': 'linea',
         'aliases': ['linea'],
-        'moralis_hex': '0xe708',
     },
-    59140: {'name': 'linea-testnet', 'aliases': ['linea-testnet'], 'moralis_hex': '0xe704'},
+    59140: {'name': 'linea-testnet', 'aliases': ['linea-testnet']},
     81457: {
         'name': 'blast',
         'aliases': ['blast'],
-        'moralis_hex': '0x13e31',
     },
-    168587773: {'name': 'blast-sepolia', 'aliases': ['blast-sepolia'], 'moralis_hex': '0xa0c71fd'},
+    168587773: {'name': 'blast-sepolia', 'aliases': ['blast-sepolia']},
     34443: {
         'name': 'mode',
         'aliases': ['mode'],
-        'moralis_hex': '0x868b',
     },
-    1284: {'name': 'moonbeam', 'aliases': ['moonbeam', 'glmr'], 'moralis_hex': '0x504'},
-    1285: {'name': 'moonriver', 'aliases': ['moonriver', 'movr'], 'moralis_hex': '0x505'},
+    1284: {'name': 'moonbeam', 'aliases': ['moonbeam', 'glmr']},
+    1285: {'name': 'moonriver', 'aliases': ['moonriver', 'movr']},
     1287: {
         'name': 'moonbase-alpha',
         'aliases': ['moonbase-alpha', 'movr-alpha'],
-        'moralis_hex': '0x507',
     },
-    9001: {'name': 'evmos', 'aliases': ['evmos'], 'moralis_hex': '0x2329'},
-    9000: {'name': 'evmos-testnet', 'aliases': ['evmos-testnet'], 'moralis_hex': '0x2328'},
+    9001: {'name': 'evmos', 'aliases': ['evmos']},
+    9000: {'name': 'evmos-testnet', 'aliases': ['evmos-testnet']},
     534352: {
         'name': 'scroll',
         'aliases': ['scroll'],
-        'blockscout_instance': 'scrollscan.com',
-        'moralis_hex': '0x82750',
     },
-    534351: {'name': 'scroll-sepolia', 'aliases': ['scroll-sepolia'], 'moralis_hex': '0x8274f'},
+    534351: {'name': 'scroll-sepolia', 'aliases': ['scroll-sepolia']},
     # Sonic
     146: {
         'name': 'sonic',
         'aliases': ['sonic'],
-        'moralis_hex': '0x92',
     },
     # Plasma — no Blockscout instance and no Etherscan-family scanner; identity there comes
     # from Routescan, so this entry carries ids and aliases only.
     9745: {
         'name': 'plasma',
         'aliases': ['plasma', 'xpl'],
-        'moralis_hex': '0x2611',
     },
     324: {
         'name': 'zksync',
         'aliases': ['zksync', 'zksync-era'],
-        'blockscout_instance': 'zksync.blockscout.com',
-        'moralis_hex': '0x144',
     },
     # BlockScout-served chains, hosts live-probed 2026-09-11 (REST /api,
     # v2 /api/v2 and /api/eth-rpc each answered, and eth_chainId matched
@@ -716,159 +698,107 @@ STANDARD_CHAINS = {
     30: {
         'name': 'rootstock',
         'aliases': ['rootstock', 'rsk'],
-        'blockscout_instance': 'rootstock.blockscout.com',
-        'moralis_hex': '0x1e',
     },
     122: {
         'name': 'fuse',
         'aliases': ['fuse'],
-        'blockscout_instance': 'explorer.fuse.io',
-        'moralis_hex': '0x7a',
     },
     177: {
         'name': 'hashkey',
         'aliases': ['hashkey'],
-        'blockscout_instance': 'hsk.blockscout.com',
-        'moralis_hex': '0xb1',
     },
     239: {
         'name': 'tac',
         'aliases': ['tac'],
-        'blockscout_instance': 'explorer.tac.build',
-        'moralis_hex': '0xef',
     },
     592: {
         'name': 'astar',
         'aliases': ['astar'],
-        'blockscout_instance': 'astar.blockscout.com',
-        'moralis_hex': '0x250',
     },
     698: {
         'name': 'matchain',
         'aliases': ['matchain'],
-        'blockscout_instance': 'matchscan.io',
-        'moralis_hex': '0x2ba',
     },
     747: {
         'name': 'flow',
         'aliases': ['flow', 'flow-evm'],
-        'blockscout_instance': 'evm.flow.com',
-        'moralis_hex': '0x2eb',
     },
     869: {
         'name': 'worldmobile',
         'aliases': ['worldmobile'],
-        'blockscout_instance': 'explorer.worldmobile.io',
-        'moralis_hex': '0x365',
     },
     957: {
         'name': 'lyra',
         'aliases': ['lyra', 'derive'],
-        'blockscout_instance': 'explorer.derive.xyz',
-        'moralis_hex': '0x3bd',
     },
     1868: {
         'name': 'soneium',
         'aliases': ['soneium'],
-        'blockscout_instance': 'soneium.blockscout.com',
-        'moralis_hex': '0x74c',
     },
     1890: {
         'name': 'lightlink',
         'aliases': ['lightlink'],
-        'blockscout_instance': 'phoenix.lightlink.io',
-        'moralis_hex': '0x762',
     },
     4326: {
         'name': 'megaeth',
         'aliases': ['megaeth'],
-        'blockscout_instance': 'megaeth.blockscout.com',
-        'moralis_hex': '0x10e6',
     },
     6497: {
         'name': 'mizuhiki-awaji',
         'aliases': ['mizuhiki-awaji'],
-        'blockscout_instance': 'awaji.blockscout.com',
-        'moralis_hex': '0x1961',
     },
     7000: {
         'name': 'zetachain',
         'aliases': ['zetachain', 'zeta'],
-        'blockscout_instance': 'zetascan.com',
-        'moralis_hex': '0x1b58',
     },
     8822: {
         'name': 'iota',
         'aliases': ['iota'],
-        'blockscout_instance': 'explorer.evm.iota.org',
-        'moralis_hex': '0x2276',
     },
     13371: {
         'name': 'immutable',
         'aliases': ['immutable', 'imx'],
-        'blockscout_instance': 'explorer.immutable.com',
-        'moralis_hex': '0x343b',
     },
     32769: {
         'name': 'zilliqa',
         'aliases': ['zilliqa'],
-        'blockscout_instance': 'zilliqa.blockscout.com',
-        'moralis_hex': '0x8001',
     },
     42793: {
         'name': 'etherlink',
         'aliases': ['etherlink', 'xtz-evm'],
-        'blockscout_instance': 'explorer.etherlink.com',
-        'moralis_hex': '0xa729',
     },
     97741: {
         'name': 'pepe-unchained',
         'aliases': ['pepe-unchained'],
-        'blockscout_instance': 'pepuscan.com',
-        'moralis_hex': '0x17dcd',
     },
     98866: {
         'name': 'plume',
         'aliases': ['plume'],
-        'blockscout_instance': 'explorer.plume.org',
-        'moralis_hex': '0x18232',
     },
     98867: {
         'name': 'plume-testnet',
         'aliases': ['plume-testnet'],
-        'blockscout_instance': 'testnet-explorer.plume.org',
-        'moralis_hex': '0x18233',
     },
     190415: {
         'name': 'hpp',
         'aliases': ['hpp'],
-        'blockscout_instance': 'explorer.hpp.io',
-        'moralis_hex': '0x2e7cf',
     },
     # --- BlockScout official mainnet instances, live-probed 2026-09-11 ---
     6498: {
         'name': 'mizuhiki',
         'aliases': ['mizuhiki'],
-        'blockscout_instance': 'mizuhiki.blockscout.com',
-        'moralis_hex': '0x1962',
     },
     8021: {
         'name': 'numine',
         'aliases': ['numine'],
-        'blockscout_instance': 'numine.blockscout.com',
-        'moralis_hex': '0x1f55',
     },
     2288: {
         'name': 'mocachain',
         'aliases': ['mocachain'],
-        'blockscout_instance': 'scan.mocachain.org',
-        'moralis_hex': '0x8f0',
     },
     101010: {
         'name': 'stability',
         'aliases': ['stability'],
-        'blockscout_instance': 'explorer.stabilityprotocol.com',
-        'moralis_hex': '0x18a92',
     },
     # --- Etherscan v2 chainlist (GET /v2/chainlist, fetched 2026-09-11) ---
     # Every chain the unified endpoint routes. Free-tier availability is
@@ -877,214 +807,200 @@ STANDARD_CHAINS = {
     50: {
         'name': 'xdc',
         'aliases': ['xdc'],
-        'moralis_hex': '0x32',
     },
     51: {
         'name': 'xdc-apothem-testnet',
         'aliases': ['xdc-apothem-testnet'],
-        'moralis_hex': '0x33',
     },
     130: {
         'name': 'unichain',
         'aliases': ['unichain'],
-        'moralis_hex': '0x82',
     },
     143: {
         'name': 'monad',
         'aliases': ['monad'],
-        'moralis_hex': '0x8f',
     },
     199: {
         'name': 'bittorrent-chain',
         'aliases': ['bittorrent-chain'],
-        'moralis_hex': '0xc7',
     },
     204: {
         'name': 'opbnb',
         'aliases': ['opbnb'],
-        'moralis_hex': '0xcc',
     },
     252: {
         'name': 'fraxtal',
         'aliases': ['fraxtal'],
-        'moralis_hex': '0xfc',
     },
     480: {
         'name': 'world',
         'aliases': ['world'],
-        'moralis_hex': '0x1e0',
     },
     988: {
         'name': 'stable',
         'aliases': ['stable'],
-        'moralis_hex': '0x3dc',
     },
     999: {
         'name': 'hyperevm',
         'aliases': ['hyperevm'],
-        'moralis_hex': '0x3e7',
     },
     1029: {
         'name': 'bittorrent-chain-testnet',
         'aliases': ['bittorrent-chain-testnet'],
-        'moralis_hex': '0x405',
     },
     1301: {
         'name': 'unichain-sepolia',
         'aliases': ['unichain-sepolia'],
-        'moralis_hex': '0x515',
     },
     1328: {
         'name': 'sei-testnet',
         'aliases': ['sei-testnet'],
-        'moralis_hex': '0x530',
     },
     1329: {
         'name': 'sei',
         'aliases': ['sei'],
-        'moralis_hex': '0x531',
     },
     2201: {
         'name': 'stable-testnet',
         'aliases': ['stable-testnet'],
-        'moralis_hex': '0x899',
     },
     2523: {
         'name': 'fraxtal-hoodi',
         'aliases': ['fraxtal-hoodi'],
-        'moralis_hex': '0x9db',
     },
     2741: {
         'name': 'abstract',
         'aliases': ['abstract'],
-        'moralis_hex': '0xab5',
     },
     4352: {
         'name': 'memecore',
         'aliases': ['memecore'],
-        'moralis_hex': '0x1100',
     },
     4801: {
         'name': 'world-sepolia',
         'aliases': ['world-sepolia'],
-        'moralis_hex': '0x12c1',
     },
     5000: {
         'name': 'mantle',
         'aliases': ['mantle'],
-        'moralis_hex': '0x1388',
     },
     5003: {
         'name': 'mantle-sepolia',
         'aliases': ['mantle-sepolia'],
-        'moralis_hex': '0x138b',
     },
     5611: {
         'name': 'opbnb-testnet',
         'aliases': ['opbnb-testnet'],
-        'moralis_hex': '0x15eb',
     },
     6343: {
         'name': 'megaeth-testnet',
         'aliases': ['megaeth-testnet'],
-        'moralis_hex': '0x18c7',
     },
     9746: {
         'name': 'plasma-testnet',
         'aliases': ['plasma-testnet'],
-        'moralis_hex': '0x2612',
     },
     10143: {
         'name': 'monad-testnet',
         'aliases': ['monad-testnet'],
-        'moralis_hex': '0x279f',
     },
     11124: {
         'name': 'abstract-sepolia',
         'aliases': ['abstract-sepolia'],
-        'moralis_hex': '0x2b74',
     },
     14601: {
         'name': 'sonic-testnet',
         'aliases': ['sonic-testnet'],
-        'moralis_hex': '0x3909',
     },
     33111: {
         'name': 'apechain-curtis-testnet',
         'aliases': ['apechain-curtis-testnet'],
-        'moralis_hex': '0x8157',
     },
     33139: {
         'name': 'apechain',
         'aliases': ['apechain'],
-        'moralis_hex': '0x8173',
     },
     42220: {
         'name': 'celo',
         'aliases': ['celo'],
-        'moralis_hex': '0xa4ec',
     },
     43522: {
         'name': 'memecore-insectarium-testnet',
         'aliases': ['memecore-insectarium-testnet'],
-        'moralis_hex': '0xaa02',
     },
     59141: {
         'name': 'linea-sepolia',
         'aliases': ['linea-sepolia'],
-        'moralis_hex': '0xe705',
     },
     80002: {
         'name': 'polygon-amoy',
         'aliases': ['polygon-amoy'],
-        'moralis_hex': '0x13882',
     },
     80069: {
         'name': 'berachain-bepolia-testnet',
         'aliases': ['berachain-bepolia-testnet'],
-        'moralis_hex': '0x138c5',
     },
     80094: {
         'name': 'berachain',
         'aliases': ['berachain'],
-        'moralis_hex': '0x138de',
     },
     167000: {
         'name': 'taiko',
         'aliases': ['taiko'],
-        'moralis_hex': '0x28c58',
     },
     167013: {
         'name': 'taiko-hoodi',
         'aliases': ['taiko-hoodi'],
-        'moralis_hex': '0x28c65',
     },
     560048: {
         'name': 'hoodi-testnet',
         'aliases': ['hoodi-testnet'],
-        'moralis_hex': '0x88bb0',
     },
     737373: {
         'name': 'katana-bokuto',
         'aliases': ['katana-bokuto'],
-        'moralis_hex': '0xb405d',
     },
     747474: {
         'name': 'katana',
         'aliases': ['katana'],
-        'moralis_hex': '0xb67d2',
     },
     11142220: {
         'name': 'celo-sepolia',
         'aliases': ['celo-sepolia'],
-        'moralis_hex': '0xaa044c',
     },
     11155420: {
         'name': 'op-sepolia',
         'aliases': ['op-sepolia'],
-        'moralis_hex': '0xaa37dc',
     },
 }
+
+
+# ---------------------------------------------------------------------------
+# Chain facts derived at build — each fact is declared exactly once
+# ---------------------------------------------------------------------------
+# A chain entry's ``moralis_hex`` is ``hex(chain_id)`` (the same rule
+# :func:`register_etherscan_chain` applies at runtime), and its
+# ``blockscout_instance`` is the chain's row in the blockscout record's
+# instance-host table. Both used to be hand-copied per entry and drift-tested
+# (the M4 round-trip and M7 host-agreement guards); deriving them here makes
+# disagreement unrepresentable.
+
+#: Chain names whose instance host is registry-declared (both BlockScout legs
+#: construct against it) but whose STANDARD_CHAINS entry deliberately does not
+#: advertise it. Today only 'mode': its entry predates the instance's
+#: registration, so ``get_blockscout_instance(34443)`` keeps refusing exactly
+#: as it always has. Lift the skip to advertise the host on the chain entry.
+_INSTANCE_HOST_UNADVERTISED_CHAINS: frozenset[str] = frozenset({'mode'})
+
+for _chain_id, _chain in STANDARD_CHAINS.items():
+    _chain['moralis_hex'] = hex(_chain_id)
+    _chain_name = _chain['name']
+    assert isinstance(_chain_name, str)
+    if _chain_name in _INSTANCE_HOST_UNADVERTISED_CHAINS:
+        continue
+    _instance_host = _blockscout_record.instance_hosts.get(_chain_name)
+    if _instance_host is not None:
+        _chain['blockscout_instance'] = _instance_host
 
 
 def resolve_chain_id(chain: str | int) -> int:

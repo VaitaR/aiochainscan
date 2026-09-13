@@ -68,14 +68,26 @@ SCANNER_CONFIG_IDS: dict[str, str] = {
     if record.config_id is not None
 }
 
+#: Config dialects the Etherscan v2 endpoint serves — the etherscan record's
+#: alias-table targets. The alias table is the ONE declared source of the
+#: scanner's network surface: its keys are the served spellings, its values
+#: the dialects they collapse to, and everything else about the surface
+#: (this set and :data:`ETHERSCAN_SCANNER_NETWORKS`) derives from it, the
+#: static counterpart of what :func:`register_etherscan_chain` writes at
+#: runtime.
+ETHERSCAN_CONFIG_NETWORKS: frozenset[str] = frozenset(
+    SCANNER_RECORDS['etherscan'].network_aliases.values()
+)
+
 # Networks each configuration-manager scanner id serves, in the config
 # lookup dialect ('main'/'test'-style names, not registry chain names).
 # Single source of the network-validity oracle for client construction
 # (:func:`resolve_scanner_target`); the configuration manager derives its
 # builtin ``supported_networks`` from this table instead of mirroring it.
 # Derived from three views: the per-kind profiles (Etherscan-family config
-# ids), the scanner records ('eth'/'nodereal' own their networks) and the
-# BlockScout host ids (each serves exactly its host suffix, so a new
+# ids), the scanner records ('nodereal' owns its networks; the Etherscan
+# dialects derive from its alias table, see ETHERSCAN_CONFIG_NETWORKS) and
+# the BlockScout host ids (each serves exactly its host suffix, so a new
 # instance registers once for both).
 SCANNER_CONFIG_NETWORKS: dict[str, frozenset[str]] = {
     **{
@@ -83,6 +95,11 @@ SCANNER_CONFIG_NETWORKS: dict[str, frozenset[str]] = {
         for kind, profile in _URL_KIND_PROFILES.items()
         if (networks := profile.config_networks) is not None
     },
+    # The Etherscan record declares no supported_networks: its config
+    # dialects are the alias table's targets — exactly what the collapse
+    # rule in :func:`resolve_scanner_target` (``aliases.get(canonical_name,
+    # canonical_name)``) can produce for a chain in the surface.
+    'eth': ETHERSCAN_CONFIG_NETWORKS,
     **{
         (record.config_id if record.config_id is not None else name): record.supported_networks
         for name, record in SCANNER_RECORDS.items()
@@ -267,17 +284,20 @@ BLOCKSCOUT_SCANNER_NETWORKS: frozenset[str] = (
 
 
 #: Network names the Etherscan v2 scanner declares. Derived from the record's
-#: alias table so the scanner cannot advertise a name ``resolve_chain_id``
-#: would not answer; every entry is a chain the keyless ``GET /v2/chainlist``
-#: registry listed on 2026-09-11 (goerli and holesky are not in it — the live
-#: endpoint answers them "Missing or unsupported chainid parameter").
+#: alias table — the ONE declared source of the surface: the keys are the
+#: served spellings, the targets the config dialects (so 'main' and the
+#: self-collapsing 'sepolia' enter through the values). The scanner cannot
+#: advertise a name ``resolve_chain_id`` would not answer, and every entry is
+#: a chain the keyless ``GET /v2/chainlist`` registry listed on 2026-09-11
+#: (goerli and holesky are not in it — the live endpoint answers them
+#: "Missing or unsupported chainid parameter").
 #:
 #: Mutable, and the scanner class binds this very object rather than a copy:
 #: :func:`register_etherscan_chain` adds to it so an opt-in registry sync
 #: (:mod:`aiochainscan.registry_sync`) reaches a scanner class that was already
 #: imported. Nothing else may mutate it.
 ETHERSCAN_SCANNER_NETWORKS: set[str] = set(SCANNER_RECORDS['etherscan'].network_aliases) | set(
-    SCANNER_RECORDS['etherscan'].supported_networks or ()
+    ETHERSCAN_CONFIG_NETWORKS
 )
 
 

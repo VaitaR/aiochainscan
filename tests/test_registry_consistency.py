@@ -17,6 +17,15 @@ and each one is a case of two registry views disagreeing:
 - **M7**: four ``STANDARD_CHAINS`` entries advertised ``blockscout_instance``
   hosts no scanner could construct against (goerli, fantom, blast, mode).
 
+M4 and M7 have since been single-sourced: ``moralis_hex`` is ``hex(chain_id)``
+and a chain's ``blockscout_instance`` is its row in the instance-host table,
+both derived at registry build — the disagreements they guarded are
+unrepresentable, so their cross-view guards became the derivation pins in
+``TestMoralisHexIsDerived`` / ``TestBlockscoutInstanceDerivation``. The sweep
+below keeps the facts that remain genuinely independent (scanner dialects,
+class supported sets, currencies, config rows, the UrlBuilder chain-id
+cross-check).
+
 The sweep derives each scanner's declared surface from the registry tables
 themselves (scanner records, class ``supported_networks``,
 ``BLOCKSCOUT_SCANNER_NETWORKS``, ``config_ids_by_network``, instance hosts,
@@ -256,50 +265,36 @@ class TestSpellingIndependence:
                 )
 
 
-class TestMoralisHexRoundTrip:
-    """M4 guard: every STANDARD_CHAINS entry's moralis_hex must parse back to
-    its own chain id. Two of 32 entries used to fail (arbitrum-sepolia carried
-    sepolia's hex with a digit flipped; mode was off by one)."""
+class TestMoralisHexIsDerived:
+    """M4's round-trip guard policed hand-written hex; ``moralis_hex`` is now
+    ``hex(chain_id)``, derived at registry build exactly like
+    :func:`register_etherscan_chain` writes it, so a corrupted copy is
+    unrepresentable. One pin keeps the derivation contract visible."""
 
-    @pytest.mark.parametrize('chain_id', sorted(STANDARD_CHAINS))
-    def test_moralis_hex_round_trips(self, chain_id: int) -> None:
-        info = STANDARD_CHAINS[chain_id]
-        assert 'moralis_hex' in info, f'chain {chain_id} ({info["name"]}) has no moralis_hex'
-        hex_value = info['moralis_hex']
-        assert isinstance(hex_value, str) and hex_value.startswith('0x')
-        assert int(hex_value, 16) == chain_id, (
-            f'chain {chain_id} ({info["name"]}): moralis_hex {hex_value!r} '
-            f'parses to {int(hex_value, 16)}'
-        )
+    def test_every_entry_carries_hex_of_its_chain_id(self) -> None:
+        for chain_id, info in STANDARD_CHAINS.items():
+            assert info['moralis_hex'] == hex(chain_id), f'chain {chain_id} ({info["name"]})'
 
 
-class TestBlockscoutInstanceAdvertisements:
-    """M7 guard: a chain advertising a ``blockscout_instance`` must advertise
-    a host the registry actually maps AND the blockscout v1 leg must construct
-    against exactly that host. Four defunct hosts (goerli, fantom, blast,
-    mode) used to be advertised to no scanner at all."""
+class TestBlockscoutInstanceDerivation:
+    """M7 policed two hand-written copies of the same host; a chain entry's
+    ``blockscout_instance`` is now derived from the instance-host table at
+    registry build, so cross-table drift is unrepresentable (and the old
+    advertised-vs-registry-host guard would be tautological). These pins keep
+    the derivation contract and the one deliberate skip visible."""
 
-    def test_advertised_hosts_are_registry_hosts(self) -> None:
-        advertised = {
-            info['blockscout_instance']
-            for info in STANDARD_CHAINS.values()
-            if 'blockscout_instance' in info
-        }
-        assert advertised, 'no chain advertises a blockscout instance — table drifted?'
-        unmapped = advertised - set(BLOCKSCOUT_INSTANCE_HOSTS.values())
-        assert (
-            not unmapped
-        ), f'STANDARD_CHAINS advertises hosts no scanner maps: {sorted(unmapped)}'
+    def test_advertised_instance_is_the_host_table_row(self) -> None:
+        from aiochainscan.registry.data import _INSTANCE_HOST_UNADVERTISED_CHAINS
 
-    async def test_advertised_chains_construct_against_their_host(self) -> None:
         for chain_id, info in sorted(STANDARD_CHAINS.items()):
-            if 'blockscout_instance' not in info:
-                continue
-            client = _construct('blockscout', chain_id)
-            try:
-                assert client._scanner.instance_domain == info['blockscout_instance']
-            finally:
-                await client.close()
+            expected = None
+            host = BLOCKSCOUT_INSTANCE_HOSTS.get(info['name'])
+            if host is not None and info['name'] not in _INSTANCE_HOST_UNADVERTISED_CHAINS:
+                expected = host
+            assert info.get('blockscout_instance') == expected, (
+                f'chain {chain_id} ({info["name"]}): advertisement does not match '
+                f'the instance-host derivation'
+            )
 
     def test_get_blockscout_instance_is_honest_for_unadvertised_chains(self) -> None:
         from aiochainscan.chain_registry import get_blockscout_instance
