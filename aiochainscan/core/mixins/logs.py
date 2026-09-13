@@ -11,7 +11,7 @@ from ...domain.normalize import normalize_log
 from ...domain.normalized import Log
 from ...types import JSONList
 from ..host import ClientHost
-from ..streaming import collect_stream
+from ..streaming import collect_for_aggregate
 
 if TYPE_CHECKING:
     from ...ports.progress import ProgressCallback
@@ -77,21 +77,18 @@ class LogsMixin:
         on_progress: ProgressCallback | None = None,
         guarantee_complete: bool = True,
     ) -> JSONList:
-        return await collect_stream(
-            self.iter_logs_streaming(
-                address=address,
-                from_block=from_block,
-                to_block=to_block,
-                topic0=topic0,
-                topic1=topic1,
-                topic2=topic2,
-                topic3=topic3,
-                batch_size=1000,
-                on_progress=on_progress,
-                guarantee_complete=guarantee_complete,
-            ),
-            stream_name='iter_logs_streaming',
-            noun='logs',
+        return await collect_for_aggregate(
+            self,
+            'get_all_logs',
+            address=address,
+            from_block=from_block,
+            to_block=to_block,
+            topic0=topic0,
+            topic1=topic1,
+            topic2=topic2,
+            topic3=topic3,
+            on_progress=on_progress,
+            guarantee_complete=guarantee_complete,
             logger=logger,
         )
 
@@ -115,20 +112,17 @@ class LogsMixin:
         ``iter_logs_streaming`` (see core/client.py) and normalizes each
         batch as it arrives, never after collecting the raw list.
         """
-        return await collect_stream(
-            self.iter_logs_normalized(
-                address,
-                from_block=from_block,
-                to_block=to_block,
-                topic0=topic0,
-                topic1=topic1,
-                topic2=topic2,
-                topic3=topic3,
-                batch_size=1000,
-                on_progress=on_progress,
-                guarantee_complete=guarantee_complete,
-            ),
-            stream_name='iter_logs_normalized',
-            noun='normalized logs',
+        return await collect_for_aggregate(
+            self,
+            'get_all_logs_normalized',
+            address=address,
+            from_block=from_block,
+            to_block=to_block,
+            topic0=topic0,
+            topic1=topic1,
+            topic2=topic2,
+            topic3=topic3,
+            on_progress=on_progress,
+            guarantee_complete=guarantee_complete,
             logger=logger,
         )

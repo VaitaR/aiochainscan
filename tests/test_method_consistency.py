@@ -54,7 +54,11 @@ from aiochainscan.core.mixins import (
     TransactionMixin,
 )
 from aiochainscan.core.pool import ChainscanPool
-from aiochainscan.core.streaming import STREAMING_SPECS, STREAMING_SPECS_BY_NAME
+from aiochainscan.core.streaming import (
+    STREAMING_SPECS,
+    STREAMING_SPECS_BY_NAME,
+    collect_for_aggregate,
+)
 from aiochainscan.core.url_builder import UrlBuilder
 from aiochainscan.domain.method import Method
 from aiochainscan.exceptions import BlockRangeNotSupportedError, MethodNotDeclaredError
@@ -252,6 +256,28 @@ class _RecordingClient(
     iter_token_transfers_normalized = _empty_stream
     iter_internal_transactions_normalized = _empty_stream
     iter_logs_normalized = _empty_stream
+
+
+class _AggregatorProbe:
+    """Fake host recording which stream attribute an aggregator's body resolves.
+
+    Bound in place of ``self`` under the mixin ``get_all_*`` functions:
+    ``collect_for_aggregate`` resolves the spec row by ``aggregate`` and
+    requests exactly ``spec.name`` on the host, so the requested attribute
+    name IS the routing fact the sweep asserts.
+    """
+
+    def __init__(self) -> None:
+        self.requested: list[str] = []
+        self.forwarded: dict[str, Any] = {}
+
+    def __getattr__(self, name: str) -> Any:
+        async def stream(*_args: Any, **kwargs: Any) -> AsyncIterator[list[dict[str, Any]]]:
+            self.requested.append(name)
+            self.forwarded = kwargs
+            yield []
+
+        return stream
 
 
 def _public_convenience_methods(mixin: type) -> list[str]:
@@ -455,6 +481,47 @@ def test_aggregate_args_cover_exactly_the_registry_aggregates() -> None:
         f'{sorted(declared - set(_AGGREGATE_ARGS))}, stale '
         f'{sorted(set(_AGGREGATE_ARGS) - declared)}'
     )
+
+
+async def test_aggregates_route_through_their_spec_row() -> None:
+    """``aggregate`` is load-bearing: it names a mixin method whose ONE body
+    routes through the row.
+
+    Three facts per row, proven behaviorally against a probe host:
+    the aggregate name belongs to exactly one mixin method, that method
+    delegates through ``collect_for_aggregate`` (the row lookup), and the
+    single stream attribute the body resolves is ``spec.name`` — with no
+    ``batch_size`` override (the stream's declared default owns the page
+    size) and materialization through ``collect_stream``.
+    """
+    for spec in STREAMING_SPECS:
+        if spec.aggregate is None:
+            continue
+        aggregate: str = spec.aggregate
+        owners = [getattr(mixin, aggregate) for mixin in MIXINS if aggregate in vars(mixin)]
+        assert len(owners) == 1, (
+            f'{aggregate}: exactly one mixin method must carry the aggregate '
+            f'name, found {len(owners)}'
+        )
+        owner = owners[0]
+        assert collect_for_aggregate.__name__ in inspect.getsource(owner), (
+            f'{aggregate} must delegate through collect_for_aggregate so its '
+            f'stream, warning noun and page size come from the spec row'
+        )
+        probe = _AggregatorProbe()
+        result = await owner(
+            probe,
+            *_AGGREGATE_ARGS[aggregate],
+            on_progress=None,
+            guarantee_complete=True,
+        )
+        assert result == [], f'{aggregate} did not materialize via collect_stream'
+        assert probe.requested == [
+            spec.name
+        ], f'{aggregate} resolved stream(s) {probe.requested} — its row names {spec.name}'
+        assert (
+            'batch_size' not in probe.forwarded
+        ), f'{aggregate} hardcodes batch_size — the stream default owns the page size'
 
 
 def _normalize_annotation(annotation: str) -> str:

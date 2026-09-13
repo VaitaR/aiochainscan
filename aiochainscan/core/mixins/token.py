@@ -9,7 +9,7 @@ from ...domain.method import Method
 from ...domain.models import Address
 from ...types import JSONDict, JSONList
 from ..host import ClientHost
-from ..streaming import collect_stream
+from ..streaming import collect_for_aggregate
 
 if TYPE_CHECKING:
     from ...ports.progress import ProgressCallback
@@ -78,15 +78,12 @@ class TokenMixin:
         ``PaginationDataLossError`` is raised if it cannot be. Pass ``False``
         for the cheaper pre-1.0 behaviour.
         """
-        return await collect_stream(
-            self.iter_token_holders_streaming(
-                contract_address=contract_address,
-                batch_size=1000,
-                on_progress=on_progress,
-                guarantee_complete=guarantee_complete,
-            ),
-            stream_name='iter_token_holders_streaming',
-            noun='token holders',
+        return await collect_for_aggregate(
+            self,
+            'get_all_token_holders',
+            contract_address=contract_address,
+            on_progress=on_progress,
+            guarantee_complete=guarantee_complete,
             logger=logger,
         )
 
