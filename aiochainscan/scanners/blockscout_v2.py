@@ -327,6 +327,12 @@ class BlockScoutV2Scanner(Scanner):
     # them let 'bsc' resolve in the registry and then fail at construction.
     supported_networks = set(BLOCKSCOUT_SCANNER_NETWORKS)
 
+    # This leg names Ethereum mainnet 'ethereum' (the canonical registry name,
+    # which is also the host-table alias); the scanner-level 'main' alias maps
+    # onto it so a spelling the registry resolves is one ``supported_networks``
+    # and ``BASE_URLS`` declare.
+    NETWORK_NAME_DIALECT = {'main': 'ethereum'}
+
     # Network -> Base URL mapping for Blockscout instances — derived from the
     # shared per-alias host table (one table for BlockScout v1 and v2).
     BASE_URLS: ClassVar[dict[str, str]] = {

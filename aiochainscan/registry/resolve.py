@@ -181,9 +181,10 @@ class ScannerTarget:
     ``url_network`` select the UrlBuilder profile (``url_network`` is the
     profile-dialect network name — ``'main'`` for Ethereum mainnet, the
     canonical registry chain name otherwise), ``scanner_network`` is the
-    scanner-dialect network name the ``Scanner`` instance is constructed
-    with (BlockScout v1 says ``'eth'`` for Ethereum mainnet, Etherscan says
-    ``'main'``), ``network`` is the canonical network name, ``api_key`` the
+    scanner-dialect network name the ``Scanner`` instance is constructed with
+    (asked of the scanner class — ``Scanner.dialect_network``; BlockScout v1
+    says ``'eth'`` for Ethereum mainnet, Etherscan says ``'main'``),
+    ``network`` is the canonical network name, ``api_key`` the
     resolved credential (``''`` when the scanner needs none), ``chain_id``
     the numeric chain identifier (``None`` for custom base URLs without an
     ``expected_chain_id`` — unknown until the instance is probed),
@@ -337,10 +338,11 @@ def resolve_scanner_target(
     # Scanner-dialect network name for the Scanner instance — same ownership
     # (the client used to re-derive this from the target; the target now
     # carries it as a field). Derived from the canonical chain name, not the
-    # caller's spelling: the dialect name is a fact about the chain, so every
-    # declared alias of a constructible chain constructs ('bnb' used to reach
-    # etherscan v2 un-normalized and fail its supported-networks check while
-    # 'bsc' constructed).
+    # caller's spelling — the dialect name is a fact about the chain — and
+    # ASKED of the scanner class rather than hardcoded here: the class that
+    # validates the spelling (:meth:`Scanner.dialect_network` beside the
+    # ``supported_networks`` check) is the one that declares it, so a name
+    # cannot resolve in the registry and die at scanner construction.
     scanner_network = _scanner_network_name(actual_scanner_name, scanner_version, canonical_name)
 
     return ScannerTarget(
@@ -417,36 +419,41 @@ def _resolve_custom_base_url_target(
 
 
 def _scanner_network_name(scanner_name: str, scanner_version: str, network: str) -> str:
-    """Map the unified network name to the scanner-specific network name.
+    """Delegate the scanner-dialect question to the scanner class.
 
     Resolution-private: :func:`resolve_scanner_target` computes this once and
     carries the result on ``ScannerTarget.scanner_network`` — the client and
     the Scanner trust the target and never re-derive it.
 
-    Different scanners use different naming conventions for the same networks:
-    BlockScout v1 uses 'eth' for Ethereum mainnet, BlockScout v2 uses
-    'ethereum', and Etherscan uses 'main'. Other networks pass through
-    unchanged.
+    The dialect spelling is a fact about the scanner, declared on the scanner
+    class (:meth:`Scanner.dialect_network` / ``NETWORK_NAME_DIALECT``) right
+    beside the ``supported_networks`` check that validates it — the registry
+    asks instead of owning an if-ladder per scanner, so the two answers can no
+    longer drift (a name that resolved here but died in ``Scanner.__init__``).
+
+    The scanners package is imported lazily, inside the call: the scanner
+    modules import ``aiochainscan.chain_registry`` at module level (the
+    chain-id fallback), so a module-level edge from this module back to
+    ``aiochainscan.scanners`` would close a genuine import cycle. At call time
+    both sides are fully loaded.
+
+    A ``(name, version)`` pair no registered scanner class answers (unknown
+    scanner names, explicit versions of no registered class) has no class to
+    ask: the canonical name passes through unchanged, as the fall-through of
+    the deleted registry-side ladder did.
 
     Args:
         scanner_name: Name of the scanner (e.g. 'etherscan', 'blockscout')
         scanner_version: Version of the scanner (e.g. 'v1', 'v2')
-        network: Unified network name (e.g. 'ethereum', 'polygon')
+        network: Canonical network name (e.g. 'ethereum', 'polygon')
 
     Returns:
         Scanner-specific network name
     """
-    if scanner_name == 'blockscout' and scanner_version == 'v1':
-        # v1 uses 'eth' for Ethereum mainnet
-        if network in ('ethereum', 'main'):
-            return 'eth'
-    elif scanner_name == 'blockscout' and scanner_version == 'v2':
-        # v2 uses 'ethereum' for Ethereum mainnet
-        if network == 'main':
-            return 'ethereum'
-    elif scanner_name == 'etherscan' and network == 'ethereum':
-        # Etherscan uses 'main' for Ethereum mainnet
-        return 'main'
+    from ..scanners import get_scanner_class
 
-    # For other cases, use the network name as-is
-    return network
+    try:
+        scanner_cls = get_scanner_class(scanner_name, scanner_version)
+    except ValueError:
+        return network
+    return scanner_cls.dialect_network(network)

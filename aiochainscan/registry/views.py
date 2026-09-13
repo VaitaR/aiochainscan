@@ -277,7 +277,8 @@ SCANNER_CONFIG_DEFINITIONS: dict[str, ConfigDefinition] = _build_config_definiti
 #: derivation for both legs, so a new instance registers for both at once and
 #: neither leg can declare a network it cannot resolve to an instance. Both
 #: dialect spellings of Ethereum mainnet ('eth' for v1, 'ethereum' for v2) are
-#: in it — see :func:`_scanner_network_name`.
+#: in it — the wire spellings each scanner class declares for itself
+#: (``NETWORK_NAME_DIALECT`` on ``BlockScoutV1`` / ``BlockScoutV2Scanner``).
 BLOCKSCOUT_SCANNER_NETWORKS: frozenset[str] = (
     frozenset(BLOCKSCOUT_INSTANCE_HOSTS) - DROPPED_INSTANCE_ALIASES
 )

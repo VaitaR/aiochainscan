@@ -15,6 +15,7 @@ from aiochainscan.chain_registry import (
     resolve_scanner_target,
 )
 from aiochainscan.config import ConfigurationManager
+from aiochainscan.scanners import NodeRealScanner, Scanner, list_scanners
 from aiochainscan.scanners.blockscout_v1 import BlockScoutV1
 from aiochainscan.scanners.blockscout_v2 import BlockScoutV2Scanner
 from aiochainscan.scanners.etherscan_v2 import EtherscanV2
@@ -525,6 +526,48 @@ class TestScannerNetwork:
         target = resolve_scanner_target('blockscout', 'https://bsc.example')
         assert target.scanner_network == 'custom'
         assert target.network == 'custom'
+
+
+class TestScannerDialectDeclaration:
+    """The scanner-dialect spelling is declared ON the scanner class — the
+    same class whose ``__init__`` validates it — and the registry only asks
+    (:meth:`Scanner.dialect_network`). The old registry-side if-ladder owned
+    the answers and could drift from the validation; these pins are the
+    class-level counterpart of :meth:`TestScannerNetwork.test_mapping`."""
+
+    def test_base_default_passes_through(self) -> None:
+        assert not Scanner.NETWORK_NAME_DIALECT
+        assert Scanner.dialect_network('polygon') == 'polygon'
+
+    def test_nodereal_declares_no_dialect(self) -> None:
+        assert not NodeRealScanner.NETWORK_NAME_DIALECT
+        assert NodeRealScanner.dialect_network('bsc') == 'bsc'
+
+    def test_blockscout_v1_dual_acceptance(self) -> None:
+        # Both canonical spellings of the Ethereum instance arrive as 'eth'.
+        assert BlockScoutV1.dialect_network('ethereum') == 'eth'
+        assert BlockScoutV1.dialect_network('main') == 'eth'
+        assert BlockScoutV1.dialect_network('polygon') == 'polygon'
+
+    def test_blockscout_v2_maps_main(self) -> None:
+        assert BlockScoutV2Scanner.dialect_network('main') == 'ethereum'
+        assert BlockScoutV2Scanner.dialect_network('gnosis') == 'gnosis'
+
+    def test_etherscan_maps_ethereum(self) -> None:
+        assert EtherscanV2.dialect_network('ethereum') == 'main'
+        assert EtherscanV2.dialect_network('polygon') == 'polygon'
+
+    def test_no_scanner_maps_to_a_spelling_it_does_not_validate(self) -> None:
+        # The invariant: a Scanner cannot validate a spelling it did not also
+        # declare. Every dialect value must survive the declaring class's own
+        # supported_networks check — it is what the registry hands the
+        # constructor as ``ScannerTarget.scanner_network``.
+        for (name, version), cls in sorted(list_scanners().items()):
+            for canonical, spelling in cls.NETWORK_NAME_DIALECT.items():
+                assert spelling in cls.supported_networks, (
+                    f'{name}/{version} maps {canonical!r} to {spelling!r}, '
+                    'which its own supported_networks rejects'
+                )
 
 
 class TestDerivedInstanceTopology:
