@@ -96,6 +96,48 @@ class BlockRangeNotSupportedError(MethodNotDeclaredError):
     """
 
 
+class ENSScannerUnavailableError(ValueError):
+    """ENS resolution was requested where this scanner/network cannot serve it.
+
+    Raised by :mod:`aiochainscan.services.ens_resolver` **before any
+    request** when the configured scanner/network combination cannot serve
+    ENS at all — ENS records live on Ethereum mainnet (``chain_id == 1``).
+    The singles (``resolve_name`` / ``lookup_address``) and the batch paths
+    (``resolve_names`` / ``lookup_addresses``) raise the SAME signal; the
+    batch does not return ``{}`` for a condition the singles raise on.
+
+    This completes the ENS error contract as a three-way distinction:
+
+    - a ``None`` return means the record simply does not exist;
+    - :class:`MethodNotDeclaredError` means the scanner lacks ``eth_call``
+      entirely (forward resolution reads the ENS registry through it);
+    - this error means the scanner/network combination cannot serve ENS
+      whatever the record (e.g. any chain but Ethereum mainnet).
+
+    Subclasses :class:`ValueError`, preserving the historical contract of
+    the two resolver raise sites (code catching ``ValueError`` for the
+    unsupported-network case keeps working) while giving the condition a
+    catchable type of its own — a bare ``ValueError`` is also absorbed by
+    handlers catching :class:`MethodNotDeclaredError`, which subclasses
+    ``ValueError`` too. Deliberately NOT a :class:`ChainscanClientError`
+    for the same reason :class:`MethodNotDeclaredError` is not: existing
+    ``except ChainscanClientError`` handlers must not start catching it.
+    Deliberately NOT a :class:`MethodNotDeclaredError` subclass either:
+    the scanner may declare ``PROXY_ETH_CALL`` perfectly well — it is the
+    network that cannot answer, so the two must stay distinguishable by
+    type.
+
+    ``failure_kind`` is :attr:`FailureKind.FATAL` explicitly: every pool
+    member serves the SAME chain, so no provider can serve ENS here and
+    failing over cannot help — propagate immediately, cool nothing. That
+    is also exactly how the pre-signal bare ``ValueError`` classified in
+    :func:`aiochainscan.core.pool.classify_failure` (kindless fall-through
+    to FATAL), so pool routing is unchanged.
+    """
+
+    failure_kind: FailureKind | None = FailureKind.FATAL
+
+
 class AbiTypeNotSupportedError(ValueError):
     """The pure-Python ABI codec does not implement this Solidity type.
 

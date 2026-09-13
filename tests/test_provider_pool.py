@@ -64,6 +64,7 @@ from aiochainscan.exceptions import (
     ChainscanRateLimitError,
     ChainscanResultWindowExceededError,
     CompletenessUnavailableError,
+    ENSScannerUnavailableError,
     MethodNotDeclaredError,
     ProviderPoolExhaustedError,
 )
@@ -225,6 +226,21 @@ class TestClassifyFailure:
 
     def test_fatal_value_error(self) -> None:
         assert classify_failure(ValueError('bad argument')) is FailureKind.FATAL
+
+    def test_ens_scanner_unavailable_carries_fatal(self) -> None:
+        """The ENS unavailability signal classifies FATAL — the same verdict
+        the pre-signal bare ``ValueError`` reached by fall-through, now by
+        carried kind. Every pool member serves the SAME chain, so failing
+        over cannot serve ENS anywhere: propagate, cool nothing."""
+        assert (
+            classify_failure(
+                ENSScannerUnavailableError(
+                    'ENS is only supported on Ethereum mainnet. '
+                    'Current network: polygon (chain_id=137)'
+                )
+            )
+            is FailureKind.FATAL
+        )
 
     def test_carried_kind_wins_without_text_match(self) -> None:
         """A raise-site kind classifies even when the message matches NO

@@ -9,7 +9,9 @@ Features:
 - Direct ENS contract calls for Etherscan and other scanners
 - Aggressive caching with TTL (default 1 hour)
 - Batch resolution with parallel requests
-- Graceful handling of unsupported networks
+- One unavailability signal for unsupported networks: singles and batch
+  alike raise :class:`~aiochainscan.exceptions.ENSScannerUnavailableError`
+  where ENS cannot be served (``None`` stays "record does not exist")
 
 Example:
     ```python
@@ -37,7 +39,11 @@ from typing import Any, Protocol, runtime_checkable
 from ..constants import BATCH_DEFAULT_CONCURRENCY, ENS_MAX_NAME_LENGTH
 from ..domain.method import Method
 from ..domain.models import Address
-from ..exceptions import ChainscanClientError, MethodNotDeclaredError
+from ..exceptions import (
+    ChainscanClientError,
+    ENSScannerUnavailableError,
+    MethodNotDeclaredError,
+)
 from ..ports.cache import Cache
 
 # ENS contract addresses on Ethereum mainnet
@@ -70,6 +76,19 @@ def _address_input_key(address: str) -> str:
     return str(address)
 
 
+def _ens_unavailable(client: ENSClient) -> ENSScannerUnavailableError:
+    """Build the ONE ENS-unavailability signal for ``client``'s network.
+
+    The single raise-site content for "ENS cannot be served here" — the
+    singles and the batch paths all raise what this returns, so the two
+    surfaces can never drift in message or type.
+    """
+    return ENSScannerUnavailableError(
+        'ENS is only supported on Ethereum mainnet. '
+        f'Current network: {client.network} (chain_id={client.chain_id})'
+    )
+
+
 @runtime_checkable
 class AddressInfoProvider(Protocol):
     """Scanner-port subset the resolver needs for ENS reverse lookup.
@@ -92,9 +111,12 @@ class ENSClient(Protocol):
 
     Structurally a subset of ``aiochainscan.core.host.ClientHost`` — kept as
     a separate declaration here, rather than importing that protocol, per
-    ``AGENTS.md``'s dependency rule ("Only downward. Never upward.").
-    ``ClientHost`` is the authority; keep this subset in sync with it by
-    hand. Both members are read-only properties on ``ClientHost`` (a plain
+    ``AGENTS.md``'s dependency rule ("Only downward. Never upward."; the
+    import-linter forbids services → core). ``ClientHost`` is the authority;
+    the hand-sync is pinned mechanically by
+    ``tests/test_client_host_contract.py::test_ens_client_protocol_is_a_subset_of_client_host``
+    (a services-module cannot import the protocol to subclass it).
+    Both members are read-only properties on ``ClientHost`` (a plain
     mutable attribute on ``ChainscanClient`` and a read-only forward on
     ``ChainscanPool`` both satisfy that), so they are declared the same way
     here rather than as plain attributes.
@@ -170,7 +192,9 @@ class ENSResolver:
             Ethereum address or None if not found
 
         Raises:
-            ValueError: If ENS is not supported on this network
+            ENSScannerUnavailableError: If ENS is not supported on this
+                network (subclasses ``ValueError``, so existing handlers
+                keep working).
 
         Example:
             ```python
@@ -179,10 +203,7 @@ class ENSResolver:
             ```
         """
         if not self._is_ens_supported():
-            raise ValueError(
-                f'ENS is only supported on Ethereum mainnet. '
-                f'Current network: {self.client.network} (chain_id={self.client.chain_id})'
-            )
+            raise _ens_unavailable(self.client)
 
         normalized_name = _normalize_ens_name(name)
         if normalized_name is None:
@@ -217,7 +238,9 @@ class ENSResolver:
             ENS name or None if not found
 
         Raises:
-            ValueError: If ENS is not supported on this network
+            ENSScannerUnavailableError: If ENS is not supported on this
+                network (subclasses ``ValueError``, so existing handlers
+                keep working).
 
         Example:
             ```python
@@ -226,10 +249,7 @@ class ENSResolver:
             ```
         """
         if not self._is_ens_supported():
-            raise ValueError(
-                f'ENS is only supported on Ethereum mainnet. '
-                f'Current network: {self.client.network} (chain_id={self.client.chain_id})'
-            )
+            raise _ens_unavailable(self.client)
 
         if not isinstance(address, str):
             return None
@@ -260,14 +280,19 @@ class ENSResolver:
     async def _safe_resolve(self, name: str) -> str | None:
         """Resolve a single name; ``None`` when the name has no record.
 
-        A library-level failure (the scanner does not declare ``eth_call``,
-        the provider rate-limited, the transport gave up) propagates: it is a
-        property of the batch, not of this one name, and absorbing it would
-        report "no such name" for every input.
+        Library-level failures propagate: it is a property of the batch,
+        not of this one name, and absorbing it would report "no such name"
+        for every input. That covers the scanner not declaring ``eth_call``
+        (:class:`MethodNotDeclaredError`), the provider rate-limiting or
+        the transport giving up (:class:`ChainscanClientError` family) and
+        the network not serving ENS at all
+        (:class:`ENSScannerUnavailableError`) — the same signal the batch
+        gate raises, re-raised here too in case a caller reaches this seam
+        directly.
         """
         try:
             return await self.resolve_name(name)
-        except (ChainscanClientError, MethodNotDeclaredError):
+        except (ChainscanClientError, ENSScannerUnavailableError, MethodNotDeclaredError):
             raise
         except Exception:  # noqa: BLE001 - one malformed input must not void the batch
             return None
@@ -280,7 +305,7 @@ class ENSResolver:
         """
         try:
             return await self.lookup_address(address)
-        except (ChainscanClientError, MethodNotDeclaredError):
+        except (ChainscanClientError, ENSScannerUnavailableError, MethodNotDeclaredError):
             raise
         except Exception:  # noqa: BLE001 - one malformed input must not void the batch
             return None
@@ -296,11 +321,14 @@ class ENSResolver:
 
         Inputs sharing a normalized ``input_key`` collapse to one live
         lookup (``resolve_one`` on the first spelling); a string result is
-        replicated to every spelling of that key, while failures (``None``)
-        are omitted from the result.
+        replicated to every spelling of that key, while "record absent"
+        (``None``) is omitted from the result. Unavailability is NOT
+        omitted: an unsupported network raises the same
+        :class:`ENSScannerUnavailableError` the singles raise — one
+        condition, one shape.
         """
         if not self._is_ens_supported():
-            return {}
+            raise _ens_unavailable(self.client)
 
         resolved: dict[str, str] = {}
         spellings_by_key: dict[str, list[str]] = {}
@@ -327,7 +355,14 @@ class ENSResolver:
             names: List of ENS names
 
         Returns:
-            Dict mapping names to addresses (only successful resolutions)
+            Dict mapping names to addresses (only successful resolutions;
+            a name with no record is absent)
+
+        Raises:
+            ENSScannerUnavailableError: If ENS is not supported on this
+                network — the same signal the singles raise, raised before
+                any request. Failures that mean "record absent" keep being
+                omitted from the result.
 
         Example:
             ```python
@@ -347,7 +382,14 @@ class ENSResolver:
             addresses: List of Ethereum addresses
 
         Returns:
-            Dict mapping addresses to names (only successful lookups)
+            Dict mapping addresses to names (only successful lookups; an
+            address with no reverse record is absent)
+
+        Raises:
+            ENSScannerUnavailableError: If ENS is not supported on this
+                network — the same signal the singles raise, raised before
+                any request. Failures that mean "record absent" keep being
+                omitted from the result.
 
         Example:
             ```python
