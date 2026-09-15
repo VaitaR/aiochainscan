@@ -6,7 +6,38 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Proxy resolution is reachable from the name agents actually use.**
+  `get_contract_abi(address, follow_proxy=True)` resolves a proxy to its implementation
+  before fetching the ABI; without the flag it still returns the ABI the explorer stores
+  for that address, which for a proxy declares none of the functions its traffic calls.
+  `get_contract()` / `SmartContract.from_address()` already resolved and now say so.
+- **`proxy_strategy` chooses where an implementation is looked for**: `'metadata'`
+  (default, explorer only, no extra request), `'chain'` (storage slots and the EIP-2535
+  loupe only) or `'auto'` (metadata first, chain as fallback, up to five extra requests).
+  The chain path reads the EIP-1967, EIP-1822, legacy zeppelinos and EIP-1967 beacon slots
+  in that order — no single slot suffices, as USDC keeps its implementation in the legacy
+  slot while stkAAVE answers at EIP-1967. Where explorer and chain disagree the chain
+  wins, and `ProxyMetadata.source` records which answered.
+- **Diamonds (EIP-2535) decode.** A diamond's ABI is assembled from every facet the
+  `facets()` loupe reports (or every address BlockScout lists in
+  `ImplementationAddresses`); `SmartContract.facets` names the sources and
+  `SmartContract.missing_facets` names any facet with no verified ABI, so a partial ABI
+  cannot pass for a complete one. The MCP tools report both in `notes`.
+- `Method.PROXY_GET_STORAGE_AT` / `client.eth_get_storage_at(address, position, tag)`,
+  declared by Etherscan v2, BlockScout v1 and NodeReal.
+
 ### Changed
+
+- **Every ABI-consuming MCP tool resolves proxies first** (`get_contract_abi`,
+  `read_contract`, `get_transaction_info`'s input decode), where they previously fetched
+  the proxy's own ABI and decoded nothing. `read_contract` still sends its `eth_call` to
+  the proxy address — only the ABI comes from the implementation.
+- **Proxy metadata is read in both explorer dialects.** Only Etherscan's `Proxy` /
+  `Implementation` keys were consulted, so every BlockScout proxy (`IsProxy` /
+  `ImplementationAddress` / `ImplementationAddresses`) read as a plain contract — on the
+  keyless default MCP scanner, that was every proxy.
 
 - **One ENS unavailability signal, honoured by the batch path.** The new
   `ENSScannerUnavailableError` (a `ValueError` subclass, exported from the package root) is
