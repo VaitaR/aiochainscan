@@ -19,9 +19,11 @@ from aiochainscan.core.client import ChainscanClient
 from aiochainscan.core.streaming import STREAMING_SPECS
 from aiochainscan.domain.method import Method
 from aiochainscan.domain.models import Address, TxHash
+from aiochainscan.exceptions import ChainscanClientError
 
 TEST_ADDRESS = '0x1111111111111111111111111111111111111111'
 TEST_CONTRACT = '0x2222222222222222222222222222222222222222'
+TEST_IMPLEMENTATION = '0x3333333333333333333333333333333333333333'
 TEST_TX_HASH = '0x' + ('a' * 64)
 # Lowercase input whose EIP-55 checksum is mixed-case, so a raw-string
 # forward is distinguishable from the Address() checksum wrap.
@@ -308,6 +310,56 @@ class TestSinglePageConvenienceMethods:
     ) -> None:
         mock_call.return_value = [{'type': 'function'}]
         assert await client.get_contract_abi(TEST_CONTRACT) == '[{"type": "function"}]'
+
+    @pytest.mark.asyncio
+    async def test_get_contract_abi_default_keeps_proxy_abi(
+        self, client: ChainscanClient, mock_call: AsyncMock
+    ) -> None:
+        """Without the flag a proxy address is never resolved — one call, proxy ABI."""
+        mock_call.return_value = '[{"type":"function","name":"admin"}]'
+        result = await client.get_contract_abi(TEST_CONTRACT)
+        mock_call.assert_awaited_once_with(
+            Method.CONTRACT_ABI, address=str(Address(TEST_CONTRACT))
+        )
+        assert result == '[{"type":"function","name":"admin"}]'
+
+    @pytest.mark.asyncio
+    async def test_get_contract_abi_follow_proxy(
+        self, client: ChainscanClient, mock_call: AsyncMock
+    ) -> None:
+        mock_call.side_effect = [
+            [{'Proxy': '1', 'Implementation': TEST_IMPLEMENTATION}],
+            '[{"type":"function","name":"stake"}]',
+        ]
+        result = await client.get_contract_abi(TEST_CONTRACT, follow_proxy=True)
+        mock_call.assert_any_call(Method.CONTRACT_SOURCE, address=TEST_CONTRACT.lower())
+        mock_call.assert_any_call(Method.CONTRACT_ABI, address=str(Address(TEST_IMPLEMENTATION)))
+        assert result == '[{"type":"function","name":"stake"}]'
+
+    @pytest.mark.asyncio
+    async def test_get_contract_abi_follow_proxy_on_plain_contract(
+        self, client: ChainscanClient, mock_call: AsyncMock
+    ) -> None:
+        mock_call.side_effect = [
+            [{'Proxy': '0'}],
+            '[{"type":"function","name":"transfer"}]',
+        ]
+        result = await client.get_contract_abi(TEST_CONTRACT, follow_proxy=True)
+        mock_call.assert_any_call(Method.CONTRACT_ABI, address=str(Address(TEST_CONTRACT)))
+        assert result == '[{"type":"function","name":"transfer"}]'
+
+    @pytest.mark.asyncio
+    async def test_get_contract_abi_follow_proxy_source_unavailable(
+        self, client: ChainscanClient, mock_call: AsyncMock
+    ) -> None:
+        """An explorer that cannot answer the proxy question must not void the ABI fetch."""
+        mock_call.side_effect = [
+            ChainscanClientError('source unavailable'),
+            '[{"type":"function","name":"transfer"}]',
+        ]
+        result = await client.get_contract_abi(TEST_CONTRACT, follow_proxy=True)
+        mock_call.assert_any_call(Method.CONTRACT_ABI, address=str(Address(TEST_CONTRACT)))
+        assert result == '[{"type":"function","name":"transfer"}]'
 
     @pytest.mark.asyncio
     async def test_get_contract_source(

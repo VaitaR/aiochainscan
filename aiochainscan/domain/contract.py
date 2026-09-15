@@ -57,6 +57,43 @@ class ContractClient(Protocol):
     ) -> AsyncIterator[dict[str, Any]]: ...
 
 
+async def resolve_proxy_metadata(
+    address: str,
+    client: ContractClient,
+) -> tuple[bool, str | None]:
+    """Ask the explorer whether ``address`` is a proxy and what it points at.
+
+    Returns ``(is_proxy, implementation_address)``; the implementation is
+    lowercased and is ``None`` when the explorer flags a proxy without naming
+    one. Explorer metadata (``getsourcecode``'s ``Proxy`` / ``Implementation``)
+    is the ONLY source — a proxy the explorer has not flagged reads here as a
+    plain contract, and no scanner declares ``eth_getStorageAt``, so the
+    EIP-1967 slot cannot be read as a cross-check.
+
+    A ``CONTRACT_SOURCE`` failure yields ``(False, None)``: an explorer that
+    cannot answer must not stop the caller from fetching the address's own ABI.
+    """
+    try:
+        source_data = await client.call(Method.CONTRACT_SOURCE, address=address)
+    except ChainscanClientError:
+        return False, None
+
+    if isinstance(source_data, list) and len(source_data) > 0:
+        contract_info = source_data[0]
+    elif isinstance(source_data, dict):
+        contract_info = source_data
+    else:
+        contract_info = {}
+
+    proxy_flag = contract_info.get('Proxy', '0')
+    is_proxy = proxy_flag == '1' or str(proxy_flag).lower() == 'true'
+    if not is_proxy:
+        return False, None
+
+    implementation = contract_info.get('Implementation', '')
+    return True, implementation.lower() if implementation else None
+
+
 class SmartContract:
     """
     High-level abstraction for smart contract interactions.
@@ -153,11 +190,11 @@ class SmartContract:
         """
         Create a SmartContract instance by fetching ABI and resolving proxies.
 
-        This method:
-        1. Fetches contract source code metadata
-        2. Detects if it's a proxy contract
-        3. If proxy, fetches the implementation contract's ABI
-        4. Returns fully initialized SmartContract instance
+        For a proxy the ABI loaded is the IMPLEMENTATION's — the proxy's own ABI
+        declares none of the functions its traffic calls. Resolution reads
+        explorer metadata (see :func:`resolve_proxy_metadata`), so a proxy the
+        explorer has not flagged still yields the proxy's ABI; ``is_proxy`` says
+        which happened.
 
         Args:
             address: Contract address
@@ -182,34 +219,7 @@ class SmartContract:
         """
         address = address.lower()
 
-        # Fetch contract source to check for proxy
-        is_proxy = False
-        implementation_address = None
-
-        try:
-            source_data = await client.call(Method.CONTRACT_SOURCE, address=address)
-
-            # Check if it's a proxy (Etherscan/BlockScout format)
-            if isinstance(source_data, list) and len(source_data) > 0:
-                contract_info = source_data[0]
-            elif isinstance(source_data, dict):
-                contract_info = source_data
-            else:
-                contract_info = {}
-
-            # Check proxy flag
-            proxy_flag = contract_info.get('Proxy', '0')
-            is_proxy = proxy_flag == '1' or str(proxy_flag).lower() == 'true'
-
-            if is_proxy:
-                # Extract implementation address
-                implementation_address = contract_info.get('Implementation', '')
-                if implementation_address:
-                    implementation_address = implementation_address.lower()
-
-        except ChainscanClientError:
-            # If CONTRACT_SOURCE fails, continue with regular ABI fetch
-            pass
+        is_proxy, implementation_address = await resolve_proxy_metadata(address, client)
 
         # Fetch ABI (from implementation if proxy, otherwise from contract itself)
         abi_address = implementation_address if implementation_address else address

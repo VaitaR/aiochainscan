@@ -44,7 +44,8 @@ async with ChainscanClient.from_config('etherscan', 'ethereum') as client:
     reached   = await client.wait_for_block(20_000_000)           # poll until reached (600s/10s)
 
     # ── Contracts ────────────────────────────────────────────
-    abi     = await client.get_contract_abi('0x...')              # JSON ABI
+    abi     = await client.get_contract_abi('0x...')              # JSON ABI (this address)
+    impl    = await client.get_contract_abi('0x...', follow_proxy=True)  # proxy -> implementation ABI
     source  = await client.get_contract_source('0x...')           # verified source
     created = await client.get_contract_creation(['0x...'])       # creator + tx
     verdict = await client.wait_for_verification(guid)            # poll Pass/Fail (300s/10s)
@@ -73,7 +74,7 @@ async with ChainscanClient.from_config('etherscan', 'ethereum') as client:
     bal_hex = await client.eth_get_balance('0x...')                # hex Wei
 
     # ── High-level APIs ──────────────────────────────────────
-    contract = await client.get_contract('0x...')                  # SmartContract
+    contract = await client.get_contract('0x...')                  # SmartContract (follows proxies)
     async for event in contract.iter_events("Transfer", limit=100):
         print(event.args['from'], event.args['to'], event.args['value'])
 
@@ -305,6 +306,13 @@ async with ChainscanClient.from_config('etherscan', 'ethereum') as client:
 - `get_all_*()` / `iter_*_streaming()` default to `guarantee_complete=True` — complete data or an exception, never silent truncation (see below).
 - A **bounded** block range (`from_block > 0` / concrete `to_block`) on a provider whose spec declares no block-range params (e.g. BlockScout V2 transactions) raises `BlockRangeNotSupportedError` at every seam — single-page `get_*`, `call()`, `fetch_page()`, streams — instead of silently dropping the bounds; unbounded calls behave exactly as before.
 - `get_transactions_df()` auto-paginates (uses `iter_transactions` internally).
+- `get_contract_abi()` returns the ABI the explorer stores **for that address**. For a
+  proxy that is the PROXY's ABI, which decodes none of its traffic — every call reaching a
+  proxy targets a selector the implementation declares. Pass `follow_proxy=True`, or use
+  `get_contract()` / `SmartContract.from_address()`, which resolve unconditionally. Both
+  routes read explorer `Proxy`/`Implementation` metadata (`resolve_proxy_metadata` in
+  `domain/contract.py`), so an unflagged proxy still yields the proxy ABI; the EIP-1967
+  storage slot is not read, because no scanner declares `eth_getStorageAt`.
 - Balance/value/supply values are **Wei strings** — convert with `wei_to_ether()` / `to_decimal_amount()` (exact `Decimal`), never `int(wei) / 10**18` float division.
 
 > **Note:** Legacy `Client` class and `modules/` were removed in v0.3.0 (see also the public API policy above).

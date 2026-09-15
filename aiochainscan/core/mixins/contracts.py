@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any, cast
 
-from ...domain.contract import SmartContract
+from ...domain.contract import SmartContract, resolve_proxy_metadata
 from ...domain.method import Method
 from ...domain.models import Address
 from ...exceptions import ChainscanClientApiError, ChainscanRateLimitError
@@ -17,9 +17,27 @@ from ._waiting import api_error_text, poll_until_final
 class ContractMixin:
     """Contract-focused typed convenience methods."""
 
-    async def get_contract_abi(self: ClientHost, address: str) -> str:
-        """Get contract ABI as JSON string."""
-        result: Any = await self.call(Method.CONTRACT_ABI, address=str(Address(address)))
+    async def get_contract_abi(
+        self: ClientHost, address: str, *, follow_proxy: bool = False
+    ) -> str:
+        """Get contract ABI as JSON string.
+
+        By default this is the ABI the explorer stores FOR THIS ADDRESS. For an
+        EIP-1967/Transparent proxy that is the proxy's own ABI, which decodes
+        none of the traffic sent to it — every call reaching a proxy targets a
+        selector declared by the implementation.
+
+        Pass ``follow_proxy=True`` to resolve the implementation first (or use
+        :meth:`get_contract`, which does it unconditionally and returns a
+        decoded-access wrapper). Resolution relies on explorer metadata, so a
+        proxy the explorer has not flagged still yields the proxy's ABI.
+        """
+        resolved = str(Address(address))
+        if follow_proxy:
+            _, implementation = await resolve_proxy_metadata(resolved.lower(), self)
+            if implementation:
+                resolved = str(Address(implementation))
+        result: Any = await self.call(Method.CONTRACT_ABI, address=resolved)
         return result if isinstance(result, str) else json.dumps(result)
 
     async def get_contract_source(self: ClientHost, address: str) -> JSONDict:
@@ -40,7 +58,13 @@ class ContractMixin:
         return result if isinstance(result, list) else []
 
     async def get_contract(self: ClientHost, address: str) -> SmartContract:
-        """Get a SmartContract instance with automatic ABI fetching."""
+        """Get a SmartContract instance with automatic ABI fetching.
+
+        Resolves a proxy to its implementation ABI when the explorer flags one
+        (``Proxy``/``Implementation`` metadata), so the returned contract
+        decodes the traffic the address actually receives. ``get_contract_abi``
+        does NOT do this unless asked (``follow_proxy=True``).
+        """
         return await SmartContract.from_address(address, self)
 
     async def wait_for_verification(
