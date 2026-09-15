@@ -60,7 +60,9 @@ async def main(address: str) -> None:
         supply = await client.get_eth_supply()
         print(f'ETH supply: {wei_to_ether(supply):,.0f} ETH')
 
-        abi = json.loads(await client.get_contract_abi(USDC))
+        # USDC is a proxy: without follow_proxy this lists the proxy's own
+        # functions (admin, upgradeTo, ...), not the token's.
+        abi = json.loads(await client.get_contract_abi(USDC, follow_proxy=True))
         functions = [entry['name'] for entry in abi if entry.get('type') == 'function']
         print(f'\nUSDC ABI: {len(abi)} entries, {len(functions)} functions')
         print(f'  first five: {", ".join(functions[:5])}')

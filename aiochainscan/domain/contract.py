@@ -208,13 +208,13 @@ class SmartContract:
 
         Example:
             ```python
-            # USDT is a proxy contract - this automatically resolves it
-            usdt = await SmartContract.from_address(
-                "0xdac17f958d2ee523a2206206994597c13d831ec7",
+            # USDC is a proxy (FiatTokenProxy) - this resolves it
+            usdc = await SmartContract.from_address(
+                "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
                 client
             )
-            print(f"Is proxy: {usdt.is_proxy}")
-            print(f"Implementation: {usdt.implementation_address}")
+            print(f"Is proxy: {usdc.is_proxy}")                 # True
+            print(f"Implementation: {usdc.implementation_address}")
             ```
         """
         address = address.lower()

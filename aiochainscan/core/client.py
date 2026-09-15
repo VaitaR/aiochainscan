@@ -673,7 +673,7 @@ class ChainscanClient(
                 print(f"Hash: {tx['hash']}")
 
             # Stream with decoding
-            abi = json.loads(await client.get_contract_abi(contract_address))
+            abi = json.loads(await client.get_contract_abi(contract_address, follow_proxy=True))
             async for tx in client.iter_transactions(whale_address, abi=abi):
                 print(f"Function: {tx['decoded_func']}")
                 print(f"Args: {tx['decoded_data']}")
@@ -1143,7 +1143,7 @@ class ChainscanClient(
         Example:
             ```python
             # Stream Transfer events
-            abi = json.loads(await client.get_contract_abi(usdt_address))
+            abi = json.loads(await client.get_contract_abi(usdt_address, follow_proxy=True))
             async for log in client.iter_logs(usdt_address, abi=abi):
                 if log.get('decoded_event') == 'Transfer':
                     print(f"From: {log['decoded_data'].get('from')}")

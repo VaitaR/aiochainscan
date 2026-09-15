@@ -99,7 +99,9 @@ async def example_stream_with_decoding():
         try:
             # Fetch ABI once
             print(f'Fetching ABI for {usdt_address}...')
-            abi_json = await client.get_contract_abi(usdt_address)
+            # follow_proxy costs one extra call and is the safe default for an
+            # address you did not verify by hand: a proxy's own ABI decodes nothing.
+            abi_json = await client.get_contract_abi(usdt_address, follow_proxy=True)
             abi = json.loads(abi_json) if isinstance(abi_json, str) else abi_json
 
             # Track function call statistics
@@ -163,7 +165,7 @@ async def example_stream_events():
 
         try:
             print(f'Fetching ABI for {weth_address}...')
-            abi_json = await client.get_contract_abi(weth_address)
+            abi_json = await client.get_contract_abi(weth_address, follow_proxy=True)
             abi = json.loads(abi_json) if isinstance(abi_json, str) else abi_json
 
             count = 0

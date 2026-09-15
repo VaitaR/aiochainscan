@@ -259,7 +259,7 @@ Streaming batches can be combined with ABI decoding via `iter_transactions(abi=.
 
 ```python
 # Use existing iter_transactions() for decoding
-abi = json.loads(await client.get_contract_abi(contract_address))
+abi = json.loads(await client.get_contract_abi(contract_address, follow_proxy=True))
 
 async for tx in client.iter_transactions(
     whale_address,

@@ -57,6 +57,7 @@ async with ChainscanClient.from_config('etherscan', 'ethereum') as client:
 
     # Contracts and logs
     abi = await client.get_contract_abi(contract_address)
+    impl_abi = await client.get_contract_abi(proxy_address, follow_proxy=True)
     source = await client.get_contract_source(contract_address)
     logs = await client.get_logs(contract_address, from_block=20_000_000)
 
