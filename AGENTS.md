@@ -329,6 +329,7 @@ Branch types: `feat | fix | chore | docs | arch | refactor` (2nd arg, default `f
 | Script | Purpose |
 |--------|---------|
 | `new-worktree.sh` | Bootstrap an isolated session worktree |
+| `provision-worktree.sh` | Provision an EXISTING worktree (.env, skills, .venv, fastabi) — shared by `new-worktree.sh` and `../xworker-bootstrap.sh`, which xworker runs on the worktrees it creates itself |
 | `rm-worktree.sh` | Safe teardown — removes only clean + merged worktrees, squash-merge aware, integration branches protected |
 | `preflight.sh` | Run BEFORE starting: env, deps, imports, test collection, fastabi status |
 | `validate_fast.sh` | The DONE gate — ruff, format, import-lint, mypy --strict, full pytest |
