@@ -827,6 +827,13 @@ Agent adapter over `ChainscanClient` — **run**: `python -m aiochainscan.mcp_se
   accepted by registering the scanner alone.
 - Unsupported scanner methods → envelope `notes` (with scanner hints), never a
   crash; primary-call failures still raise (clean MCP error).
+- Every ABI-consuming tool (`get_contract_abi`, `read_contract`,
+  `get_transaction_info`'s input decode) resolves a proxy to its implementation
+  before fetching the ABI, and says so in `notes` — a proxy's own ABI declares
+  none of the functions its traffic calls. The probe costs one `CONTRACT_SOURCE`
+  call and is best effort: a scanner that does not declare that method leaves
+  the tool on the proxy's ABI rather than failing. `read_contract` still sends
+  `eth_call` to the PROXY address — only the ABI comes from the implementation.
 - Default scanner `blockscout` (keyless, v1); override per call (`scanner=`)
   or via `AIOCHAINSCAN_MCP_SCANNER`.
 - `mcp/cursors.py` and `mcp/envelope.py` import WITHOUT the `mcp` extra, and

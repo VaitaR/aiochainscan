@@ -51,6 +51,7 @@ WALLET = '0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed'
 WALLET_OTHER = '0xfB6916095ca1df60bB79Ce92cE3Ea74c37c5d359'
 TOKEN = '0xdAC17F958D2ee523a2206206994597C13D831ec7'
 TX_HASH = '0x' + 'ab' * 32
+IMPLEMENTATION = '0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984'
 TRANSFER_ABI = [
     {
         'type': 'function',
@@ -105,6 +106,8 @@ class StubClient:
         self.get_token_info = _AsyncReturner({})
         self.get_token_holder_count = _AsyncReturner(0)
         self.get_contract_abi = _AsyncReturner('[]')
+        # Raw Method call: only the proxy-metadata probe uses it.
+        self.call = _AsyncReturner([{'Proxy': '0'}])
         self.eth_call = _AsyncReturner('0x')
         self.resolve_name = _AsyncReturner(None)
         self.lookup_address = _AsyncReturner(None)
@@ -966,6 +969,39 @@ class TestGetContractAbi:
         assert response.data is None
         assert response.notes is not None
 
+    async def test_proxy_reports_implementation_abi(self) -> None:
+        """A proxy's own ABI describes none of its traffic — follow it and say so."""
+        client = StubClient()
+        client.support(Method.CONTRACT_ABI, Method.CONTRACT_SOURCE)
+        client.call.value = [{'Proxy': '1', 'Implementation': IMPLEMENTATION}]
+        client.get_contract_abi.value = json.dumps(TRANSFER_ABI)
+        response = await mcp_tools.get_contract_abi(client, TOKEN)
+        assert response.data is not None
+        assert response.data['contract_address'] == TOKEN
+        assert response.data['implementation_address'] == IMPLEMENTATION
+        assert client.get_contract_abi.calls[0]['args'][0] == IMPLEMENTATION.lower()
+        assert any('implementation' in note for note in response.notes or [])
+
+    async def test_plain_contract_reports_no_implementation(self) -> None:
+        client = StubClient()
+        client.support(Method.CONTRACT_ABI, Method.CONTRACT_SOURCE)
+        client.get_contract_abi.value = json.dumps(TRANSFER_ABI)
+        response = await mcp_tools.get_contract_abi(client, TOKEN)
+        assert response.data is not None
+        assert 'implementation_address' not in response.data
+        assert client.get_contract_abi.calls[0]['args'][0] == TOKEN
+        assert not any('implementation' in note for note in response.notes or [])
+
+    async def test_scanner_without_source_endpoint_still_answers(self) -> None:
+        """The proxy probe is best effort: no source endpoint, no extra call, ABI as-is."""
+        client = StubClient()
+        client.support(Method.CONTRACT_ABI)
+        client.get_contract_abi.value = json.dumps(TRANSFER_ABI)
+        response = await mcp_tools.get_contract_abi(client, TOKEN)
+        assert response.data is not None
+        assert response.data['function_count'] == 1
+        assert client.call.calls == []
+
 
 class TestReadContract:
     async def test_happy_path(self) -> None:
@@ -985,6 +1021,20 @@ class TestReadContract:
         client = StubClient()
         with pytest.raises(ValueError, match='args'):
             await mcp_tools.read_contract(client, TOKEN, 'balanceOf', args='not json')
+
+    async def test_proxy_uses_implementation_abi_but_calls_proxy(self) -> None:
+        """The ABI comes from the implementation; eth_call still targets the proxy."""
+        client = StubClient()
+        client.support(Method.CONTRACT_ABI, Method.CONTRACT_SOURCE, Method.PROXY_ETH_CALL)
+        client.call.value = [{'Proxy': '1', 'Implementation': IMPLEMENTATION}]
+        client.get_contract_abi.value = json.dumps(BALANCE_OF_ABI)
+        client.eth_call.value = '0x' + (7).to_bytes(32, 'big').hex()
+        response = await mcp_tools.read_contract(client, TOKEN, 'balanceOf', args=f'["{WALLET}"]')
+        assert response.data is not None
+        assert response.data['result'] == {'balance': '7'}
+        assert client.get_contract_abi.calls[0]['args'][0] == IMPLEMENTATION.lower()
+        assert client.eth_call.calls[0]['kwargs']['to'] == TOKEN
+        assert any('proxy address' in note for note in response.notes or [])
 
     async def test_arity_mismatch(self) -> None:
         client = StubClient()

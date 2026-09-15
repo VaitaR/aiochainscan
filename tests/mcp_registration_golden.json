@@ -377,7 +377,7 @@
  },
  {
   "annotations": null,
-  "description": "Get a curated summary of a verified contract ABI: function/event signatures.\n\nread_contract fetches and applies the full ABI automatically — this\ntool is for discovery.\n",
+  "description": "Get a curated summary of a verified contract ABI: function/event signatures.\n\nProxies are followed: for a proxy address the summary describes the\nimplementation (reported as implementation_address), because a\nproxy's own ABI declares none of the functions it runs.\n\nread_contract fetches and applies the full ABI automatically — this\ntool is for discovery.\n",
   "execution": null,
   "icons": null,
   "inputSchema": {
@@ -417,7 +417,7 @@
  },
  {
   "annotations": null,
-  "description": "Call a view/pure contract function via auto-fetched ABI + eth_call, outputs decoded.\n\nNo manual ABI needed: the verified ABI is fetched, the function found\nby name, arguments encoded and outputs decoded automatically.\n`args` is a JSON array string, e.g. '[\"0xabc...\", 5]'; numeric strings\ncoerce to ints, 0x-hex strings pass through for bytes arguments.\n",
+  "description": "Call a view/pure contract function via auto-fetched ABI + eth_call, outputs decoded.\n\nNo manual ABI needed: the verified ABI is fetched (from the\nimplementation when the address is a proxy), the function found\nby name, arguments encoded and outputs decoded automatically.\n`args` is a JSON array string, e.g. '[\"0xabc...\", 5]'; numeric strings\ncoerce to ints, 0x-hex strings pass through for bytes arguments.\n",
   "execution": null,
   "icons": null,
   "inputSchema": {

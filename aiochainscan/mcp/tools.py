@@ -27,7 +27,7 @@ import json
 import os
 from collections.abc import Callable
 from functools import partial
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import orjson
 
@@ -40,6 +40,7 @@ from ..chain_registry import (
     resolve_chain_id,
 )
 from ..decode import decode_transaction_input
+from ..domain.contract import resolve_proxy_metadata
 from ..domain.method import Method
 from ..domain.models import Address
 from ..domain.normalize import (
@@ -59,7 +60,7 @@ from ..domain.normalize import (
     flat_address,
     int_or_default,
 )
-from ..exceptions import ChainscanClientError
+from ..exceptions import ChainscanClientError, MethodNotDeclaredError
 from ..scanners import SCANNER_REGISTRY, chains_served_by
 from .cursors import decode_tool_cursor, encode_cursor
 from .envelope import (
@@ -352,26 +353,69 @@ def _next_call_params(
     return merged
 
 
-async def _fetch_verified_abi(
-    client: ChainscanClient, contract: str
-) -> tuple[list[Any] | None, str | None]:
-    """Fetch and parse a verified ABI, degrading to ``(None, note)``.
+class VerifiedAbi(NamedTuple):
+    """Outcome of an ABI fetch: exactly one of ``abi`` and ``failure`` is set.
+
+    ``implementation`` is the address the ABI actually came from when
+    ``contract`` turned out to be a proxy.
+    """
+
+    abi: list[Any] | None
+    failure: str | None
+    implementation: str | None
+
+    @property
+    def notes(self) -> list[str]:
+        """Context worth surfacing on success — one wording, one home."""
+        if self.implementation is None:
+            return []
+        return [
+            f'Proxy contract: ABI taken from implementation {self.implementation}; '
+            'calls and transactions still go to the proxy address.'
+        ]
+
+
+async def _resolve_abi_address(client: ChainscanClient, contract: str) -> str | None:
+    """Implementation address behind ``contract``, or ``None`` to use it as-is.
+
+    A proxy's own ABI declares none of the functions its traffic calls, so
+    every ABI-consuming tool asks this first. Best effort by design: a scanner
+    that cannot answer the proxy question leaves the caller on the proxy's ABI,
+    which is worse than the implementation's but better than no answer.
+    """
+    if not client.supports_method(Method.CONTRACT_SOURCE):
+        return None
+    try:
+        _, implementation = await resolve_proxy_metadata(contract.lower(), client)
+    except MethodNotDeclaredError:
+        return None
+    return implementation
+
+
+async def _fetch_verified_abi(client: ChainscanClient, contract: str) -> VerifiedAbi:
+    """Fetch and parse the verified ABI that describes what ``contract`` runs.
 
     ONE wording per failure for every ABI-consuming site (input decoding,
     the ABI summary tool, read_contract): the same fetch failure must not
     read three different ways. Callers append their own context suffix.
     """
+    implementation = await _resolve_abi_address(client, contract)
+    source = implementation or contract
     try:
-        abi_json = await client.get_contract_abi(contract)
+        abi_json = await client.get_contract_abi(source)
     except ChainscanClientError as exc:
-        return None, f'No verified ABI for {contract}: {exc}'
+        return VerifiedAbi(None, f'No verified ABI for {source}: {exc}', implementation)
     try:
         abi = orjson.loads(abi_json) if isinstance(abi_json, str) else abi_json
     except orjson.JSONDecodeError:
-        return None, f'No verified ABI for {contract}: response is not valid JSON'
+        return VerifiedAbi(
+            None, f'No verified ABI for {source}: response is not valid JSON', implementation
+        )
     if not isinstance(abi, list) or not abi:
-        return None, f'Contract {contract} has no verified ABI on this scanner'
-    return abi, None
+        return VerifiedAbi(
+            None, f'Contract {source} has no verified ABI on this scanner', implementation
+        )
+    return VerifiedAbi(abi, None, implementation)
 
 
 # Cursor allow-lists are DERIVED, not hand-listed: every scanner declares the
@@ -708,20 +752,20 @@ async def _best_effort_status(
 async def _decode_input_best_effort(
     client: ChainscanClient, contract: str, raw_input: str
 ) -> tuple[dict[str, Any] | None, str | None]:
-    """Decode calldata via the explorer ABI; failures degrade to a note."""
+    """Decode calldata via the explorer ABI; failures and proxy resolution become notes."""
     if not contract:
         return None, None
     if not client.supports_method(Method.CONTRACT_ABI):
         return None, 'Input decoding unavailable: scanner lacks the ABI endpoint.'
-    abi, fetch_note = await _fetch_verified_abi(client, contract)
-    if abi is None:
-        return None, f'{fetch_note}; raw input kept.'
-    decoded = decode_transaction_input({'input': raw_input}, abi)
+    fetched = await _fetch_verified_abi(client, contract)
+    if fetched.abi is None:
+        return None, f'{fetched.failure}; raw input kept.'
+    decoded = decode_transaction_input({'input': raw_input}, fetched.abi)
     name = decoded.get('decoded_func')
     if not isinstance(name, str) or not name:
         return None, 'Function selector not found in the contract ABI; raw input kept.'
     args_data, _ = truncate_long_strings(decoded.get('decoded_data') or {})
-    return {'function': name, 'args': args_data}, None
+    return {'function': name, 'args': args_data}, '; '.join(fetched.notes) or None
 
 
 async def get_token_portfolio(
@@ -949,13 +993,14 @@ async def get_contract_abi(client: ChainscanClient, address: str) -> ToolRespons
     if not client.supports_method(Method.CONTRACT_ABI):
         return _unsupported_response(client, Method.CONTRACT_ABI, what=f'fetch ABI of {contract}')
 
-    abi, abi_note = await _fetch_verified_abi(client, contract)
+    fetched = await _fetch_verified_abi(client, contract)
+    abi = fetched.abi
     if abi is None:
-        # (None, note) is the only failure shape the helper returns.
-        assert abi_note is not None
+        # A null abi always carries a failure note; nothing else sets one.
+        assert fetched.failure is not None
         return build_tool_response(
             data=None,
-            notes=[abi_note],
+            notes=[fetched.failure],
             content_text=f'No verified ABI for {contract}.',
         )
 
@@ -970,16 +1015,19 @@ async def get_contract_abi(client: ChainscanClient, address: str) -> ToolRespons
         if isinstance(item, dict) and item.get('type') == 'event' and item.get('name')
     ]
     signatures = [canonical_signature(str(fn['name']), fn.get('inputs') or []) for fn in functions]
-    notes: list[str] = []
+    notes: list[str] = list(fetched.notes)
     if len(signatures) > _ABI_SIGNATURE_LIMIT:
         notes.append(f'Showing {_ABI_SIGNATURE_LIMIT} of {len(signatures)} function signatures.')
+    data: dict[str, Any] = {
+        'contract_address': _checksum(contract),
+        'function_count': len(functions),
+        'event_count': len(events),
+        'functions': signatures[:_ABI_SIGNATURE_LIMIT],
+    }
+    if fetched.implementation is not None:
+        data['implementation_address'] = _checksum(fetched.implementation)
     return build_tool_response(
-        data={
-            'contract_address': _checksum(contract),
-            'function_count': len(functions),
-            'event_count': len(events),
-            'functions': signatures[:_ABI_SIGNATURE_LIMIT],
-        },
+        data=data,
         notes=notes or None,
         instructions=[
             'Call read_contract with any of these function names — the ABI is '
@@ -1011,11 +1059,12 @@ async def read_contract(
             client, Method.CONTRACT_ABI, what=f'read {contract}', capability='ABI endpoint'
         )
     abi_note: str | None = args_note
-    abi, fetch_note = await _fetch_verified_abi(client, contract)
+    fetched = await _fetch_verified_abi(client, contract)
+    abi = fetched.abi
     if abi is None:
         return build_tool_response(
             data=None,
-            notes=[f'{fetch_note}; cannot auto-encode the call.'],
+            notes=[f'{fetched.failure}; cannot auto-encode the call.'],
             content_text=f'Cannot read {function_name} on {contract}: no verified ABI.',
         )
 
@@ -1071,7 +1120,7 @@ async def read_contract(
             client, Method.PROXY_ETH_CALL, what=f'read {contract}', capability='eth_call endpoint'
         )
 
-    notes: list[str] = []
+    notes: list[str] = list(fetched.notes)
     if abi_note:
         notes.append(abi_note)
     if len(overloads) > 1:
