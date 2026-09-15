@@ -38,6 +38,7 @@ _JSON_RPC_ACTIONS: dict[Method, str] = {
     Method.BLOCK_BY_NUMBER: 'eth_getBlockByNumber',
     Method.PROXY_ETH_CALL: 'eth_call',
     Method.PROXY_GET_BALANCE: 'eth_getBalance',
+    Method.PROXY_GET_STORAGE_AT: 'eth_getStorageAt',
 }
 
 #: Methods inherited from ``EtherscanLikeScanner.SPECS`` that BlockScout's
@@ -249,6 +250,12 @@ class BlockScoutV1(EtherscanLikeScanner):
             ]
         elif rpc_method == 'eth_getBalance':
             rpc_params = [params.get('address', ''), params.get('tag', 'latest')]
+        elif rpc_method == 'eth_getStorageAt':
+            rpc_params = [
+                params.get('address', ''),
+                params.get('position', '0x0'),
+                params.get('tag', 'latest'),
+            ]
         elif rpc_method == 'eth_getBlockByNumber':
             # ``block_number`` arrives as int (convenience paths) or as a
             # JSON-RPC tag ('latest', '0x...'); numeric forms become hex

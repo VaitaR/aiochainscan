@@ -8,6 +8,7 @@ method on ChainscanClient, and that critical data-integrity bugs
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator
 from typing import Any
 from unittest.mock import AsyncMock, patch
@@ -335,6 +336,23 @@ class TestSinglePageConvenienceMethods:
         mock_call.assert_any_call(Method.CONTRACT_SOURCE, address=TEST_CONTRACT.lower())
         mock_call.assert_any_call(Method.CONTRACT_ABI, address=str(Address(TEST_IMPLEMENTATION)))
         assert result == '[{"type":"function","name":"stake"}]'
+
+    @pytest.mark.asyncio
+    async def test_get_contract_abi_follow_proxy_merges_a_diamond(
+        self, client: ChainscanClient, mock_call: AsyncMock
+    ) -> None:
+        """One facet's ABI covers one facet's selectors — a diamond needs them all."""
+        facets = [
+            '0x37cefd5b44c131fef27e9bc542e5b77a177a7253',
+            '0x1666124221622eb6154306ea9ba87043e8be88b2',
+        ]
+        mock_call.side_effect = [
+            [{'IsProxy': 'true', 'ImplementationAddresses': facets}],
+            '[{"type":"function","name":"stake","inputs":[]}]',
+            '[{"type":"function","name":"claim","inputs":[]}]',
+        ]
+        result = await client.get_contract_abi(TEST_CONTRACT, follow_proxy=True)
+        assert [entry['name'] for entry in json.loads(result)] == ['stake', 'claim']
 
     @pytest.mark.asyncio
     async def test_get_contract_abi_follow_proxy_on_plain_contract(
@@ -790,6 +808,7 @@ class TestMethodCoverage:
             Method.ETH_PRICE: ['get_eth_price'],
             Method.PROXY_ETH_CALL: ['eth_call'],
             Method.PROXY_GET_BALANCE: ['eth_get_balance'],
+            Method.PROXY_GET_STORAGE_AT: ['eth_get_storage_at'],
         }
 
         # The streaming/aggregated surface is NOT hand-maintained here: every

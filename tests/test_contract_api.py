@@ -6,6 +6,7 @@ and error handling.
 """
 
 import json
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -14,11 +15,14 @@ from aiochainscan.core.client import ChainscanClient
 from aiochainscan.domain.contract import (
     DecodedEvent,
     DecodedTransaction,
+    ProxyMetadata,
     SmartContract,
+    fetch_resolved_abi,
+    merge_facet_abis,
     resolve_proxy_metadata,
 )
 from aiochainscan.domain.method import Method
-from aiochainscan.exceptions import ChainscanClientError
+from aiochainscan.exceptions import ChainscanClientError, MethodNotDeclaredError
 
 # Sample ERC20 ABI (minimal for testing)
 SAMPLE_ERC20_ABI = [
@@ -726,3 +730,253 @@ class TestSmartContractRepr:
         assert 'SmartContract' in repr_str
         assert 'proxy=True' in repr_str
         assert '0x9876543210987654321098765432109876543210' in repr_str
+
+
+# ============================================================================
+# Chain-side proxy resolution: storage slots and the EIP-2535 diamond loupe
+# ============================================================================
+
+EIP1967_SLOT = '0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc'
+ZEPPELINOS_SLOT = '0x7050c9e0f4ca769c69bd3a8ef740bc37934f8e2c036e5a723fd8ee048ed3f8c3'
+BEACON_SLOT = '0xa3f0ad74e5423aebfd80d3ef4346578335a9a72aeaee59ff6cb3582b35133d50'
+EMPTY_WORD = '0x' + '0' * 64
+IMPL = '0x43506849d7c04f9138d1a2050bbf3a0c054402dd'
+
+#: Verbatim ``facets()`` return of the zkSync Era DiamondProxy
+#: (0x32400084C286CF3E17e7B677ea9583e60a000324), captured live 2026-09-15 via
+#: Etherscan v2 ``eth_call``. Pinned so the loupe decode is tested against
+#: what a real diamond answers, not against this library's own encoder.
+DIAMOND_FACETS_RETURN = (
+    (Path(__file__).parent / 'fixtures' / 'diamond_facets_zksync_era.hex').read_text().strip()
+)
+
+ZKSYNC_FACETS = (
+    '0x37cefd5b44c131fef27e9bc542e5b77a177a7253',
+    '0x1666124221622eb6154306ea9ba87043e8be88b2',
+    '0x1e34ab39a9682149165ddecc0583d238a5448b45',
+    '0x0597caa8a823a699d7cd9e62b5e5d4153ff82691',
+)
+
+
+def word(address: str) -> str:
+    """A storage word holding ``address`` in its low 20 bytes."""
+    return '0x' + address[2:].rjust(64, '0')
+
+
+def routing_client(
+    *,
+    source: object = None,
+    slots: dict[str, str] | None = None,
+    calls: dict[str, str] | None = None,
+    abis: dict[str, object] | None = None,
+) -> MagicMock:
+    """A client answering per Method, recording every call it received."""
+    client = MagicMock()
+    client.received = []
+
+    async def call(method, **params):
+        client.received.append((method, params))
+        if method == Method.CONTRACT_SOURCE:
+            if source is None:
+                raise ChainscanClientError('no source')
+            return source
+        if method == Method.PROXY_GET_STORAGE_AT:
+            if slots is None:
+                raise MethodNotDeclaredError('PROXY_GET_STORAGE_AT')
+            return slots.get(params['position'], EMPTY_WORD)
+        if method == Method.PROXY_ETH_CALL:
+            if calls is None:
+                raise ChainscanClientError('execution reverted')
+            answer = calls.get(params['data'])
+            if answer is None:
+                raise ChainscanClientError('execution reverted')
+            return answer
+        if method == Method.CONTRACT_ABI:
+            abi = (abis or {}).get(params['address'])
+            if abi is None:
+                raise ChainscanClientError('not verified')
+            return abi
+        raise AssertionError(f'unexpected method {method}')
+
+    client.call = AsyncMock(side_effect=call)
+    return client
+
+
+class TestSlotLadder:
+    """Explorer metadata and the chain miss different proxies."""
+
+    @pytest.mark.asyncio
+    async def test_metadata_strategy_never_touches_the_chain(self):
+        client = routing_client(source=[{'Proxy': '0'}], slots={EIP1967_SLOT: word(IMPL)})
+        result = await resolve_proxy_metadata('0xdead', client, strategy='metadata')
+        assert result.is_proxy is False
+        assert [method for method, _ in client.received] == [Method.CONTRACT_SOURCE]
+
+    @pytest.mark.asyncio
+    async def test_auto_finds_a_proxy_the_explorer_did_not_flag(self):
+        client = routing_client(source=[{'Proxy': '0'}], slots={EIP1967_SLOT: word(IMPL)})
+        result = await resolve_proxy_metadata('0xdead', client, strategy='auto')
+        assert result.is_proxy is True
+        assert result.implementations == (IMPL,)
+        assert result.source == 'chain'
+
+    @pytest.mark.asyncio
+    async def test_legacy_slot_is_read_when_eip1967_is_empty(self):
+        """The USDC shape: zero at EIP-1967, the address in the zeppelinos slot."""
+        client = routing_client(source=[{'Proxy': '0'}], slots={ZEPPELINOS_SLOT: word(IMPL)})
+        result = await resolve_proxy_metadata('0xa0b8', client, strategy='auto')
+        assert result.implementations == (IMPL,)
+
+    @pytest.mark.asyncio
+    async def test_beacon_slot_asks_the_beacon_for_the_implementation(self):
+        beacon = '0x1111111111111111111111111111111111111111'
+        client = routing_client(
+            source=[{'Proxy': '0'}],
+            slots={BEACON_SLOT: word(beacon)},
+            calls={'0x5c60da1b': word(IMPL)},
+        )
+        result = await resolve_proxy_metadata('0xbeac', client, strategy='auto')
+        assert result.implementations == (IMPL,)
+        assert (Method.PROXY_ETH_CALL, {'to': beacon, 'data': '0x5c60da1b', 'tag': 'latest'}) in (
+            client.received
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_word_that_is_not_an_address_is_not_one(self):
+        """Upper bytes set means the slot holds something else — never guess."""
+        client = routing_client(source=[{'Proxy': '0'}], slots={EIP1967_SLOT: '0x' + 'ff' * 32})
+        result = await resolve_proxy_metadata('0xdead', client, strategy='auto')
+        assert result.is_proxy is False
+
+    @pytest.mark.asyncio
+    async def test_scanner_without_the_method_falls_back_to_metadata(self):
+        client = routing_client(source=[{'Proxy': '1', 'Implementation': IMPL}], slots=None)
+        result = await resolve_proxy_metadata('0xa0b8', client, strategy='auto')
+        assert result.implementations == (IMPL,)
+        assert result.source == 'metadata'
+
+    @pytest.mark.asyncio
+    async def test_chain_wins_over_stale_explorer_metadata(self):
+        stale = '0x2222222222222222222222222222222222222222'
+        client = routing_client(
+            source=[{'Proxy': '1', 'Implementation': stale}],
+            slots={EIP1967_SLOT: word(IMPL)},
+        )
+        result = await resolve_proxy_metadata('0xa0b8', client, strategy='auto')
+        assert result.implementations == (IMPL,)
+        assert result.source == 'both'
+
+    @pytest.mark.asyncio
+    async def test_a_diamond_the_explorer_enumerated_needs_no_chain_call(self):
+        client = routing_client(
+            source=[{'IsProxy': 'true', 'ImplementationAddresses': list(ZKSYNC_FACETS)}],
+            slots={EIP1967_SLOT: word(IMPL)},
+        )
+        result = await resolve_proxy_metadata('0x3240', client, strategy='auto')
+        assert result.implementations == ZKSYNC_FACETS
+        assert [method for method, _ in client.received] == [Method.CONTRACT_SOURCE]
+
+
+class TestDiamondLoupe:
+    @pytest.mark.asyncio
+    async def test_facets_of_a_real_diamond(self):
+        """Decoded from the zkSync Era DiamondProxy's own answer."""
+        client = routing_client(
+            source=[{'Proxy': '0'}],
+            slots={},
+            calls={'0x7a0ed627': DIAMOND_FACETS_RETURN},
+        )
+        result = await resolve_proxy_metadata('0x3240', client, strategy='auto')
+        assert result.is_proxy is True
+        assert result.is_diamond is True
+        assert result.implementations == ZKSYNC_FACETS
+
+    @pytest.mark.asyncio
+    async def test_a_contract_without_the_loupe_is_not_a_diamond(self):
+        client = routing_client(source=[{'Proxy': '0'}], slots={}, calls={})
+        result = await resolve_proxy_metadata('0xdac1', client, strategy='auto')
+        assert result.is_proxy is False
+        assert result.implementations == ()
+
+
+class TestFacetAbiMerge:
+    def test_functions_of_every_facet_survive_and_events_dedupe(self):
+        transfer_event = {'type': 'event', 'name': 'Transfer', 'inputs': []}
+        merged = merge_facet_abis(
+            [
+                [
+                    {'type': 'constructor', 'inputs': []},
+                    {'type': 'function', 'name': 'stake', 'inputs': []},
+                    transfer_event,
+                ],
+                [
+                    {'type': 'function', 'name': 'claim', 'inputs': []},
+                    dict(transfer_event),
+                ],
+            ]
+        )
+        assert [entry.get('name') for entry in merged] == ['stake', 'Transfer', 'claim']
+
+    def test_same_name_different_signature_is_a_different_function(self):
+        merged = merge_facet_abis(
+            [
+                [{'type': 'function', 'name': 'stake', 'inputs': []}],
+                [
+                    {
+                        'type': 'function',
+                        'name': 'stake',
+                        'inputs': [{'name': 'amount', 'type': 'uint256'}],
+                    }
+                ],
+            ]
+        )
+        assert len(merged) == 2
+
+
+class TestFetchResolvedAbi:
+    @pytest.mark.asyncio
+    async def test_diamond_abi_is_merged_from_every_facet(self):
+        facets = ZKSYNC_FACETS[:2]
+        client = routing_client(
+            abis={
+                facets[0]: json.dumps([{'type': 'function', 'name': 'stake', 'inputs': []}]),
+                facets[1]: json.dumps([{'type': 'function', 'name': 'claim', 'inputs': []}]),
+            }
+        )
+        resolved = await fetch_resolved_abi('0x3240', client, ProxyMetadata(True, facets))
+        assert [entry['name'] for entry in resolved.abi] == ['stake', 'claim']
+        assert resolved.sources == facets
+        assert resolved.missing == ()
+
+    @pytest.mark.asyncio
+    async def test_an_unverified_facet_is_reported_not_dropped(self):
+        facets = ZKSYNC_FACETS[:2]
+        client = routing_client(
+            abis={facets[0]: json.dumps([{'type': 'function', 'name': 'stake', 'inputs': []}])}
+        )
+        resolved = await fetch_resolved_abi('0x3240', client, ProxyMetadata(True, facets))
+        assert resolved.sources == (facets[0],)
+        assert resolved.missing == (facets[1],)
+
+    @pytest.mark.asyncio
+    async def test_a_diamond_with_no_verified_facet_at_all_raises(self):
+        client = routing_client(abis={})
+        with pytest.raises(ValueError, match='any facet'):
+            await fetch_resolved_abi('0x3240', client, ProxyMetadata(True, ZKSYNC_FACETS[:2]))
+
+
+class TestSmartContractDiamond:
+    @pytest.mark.asyncio
+    async def test_from_address_merges_and_records_provenance(self):
+        facets = ZKSYNC_FACETS[:2]
+        client = routing_client(
+            source=[{'IsProxy': 'true', 'ImplementationAddresses': list(facets)}],
+            abis={
+                facets[0]: json.dumps([{'type': 'function', 'name': 'stake', 'inputs': []}]),
+                facets[1]: json.dumps([{'type': 'function', 'name': 'claim', 'inputs': []}]),
+            },
+        )
+        contract = await SmartContract.from_address('0x3240', client)
+        assert contract.is_proxy is True
+        assert contract.facets == facets
+        assert set(contract._function_map) == {'stake', 'claim'}

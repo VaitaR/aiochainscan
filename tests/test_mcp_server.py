@@ -982,6 +982,48 @@ class TestGetContractAbi:
         assert client.get_contract_abi.calls[0]['args'][0] == IMPLEMENTATION.lower()
         assert any('implementation' in note for note in response.notes or [])
 
+    async def test_diamond_reports_every_facet(self) -> None:
+        """One address, many facets: the merged ABI is the only one that decodes it."""
+        facets = [
+            '0x37cefd5b44c131fef27e9bc542e5b77a177a7253',
+            '0x1666124221622eb6154306ea9ba87043e8be88b2',
+        ]
+        client = StubClient()
+        client.support(Method.CONTRACT_ABI, Method.CONTRACT_SOURCE)
+
+        async def call(method: Method, **params: Any) -> Any:
+            if method is Method.CONTRACT_SOURCE:
+                return [{'IsProxy': 'true', 'ImplementationAddresses': facets}]
+            return json.dumps([{'type': 'function', 'name': params['address'][-4:], 'inputs': []}])
+
+        client.call = call  # type: ignore[assignment]
+        response = await mcp_tools.get_contract_abi(client, TOKEN)
+        assert response.data is not None
+        functions = response.data['functions']
+        assert any('7253' in entry for entry in functions)
+        assert any('88b2' in entry for entry in functions)
+        assert any('Diamond' in note for note in response.notes or [])
+
+    async def test_diamond_says_when_a_facet_has_no_verified_abi(self) -> None:
+        facets = [
+            '0x37cefd5b44c131fef27e9bc542e5b77a177a7253',
+            '0x1666124221622eb6154306ea9ba87043e8be88b2',
+        ]
+        client = StubClient()
+        client.support(Method.CONTRACT_ABI, Method.CONTRACT_SOURCE)
+
+        async def call(method: Method, **params: Any) -> Any:
+            if method is Method.CONTRACT_SOURCE:
+                return [{'IsProxy': 'true', 'ImplementationAddresses': facets}]
+            if params['address'] == facets[1]:
+                raise ChainscanClientApiError('NOTOK', 'Contract not verified')
+            return json.dumps(TRANSFER_ABI)
+
+        client.call = call  # type: ignore[assignment]
+        response = await mcp_tools.get_contract_abi(client, TOKEN)
+        assert response.data is not None
+        assert any('Incomplete' in note for note in response.notes or [])
+
     async def test_plain_contract_reports_no_implementation(self) -> None:
         client = StubClient()
         client.support(Method.CONTRACT_ABI, Method.CONTRACT_SOURCE)

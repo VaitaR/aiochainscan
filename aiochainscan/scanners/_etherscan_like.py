@@ -379,6 +379,13 @@ class EtherscanLikeScanner(Scanner):
             param_map={'address': 'address', 'tag': 'tag'},
             parser=etherscan_parser,
         ),
+        Method.PROXY_GET_STORAGE_AT: EndpointSpec(
+            http_method='GET',
+            path='/api',
+            query={'module': 'proxy', 'action': 'eth_getStorageAt'},
+            param_map={'address': 'address', 'position': 'position', 'tag': 'tag'},
+            parser=etherscan_parser,
+        ),
         Method.ACCOUNT_TOKEN_PORTFOLIO: EndpointSpec(
             http_method='GET',
             path='/api',

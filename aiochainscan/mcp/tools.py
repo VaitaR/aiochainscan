@@ -40,7 +40,7 @@ from ..chain_registry import (
     resolve_chain_id,
 )
 from ..decode import decode_transaction_input
-from ..domain.contract import resolve_proxy_metadata
+from ..domain.contract import ProxyMetadata, fetch_resolved_abi, resolve_proxy_metadata
 from ..domain.method import Method
 from ..domain.models import Address
 from ..domain.normalize import (
@@ -357,26 +357,42 @@ class VerifiedAbi(NamedTuple):
     """Outcome of an ABI fetch: exactly one of ``abi`` and ``failure`` is set.
 
     ``implementation`` is the address the ABI actually came from when
-    ``contract`` turned out to be a proxy.
+    ``contract`` turned out to be a proxy; ``facets`` is every address it was
+    merged from when the proxy turned out to be a diamond (EIP-2535).
     """
 
     abi: list[Any] | None
     failure: str | None
     implementation: str | None
+    facets: tuple[str, ...] = ()
+    missing_facets: tuple[str, ...] = ()
 
     @property
     def notes(self) -> list[str]:
         """Context worth surfacing on success — one wording, one home."""
         if self.implementation is None:
             return []
+        if self.facets:
+            notes = [
+                f'Diamond contract (EIP-2535): ABI merged from {len(self.facets)} facets '
+                f'({", ".join(self.facets)}); calls and transactions still go to the '
+                'diamond address.'
+            ]
+            if self.missing_facets:
+                notes.append(
+                    'Incomplete: no verified ABI for '
+                    f'{", ".join(self.missing_facets)}, so functions on those facets are '
+                    'missing from this ABI.'
+                )
+            return notes
         return [
             f'Proxy contract: ABI taken from implementation {self.implementation}; '
             'calls and transactions still go to the proxy address.'
         ]
 
 
-async def _resolve_abi_address(client: ChainscanClient, contract: str) -> str | None:
-    """Implementation address behind ``contract``, or ``None`` to use it as-is.
+async def _resolve_proxy(client: ChainscanClient, contract: str) -> ProxyMetadata:
+    """What is behind ``contract``, or a non-proxy answer when unknowable.
 
     A proxy's own ABI declares none of the functions its traffic calls, so
     every ABI-consuming tool asks this first. Best effort by design: a scanner
@@ -384,11 +400,11 @@ async def _resolve_abi_address(client: ChainscanClient, contract: str) -> str | 
     which is worse than the implementation's but better than no answer.
     """
     if not client.supports_method(Method.CONTRACT_SOURCE):
-        return None
+        return ProxyMetadata(False, ())
     try:
-        return (await resolve_proxy_metadata(contract.lower(), client)).implementation
+        return await resolve_proxy_metadata(contract.lower(), client)
     except MethodNotDeclaredError:
-        return None
+        return ProxyMetadata(False, ())
 
 
 async def _fetch_verified_abi(client: ChainscanClient, contract: str) -> VerifiedAbi:
@@ -398,7 +414,16 @@ async def _fetch_verified_abi(client: ChainscanClient, contract: str) -> Verifie
     the ABI summary tool, read_contract): the same fetch failure must not
     read three different ways. Callers append their own context suffix.
     """
-    implementation = await _resolve_abi_address(client, contract)
+    metadata = await _resolve_proxy(client, contract)
+    implementation = metadata.implementation
+
+    if metadata.is_diamond:
+        try:
+            resolved = await fetch_resolved_abi(contract.lower(), client, metadata)
+        except ValueError as exc:
+            return VerifiedAbi(None, str(exc), implementation)
+        return VerifiedAbi(resolved.abi, None, implementation, resolved.sources, resolved.missing)
+
     source = implementation or contract
     try:
         abi_json = await client.get_contract_abi(source)

@@ -967,6 +967,12 @@ class NodeRealScanner(Scanner):
             wire_method='eth_getBalance',
             param_map={'address': 'address', 'tag': 'tag'},
         ),
+        Method.PROXY_GET_STORAGE_AT: EndpointSpec(
+            http_method='POST',
+            param_style='rpc-positional',
+            wire_method='eth_getStorageAt',
+            param_map={'address': 'address', 'position': 'position', 'tag': 'tag'},
+        ),
     }
 
     def __init__(

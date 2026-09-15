@@ -58,6 +58,7 @@ class Method(Enum):
     # Proxy operations
     PROXY_ETH_CALL = auto()
     PROXY_GET_BALANCE = auto()
+    PROXY_GET_STORAGE_AT = auto()
 
     def __str__(self) -> str:
         """Return a human-readable string representation."""

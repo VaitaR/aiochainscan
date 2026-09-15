@@ -156,6 +156,7 @@ _HAND_INVOCATIONS: dict[str, tuple[tuple[Any, ...], dict[str, Any]]] = {
     # Proxy
     'eth_call': ((CONTRACT_ADDRESS, '0x70a08231'), {}),
     'eth_get_balance': ((CHECKSUM_ADDRESS,), {}),
+    'eth_get_storage_at': ((CHECKSUM_ADDRESS, '0x0'), {}),
 }
 
 # Positional invocation args per registry-declared aggregator (the unbounded

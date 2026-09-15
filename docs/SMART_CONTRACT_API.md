@@ -48,6 +48,20 @@ address you asked about, which for a proxy declares none of the functions its
 traffic calls. Pass `get_contract_abi(address, follow_proxy=True)` when you
 need the raw ABI rather than a `SmartContract`.
 
+Both routes read explorer metadata by default, so a proxy the explorer never
+flagged still yields the proxy's own ABI. `proxy_strategy='auto'` also reads
+the EIP-1967/1822/zeppelinos/beacon storage slots and the EIP-2535 diamond
+loupe, at up to five extra requests:
+
+```python
+# A diamond: one address, many facets, and the explorer names only one
+diamond = await client.get_contract(
+    "0x32400084c286cf3e17e7b677ea9583e60a000324", proxy_strategy="auto"
+)
+print(diamond.facets)          # every facet the loupe reported
+print(diamond.missing_facets)  # facets with no verified ABI, if any
+```
+
 ### 2. Event Iteration
 
 Stream and decode events with a clean async iterator interface:

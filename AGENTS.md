@@ -46,6 +46,9 @@ async with ChainscanClient.from_config('etherscan', 'ethereum') as client:
     # ── Contracts ────────────────────────────────────────────
     abi     = await client.get_contract_abi('0x...')              # JSON ABI (this address)
     impl    = await client.get_contract_abi('0x...', follow_proxy=True)  # proxy -> implementation ABI
+    deep    = await client.get_contract_abi(                           # + storage slots / diamond loupe
+        '0x...', follow_proxy=True, proxy_strategy='auto'
+    )
     source  = await client.get_contract_source('0x...')           # verified source
     created = await client.get_contract_creation(['0x...'])       # creator + tx
     verdict = await client.wait_for_verification(guid)            # poll Pass/Fail (300s/10s)
@@ -309,10 +312,36 @@ async with ChainscanClient.from_config('etherscan', 'ethereum') as client:
 - `get_contract_abi()` returns the ABI the explorer stores **for that address**. For a
   proxy that is the PROXY's ABI, which decodes none of its traffic — every call reaching a
   proxy targets a selector the implementation declares. Pass `follow_proxy=True`, or use
-  `get_contract()` / `SmartContract.from_address()`, which resolve unconditionally. Both
-  routes read explorer proxy metadata (`resolve_proxy_metadata` in `domain/contract.py`),
-  so an unflagged proxy still yields the proxy ABI; the EIP-1967 storage slot is not read,
-  because no scanner declares `eth_getStorageAt`.
+  `get_contract()` / `SmartContract.from_address()`, which resolve unconditionally.
+- **`proxy_strategy` picks where an implementation is looked for**, and the default is
+  deliberately the cheap one. `'metadata'` (default) asks the explorer only — no extra
+  request, and blind to a proxy the explorer never flagged. `'auto'` falls through to the
+  chain whenever metadata answers "not a proxy" or names at most one implementation, at up
+  to five extra requests; `'chain'` skips the explorer entirely. The default is NOT
+  `'auto'` because the extra requests land on the common case (a plain contract) and on a
+  keyless provider that rate-limits hard — making it the default is a cost decision, not a
+  correctness one, and wants the cheaper `eth_getCode` pre-filter measured first.
+- **No single storage slot is enough** (measured 2026-09-15): USDC holds ZERO at the
+  EIP-1967 slot and keeps its implementation in the legacy `org.zeppelinos` slot, while
+  stkAAVE and etherfi answer at EIP-1967. `_IMPLEMENTATION_SLOTS` is therefore a ladder —
+  EIP-1967 → EIP-1822 → zeppelinos → EIP-1967 beacon (one more `eth_call` for the beacon's
+  `implementation()`) — read first-non-zero-wins. A word whose upper 12 bytes are set holds
+  something other than an address and is rejected rather than truncated into one.
+  `Method.PROXY_GET_STORAGE_AT` is what makes this readable at all; a scanner that does not
+  declare it leaves the resolution on metadata instead of failing.
+- **Explorer and chain disagree after an upgrade**, and the chain wins: explorers cache the
+  implementation, the slot is the truth at `latest`. `ProxyMetadata.source` says which
+  sources answered (`'metadata'` / `'chain'` / `'both'`).
+- **Diamonds (EIP-2535) need no new `Method`.** `facets()` (`0x7a0ed627`) goes through the
+  existing `PROXY_ETH_CALL` and decodes with `abi_pure.decode_arguments`; a contract
+  without the loupe reverts, which IS the detection. `SmartContract` merges every facet's
+  ABI — sound because EIP-2535 gives each selector exactly one facet, so functions cannot
+  collide (events and errors dedupe by signature; constructors/fallbacks are dropped,
+  they describe the facet and not the diamond). `facets` records where the ABI came from
+  and `missing_facets` names any facet with no verified ABI — a partial ABI that does not
+  say it is partial reads exactly like a complete one. Live 2026-09-15, zkSync Era
+  `0x3240…0324` on Etherscan: own ABI 0 functions, `follow_proxy=True` 15 (Etherscan names
+  ONE implementation), `proxy_strategy='auto'` **90** across all four facets.
 - **Two explorer dialects, one fact.** Etherscan v2 answers `Proxy`='1'/'0' + `Implementation`;
   BlockScout answers `IsProxy`='true' + `ImplementationAddress`, plus `ImplementationAddresses`
   listing EVERY implementation (a diamond's facets, EIP-2535 — live-verified 2026-09-15: the
@@ -320,7 +349,7 @@ async with ChainscanClient.from_config('etherscan', 'ethereum') as client:
   `resolve_proxy_metadata` reads both vocabularies; reading only Etherscan's reported every
   BlockScout proxy as a plain contract, which is what the keyless default scanner serves.
   `ProxyMetadata.implementation` is the first entry — the ABI of one facet does NOT cover a
-  diamond's whole selector table.
+  diamond's whole selector table, which is what `is_diamond` and the facet merge are for.
 - Balance/value/supply values are **Wei strings** — convert with `wei_to_ether()` / `to_decimal_amount()` (exact `Decimal`), never `int(wei) / 10**18` float division.
 
 > **Note:** Legacy `Client` class and `modules/` were removed in v0.3.0 (see also the public API policy above).
@@ -372,7 +401,7 @@ its exit status is the verdict.
 
 ## Complete Method Reference
 
-Every `Method` enum value (33 total) maps to typed convenience methods on `ChainscanClient`:
+Every `Method` enum value (34 total) maps to typed convenience methods on `ChainscanClient`:
 
 | Method Enum | Convenience Method(s) | Returns |
 |---|---|---|
@@ -409,6 +438,7 @@ Every `Method` enum value (33 total) maps to typed convenience methods on `Chain
 | `ETH_PRICE` | `get_eth_price()` | `dict` |
 | `PROXY_ETH_CALL` | `eth_call(to, data, tag)` | `str` |
 | `PROXY_GET_BALANCE` | `eth_get_balance(address, tag)` | `str` |
+| `PROXY_GET_STORAGE_AT` | `eth_get_storage_at(address, position, tag)` | `str` (32-byte word) |
 
 ### Paginated (get_all_*) vs Single-Page Methods
 
@@ -508,7 +538,7 @@ Every `Method` enum value (33 total) maps to typed convenience methods on `Chain
 | `core/client.py` + `core/mixins/` | **ChainscanClient** (composition of per-domain mixins) | All API interactions, one convenience method per `Method` value plus `get_all_*`/`iter_*`/`wait_for_*`; constructed via `ScannerTarget` (`from_config` / `chain=`-`provider=` kwargs; the positional field form is gone) |
 | `core/streaming.py` | **Streaming surface declaration** | `STREAMING_SPECS` registry (Method, params builder, operation noun, flags) + the ONE shared stream implementation; pool forwards and the test sweeps derive from it |
 | `core/pool.py` | **ChainscanPool** | Multi-provider failover: `classify_failure` (lookup of the exception's `failure_kind`, regex fallback), sticky routing, cooldowns, pinned pagination |
-| `domain/method.py` | **Method** enum (33 values) | Supported operations |
+| `domain/method.py` | **Method** enum (34 values) | Supported operations |
 | `domain/contract.py` | **SmartContract** | High-level contract API |
 | `domain/models.py` | **Address`, **TxHash** | Data validation, EIP-55 |
 | `config.py` | **ConfigurationManager** | Credential/env resolution only (topology lives in the `registry/` package — `data.py` tables, `views.py` derivations, `resolve.py` target resolution — re-exported by `chain_registry.py`) |
@@ -542,8 +572,8 @@ Every `Method` enum value (33 total) maps to typed convenience methods on `Chain
 |---------|---------|-------|-------------|-----------------|
 | BlockScout | v1 | ✅ Yes | - | Etherscan-like surface **plus** `TOKEN_HOLDERS` (its own action name `token/getTokenHolders`, not Etherscan's `tokenholderlist`); `TX_BY_HASH`/`PROXY_*` served via the instance's `/api/eth-rpc` JSON-RPC (see below) |
 | BlockScout | **v2** | ✅ Yes | - | Cursor-paginated (no result window). Subset of 11: `ACCOUNT_BALANCE`, `ACCOUNT_TRANSACTIONS`, `ACCOUNT_INTERNAL_TXS`, `ACCOUNT_ERC20_TRANSFERS`, `ACCOUNT_TOKEN_PORTFOLIO`, `ACCOUNT_NFT_PORTFOLIO`, `CONTRACT_ABI`, `CONTRACT_SOURCE`, `BLOCK_BY_NUMBER`, `TOKEN_HOLDERS` (native `/api/v2/tokens/{addr}/holders`), `TOKEN_HOLDER_COUNT` (token info `holders_count`) |
-| Etherscan | v2 | ❌ No | `ETHERSCAN_KEY` | Full Etherscan-like surface + token holders (`tokenholderlist`/`topholders`/`tokenholdercount` are PRO endpoints) — all 33 `Method` values |
-| NodeReal | v1 | Free tier | `NODEREAL_KEY` | BSC-only subset (25 `Method` values) incl. the only `CONTRACT_ABI`/`CONTRACT_SOURCE`/`ACCOUNT_INTERNAL_TXS` alternative for keyless-free BSC analytics |
+| Etherscan | v2 | ❌ No | `ETHERSCAN_KEY` | Full Etherscan-like surface + token holders (`tokenholderlist`/`topholders`/`tokenholdercount` are PRO endpoints) — all 34 `Method` values |
+| NodeReal | v1 | Free tier | `NODEREAL_KEY` | BSC-only subset (26 `Method` values) incl. the only `CONTRACT_ABI`/`CONTRACT_SOURCE`/`ACCOUNT_INTERNAL_TXS` alternative for keyless-free BSC analytics |
 
 > **Token holders notes:** the unified item shape is `{'address': EIP-55 str, 'value': str}`
 > (raw-unit quantity — never Int64) — the ONE Method with a normalized cross-scanner item
@@ -604,7 +634,7 @@ Every `Method` enum value (33 total) maps to typed convenience methods on `Chain
 BscScan-compatible verified-contract REST on `open-platform.nodereal.io`. Networks:
 `bsc` / `bnb` / `binance` (mainnet) and `bsc-testnet`.
 
-- Declares 25 of the 33 `Method` values; honest `ValueError` for contract
+- Declares 26 of the 34 `Method` values; honest `ValueError` for contract
   verify, gas oracle/estimate, price/supply stats, block reward/countdown.
 - The public→wire mapping is DECLARED in `SPECS` and executed:
   `param_style` (`'rpc-positional'` / `'rpc-object'` / `'query'` for the
@@ -842,6 +872,11 @@ Agent adapter over `ChainscanClient` — **run**: `python -m aiochainscan.mcp_se
   call and is best effort: a scanner that does not declare that method leaves
   the tool on the proxy's ABI rather than failing. `read_contract` still sends
   `eth_call` to the PROXY address — only the ABI comes from the implementation.
+  A diamond arrives as every facet's ABI merged, with the facet list (and any
+  facet without a verified ABI) in `notes`. The tools stay on the default
+  `proxy_strategy='metadata'`: on the keyless BlockScout default that already
+  yields a diamond's full facet list for free via `ImplementationAddresses`,
+  and the chain probes would multiply every tool's request count.
 - Default scanner `blockscout` (keyless, v1); override per call (`scanner=`)
   or via `AIOCHAINSCAN_MCP_SCANNER`.
 - `mcp/cursors.py` and `mcp/envelope.py` import WITHOUT the `mcp` extra, and

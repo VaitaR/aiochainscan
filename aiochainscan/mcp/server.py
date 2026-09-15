@@ -183,7 +183,9 @@ _TOOL_SPECS: tuple[_ToolSpec, ...] = (
 
             Proxies are followed: for a proxy address the summary describes the
             implementation (reported as implementation_address), because a
-            proxy's own ABI declares none of the functions it runs.
+            proxy's own ABI declares none of the functions it runs. For a
+            diamond (EIP-2535) every facet's ABI is merged, and the notes say
+            which facets it came from.
 
             read_contract fetches and applies the full ABI automatically — this
             tool is for discovery.
@@ -198,7 +200,8 @@ _TOOL_SPECS: tuple[_ToolSpec, ...] = (
             Call a view/pure contract function via auto-fetched ABI + eth_call, outputs decoded.
 
             No manual ABI needed: the verified ABI is fetched (from the
-            implementation when the address is a proxy), the function found
+            implementation when the address is a proxy, merged across facets
+            when it is a diamond), the function found
             by name, arguments encoded and outputs decoded automatically.
             `args` is a JSON array string, e.g. '["0xabc...", 5]'; numeric strings
             coerce to ints, 0x-hex strings pass through for bytes arguments.

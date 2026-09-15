@@ -5,7 +5,12 @@ from __future__ import annotations
 import json
 from typing import Any, cast
 
-from ...domain.contract import SmartContract, resolve_proxy_metadata
+from ...domain.contract import (
+    ProxyStrategy,
+    SmartContract,
+    fetch_resolved_abi,
+    resolve_proxy_metadata,
+)
 from ...domain.method import Method
 from ...domain.models import Address
 from ...exceptions import ChainscanClientApiError, ChainscanRateLimitError
@@ -18,7 +23,11 @@ class ContractMixin:
     """Contract-focused typed convenience methods."""
 
     async def get_contract_abi(
-        self: ClientHost, address: str, *, follow_proxy: bool = False
+        self: ClientHost,
+        address: str,
+        *,
+        follow_proxy: bool = False,
+        proxy_strategy: ProxyStrategy = 'metadata',
     ) -> str:
         """Get contract ABI as JSON string.
 
@@ -29,16 +38,27 @@ class ContractMixin:
 
         Pass ``follow_proxy=True`` to resolve the implementation first (or use
         :meth:`get_contract`, which does it unconditionally and returns a
-        decoded-access wrapper). Resolution relies on explorer metadata, so a
-        proxy the explorer has not flagged still yields the proxy's ABI.
+        decoded-access wrapper); for a diamond (EIP-2535) the result is every
+        facet's ABI merged. ``proxy_strategy`` picks where the implementation
+        is looked up — the default reads explorer metadata only, so a proxy the
+        explorer has not flagged still yields the proxy's ABI; ``'auto'`` also
+        reads the storage slots and the diamond loupe.
         """
         resolved = str(Address(address))
-        if follow_proxy:
-            implementation = (await resolve_proxy_metadata(resolved.lower(), self)).implementation
-            if implementation:
-                resolved = str(Address(implementation))
-        result: Any = await self.call(Method.CONTRACT_ABI, address=resolved)
-        return result if isinstance(result, str) else json.dumps(result)
+        if not follow_proxy:
+            result: Any = await self.call(Method.CONTRACT_ABI, address=resolved)
+            return result if isinstance(result, str) else json.dumps(result)
+
+        lowered = resolved.lower()
+        metadata = await resolve_proxy_metadata(lowered, self, strategy=proxy_strategy)
+        if metadata.is_diamond:
+            return json.dumps((await fetch_resolved_abi(lowered, self, metadata)).abi)
+        # One implementation needs no merge, and fetching it directly hands
+        # back the explorer's own JSON bytes — following a proxy must not
+        # reformat an ABI that was going to be returned verbatim anyway.
+        target = metadata.implementation or resolved
+        followed: Any = await self.call(Method.CONTRACT_ABI, address=str(Address(target)))
+        return followed if isinstance(followed, str) else json.dumps(followed)
 
     async def get_contract_source(self: ClientHost, address: str) -> JSONDict:
         """Get verified contract source code."""
@@ -57,15 +77,19 @@ class ContractMixin:
         )
         return result if isinstance(result, list) else []
 
-    async def get_contract(self: ClientHost, address: str) -> SmartContract:
+    async def get_contract(
+        self: ClientHost, address: str, *, proxy_strategy: ProxyStrategy = 'metadata'
+    ) -> SmartContract:
         """Get a SmartContract instance with automatic ABI fetching.
 
-        Resolves a proxy to its implementation ABI when the explorer flags one,
-        so the returned contract decodes the traffic the address actually
-        receives. ``get_contract_abi`` does NOT do this unless asked
-        (``follow_proxy=True``).
+        Resolves a proxy to its implementation ABI — and a diamond to every
+        facet's ABI merged — so the returned contract decodes the traffic the
+        address actually receives. ``get_contract_abi`` does NOT do this unless
+        asked (``follow_proxy=True``). ``proxy_strategy='auto'`` additionally
+        reads the storage slots and the diamond loupe, for proxies the explorer
+        does not flag.
         """
-        return await SmartContract.from_address(address, self)
+        return await SmartContract.from_address(address, self, proxy_strategy=proxy_strategy)
 
     async def wait_for_verification(
         self: ClientHost,

@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncIterator
-from typing import Any, NamedTuple, Protocol
+from typing import Any, Literal, NamedTuple, Protocol
 
 from ..decode import canonical_abi_type, decode_log_data, decode_transaction_input
 from ..domain.method import Method
@@ -66,20 +66,68 @@ _PROXY_FLAG_KEYS = ('Proxy', 'IsProxy')
 _IMPLEMENTATION_KEYS = ('ImplementationAddresses', 'Implementation', 'ImplementationAddress')
 _ZERO_ADDRESS = '0x' + '0' * 40
 
+# Four standards put the implementation address in four different slots, and
+# no single one of them is enough: USDC holds ZERO at the EIP-1967 slot and
+# keeps its implementation in the legacy zeppelinos slot (measured
+# 2026-09-15), while stkAAVE and etherfi answer at EIP-1967. Read in this
+# order, first non-zero wins.
+_EIP1967_IMPLEMENTATION_SLOT = '0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc'
+_EIP1822_PROXIABLE_SLOT = '0xc5f16f0fcc639fa48a6947836d9850f504798523bf8c9a3a87d5876cf622bcf7'
+_ZEPPELINOS_IMPLEMENTATION_SLOT = (
+    '0x7050c9e0f4ca769c69bd3a8ef740bc37934f8e2c036e5a723fd8ee048ed3f8c3'
+)
+_EIP1967_BEACON_SLOT = '0xa3f0ad74e5423aebfd80d3ef4346578335a9a72aeaee59ff6cb3582b35133d50'
+
+#: ``(slot, holds_a_beacon)`` — a beacon slot names a contract that must then
+#: be asked for the implementation, one extra call.
+_IMPLEMENTATION_SLOTS: tuple[tuple[str, bool], ...] = (
+    (_EIP1967_IMPLEMENTATION_SLOT, False),
+    (_EIP1822_PROXIABLE_SLOT, False),
+    (_ZEPPELINOS_IMPLEMENTATION_SLOT, False),
+    (_EIP1967_BEACON_SLOT, True),
+)
+
+_BEACON_IMPLEMENTATION_SELECTOR = '0x5c60da1b'  # implementation()
+_FACETS_SELECTOR = '0x7a0ed627'  # facets() — the EIP-2535 diamond loupe
+_FACETS_OUTPUTS: list[dict[str, Any]] = [
+    {
+        'name': 'facets_',
+        'type': 'tuple[]',
+        'components': [
+            {'name': 'facetAddress', 'type': 'address'},
+            {'name': 'functionSelectors', 'type': 'bytes4[]'},
+        ],
+    }
+]
+
+#: How hard to look. ``'metadata'`` asks the explorer only (no extra request,
+#: blind to an unflagged proxy). ``'chain'`` reads the storage slots and the
+#: diamond loupe only (works where the explorer flags nothing). ``'auto'``
+#: asks the explorer first and falls through to the chain when the answer is
+#: "not a proxy" or names at most one implementation — the two cases that can
+#: be wrong — at a cost of up to five extra requests.
+ProxyStrategy = Literal['metadata', 'chain', 'auto']
+
 
 class ProxyMetadata(NamedTuple):
-    """What the explorer says about a proxy at one address."""
+    """What is known about a proxy at one address, and who said so."""
 
     is_proxy: bool
     implementations: tuple[str, ...]
+    source: str = 'none'
 
     @property
     def implementation(self) -> str | None:
         """The single implementation, or the first facet of a diamond."""
         return self.implementations[0] if self.implementations else None
 
+    @property
+    def is_diamond(self) -> bool:
+        """Several implementations behind one address (EIP-2535)."""
+        return len(self.implementations) > 1
 
-_NOT_A_PROXY = ProxyMetadata(False, ())
+
+_NOT_A_PROXY = ProxyMetadata(False, (), 'none')
 
 
 def _implementation_addresses(contract_info: dict[str, Any]) -> tuple[str, ...]:
@@ -98,23 +146,98 @@ def _implementation_addresses(contract_info: dict[str, Any]) -> tuple[str, ...]:
     return tuple(found)
 
 
-async def resolve_proxy_metadata(
-    address: str,
-    client: ContractClient,
-) -> ProxyMetadata:
-    """Ask the explorer whether ``address`` is a proxy and what it points at.
+def _address_from_word(word: Any) -> str | None:
+    """Read an address out of a 32-byte word, or ``None`` if it holds no address.
 
-    Explorer metadata is the ONLY source — a proxy the explorer has not flagged
-    reads here as a plain contract, and no scanner declares ``eth_getStorageAt``,
-    so the EIP-1967 slot cannot be read as a cross-check.
+    A slot that is zero, unreadable, or whose upper 12 bytes are set holds
+    something other than an implementation pointer — guessing at it would
+    invent an address.
+    """
+    if not isinstance(word, str):
+        return None
+    digits = word[2:] if word.lower().startswith('0x') else word
+    if not digits or len(digits) > 64:
+        return None
+    try:
+        value = int(digits, 16)
+    except ValueError:
+        return None
+    if value == 0 or value >= 1 << 160:
+        return None
+    return f'0x{value:040x}'
 
-    A ``CONTRACT_SOURCE`` failure yields a non-proxy answer: an explorer that
-    cannot answer must not stop the caller from fetching the address's own ABI.
+
+async def _quiet_call(client: ContractClient, method: Method, **params: Any) -> Any:
+    """Call ``method``, answering ``None`` for anything that is not an answer.
+
+    Chain probing is best effort by construction: a revert, a throttled
+    explorer or a scanner that never declared the method all mean "this
+    source cannot tell us", never "this address is not a proxy".
     """
     try:
-        source_data = await client.call(Method.CONTRACT_SOURCE, address=address)
-    except ChainscanClientError:
-        return _NOT_A_PROXY
+        return await client.call(method, **params)
+    except (ChainscanClientError, ValueError):
+        return None
+
+
+async def _resolve_from_slots(address: str, client: ContractClient) -> str | None:
+    """Walk the slot ladder; ``None`` when no standard slot holds an address."""
+    for slot, holds_a_beacon in _IMPLEMENTATION_SLOTS:
+        word = await _quiet_call(
+            client, Method.PROXY_GET_STORAGE_AT, address=address, position=slot, tag='latest'
+        )
+        found = _address_from_word(word)
+        if found is None:
+            continue
+        if not holds_a_beacon:
+            return found
+        beacon_answer = await _quiet_call(
+            client,
+            Method.PROXY_ETH_CALL,
+            to=found,
+            data=_BEACON_IMPLEMENTATION_SELECTOR,
+            tag='latest',
+        )
+        return _address_from_word(beacon_answer)
+    return None
+
+
+async def _diamond_facets(address: str, client: ContractClient) -> tuple[str, ...]:
+    """Ask the EIP-2535 loupe for every facet; ``()`` when this is no diamond.
+
+    A contract without the loupe reverts, which is the detection: there is no
+    cheaper signal, and the call only runs where the other sources already
+    came up short.
+    """
+    from ..abi_pure import decode_arguments
+
+    answer = await _quiet_call(
+        client, Method.PROXY_ETH_CALL, to=address, data=_FACETS_SELECTOR, tag='latest'
+    )
+    if not isinstance(answer, str) or len(answer) <= 2:
+        return ()
+    try:
+        decoded = decode_arguments(_FACETS_OUTPUTS, answer)
+    except (ValueError, KeyError):
+        return ()
+    facets = decoded.get('facets_')
+    if not isinstance(facets, list):
+        return ()
+    found: list[str] = []
+    for facet in facets:
+        candidate = facet.get('facetAddress') if isinstance(facet, dict) else None
+        if not isinstance(candidate, str):
+            continue
+        normalized = candidate.lower()
+        if normalized == _ZERO_ADDRESS or normalized in found:
+            continue
+        found.append(normalized)
+    return tuple(found)
+
+
+async def _resolve_from_metadata(address: str, client: ContractClient) -> ProxyMetadata:
+    """The explorer's own answer, or a non-proxy when it cannot give one."""
+    source_data = await _quiet_call(client, Method.CONTRACT_SOURCE, address=address)
 
     if isinstance(source_data, list) and len(source_data) > 0:
         contract_info = source_data[0]
@@ -128,7 +251,140 @@ async def resolve_proxy_metadata(
     if not is_proxy:
         return _NOT_A_PROXY
 
-    return ProxyMetadata(True, _implementation_addresses(contract_info))
+    return ProxyMetadata(True, _implementation_addresses(contract_info), 'metadata')
+
+
+async def _resolve_from_chain(address: str, client: ContractClient) -> tuple[str, ...]:
+    """Slots first (one hit ends it), then the loupe for a diamond."""
+    from_slot = await _resolve_from_slots(address, client)
+    if from_slot is not None:
+        return (from_slot,)
+    return await _diamond_facets(address, client)
+
+
+async def resolve_proxy_metadata(
+    address: str,
+    client: ContractClient,
+    *,
+    strategy: ProxyStrategy = 'metadata',
+) -> ProxyMetadata:
+    """Find out whether ``address`` is a proxy and what it points at.
+
+    ``strategy`` picks the sources — see :data:`ProxyStrategy`. The default
+    stays explorer metadata so the request count of an ordinary resolution
+    does not change; ``'auto'`` is the one-word opt-in that also sees proxies
+    the explorer never flagged, and diamonds on an explorer that reports a
+    single implementation.
+
+    When both sources answer and disagree, the chain wins and ``source`` says
+    ``'both'``: explorers cache the implementation and go stale after an
+    upgrade, while the slot is the truth at ``latest``.
+
+    Failure of any source is an absent answer, never an exception — an
+    explorer that cannot answer must not stop the caller from fetching the
+    address's own ABI.
+    """
+    metadata = _NOT_A_PROXY
+    if strategy in ('metadata', 'auto'):
+        metadata = await _resolve_from_metadata(address, client)
+    if strategy == 'metadata' or metadata.is_diamond:
+        return metadata
+
+    from_chain = await _resolve_from_chain(address, client)
+    if not from_chain:
+        return metadata
+    source = 'both' if metadata.is_proxy else 'chain'
+    return ProxyMetadata(True, from_chain, source)
+
+
+#: A merged diamond ABI keeps only what a caller decodes or calls through the
+#: proxy address. Constructors, fallbacks and receives belong to the
+#: individual facets and describe nothing about the diamond.
+_MERGEABLE_ABI_TYPES = frozenset({'function', 'event', 'error'})
+
+
+class ResolvedAbi(NamedTuple):
+    """An ABI plus the addresses it was actually assembled from."""
+
+    abi: list[dict[str, Any]]
+    sources: tuple[str, ...]
+    missing: tuple[str, ...]
+
+
+def _abi_entry_key(entry: dict[str, Any]) -> tuple[str, str, tuple[str, ...]]:
+    inputs = entry.get('inputs') or []
+    types = tuple(canonical_abi_type(param) for param in inputs)
+    return str(entry.get('type', 'function')), str(entry.get('name', '')), types
+
+
+def merge_facet_abis(facet_abis: list[list[dict[str, Any]]]) -> list[dict[str, Any]]:
+    """Concatenate facet ABIs into the one a diamond behaves like.
+
+    Sound because EIP-2535 gives each selector exactly one facet, so functions
+    cannot collide; events and errors are shared boilerplate and are
+    de-duplicated by signature.
+    """
+    merged: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, tuple[str, ...]]] = set()
+    for facet_abi in facet_abis:
+        for entry in facet_abi:
+            if not isinstance(entry, dict) or entry.get('type') not in _MERGEABLE_ABI_TYPES:
+                continue
+            key = _abi_entry_key(entry)
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(entry)
+    return merged
+
+
+async def _fetch_abi(address: str, client: ContractClient) -> list[dict[str, Any]] | None:
+    """One address's ABI, or ``None`` when the explorer has none for it."""
+    try:
+        abi_json = await client.call(Method.CONTRACT_ABI, address=address)
+        abi = json.loads(abi_json) if isinstance(abi_json, str) else abi_json
+    except Exception:  # noqa: BLE001 - every failure means "no ABI here"
+        return None
+    return abi if isinstance(abi, list) else None
+
+
+async def fetch_resolved_abi(
+    address: str,
+    client: ContractClient,
+    metadata: ProxyMetadata,
+) -> ResolvedAbi:
+    """The ABI that decodes traffic sent to ``address``.
+
+    A diamond's is merged from every facet, and a facet whose ABI cannot be
+    fetched is reported in ``missing`` rather than dropped — a partial ABI
+    that does not say it is partial reads exactly like a complete one.
+
+    Raises:
+        ValueError: if no ABI could be fetched at all.
+    """
+    if not metadata.is_diamond:
+        source = metadata.implementation or address
+        abi = await _fetch_abi(source, client)
+        if abi is None:
+            raise ValueError(f'Failed to fetch ABI for contract {source}')
+        return ResolvedAbi(abi, (source,), ())
+
+    facet_abis: list[list[dict[str, Any]]] = []
+    used: list[str] = []
+    missing: list[str] = []
+    for facet in metadata.implementations:
+        facet_abi = await _fetch_abi(facet, client)
+        if facet_abi is None:
+            missing.append(facet)
+            continue
+        facet_abis.append(facet_abi)
+        used.append(facet)
+    if not facet_abis:
+        raise ValueError(
+            f'Failed to fetch an ABI for any facet of diamond {address}: '
+            f'{", ".join(metadata.implementations)}'
+        )
+    return ResolvedAbi(merge_facet_abis(facet_abis), tuple(used), tuple(missing))
 
 
 class SmartContract:
@@ -163,6 +419,8 @@ class SmartContract:
         client: ContractClient,
         is_proxy: bool = False,
         implementation_address: str | None = None,
+        facets: tuple[str, ...] = (),
+        missing_facets: tuple[str, ...] = (),
     ):
         """
         Initialize a SmartContract instance.
@@ -175,6 +433,10 @@ class SmartContract:
             client: ChainscanClient instance for API calls
             is_proxy: Whether this contract is a proxy
             implementation_address: Implementation contract address (for proxies)
+            facets: Addresses this ABI was assembled from, for a diamond
+                (EIP-2535); empty for an ordinary contract or proxy
+            missing_facets: Facets whose ABI could not be fetched, so the ABI
+                covers less than the diamond's whole selector table
         """
         self.address = address.lower()
         self.abi = abi
@@ -183,6 +445,8 @@ class SmartContract:
         self.implementation_address = (
             implementation_address.lower() if implementation_address else None
         )
+        self.facets = facets
+        self.missing_facets = missing_facets
 
         # Build lookup maps for quick access
         self._function_map: dict[str, dict[str, Any]] = {}
@@ -223,19 +487,26 @@ class SmartContract:
         cls,
         address: str,
         client: ContractClient,
+        *,
+        proxy_strategy: ProxyStrategy = 'metadata',
     ) -> SmartContract:
         """
         Create a SmartContract instance by fetching ABI and resolving proxies.
 
         For a proxy the ABI loaded is the IMPLEMENTATION's — the proxy's own ABI
-        declares none of the functions its traffic calls. Resolution reads
-        explorer metadata (see :func:`resolve_proxy_metadata`), so a proxy the
-        explorer has not flagged still yields the proxy's ABI; ``is_proxy`` says
-        which happened.
+        declares none of the functions its traffic calls. For a diamond
+        (EIP-2535) it is every facet's ABI merged, and ``facets`` says which
+        addresses it came from.
+
+        Resolution reads explorer metadata by default, so a proxy the explorer
+        has not flagged still yields the proxy's ABI and ``is_proxy`` says so;
+        ``proxy_strategy='auto'`` also reads the storage slots and the diamond
+        loupe (see :func:`resolve_proxy_metadata`).
 
         Args:
             address: Contract address
             client: ChainscanClient instance
+            proxy_strategy: Where to look for an implementation
 
         Returns:
             SmartContract instance with ABI loaded and proxies resolved
@@ -256,28 +527,17 @@ class SmartContract:
         """
         address = address.lower()
 
-        metadata = await resolve_proxy_metadata(address, client)
-        is_proxy, implementation_address = metadata.is_proxy, metadata.implementation
-
-        # Fetch ABI (from implementation if proxy, otherwise from contract itself)
-        abi_address = implementation_address if implementation_address else address
-
-        try:
-            abi_json = await client.call(Method.CONTRACT_ABI, address=abi_address)
-            abi = json.loads(abi_json) if isinstance(abi_json, str) else abi_json
-
-            if not isinstance(abi, list):
-                raise ValueError(f'Invalid ABI format for contract {abi_address}')
-
-        except Exception as e:  # noqa: BLE001 - Wrap API errors with context
-            raise ValueError(f'Failed to fetch ABI for contract {abi_address}: {e}') from e
+        metadata = await resolve_proxy_metadata(address, client, strategy=proxy_strategy)
+        resolved = await fetch_resolved_abi(address, client, metadata)
 
         return cls(
             address=address,
-            abi=abi,
+            abi=resolved.abi,
             client=client,
-            is_proxy=is_proxy,
-            implementation_address=implementation_address,
+            is_proxy=metadata.is_proxy,
+            implementation_address=metadata.implementation,
+            facets=resolved.sources if metadata.is_diamond else (),
+            missing_facets=resolved.missing,
         )
 
     def get_event_abi(self, event_name: str) -> dict[str, Any] | None:
