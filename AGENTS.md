@@ -1052,7 +1052,7 @@ from aiochainscan.exceptions import (
 ## Testing
 
 ```bash
-# Run all tests (1000+ tests)
+# Run the whole suite
 pytest tests/ -q
 
 # Type checking (strict)
@@ -1229,8 +1229,8 @@ decoding needs no extra at all.
 
 **Run BEFORE `git commit` — not after:**
 ```bash
-pytest tests/ -q                    # Verify all 1000+ tests pass
-mypy aiochainscan --strict          # Type safety check (69 source files)
+pytest tests/ -q                    # The whole suite must pass
+mypy aiochainscan --strict          # Type safety across every source file
 pre-commit run --all-files          # All linters (ruff, format, etc.)
 ```
 Only proceed to `git commit` when ALL three checks pass. Do NOT rely on post-commit hook to catch errors.
