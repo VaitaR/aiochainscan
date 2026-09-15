@@ -310,9 +310,17 @@ async with ChainscanClient.from_config('etherscan', 'ethereum') as client:
   proxy that is the PROXY's ABI, which decodes none of its traffic — every call reaching a
   proxy targets a selector the implementation declares. Pass `follow_proxy=True`, or use
   `get_contract()` / `SmartContract.from_address()`, which resolve unconditionally. Both
-  routes read explorer `Proxy`/`Implementation` metadata (`resolve_proxy_metadata` in
-  `domain/contract.py`), so an unflagged proxy still yields the proxy ABI; the EIP-1967
-  storage slot is not read, because no scanner declares `eth_getStorageAt`.
+  routes read explorer proxy metadata (`resolve_proxy_metadata` in `domain/contract.py`),
+  so an unflagged proxy still yields the proxy ABI; the EIP-1967 storage slot is not read,
+  because no scanner declares `eth_getStorageAt`.
+- **Two explorer dialects, one fact.** Etherscan v2 answers `Proxy`='1'/'0' + `Implementation`;
+  BlockScout answers `IsProxy`='true' + `ImplementationAddress`, plus `ImplementationAddresses`
+  listing EVERY implementation (a diamond's facets, EIP-2535 — live-verified 2026-09-15: the
+  zkSync Era DiamondProxy lists the same four facets its `facets()` loupe call returns).
+  `resolve_proxy_metadata` reads both vocabularies; reading only Etherscan's reported every
+  BlockScout proxy as a plain contract, which is what the keyless default scanner serves.
+  `ProxyMetadata.implementation` is the first entry — the ABI of one facet does NOT cover a
+  diamond's whole selector table.
 - Balance/value/supply values are **Wei strings** — convert with `wei_to_ether()` / `to_decimal_amount()` (exact `Decimal`), never `int(wei) / 10**18` float division.
 
 > **Note:** Legacy `Client` class and `modules/` were removed in v0.3.0 (see also the public API policy above).

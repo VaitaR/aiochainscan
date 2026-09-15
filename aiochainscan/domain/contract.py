@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncIterator
-from typing import Any, Protocol
+from typing import Any, NamedTuple, Protocol
 
 from ..decode import canonical_abi_type, decode_log_data, decode_transaction_input
 from ..domain.method import Method
@@ -57,26 +57,64 @@ class ContractClient(Protocol):
     ) -> AsyncIterator[dict[str, Any]]: ...
 
 
+# Two explorer dialects describe the same fact under different names, and a
+# reader that knows only one reports every proxy on the other as a plain
+# contract. Etherscan v2: Proxy='1'/'0' + Implementation. BlockScout:
+# IsProxy='true' + ImplementationAddress, plus ImplementationAddresses, which
+# lists EVERY implementation (a diamond's facets, EIP-2535).
+_PROXY_FLAG_KEYS = ('Proxy', 'IsProxy')
+_IMPLEMENTATION_KEYS = ('ImplementationAddresses', 'Implementation', 'ImplementationAddress')
+_ZERO_ADDRESS = '0x' + '0' * 40
+
+
+class ProxyMetadata(NamedTuple):
+    """What the explorer says about a proxy at one address."""
+
+    is_proxy: bool
+    implementations: tuple[str, ...]
+
+    @property
+    def implementation(self) -> str | None:
+        """The single implementation, or the first facet of a diamond."""
+        return self.implementations[0] if self.implementations else None
+
+
+_NOT_A_PROXY = ProxyMetadata(False, ())
+
+
+def _implementation_addresses(contract_info: dict[str, Any]) -> tuple[str, ...]:
+    """Lowercased, de-duplicated implementations across both explorer dialects."""
+    found: list[str] = []
+    for key in _IMPLEMENTATION_KEYS:
+        value = contract_info.get(key)
+        candidates = value if isinstance(value, list) else [value]
+        for candidate in candidates:
+            if not isinstance(candidate, str) or not candidate:
+                continue
+            normalized = candidate.lower()
+            if normalized == _ZERO_ADDRESS or normalized in found:
+                continue
+            found.append(normalized)
+    return tuple(found)
+
+
 async def resolve_proxy_metadata(
     address: str,
     client: ContractClient,
-) -> tuple[bool, str | None]:
+) -> ProxyMetadata:
     """Ask the explorer whether ``address`` is a proxy and what it points at.
 
-    Returns ``(is_proxy, implementation_address)``; the implementation is
-    lowercased and is ``None`` when the explorer flags a proxy without naming
-    one. Explorer metadata (``getsourcecode``'s ``Proxy`` / ``Implementation``)
-    is the ONLY source — a proxy the explorer has not flagged reads here as a
-    plain contract, and no scanner declares ``eth_getStorageAt``, so the
-    EIP-1967 slot cannot be read as a cross-check.
+    Explorer metadata is the ONLY source — a proxy the explorer has not flagged
+    reads here as a plain contract, and no scanner declares ``eth_getStorageAt``,
+    so the EIP-1967 slot cannot be read as a cross-check.
 
-    A ``CONTRACT_SOURCE`` failure yields ``(False, None)``: an explorer that
+    A ``CONTRACT_SOURCE`` failure yields a non-proxy answer: an explorer that
     cannot answer must not stop the caller from fetching the address's own ABI.
     """
     try:
         source_data = await client.call(Method.CONTRACT_SOURCE, address=address)
     except ChainscanClientError:
-        return False, None
+        return _NOT_A_PROXY
 
     if isinstance(source_data, list) and len(source_data) > 0:
         contract_info = source_data[0]
@@ -85,13 +123,12 @@ async def resolve_proxy_metadata(
     else:
         contract_info = {}
 
-    proxy_flag = contract_info.get('Proxy', '0')
-    is_proxy = proxy_flag == '1' or str(proxy_flag).lower() == 'true'
+    flags = [contract_info.get(key) for key in _PROXY_FLAG_KEYS]
+    is_proxy = any(flag in (1, True, '1') or str(flag).lower() == 'true' for flag in flags)
     if not is_proxy:
-        return False, None
+        return _NOT_A_PROXY
 
-    implementation = contract_info.get('Implementation', '')
-    return True, implementation.lower() if implementation else None
+    return ProxyMetadata(True, _implementation_addresses(contract_info))
 
 
 class SmartContract:
@@ -219,7 +256,8 @@ class SmartContract:
         """
         address = address.lower()
 
-        is_proxy, implementation_address = await resolve_proxy_metadata(address, client)
+        metadata = await resolve_proxy_metadata(address, client)
+        is_proxy, implementation_address = metadata.is_proxy, metadata.implementation
 
         # Fetch ABI (from implementation if proxy, otherwise from contract itself)
         abi_address = implementation_address if implementation_address else address

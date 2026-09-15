@@ -34,7 +34,7 @@ class ContractMixin:
         """
         resolved = str(Address(address))
         if follow_proxy:
-            _, implementation = await resolve_proxy_metadata(resolved.lower(), self)
+            implementation = (await resolve_proxy_metadata(resolved.lower(), self)).implementation
             if implementation:
                 resolved = str(Address(implementation))
         result: Any = await self.call(Method.CONTRACT_ABI, address=resolved)
@@ -60,10 +60,10 @@ class ContractMixin:
     async def get_contract(self: ClientHost, address: str) -> SmartContract:
         """Get a SmartContract instance with automatic ABI fetching.
 
-        Resolves a proxy to its implementation ABI when the explorer flags one
-        (``Proxy``/``Implementation`` metadata), so the returned contract
-        decodes the traffic the address actually receives. ``get_contract_abi``
-        does NOT do this unless asked (``follow_proxy=True``).
+        Resolves a proxy to its implementation ABI when the explorer flags one,
+        so the returned contract decodes the traffic the address actually
+        receives. ``get_contract_abi`` does NOT do this unless asked
+        (``follow_proxy=True``).
         """
         return await SmartContract.from_address(address, self)
 

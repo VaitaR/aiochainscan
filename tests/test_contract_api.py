@@ -11,7 +11,12 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from aiochainscan.core.client import ChainscanClient
-from aiochainscan.domain.contract import DecodedEvent, DecodedTransaction, SmartContract
+from aiochainscan.domain.contract import (
+    DecodedEvent,
+    DecodedTransaction,
+    SmartContract,
+    resolve_proxy_metadata,
+)
 from aiochainscan.domain.method import Method
 from aiochainscan.exceptions import ChainscanClientError
 
@@ -127,6 +132,59 @@ class TestSmartContractInit:
         assert len(sample_contract._event_topic_map) == 2
 
 
+class TestResolveProxyMetadata:
+    """Both explorer dialects describe a proxy, under different field names."""
+
+    @pytest.mark.asyncio
+    async def test_etherscan_dialect(self, mock_client):
+        impl = '0x43506849D7C04F9138D1A2050bbF3A0c054402dd'
+        mock_client.call.return_value = [{'Proxy': '1', 'Implementation': impl}]
+        result = await resolve_proxy_metadata('0xa0b8', mock_client)
+        assert result.is_proxy is True
+        assert result.implementation == impl.lower()
+
+    @pytest.mark.asyncio
+    async def test_blockscout_dialect(self, mock_client):
+        """BlockScout says IsProxy/ImplementationAddress — read as a plain contract before."""
+        impl = '0x43506849d7c04f9138d1a2050bbf3a0c054402dd'
+        mock_client.call.return_value = [{'IsProxy': 'true', 'ImplementationAddress': impl}]
+        result = await resolve_proxy_metadata('0xa0b8', mock_client)
+        assert result.is_proxy is True
+        assert result.implementation == impl
+
+    @pytest.mark.asyncio
+    async def test_diamond_lists_every_facet(self, mock_client):
+        facets = [
+            '0x37cefd5b44c131fef27e9bc542e5b77a177a7253',
+            '0x1666124221622eb6154306ea9ba87043e8be88b2',
+        ]
+        mock_client.call.return_value = [
+            {
+                'IsProxy': 'true',
+                'ImplementationAddress': facets[0],
+                'ImplementationAddresses': facets,
+            }
+        ]
+        result = await resolve_proxy_metadata('0x3240', mock_client)
+        assert result.implementations == tuple(facets)
+        assert result.implementation == facets[0]
+
+    @pytest.mark.asyncio
+    async def test_flagged_proxy_without_usable_address(self, mock_client):
+        """A zero address names no implementation — it must not become an ABI target."""
+        mock_client.call.return_value = [{'Proxy': '1', 'Implementation': '0x' + '0' * 40}]
+        result = await resolve_proxy_metadata('0xdead', mock_client)
+        assert result.is_proxy is True
+        assert result.implementations == ()
+
+    @pytest.mark.asyncio
+    async def test_plain_contract(self, mock_client):
+        mock_client.call.return_value = [{'Proxy': '0', 'IsProxy': 'false'}]
+        result = await resolve_proxy_metadata('0xdac1', mock_client)
+        assert result.is_proxy is False
+        assert result.implementations == ()
+
+
 class TestSmartContractFromAddress:
     """Test SmartContract.from_address() factory method."""
 
@@ -178,6 +236,23 @@ class TestSmartContractFromAddress:
 
         # Verify ABI was fetched from implementation
         mock_client.call.assert_any_call(Method.CONTRACT_ABI, address=impl_addr.lower())
+
+    @pytest.mark.asyncio
+    async def test_from_address_proxy_blockscout_dialect(self, mock_client):
+        """The keyless default scanner names the same fields differently."""
+        impl_addr = '0x9876543210987654321098765432109876543210'
+        mock_client.call.side_effect = [
+            [{'IsProxy': 'true', 'ImplementationAddress': impl_addr}],
+            json.dumps(SAMPLE_ERC20_ABI),
+        ]
+
+        contract = await SmartContract.from_address(
+            '0x1234567890123456789012345678901234567890', mock_client
+        )
+
+        assert contract.is_proxy is True
+        assert contract.implementation_address == impl_addr
+        mock_client.call.assert_any_call(Method.CONTRACT_ABI, address=impl_addr)
 
     @pytest.mark.asyncio
     async def test_from_address_source_fails(self, mock_client):

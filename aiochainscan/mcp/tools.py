@@ -386,10 +386,9 @@ async def _resolve_abi_address(client: ChainscanClient, contract: str) -> str | 
     if not client.supports_method(Method.CONTRACT_SOURCE):
         return None
     try:
-        _, implementation = await resolve_proxy_metadata(contract.lower(), client)
+        return (await resolve_proxy_metadata(contract.lower(), client)).implementation
     except MethodNotDeclaredError:
         return None
-    return implementation
 
 
 async def _fetch_verified_abi(client: ChainscanClient, contract: str) -> VerifiedAbi:
