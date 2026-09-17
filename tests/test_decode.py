@@ -500,6 +500,16 @@ class TestDecodeLogData:
         assert decoded['to'] == '0xabc123def456789012345678901234567890abcd'
         assert decoded['value'] == 1000000000000000000
 
+    def test_decode_log_data_ignores_null_topic_padding(self):
+        """BlockScout V1 pads the topic list to four; a null slot is no topic."""
+        log = self.transfer_log.copy()
+        log['topics'] = [*log['topics'], None]
+
+        result = decode_log_data(log, self.transfer_event_abi)
+
+        assert result['decoded_data']['event'] == 'Transfer'
+        assert result['decoded_data']['value'] == '16000000000000000000'
+
     @patch('aiochainscan.decode._abi_decode_params')
     @patch('aiochainscan.decode.keccak_hash')
     def test_decode_log_data_stringifies_uint_above_i64(self, mock_keccak, mock_decode):

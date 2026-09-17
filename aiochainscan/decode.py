@@ -744,7 +744,9 @@ def decode_log_data(log: dict[str, Any], abi: list[dict[str, Any]]) -> dict[str,
     index = _abi_index(abi)
     event_map = index.event_map
 
-    topics = cast(list[str], log.get('topics', []))
+    # A provider may pad the topic list to four with nulls (BlockScout V1
+    # does); an absent topic slot carries no topic.
+    topics = [topic for topic in cast(list[str], log.get('topics') or []) if topic]
     event: dict[str, Any] | None = None
     anonymous_candidates: list[dict[str, Any]] = []
     indexed_topics = topics[1:]

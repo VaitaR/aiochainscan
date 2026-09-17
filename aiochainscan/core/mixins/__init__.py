@@ -4,6 +4,7 @@ from .account import AccountMixin
 from .blocks import BlockMixin
 from .chain import ChainMixin
 from .contracts import ContractMixin
+from .decoding import DecodeMixin
 from .ens import ENSMixin
 from .logs import LogsMixin
 from .proxy import ProxyMixin
@@ -16,6 +17,7 @@ __all__ = [
     'BlockMixin',
     'ChainMixin',
     'ContractMixin',
+    'DecodeMixin',
     'ENSMixin',
     'LogsMixin',
     'ProxyMixin',

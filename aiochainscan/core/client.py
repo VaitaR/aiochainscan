@@ -38,6 +38,7 @@ from .mixins import (
     BlockMixin,
     ChainMixin,
     ContractMixin,
+    DecodeMixin,
     ENSMixin,
     LogsMixin,
     ProxyMixin,
@@ -71,6 +72,7 @@ def _decode_with_abi(
 class ChainscanClient(
     AccountMixin,
     ContractMixin,
+    DecodeMixin,
     BlockMixin,
     TransactionMixin,
     LogsMixin,

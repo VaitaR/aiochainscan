@@ -80,6 +80,7 @@ from .mixins import (
     BlockMixin,
     ChainMixin,
     ContractMixin,
+    DecodeMixin,
     ENSMixin,
     LogsMixin,
     ProxyMixin,
@@ -320,6 +321,7 @@ def _inject_provider_progress(label: str, callback: ProgressCallback) -> Progres
 class ChainscanPool(
     AccountMixin,
     ContractMixin,
+    DecodeMixin,
     BlockMixin,
     TransactionMixin,
     LogsMixin,
