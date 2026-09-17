@@ -224,6 +224,20 @@ async for event in contract.iter_events('Transfer', limit=100):
     print(event.args['from'], event.args['to'], event.args['value'])
 ```
 
+With records you already hold — a page of transactions, a batch of logs — the
+client resolves each ABI itself, following proxies and merging a diamond's
+facets, and caches it per address:
+
+```python
+calls = await client.decode_transactions(txs)    # ABI per tx['to'], fetched once each
+events = await client.decode_logs(logs)          # ABI per log['address']
+one = await client.decode_input(tx['input'], address=tx['to'])
+```
+
+A record whose ABI cannot be fetched comes back with an empty `decoded_func`
+rather than being dropped, and the list you passed in is never mutated. Pass
+`abi=` to skip the lookup entirely.
+
 With an ABI you already hold, decode directly — no client, no network:
 
 ```python
