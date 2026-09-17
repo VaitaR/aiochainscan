@@ -9,6 +9,7 @@ copy of the registration table and must not outlive it.
 from __future__ import annotations
 
 import json
+import re
 import tomllib
 from pathlib import Path
 from typing import Any
@@ -21,6 +22,7 @@ MANIFEST = json.loads((BUNDLE_DIR / 'manifest.json').read_text())
 BUNDLE_PYPROJECT = tomllib.loads((BUNDLE_DIR / 'pyproject.toml').read_text())
 SERVER_JSON = json.loads((REPO_ROOT / 'server.json').read_text())
 PROJECT = tomllib.loads((REPO_ROOT / 'pyproject.toml').read_text())
+PACKAGE_INIT = (REPO_ROOT / 'aiochainscan' / '__init__.py').read_text()
 
 
 def test_manifest_declares_the_uv_runtime_entry_point() -> None:
@@ -69,7 +71,13 @@ def test_every_stated_version_agrees() -> None:
         for requirement in BUNDLE_PYPROJECT['project']['dependencies']
         if requirement.startswith('aiochainscan[mcp]')
     )
+    # The literal in ``__init__.py`` is only the fallback for an uninstalled
+    # source tree, but a caller cannot tell which source answered, so a stale
+    # literal misreports the version exactly as a wrong dist would.
+    fallback = re.search(r"__version__ = '([^']+)'", PACKAGE_INIT)
+    assert fallback is not None
     stated = {
+        fallback.group(1),
         PROJECT['project']['version'],
         MANIFEST['version'],
         BUNDLE_PYPROJECT['project']['version'],

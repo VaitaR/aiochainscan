@@ -168,6 +168,25 @@ async for event in contract.iter_events('Transfer', from_block=18_000_000, limit
 result = await client.eth_call(to_address, '0x70a08231…')   # raw eth_call
 ```
 
+Records you already hold decode without any ABI plumbing — the ABI that
+decodes traffic sent to an address (its proxy implementation, or a diamond's
+facets merged) is resolved for you and cached per address:
+
+```python
+txs = await client.get_all_transactions(wallet)
+calls = await client.decode_transactions(txs)         # ABI per tx['to']
+events = await client.decode_logs(logs)               # ABI per log['address']
+one = await client.decode_input(tx['input'], address=tx['to'])
+
+calls = await client.decode_transactions(txs, abi=known_abi)   # skip the lookup
+```
+
+A row whose ABI cannot be fetched (unverified contract, plain transfer) keeps
+every field with an empty `decoded_func` instead of being dropped, and the
+list you passed in is not mutated. `get_contract_abi(address)` alone returns
+the ABI stored FOR THAT ADDRESS — for a proxy that decodes nothing, so pass
+`follow_proxy=True` when you fetch an ABI yourself.
+
 ABI decoding works on a bare install (pure-Python codec covers the full ABI
 spec). `pip install "aiochainscan[fastabi]"` swaps in the Rust backend for
 bulk decoding; decoded values are identical by contract. An unsupported

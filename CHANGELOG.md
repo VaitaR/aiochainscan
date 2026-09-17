@@ -8,6 +8,21 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Decoding is on the client surface.** `decode_input(calldata, address=...)`,
+  `decode_transactions(txs)` and `decode_logs(logs)` resolve the ABI that decodes traffic
+  sent to an address — proxy implementation, or every facet of a diamond — and apply it to
+  records the caller already holds. The decoders were reachable only as
+  `aiochainscan.decode` functions or implicitly through `iter_transactions(abi=...)`, so
+  the ABI resolution in front of them was work every caller wrote again. Records whose ABI
+  cannot be fetched keep every field with an empty `decoded_func`; the caller's lists are
+  never mutated, and the ABI is fetched once per destination address.
+
+- **Null topic padding no longer blocks event decoding.** BlockScout V1 pads a log's
+  `topics` list to four entries with nulls, and every such log decoded to nothing — on the
+  keyless default provider, that was every log. `decode_log_data` now reads an absent slot
+  as no topic, which fixes `decode_logs`, `SmartContract.iter_events` and the streaming
+  decode paths alike.
+
 - **Proxy resolution is reachable from the name agents actually use.**
   `get_contract_abi(address, follow_proxy=True)` resolves a proxy to its implementation
   before fetching the ABI; without the flag it still returns the ABI the explorer stores

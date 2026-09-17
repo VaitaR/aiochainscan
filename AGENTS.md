@@ -53,6 +53,11 @@ async with ChainscanClient.from_config('etherscan', 'ethereum') as client:
     created = await client.get_contract_creation(['0x...'])       # creator + tx
     verdict = await client.wait_for_verification(guid)            # poll Pass/Fail (300s/10s)
 
+    # ── Decoding (ABI resolved for you, proxies followed) ────
+    call   = await client.decode_input(tx['input'], address=tx['to'])   # {'decoded_func', 'decoded_data'}
+    calls  = await client.decode_transactions(txs)                      # ABI per tx['to'], once each
+    events = await client.decode_logs(logs)                             # ABI per log['address']
+
     # ── Tokens ───────────────────────────────────────────────
     bal     = await client.get_token_balance('0xWALLET', '0xTOKEN')  # raw units
     supply  = await client.get_token_supply('0xTOKEN')               # total supply
@@ -350,6 +355,11 @@ async with ChainscanClient.from_config('etherscan', 'ethereum') as client:
   BlockScout proxy as a plain contract, which is what the keyless default scanner serves.
   `ProxyMetadata.implementation` is the first entry — the ABI of one facet does NOT cover a
   diamond's whole selector table, which is what `is_diamond` and the facet merge are for.
+- **Decoding needs no ABI plumbing**: `decode_transactions()` / `decode_logs()` /
+  `decode_input()` resolve the deciding ABI themselves (proxy implementation, or a
+  diamond's facets merged) and cache it per address. Pass `abi=` to skip the lookup.
+  A record whose ABI cannot be fetched is kept with an empty `decoded_func`, never
+  dropped, and the caller's list is never mutated.
 - Balance/value/supply values are **Wei strings** — convert with `wei_to_ether()` / `to_decimal_amount()` (exact `Decimal`), never `int(wei) / 10**18` float division.
 
 > **Note:** Legacy `Client` class and `modules/` were removed in v0.3.0 (see also the public API policy above).
