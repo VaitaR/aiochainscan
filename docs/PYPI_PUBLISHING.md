@@ -88,11 +88,6 @@ bump the version and rebuild.
 
 ## Automated Publishing via GitHub Actions
 
-> **Currently DISABLED** (`disabled_manually`, Actions-minutes budget). Do not
-> wait on CI. Re-enable with:
-> `gh workflow enable ci.yml test-install.yml wheels.yml --repo VaitaR/aiochainscan`
-> and use `make ci-local` as the local gate meanwhile.
-
 `wheels.yml` builds both distributions on a release tag:
 
 1. `aiochainscan` — pure-Python wheel + sdist, plus a smoke import test without
@@ -107,6 +102,22 @@ push origin v1.0.0`) → the workflow builds and publishes all artifacts.
 **Trusted Publishing** (recommended, no tokens): PyPI → Your Project →
 Publishing → add publisher `VaitaR/aiochainscan`, workflow `wheels.yml`.
 Otherwise add a `PYPI_API_TOKEN` repository secret and use it in the workflow.
+
+## Step 6: Verify the Release
+
+Install it from PyPI into a throwaway venv — that is the only check that proves
+the uploaded artifact carries the release:
+
+```sh
+python3 -m venv /tmp/verify && /tmp/verify/bin/pip install --no-cache-dir aiochainscan
+/tmp/verify/bin/python -c "import aiochainscan; print(aiochainscan.__version__)"
+```
+
+Do NOT judge a publish by `https://pypi.org/pypi/<project>/json`. It is
+CDN-cached and lags an upload by minutes — after v1.0.6 it still reported the
+previous version ~5 minutes after a successful upload, which reads exactly like
+a failed release. The authorities, in order: the `Publish to PyPI` job's upload
+log, then an install.
 
 ## Version Management
 

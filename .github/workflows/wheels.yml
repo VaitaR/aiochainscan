@@ -219,11 +219,18 @@ jobs:
           echo "--- staging/base ---";    ls -l staging/base || true
           echo "--- staging/fastabi ---"; ls -l staging/fastabi || true
 
+      # `skip-existing` is what actually makes the re-run above safe: the prune
+      # step reads pypi.org's JSON API, which is CDN-cached and can lag an
+      # upload by minutes (measured after v1.0.6: still reporting the previous
+      # version ~5 min after a successful upload). A stale read that misses a
+      # file already on PyPI would re-upload it and fail the job on a 400. With
+      # this, the prune is an optimization and PyPI itself is the authority.
       - name: Publish aiochainscan
         if: steps.files.outputs.base_count != '0'
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: staging/base
+          skip-existing: true
 
       # `!cancelled()` is what actually makes the two steps independent: a step
       # whose `if` names no result function is skipped once an earlier step in
@@ -234,3 +241,4 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: staging/fastabi
+          skip-existing: true

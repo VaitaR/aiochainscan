@@ -18,7 +18,7 @@ Bootstrap/list/teardown commands: see AGENTS.md "Multi-Agent Workflow". `AIO_SKI
 
 ## Waiting on long-running things
 
-Do not stream `gh run watch` — it burns tokens; use `./scripts/agent/ci_watch.sh` instead (see AGENTS.md CI section — workflows currently disabled).
+Do not stream `gh run watch` — it burns tokens; use `./scripts/agent/ci_watch.sh` instead (see AGENTS.md CI section).
 
 ## Permissions
 

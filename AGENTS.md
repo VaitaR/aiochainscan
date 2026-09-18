@@ -1073,7 +1073,7 @@ ruff check . --fix
 ruff format .
 ```
 
-Or in one shot: `make ci-local` (mirrors the disabled GitHub CI). Agents: run `make validate` before claiming DONE and `make commit MSG="..." PATHS="..."` to commit.
+Or in one shot: `make ci-local` (mirrors GitHub CI locally). Agents: run `make validate` before claiming DONE and `make commit MSG="..." PATHS="..."` to commit.
 
 ---
 
