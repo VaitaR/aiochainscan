@@ -6,6 +6,8 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.6] — 2026-09-18
+
 ### Added
 
 - **Decoding is on the client surface.** `decode_input(calldata, address=...)`,
@@ -322,3 +324,4 @@ facade from the 0.2 series is long gone — see
 [1.0.1]: https://github.com/VaitaR/aiochainscan/releases/tag/v1.0.1
 [1.0.3]: https://github.com/VaitaR/aiochainscan/releases/tag/v1.0.3
 [1.0.4]: https://github.com/VaitaR/aiochainscan/releases/tag/v1.0.4
+[1.0.6]: https://github.com/VaitaR/aiochainscan/releases/tag/v1.0.6
