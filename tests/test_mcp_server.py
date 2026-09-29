@@ -26,6 +26,7 @@ from aiochainscan.abi_pure import (
 from aiochainscan.chain_registry import (
     BLOCKSCOUT_INSTANCE_HOSTS,
     BLOCKSCOUT_SCANNER_NETWORKS,
+    DEFAULT_SCANNER_VERSIONS,
     resolve_scanner_target,
 )
 from aiochainscan.core.endpoint import EndpointSpec
@@ -1279,7 +1280,7 @@ class TestListChains:
         assert coverage['blockscout'] == coverage['blockscout_v2']
         # Every chain the tool lists as covered must actually construct.
         for scanner, chains in coverage.items():
-            version = 'v2' if scanner in ('etherscan', 'blockscout_v2') else 'v1'
+            version = DEFAULT_SCANNER_VERSIONS.get(scanner, 'v1')
             cls_name, cls_version = (
                 ('blockscout', 'v2') if scanner == 'blockscout_v2' else (scanner, version)
             )

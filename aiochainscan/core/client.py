@@ -241,6 +241,15 @@ class ChainscanClient(
         self._rate_limiter = rate_limiter
         self._retry_policy = retry_policy
 
+        scanner_class = (
+            get_scanner_class(target.scanner_name, target.scanner_version)
+            if scanner is None
+            else type(scanner)
+        )
+        default_rate_rps = getattr(scanner_class, 'default_rate_limit_rps', None)
+        if not isinstance(default_rate_rps, int | float) or isinstance(default_rate_rps, bool):
+            default_rate_rps = None
+
         # Create Network instance owned by this client for connection pooling
         # — unless the caller injected one (wiring seam: resolution above is
         # still the single source of chain id / api kind / network name;
@@ -258,6 +267,7 @@ class ChainscanClient(
                 timeout=timeout,
                 proxy=proxy,
                 rate_limiter=rate_limiter,
+                default_rate_rps=default_rate_rps,
                 retry_policy=retry_policy,
                 first_request_guard=(
                     self._validate_expected_chain_once
@@ -276,7 +286,6 @@ class ChainscanClient(
         # the built scanner is wired to *that* network (the connection-
         # pooling relationship holds whichever collaborator was injected).
         if scanner is None:
-            scanner_class = get_scanner_class(target.scanner_name, target.scanner_version)
             self._scanner = scanner_class(
                 target.api_key,
                 target.scanner_network,

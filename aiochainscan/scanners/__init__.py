@@ -164,6 +164,7 @@ from .blockscout_v1 import BlockScoutV1  # noqa: E402
 from .blockscout_v2 import BlockScoutV2Scanner  # noqa: E402
 from .etherscan_v2 import EtherscanV2  # noqa: E402
 from .nodereal import NodeRealScanner  # noqa: E402
+from .routescan_v2 import RoutescanV2  # noqa: E402
 
 __all__ = [
     'Scanner',
@@ -177,4 +178,5 @@ __all__ = [
     'BlockScoutV1',
     'BlockScoutV2Scanner',
     'NodeRealScanner',
+    'RoutescanV2',
 ]

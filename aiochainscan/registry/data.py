@@ -208,6 +208,15 @@ _URL_KIND_PROFILES: dict[str, KindProfile] = {
         base_url='https://routescan.io/v2/network/mainnet/evm/34443/etherscan',
         api_url='https://routescan.io/v2/network/mainnet/evm/34443/etherscan/api',
     ),
+    'routescan': KindProfile(
+        currency='EVM',
+        base_url='https://api.routescan.io',
+        api_url='https://api.routescan.io',
+        display_name='Routescan',
+        base_domain='routescan.io',
+        requires_api_key=False,
+        special_config={'rate_limit': 1},
+    ),
     'linea': KindProfile(
         currency='LINEA',
         base_url='https://lineascan.build',
@@ -565,6 +574,14 @@ SCANNER_RECORDS: dict[str, ScannerRecord] = {
             'binance': 'bsc',
         },
         supported_networks=frozenset({'bsc', 'bsc-testnet'}),
+    ),
+    'routescan': ScannerRecord(
+        kind='routescan',
+        default_version='v2',
+        api_kind='routescan',
+        # Only the three chain ids probed against the Etherscan-compatible
+        # endpoint on 2026-09-30 are declared here.
+        supported_networks=frozenset({'ethereum', 'avalanche', 'plasma'}),
     ),
 }
 

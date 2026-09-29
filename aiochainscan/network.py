@@ -130,6 +130,7 @@ class Network:
         max_connections: int | None = None,
         max_response_bytes: int = NETWORK_MAX_RESPONSE_BYTES,
         first_request_guard: Callable[[], Awaitable[None]] | None = None,
+        default_rate_rps: float | None = None,
     ) -> None:
         """Initialize Network transport.
 
@@ -138,6 +139,7 @@ class Network:
             timeout: Request timeout in seconds, or httpx.Timeout instance.
             proxy: Optional proxy URL (e.g., "http://localhost:8080").
             rate_limiter: Rate limiter implementation (default: AioLimiterAdapter).
+            default_rate_rps: Provider-specific default rate when no limiter is injected.
             retry_policy: Retry policy implementation (default: TenacityRetryAdapter).
             http2: Whether to use HTTP/2 (default False for API stability).
             max_connections: Maximum connections in the pool (default 10).
@@ -172,8 +174,11 @@ class Network:
         else:
             from aiochainscan.adapters.aiolimiter_adapter import AioLimiterAdapter
 
+            max_rate = RATE_DEFAULT_RPS if default_rate_rps is None else default_rate_rps
+            if max_rate <= 0:
+                raise ValueError('default_rate_rps must be greater than zero')
             self._rate_limiter = AioLimiterAdapter(
-                max_rate=RATE_DEFAULT_RPS,
+                max_rate=max_rate,
                 time_period=RATE_TIME_PERIOD,
                 max_burst=RATE_DEFAULT_BURST,
             )

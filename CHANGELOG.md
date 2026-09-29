@@ -6,6 +6,15 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Routescan v2 scanner.** Adds the keyless Etherscan-compatible Routescan API
+  for the live-verified Ethereum, Avalanche C-Chain and Plasma networks, with
+  optional `ROUTESCAN_KEY` / `ROUTESCAN_API_KEY` header authentication. Routescan
+  is rate-limited at one request per second by default (the keyless plan allows
+  two). Its measured caps are a 10,000-record result window, as on Etherscan,
+  and a 5,000-record page.
+
 ## [1.0.6] — 2026-09-18
 
 ### Added
