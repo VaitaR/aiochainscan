@@ -41,6 +41,19 @@ NodeReal) declares none, because an opaque server cursor runs to exhaustion and
 has nothing to overflow. On those providers the flag is inert — there is no cap
 to work around.
 
+A provider that *refuses* a request as too big is split the same way as one
+that overflows. On Etherscan this also covers span, not only count: a
+`getLogs` range too wide to scan in about 30 seconds is refused ("Please select
+a smaller result dataset") even when it matches few records, and the range is
+narrowed until it is served. The refusal takes those ~30 seconds to arrive, so
+the client `timeout` must exceed it. Below it, the client aborts first, retries
+the same window and fails with `ChainscanNetworkError`:
+
+```python
+async with ChainscanClient.from_config('etherscan', 'ethereum', timeout=60) as client:
+    logs = await client.get_all_logs(address, from_block=0)
+```
+
 Two failures can end the walk, and they mean different things:
 
 - **`PaginationDataLossError`** — the range was narrowed until a *single block*
@@ -69,7 +82,7 @@ accept truncation deliberately.
 Up to one extra pass over each overflowing window (the truncated attempt is
 discarded rather than yielded, so nothing duplicates), a buffer bounded by the
 provider's window, and one unnecessary split for a range holding exactly the
-cap.
+cap. Each Etherscan scan-timeout refusal adds its ~30 seconds of wall time.
 
 ## Streaming and DataFrames
 

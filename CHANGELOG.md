@@ -6,6 +6,18 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **An Etherscan scan timeout is split, not fatal.** A `getLogs` range too wide for
+  Etherscan to scan in ~30s is refused with status 0 "Query Timeout occured. Please select
+  a smaller result dataset", whatever the record count. It surfaced as a generic
+  `ChainscanClientApiError` and ended `get_all_logs`/`iter_logs` on the first window. It is
+  now a `ChainscanResultWindowExceededError`, the refusal the guarantee engine already
+  narrows on. Code catching `ChainscanClientApiError` for this text must catch the new type:
+  it is a `ChainscanClientError`, not an API error. The refusal takes ~30s to arrive, so
+  it only reaches the engine when the client `timeout` exceeds it. The default 10s aborts
+  first and fails with `ChainscanNetworkError`.
+
 ## [1.0.6] — 2026-09-18
 
 ### Added

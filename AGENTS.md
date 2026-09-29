@@ -531,6 +531,7 @@ Every `Method` enum value (34 total) maps to typed convenience methods on `Chain
 | Assume the provider honoured the `offset` you sent | Clamp it to `Scanner.max_page_size` before comparing | Etherscan serves 1000 for `offset=5000` with `status=1` — the "partial" page is a full one |
 | Give every endpoint the scanner's one `result_window` | Declare the tighter ones in `RESULT_WINDOW_OVERRIDES` | BlockScout V1 `getLogs` caps at 1000 and ignores paging; walking to 10_000 re-fetches page 1 ten times |
 | Split a range in fixed-width windows | Bisect on the *observed* overflow boundary | Fixed windows cost requests where data is sparse and still truncate where it is dense |
+| Run `get_all_logs` on Etherscan with the default 10s `timeout` | Pass `timeout` above ~35s | A wide `getLogs` span is refused after a ~30s server-side scan ("select a smaller result dataset") — the refusal the engine splits on. A shorter client timeout aborts first, the same window is retried, and the call fails with `ChainscanNetworkError` |
 
 ### Network
 | ❌ DON'T | ✅ DO | Why |
@@ -1041,7 +1042,7 @@ Semantics:
 from aiochainscan.exceptions import (
     ChainscanRateLimitError,      # Retry with backoff
     ChainscanNetworkError,        # Retry (connection issues)
-    ChainscanResultWindowExceededError,  # FATAL: provider refused the request as over its result window (engine splits it)
+    ChainscanResultWindowExceededError,  # FATAL: provider refused the request as too big — over its result window, or an Etherscan scan timeout (engine splits it)
     PaginationDataLossError,      # Whale block: a single block over the API's cap
     CompletenessUnavailableError, # Endpoint has no splittable dimension here (.alternatives)
     ChainscanDataError,           # Data contract violation
