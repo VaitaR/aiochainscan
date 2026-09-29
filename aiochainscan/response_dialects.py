@@ -25,8 +25,10 @@ from aiochainscan.exceptions import (
     ChainscanClientProxyError,
     ChainscanDataError,
     ChainscanRateLimitError,
+    ChainscanResultWindowExceededError,
     api_error_failure_kind,
     mentions_rate_limit,
+    mentions_result_size_refusal,
 )
 
 
@@ -97,6 +99,11 @@ def _raise_if_etherscan_error(response_json: Any) -> None:
     ``{"status":"0","message":"NOTOK","result":"Max rate limit reached"}``
     ``{"status":"0","message":"Max calls rate limit reached","result":"NOTOK"}``
 
+    A request to narrow the query (see
+    :data:`aiochainscan.exceptions.RESULT_SIZE_REFUSAL_MESSAGE_MARKERS`)
+    becomes :class:`ChainscanResultWindowExceededError`, the refusal the
+    guarantee engine splits on instead of failing.
+
     Any other failing status raises :class:`ChainscanClientApiError` with
     the kind computed by :func:`aiochainscan.exceptions.api_error_failure_kind`
     — decided here, where the failure is detected, so the pool classifies
@@ -116,6 +123,9 @@ def _raise_if_etherscan_error(response_json: Any) -> None:
 
         if mentions_rate_limit(result) or mentions_rate_limit(message):
             raise ChainscanRateLimitError(message, result)
+
+        if mentions_result_size_refusal(result) or mentions_result_size_refusal(message):
+            raise ChainscanResultWindowExceededError(f'[{message}] {result}'.rstrip(' .'))
 
         raise ChainscanClientApiError(
             message, result, failure_kind=api_error_failure_kind(message, result)

@@ -24,6 +24,7 @@ from aiochainscan.exceptions import (
     FailureKind,
     PaginationDataLossError,
 )
+from aiochainscan.response_dialects import _raise_if_etherscan_error
 from aiochainscan.scanners._etherscan_like import EtherscanLikeScanner
 from aiochainscan.scanners.base import Scanner
 from aiochainscan.scanners.blockscout_v2 import BlockScoutV2Scanner
@@ -864,3 +865,92 @@ def test_refusal_error_is_a_fatal_chainscan_client_error() -> None:
     assert isinstance(error, ChainscanClientError)
     assert error.failure_kind is FailureKind.FATAL
     assert error.limit == 50_000
+
+
+# ---------------------------------------------------------------------------
+# Etherscan server-side scan timeout: a refusal driven by block SPAN
+# ---------------------------------------------------------------------------
+
+
+class SpanTimeoutExplorer:
+    """Etherscan ``getLogs`` that cannot scan more than ``max_span`` blocks.
+
+    A wider window is answered with the provider's own status=0 envelope,
+    pushed through the real Etherscan dialect — so the test covers the text
+    classification, not a hand-raised exception. Record counts stay far below
+    the result window: this refusal has nothing to do with the cap.
+    """
+
+    def __init__(self, blocks: dict[int, int], max_span: int) -> None:
+        self.max_span = max_span
+        self.items: list[dict[str, Any]] = [
+            {'blockNumber': str(block), 'id': f'{block}-{index}'}
+            for block in sorted(blocks)
+            for index in range(blocks[block])
+        ]
+        self.requests: list[tuple[int, int, int]] = []
+        self.refusals = 0
+
+    @property
+    def all_ids(self) -> list[str]:
+        return [item['id'] for item in self.items]
+
+    async def fetch(
+        self, params: dict[str, Any]
+    ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+        start = int(params['start_block'])
+        end = int(params['end_block'])
+        page = int(params.get('page', 1))
+        offset = int(params['offset'])
+        self.requests.append((start, end, page))
+
+        if end - start + 1 > self.max_span:
+            self.refusals += 1
+            _raise_if_etherscan_error(
+                {
+                    'status': '0',
+                    'message': 'NOTOK',
+                    'result': 'Query Timeout occured. Please select a smaller result dataset',
+                }
+            )
+            raise AssertionError('the dialect did not raise on a failing envelope')
+        matching = [item for item in self.items if start <= int(item['blockNumber']) <= end]
+        lo = (page - 1) * offset
+        chunk = matching[lo : lo + offset]
+        cursor = {'page': page + 1, 'offset': offset} if lo + offset < len(matching) else None
+        return chunk, cursor
+
+
+@pytest.mark.asyncio
+async def test_scan_timeout_splits_and_recovers_every_record() -> None:
+    """A window refused for its span is narrowed until it is served."""
+    explorer = SpanTimeoutExplorer({3: 2, 400: 3, 998: 1}, max_span=150)  # 6 records
+
+    collected = await drain(
+        iter_pages(
+            explorer.fetch,
+            dict(BASE_PARAMS),
+            guarantee_complete=True,
+            result_window=WINDOW,
+        )
+    )
+
+    assert [item['id'] for item in collected] == explorer.all_ids
+    assert explorer.refusals >= 1, 'the stub never refused — nothing was exercised'
+    served = [r for r in explorer.requests if r[1] - r[0] + 1 <= explorer.max_span]
+    covered = sorted({(start, end) for start, end, _ in served})
+    assert covered[0][0] == 0 and covered[-1][1] == 999
+    assert all(
+        b[0] == a[1] + 1 for a, b in zip(covered, covered[1:], strict=False)
+    ), 'served windows must tile the range without gap or overlap'
+
+
+@pytest.mark.asyncio
+async def test_scan_timeout_escapes_without_the_guarantee() -> None:
+    """Non-vacuity: the same explorer in legacy mode fails on the first window."""
+    explorer = SpanTimeoutExplorer({3: 2, 400: 3, 998: 1}, max_span=150)
+
+    with pytest.raises(ChainscanResultWindowExceededError):
+        await drain(iter_pages(explorer.fetch, dict(BASE_PARAMS), guarantee_complete=False))
+
+    assert explorer.requests == [(0, 999, 1)]

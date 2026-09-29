@@ -22,6 +22,7 @@ from aiochainscan.exceptions import (
     ChainscanNetworkError,
     ChainscanRateLimitError,
     ChainscanResponseTooLargeError,
+    ChainscanResultWindowExceededError,
     FailureKind,
     api_error_failure_kind,
 )
@@ -537,6 +538,82 @@ async def test_rate_limit_in_http_200_carries_rate_limit_kind(ub) -> None:
         await network.close()
 
     assert exc_info.value.failure_kind is FailureKind.RATE_LIMIT
+
+
+# Etherscan's server-side getLogs scan timeout, verbatim (including its typo).
+_ETHERSCAN_SCAN_TIMEOUT = 'Query Timeout occured. Please select a smaller result dataset'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    'envelope',
+    [
+        {'status': '0', 'message': 'NOTOK', 'result': _ETHERSCAN_SCAN_TIMEOUT},
+        {'status': '0', 'message': _ETHERSCAN_SCAN_TIMEOUT, 'result': None},
+    ],
+)
+async def test_scan_timeout_in_http_200_is_a_splittable_refusal(
+    ub, envelope: dict[str, Any]
+) -> None:
+    """Etherscan's "select a smaller result dataset" is the result-size refusal
+    the guarantee engine splits on — not a generic FATAL API error."""
+    network = Network(ub)
+    response = httpx.Response(200, headers={'content-type': 'application/json'}, json=envelope)
+    try:
+        with pytest.raises(ChainscanResultWindowExceededError) as exc_info:
+            network._handle_response(response)
+    finally:
+        await network.close()
+
+    error = exc_info.value
+    assert error.failure_kind is FailureKind.FATAL
+    assert error.limit is None
+    assert 'smaller result dataset' in error.detail
+    assert not isinstance(error, ChainscanClientApiError)
+
+
+@pytest.mark.asyncio
+async def test_scan_timeout_is_not_retried(ub) -> None:
+    """The same window repeats the refusal, so the transport must not spend
+    retries on it: exactly one request reaches the provider."""
+    rate_limiter = MagicMock()
+    rate_limiter.acquire = AsyncMock()
+    # Default retry vocabulary: the production transient set decides.
+    retry_policy = TenacityRetryAdapter(max_attempts=3, min_wait=0.0, max_wait=0.0, jitter=0.0)
+    network = Network(ub, rate_limiter=rate_limiter, retry_policy=retry_policy)
+    response = httpx.Response(
+        200,
+        request=httpx.Request('GET', 'https://example.com/api'),
+        json={'status': '0', 'message': 'NOTOK', 'result': _ETHERSCAN_SCAN_TIMEOUT},
+    )
+
+    try:
+        with (
+            patch.object(httpx.AsyncClient, 'get', new=AsyncMock(return_value=response)) as get,
+            pytest.raises(ChainscanResultWindowExceededError),
+        ):
+            await network.get()
+    finally:
+        await network.close()
+
+    assert get.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_unrelated_timeout_text_stays_a_generic_api_error(ub) -> None:
+    """Only the provider's "ask for less" phrase splits; a bare timeout text
+    carries no such instruction."""
+    network = Network(ub)
+    response = httpx.Response(
+        200,
+        headers={'content-type': 'application/json'},
+        json={'status': '0', 'message': 'NOTOK', 'result': 'Query Timeout occured'},
+    )
+    try:
+        with pytest.raises(ChainscanClientApiError):
+            network._handle_response(response)
+    finally:
+        await network.close()
 
 
 @pytest.mark.parametrize(

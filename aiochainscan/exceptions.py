@@ -308,7 +308,10 @@ class ChainscanResultWindowExceededError(ChainscanClientError):
     request as asked* (measured live 2026-09-05: ``eth_getLogs`` over a
     2000-block BSC-USD window answers "logs count exceeds the limit 50000")
     and is raised as THIS error instead of a raw
-    :class:`ChainscanClientProxyError`.
+    :class:`ChainscanClientProxyError`. Etherscan's status=0 "Please select a
+    smaller result dataset" (a server-side scan timeout, see
+    :data:`RESULT_SIZE_REFUSAL_MESSAGE_MARKERS`) is raised as it too; it
+    states no limit.
 
     Placement follows :class:`InputLimitExceededError` /
     :class:`ScannerArgumentError`: a :class:`ChainscanClientError` with
@@ -425,6 +428,25 @@ def mentions_rate_limit(text: Any) -> bool:
     """Whether provider text carries a throttling marker."""
     return isinstance(text, str) and any(
         marker in text.lower() for marker in RATE_LIMIT_MESSAGE_MARKERS
+    )
+
+
+# Provider text meaning "this query is too big — ask for less", inside an
+# HTTP 200 envelope. Etherscan answers a ``getLogs`` scan it cannot finish
+# server-side (~30s) with status=0 "Query Timeout occured. Please select a
+# smaller result dataset". It depends on the block SPAN scanned, not on the
+# record count, so it arrives on windows far below ``result_window``; a retry
+# of the same window repeats it and only a narrower one is served — the
+# contract of :class:`ChainscanResultWindowExceededError`. The phrase is the
+# provider's instruction, not the "Query Timeout" prefix, so an unrelated
+# timeout text never matches.
+RESULT_SIZE_REFUSAL_MESSAGE_MARKERS: tuple[str, ...] = ('smaller result dataset',)
+
+
+def mentions_result_size_refusal(text: Any) -> bool:
+    """Whether provider text asks for a narrower query."""
+    return isinstance(text, str) and any(
+        marker in text.lower() for marker in RESULT_SIZE_REFUSAL_MESSAGE_MARKERS
     )
 
 
