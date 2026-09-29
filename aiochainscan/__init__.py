@@ -3,6 +3,7 @@
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _dist_version
 
+from aiochainscan._redaction import install_http_logging_filter as _install_http_logging_filter
 from aiochainscan.convert import (
     format_ether,
     hex_to_int,
@@ -36,6 +37,8 @@ from aiochainscan.exceptions import (
 )
 from aiochainscan.scanners import list_scanners, register_scanner
 from aiochainscan.services.chain_info import ChainInfo
+
+_install_http_logging_filter()
 
 # Single source of truth is the distribution metadata (pyproject `version`);
 # the literal is the fallback for a source tree that was never installed.

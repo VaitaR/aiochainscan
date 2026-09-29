@@ -4,8 +4,8 @@ Answers "which chain does this instance actually serve?" for self-hosted /
 custom deployments:
 
 - BlockScout (v1/v2): ``POST {base_url}/api/eth-rpc`` with the standard
-  JSON-RPC ``eth_chainId`` method. Works on any BlockScout instance and needs
-  no API key.
+  JSON-RPC ``eth_chainId`` method. Optional provider headers are forwarded for
+  authenticated Blockscout PRO instances.
 - Etherscan v2: ``GET https://api.etherscan.io/v2/chainlist`` — the keyless
   registry of chains the V2 multichain API serves (one entry per chainid).
   The full list (~60 networks) is fetched at most once per TTL window.
@@ -90,6 +90,8 @@ async def fetch_blockscout_chain_info(
     transport: ChainProbeTransport,
     base_url: str,
     cache: Cache,
+    headers: dict[str, str] | None = None,
+    rpc_url: str | None = None,
 ) -> ChainInfo:
     """Probe a BlockScout instance (self-hosted or public) for its chain id.
 
@@ -104,9 +106,9 @@ async def fetch_blockscout_chain_info(
 
     result = await transport.request(
         method='POST',
-        url=f'{base_url}/api/eth-rpc',
+        url=rpc_url or f'{base_url}/api/eth-rpc',
         json_data={'jsonrpc': '2.0', 'method': 'eth_chainId', 'params': [], 'id': 1},
-        headers={'Content-Type': 'application/json'},
+        headers={'Content-Type': 'application/json', **(headers or {})},
     )
     chain_id = _hex_chain_id(result)
     if chain_id is None:

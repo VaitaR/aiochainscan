@@ -12,6 +12,7 @@ Supports multiple blockchain networks through different BlockScout instances:
 """
 
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlsplit
 
 from ..chain_registry import BLOCKSCOUT_INSTANCE_HOSTS, BLOCKSCOUT_SCANNER_NETWORKS
 from ..constants import API_MAX_OFFSET_ETHERSCAN, API_MAX_OFFSET_LOGS
@@ -114,6 +115,10 @@ class BlockScoutV1(EtherscanLikeScanner):
     name = 'blockscout'
     version = 'v1'
 
+    # Blockscout PRO (one host, per-chain paths) authenticates with a Bearer
+    # header; public and self-hosted instances take ``apikey`` in the query.
+    PRO_API_HOST = 'api.blockscout.com'
+
     # Every alias the shared host table maps: an instance this scanner can
     # reach is an instance it declares, so a new entry in the record registers
     # for both BlockScout legs at once instead of drifting per leg.
@@ -186,6 +191,9 @@ class BlockScoutV1(EtherscanLikeScanner):
         if base_url is not None:
             self.instance_domain: str | None = None
             self._instance_root = base_url
+            if urlsplit(base_url).hostname == self.PRO_API_HOST:
+                self.auth_mode = 'header'
+                self.auth_field = 'authorization'
             return
 
         # Get BlockScout instance for this network (shared unknown-network
@@ -208,6 +216,20 @@ class BlockScoutV1(EtherscanLikeScanner):
         hosts, unlike Etherscan's shared subdomain layout. The root is the
         ``_instance_root`` attribute set in ``__init__``."""
         return f'{self._instance_root}{spec.path}'
+
+    @property
+    def eth_rpc_url(self) -> str:
+        """JSON-RPC endpoint. PRO serves it at ``/{chain_id}/json-rpc`` and
+        404s ``/api/eth-rpc`` (both measured live 2026-09-30 on chain 42793)."""
+        if self.auth_mode == 'header':
+            return f'{self._instance_root}/json-rpc'
+        return f'{self._instance_root}/api/eth-rpc'
+
+    def _auth_headers(self) -> dict[str, str]:
+        """Use Blockscout PRO's Bearer header without putting the key in URLs."""
+        if self.auth_mode != 'header' or not self.api_key:
+            return {}
+        return {'authorization': f'Bearer {self.api_key}'}
 
     async def _perform_request(
         self,
@@ -267,9 +289,9 @@ class BlockScoutV1(EtherscanLikeScanner):
 
         return await network.request(
             method='POST',
-            url=f'{self._instance_root}/api/eth-rpc',
+            url=self.eth_rpc_url,
             json_data={'jsonrpc': '2.0', 'method': rpc_method, 'params': rpc_params, 'id': 1},
-            headers={},
+            headers=self._auth_headers(),
         )
 
     # Most SPECS are inherited from the shared Etherscan-like implementation.

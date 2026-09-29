@@ -19,6 +19,7 @@ from tests.conftest import FakeNetwork
         (1, 'ethereum', 'mainnet/evm/1'),
         (43114, 'avalanche', 'mainnet/evm/43114'),
         (9745, 'plasma', 'mainnet/evm/9745'),
+        (21000000, 'corn', 'mainnet/evm/21000000'),
     ],
 )
 def test_routescan_url_shape(chain_id: int, network: str, expected_path: str) -> None:
@@ -70,5 +71,20 @@ async def test_routescan_default_limiter_is_conservative() -> None:
         limiter: Any = client._network._rate_limiter
         assert limiter.max_rate == 1.0
         assert limiter.max_burst == 1.0
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_routescan_corn_chain_id_constructs_and_routes() -> None:
+    client = ChainscanClient.from_config('routescan', 21000000, 'v2')
+    try:
+        request = client._scanner._build_request(
+            client._scanner.SPECS[Method.CONTRACT_SOURCE], address='0xabc'
+        )
+        assert client.chain_id == 21000000
+        assert request['url'] == (
+            'https://api.routescan.io/v2/network/mainnet/evm/21000000/etherscan/api'
+        )
     finally:
         await client.close()

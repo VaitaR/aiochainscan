@@ -325,6 +325,100 @@ class TestClientCustomBaseUrl:
         finally:
             await client.close()
 
+    async def test_blockscout_pro_uses_bearer_header_and_validates_chain(self) -> None:
+        key = 'K'
+        client = ChainscanClient.from_config(
+            'blockscout',
+            'https://api.blockscout.com/57073',
+            'v1',
+            api_key=key,
+            expected_chain_id=57073,
+        )
+        requests: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            assert request.headers.get('authorization') == f'Bearer {key}'
+            assert request.url.params.get('apikey') is None
+            if request.url.path == '/57073/json-rpc':
+                return httpx.Response(
+                    200,
+                    json={'jsonrpc': '2.0', 'result': '0xdef1', 'id': 1},
+                    request=request,
+                )
+            assert request.url.path == '/57073/api'
+            return httpx.Response(
+                200,
+                json={
+                    'status': '1',
+                    'message': 'OK',
+                    'result': [{'ContractName': 'CornContract'}],
+                },
+                request=request,
+            )
+
+        _install_transport(client, handler)
+        try:
+            source = await client.get_contract_source('0x0000000000000000000000000000000000000001')
+            assert source == {'ContractName': 'CornContract'}
+            assert len(requests) == 2  # authenticated chain guard + source request
+            assert key not in repr(client)
+            assert key not in repr(client._scanner)
+            assert key not in str(requests[-1].url)
+        finally:
+            await client.close()
+
+    @pytest.mark.parametrize(
+        ('network', 'host'),
+        [('https://explorer.example.org', 'explorer.example.org'), ('eth', 'eth.blockscout.com')],
+        ids=['self_hosted', 'registry_instance'],
+    )
+    async def test_blockscout_non_pro_key_stays_in_query(self, network: str, host: str) -> None:
+        # Only the PRO host takes Bearer; public and self-hosted instances
+        # document ``apikey`` in the query, so a header there would be ignored.
+        client = ChainscanClient.from_config('blockscout', network, 'v1', api_key='K')
+        requests: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            return httpx.Response(
+                200,
+                json={'status': '1', 'message': 'OK', 'result': [{'ContractName': 'C'}]},
+                request=request,
+            )
+
+        _install_transport(client, handler)
+        try:
+            await client.get_contract_source('0x0000000000000000000000000000000000000001')
+            assert requests[0].url.host == host
+            assert requests[0].headers.get('authorization') is None
+            assert requests[0].url.params.get('apikey') == 'K'
+        finally:
+            await client.close()
+
+    async def test_blockscout_custom_url_without_key_stays_keyless(self) -> None:
+        client = ChainscanClient.from_config(
+            'blockscout', 'https://api.blockscout.com/57073', 'v1'
+        )
+        requests: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            return httpx.Response(
+                200,
+                json={'status': '1', 'message': 'OK', 'result': [{'ContractName': 'Public'}]},
+                request=request,
+            )
+
+        _install_transport(client, handler)
+        try:
+            source = await client.get_contract_source('0x0000000000000000000000000000000000000001')
+            assert source == {'ContractName': 'Public'}
+            assert requests[0].headers.get('authorization') is None
+            assert requests[0].url.params.get('apikey') is None
+        finally:
+            await client.close()
+
     async def test_etherscan_proxy_overrides_api_url(self) -> None:
         client = ChainscanClient.from_config(
             'etherscan', 'https://eth-proxy.internal', api_key='k', expected_chain_id=137

@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from ..services.ens_resolver import ENSResolver
     from .host import ClientHost
 
+from .._redaction import install_http_logging_filter
 from ..chain_registry import (
     ScannerTarget,
     resolve_scanner_target,
@@ -183,6 +184,8 @@ class ChainscanClient(
                 ``(scanner_name, scanner_version, api_kind, network,
                 api_key)`` form was used.
         """
+        install_http_logging_filter()
+
         if target is None:
             if chain is None or provider is None:
                 raise TypeError(

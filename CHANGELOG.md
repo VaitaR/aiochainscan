@@ -6,6 +6,27 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Added keyless Routescan v2 support for Corn mainnet (chain ID 21000000),
+  measured live through `getsourcecode` and `getLogs`.
+
+### Changed
+
+- BlockScout v1 on the Blockscout PRO host (`https://api.blockscout.com/{chain_id}`
+  as a custom base URL) authenticates with `authorization: Bearer <key>`, never a
+  query parameter, including the `expected_chain_id` guard's `eth_chainId` probe,
+  which on that host goes to `/{chain_id}/json-rpc` (PRO answers 404 on
+  `/api/eth-rpc`).
+  A key passed for any other custom BlockScout base URL is now forwarded as the
+  `apikey` query parameter; it was previously dropped. Registry instances keep
+  query-parameter auth.
+
+### Fixed
+
+- Redacted credentials in httpx request log records while preserving the
+  original records.
+
 ## [1.0.7] — 2026-09-30
 
 ### Added

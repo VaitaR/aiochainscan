@@ -579,9 +579,9 @@ SCANNER_RECORDS: dict[str, ScannerRecord] = {
         kind='routescan',
         default_version='v2',
         api_kind='routescan',
-        # Only the three chain ids probed against the Etherscan-compatible
+        # Only the four chain ids probed against the Etherscan-compatible
         # endpoint on 2026-09-30 are declared here.
-        supported_networks=frozenset({'ethereum', 'avalanche', 'plasma'}),
+        supported_networks=frozenset({'ethereum', 'avalanche', 'plasma', 'corn'}),
     ),
 }
 
@@ -703,6 +703,11 @@ STANDARD_CHAINS = {
     9745: {
         'name': 'plasma',
         'aliases': ['plasma', 'xpl'],
+    },
+    # Corn mainnet — live Routescan Etherscan-envelope probes on 2026-09-30.
+    21000000: {
+        'name': 'corn',
+        'aliases': ['corn'],
     },
     324: {
         'name': 'zksync',

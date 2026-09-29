@@ -385,6 +385,8 @@ def _resolve_custom_base_url_target(
     actual_scanner_name, scanner_version = _resolve_scanner_identity(scanner, scanner_version)
 
     resolved_api_key = ''
+    if actual_scanner_name == 'blockscout' and api_key is not None:
+        resolved_api_key = api_key
     if actual_scanner_name == 'etherscan':
         if expected_chain_id is None:
             raise ValueError(

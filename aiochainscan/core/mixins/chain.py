@@ -73,7 +73,13 @@ class ChainMixin:
                 raise ValueError(
                     f'Chain info requires a resolvable {self.scanner_name} instance base URL'
                 )
-            return await fetch_blockscout_chain_info(self._network, base_url, cache)
+            return await fetch_blockscout_chain_info(
+                self._network,
+                base_url,
+                cache,
+                headers=self._scanner._auth_headers(),
+                rpc_url=getattr(self._scanner, 'eth_rpc_url', None),
+            )
 
         if self.scanner_name == 'etherscan':
             if self.chain_id is None:

@@ -526,6 +526,12 @@ class Scanner(ABC):
         """
         return {}
 
+    def _auth_headers(self) -> dict[str, str]:
+        """Build header authentication for transports outside endpoint specs."""
+        if self.auth_mode != 'header' or not self.api_key:
+            return {}
+        return {self.auth_field: self.api_key}
+
     def _error_context(self, method: Method) -> str:
         """Context string the error ladder stamps on unexpected failures.
 
@@ -581,11 +587,11 @@ class Scanner(ABC):
 
         # Set up authentication
         headers: dict[str, str] = dict(self._transport_headers(spec))
-        if spec.requires_api_key and self.api_key:
-            if self.auth_mode == 'query':
+        if self.api_key:
+            if self.auth_mode == 'query' and spec.requires_api_key:
                 mapped_params[self.auth_field] = self.api_key
-            else:  # header
-                headers[self.auth_field] = self.api_key
+            elif self.auth_mode == 'header':
+                headers.update(self._auth_headers())
 
         # Build request data
         request_data: dict[str, Any] = {'headers': headers}

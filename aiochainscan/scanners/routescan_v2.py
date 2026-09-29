@@ -32,8 +32,9 @@ class RoutescanV2(EtherscanLikeScanner):
     default_rate_limit_rps = 1.0
 
     # Live probes on 2026-09-30 verified the Etherscan-compatible envelope for
-    # Ethereum (1), Avalanche C-Chain (43114) and Plasma (9745). Mode (34443)
-    # answered status=0 "chain not supported" and is intentionally excluded.
+    # Ethereum (1), Avalanche C-Chain (43114), Plasma (9745) and Corn
+    # (21000000). Mode (34443) answered status=0 "chain not supported" and is
+    # intentionally excluded.
     supported_networks = set(ROUTESCAN_SCANNER_NETWORKS)
 
     # Verified live 2026-09-30 on Avalanche WAVAX: ``getLogs``, ``txlist`` and
