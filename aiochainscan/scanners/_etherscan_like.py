@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from ..constants import (
     API_MAX_CONTRACT_CREATION_ADDRESSES,
@@ -18,7 +18,7 @@ from .base import Scanner
 class EtherscanLikeScanner(Scanner):
     """Common implementation for scanners that expose the classic Etherscan layout."""
 
-    auth_mode = 'query'
+    auth_mode: Literal['query', 'header'] = 'query'
     auth_field = 'apikey'
 
     # page/offset REST: ``page * offset`` is bounded, so a block range holding

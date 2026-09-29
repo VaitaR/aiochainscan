@@ -60,6 +60,12 @@ BSC = Target(
     log_range=(40_000_000, 40_002_000),
     contract_address='0x55d398326f99059fF775485246999027B3197955',
 )
+# WAVAX on Avalanche C-Chain: a busy address with more than 15k transactions.
+ROUTESCAN = Target(
+    address='0xB31f66AA3C1e785363F0875A1B74E27b85FD66c7',
+    log_range=(96_400_000, 96_410_000),
+    contract_address='0xB31f66AA3C1e785363F0875A1B74E27b85FD66c7',
+)
 
 #: Page sizes to ask for. Each is requested with ``page=1``, so ``page * offset``
 #: stays inside a 10_000 window for every value up to 10_000.
@@ -328,6 +334,10 @@ PROVIDERS: dict[str, tuple[str, tuple[Method, ...], Target]] = {
     'blockscout': ('ethereum', (Method.ACCOUNT_TRANSACTIONS, Method.EVENT_LOGS), ETHEREUM),
     'blockscout_v2': ('ethereum', (Method.ACCOUNT_TRANSACTIONS, Method.TOKEN_HOLDERS), ETHEREUM),
     'nodereal': ('bsc', (Method.ACCOUNT_TRANSACTIONS, Method.TOKEN_HOLDERS), BSC),
+    # EVENT_LOGS is not probed: Routescan serves it a 10_000 page, above the
+    # scanner-wide 5_000 that txlist's HTTP 502 at 10_000 forces, so the probe
+    # would report a harmless under-declaration as drift on every run.
+    'routescan': ('avalanche', (Method.ACCOUNT_TRANSACTIONS,), ROUTESCAN),
 }
 
 

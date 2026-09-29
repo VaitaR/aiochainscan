@@ -59,8 +59,7 @@ DEFAULT_SCANNER_VERSIONS: dict[str, str] = {
 }
 
 # Configuration-manager scanner ids for non-BlockScout scanners (api key lookup).
-# There is deliberately no entry for 'moralis'/'routscan': no such scanner exists,
-# unknown names fall through as-is and the config manager raises its honest
+# Unknown names fall through as-is and the config manager raises its honest
 # 'Unknown scanner' error for them.
 SCANNER_CONFIG_IDS: dict[str, str] = {
     name: record.config_id
@@ -319,6 +318,12 @@ BLOCKSCOUT_SCANNER_NETWORKS: frozenset[str] = (
 #: imported. Nothing else may mutate it.
 ETHERSCAN_SCANNER_NETWORKS: set[str] = set(SCANNER_RECORDS['etherscan'].network_aliases) | set(
     ETHERSCAN_CONFIG_NETWORKS
+)
+
+# Routescan's class binds this registry-derived set so the scanner and the
+# configuration/consistency views share one live-verified network surface.
+ROUTESCAN_SCANNER_NETWORKS: frozenset[str] = frozenset(
+    SCANNER_RECORDS['routescan'].supported_networks or ()
 )
 
 

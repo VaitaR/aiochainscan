@@ -143,6 +143,9 @@ class Scanner(ABC):
     auth_field: str = 'apikey'
     """Field name for authentication (e.g., 'apikey', 'OK-ACCESS-KEY')"""
 
+    default_rate_limit_rps: ClassVar[float | None] = None
+    """Optional provider-specific default request rate for the Network port."""
+
     SPECS: dict[Method, EndpointSpec]
     """Mapping of logical methods to endpoint specifications"""
 

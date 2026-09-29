@@ -207,7 +207,13 @@ class TestDeclaredSpellingsResolve:
     def test_all_scanners_are_swept(self) -> None:
         # Public-surface pin: a newly registered scanner must join the sweep
         # (and its declared surface with it), not slip past the guard.
-        assert set(SCANNER_RECORDS) == {'etherscan', 'blockscout', 'blockscout_v2', 'nodereal'}
+        assert set(SCANNER_RECORDS) == {
+            'etherscan',
+            'blockscout',
+            'blockscout_v2',
+            'nodereal',
+            'routescan',
+        }
 
 
 class TestConstructionSweep:

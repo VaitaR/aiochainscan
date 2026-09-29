@@ -110,6 +110,9 @@ from .registry.views import (
     ETHERSCAN_SCANNER_NETWORKS as ETHERSCAN_SCANNER_NETWORKS,
 )
 from .registry.views import (
+    ROUTESCAN_SCANNER_NETWORKS as ROUTESCAN_SCANNER_NETWORKS,
+)
+from .registry.views import (
     SCANNER_API_KINDS as SCANNER_API_KINDS,
 )
 from .registry.views import (

@@ -29,6 +29,7 @@ from aiochainscan.scanners._etherscan_like import EtherscanLikeScanner
 from aiochainscan.scanners.base import Scanner
 from aiochainscan.scanners.blockscout_v2 import BlockScoutV2Scanner
 from aiochainscan.scanners.nodereal import NodeRealScanner
+from aiochainscan.scanners.routescan_v2 import RoutescanV2
 from aiochainscan.services.pagination import (
     PaginationContext,
     detect_block_range,
@@ -498,6 +499,8 @@ def test_declared_result_windows_per_scanner() -> None:
     assert EtherscanLikeScanner.result_window == API_MAX_OFFSET_ETHERSCAN
     assert BlockScoutV2Scanner.result_window is None
     assert NodeRealScanner.result_window is None
+    assert RoutescanV2.result_window == API_MAX_OFFSET_ETHERSCAN
+    assert RoutescanV2.max_page_size == 5_000
     assert Scanner.result_window is None
 
 

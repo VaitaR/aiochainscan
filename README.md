@@ -26,8 +26,9 @@ Three things it does for you instead of leaving them as homework:
   optional [failover](https://github.com/VaitaR/aiochainscan/blob/main/docs/PAGINATION_AND_FAILOVER.md#multi-provider-failover)
   between them.
 
-It runs on free access: 8 chains need no API key at all, BSC works on
-NodeReal's free tier, and the base install pulls four dependencies.
+It runs on free access: public BlockScout instances and Routescan need no API
+key, BSC works on NodeReal's free tier, and the base install pulls four
+dependencies.
 
 > Status: stable public API (1.x). The public surface is `ChainscanClient`;
 > provider coverage differs by scanner and endpoint. Released changes are
@@ -135,6 +136,7 @@ client at a self-hosted Blockscout or an Etherscan proxy — see the
 | `blockscout` | v1 | None for public instances | 32 | 31/33 |
 | `blockscout_v2` | v2 | None for public instances | 32 | 11/33 |
 | `nodereal` | v1 | API key (`NODEREAL_KEY`), free tier | BSC only | 25/33 |
+| `routescan` | v2 | None by default; optional `ROUTESCAN_KEY` / `ROUTESCAN_API_KEY` | 3 (Ethereum, Avalanche C-Chain, Plasma) | 31/34 |
 
 Thirty-three chains need no API key at all — every Blockscout instance
 (Ethereum, Optimism, Gnosis, Polygon, Base, Arbitrum, Scroll, Sepolia, Mode,
@@ -149,6 +151,11 @@ and BSC has no Blockscout instance at all — the measured details, and the full
 [API reference](https://github.com/VaitaR/aiochainscan/blob/main/docs/API_REFERENCE.md).
 `aiochainscan scanners` prints the same table for your own environment,
 including which keys are configured.
+
+Routescan provides a keyless Etherscan-compatible fallback for Avalanche C-Chain
+and Plasma (as well as Ethereum). It shares Etherscan's 10,000-record result
+window but serves pages of up to 5,000, and its default limiter runs at one
+request per second (the keyless plan allows two).
 
 ## Complete data, or an exception
 
