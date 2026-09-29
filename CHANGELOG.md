@@ -6,6 +6,8 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.8] — 2026-09-30
+
 ### Added
 
 - Added keyless Routescan v2 support for Corn mainnet (chain ID 21000000),
@@ -370,3 +372,4 @@ facade from the 0.2 series is long gone — see
 [1.0.4]: https://github.com/VaitaR/aiochainscan/releases/tag/v1.0.4
 [1.0.6]: https://github.com/VaitaR/aiochainscan/releases/tag/v1.0.6
 [1.0.7]: https://github.com/VaitaR/aiochainscan/releases/tag/v1.0.7
+[1.0.8]: https://github.com/VaitaR/aiochainscan/releases/tag/v1.0.8

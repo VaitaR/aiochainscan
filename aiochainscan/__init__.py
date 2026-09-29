@@ -45,7 +45,7 @@ _install_http_logging_filter()
 try:
     __version__ = _dist_version('aiochainscan')
 except PackageNotFoundError:  # pragma: no cover - source checkout without install
-    __version__ = '1.0.7'
+    __version__ = '1.0.8'
 
 __all__ = [
     'AbiTypeNotSupportedError',
