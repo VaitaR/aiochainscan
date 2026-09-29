@@ -6,6 +6,8 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.7] — 2026-09-30
+
 ### Added
 
 - **Routescan v2 scanner.** Adds the keyless Etherscan-compatible Routescan API
@@ -346,3 +348,4 @@ facade from the 0.2 series is long gone — see
 [1.0.3]: https://github.com/VaitaR/aiochainscan/releases/tag/v1.0.3
 [1.0.4]: https://github.com/VaitaR/aiochainscan/releases/tag/v1.0.4
 [1.0.6]: https://github.com/VaitaR/aiochainscan/releases/tag/v1.0.6
+[1.0.7]: https://github.com/VaitaR/aiochainscan/releases/tag/v1.0.7
