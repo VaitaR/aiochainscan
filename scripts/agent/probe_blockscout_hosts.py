@@ -129,8 +129,29 @@ async def probe_host(client: httpx.AsyncClient, chain_id: int, host: str) -> Hos
         elif response.status_code != 200:
             result.rpc = f'http:{response.status_code}'
         else:
-            result.reported_chain_id = int(response.json()['result'], 16)
-            result.rpc = 'ok' if result.reported_chain_id == chain_id else 'chain-id-mismatch'
+            rpc_response = response.json()
+            if isinstance(rpc_response, dict) and 'error' in rpc_response:
+                rpc_error = rpc_response['error']
+                error_message = rpc_error.get('message') if isinstance(rpc_error, dict) else None
+                rate_limited = (
+                    isinstance(rpc_error, dict) and rpc_error.get('code') in (429, '429')
+                ) or (
+                    isinstance(error_message, str)
+                    and any(
+                        marker in error_message.lower()
+                        for marker in (
+                            'rate limit',
+                            'rate-limit',
+                            'too many requests',
+                            'too many calls',
+                            'usage limit',
+                        )
+                    )
+                )
+                result.rpc = 'throttled' if rate_limited else 'error:JSONRPCError'
+            else:
+                result.reported_chain_id = int(rpc_response['result'], 16)
+                result.rpc = 'ok' if result.reported_chain_id == chain_id else 'chain-id-mismatch'
     except Exception as exc:
         result.rpc = f'error:{type(exc).__name__}'
 
