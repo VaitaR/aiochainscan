@@ -72,6 +72,14 @@ def probe_module() -> Any:
         ),
         pytest.param(
             200,
+            {'jsonrpc': '2.0', 'id': 1, 'result': '0x1', 'error': None},
+            None,
+            'ok',
+            'OK',
+            id='matching-chain-id-with-null-error',
+        ),
+        pytest.param(
+            200,
             {'jsonrpc': '2.0', 'id': 1, 'result': '0x2'},
             None,
             'chain-id-mismatch',

@@ -130,7 +130,7 @@ async def probe_host(client: httpx.AsyncClient, chain_id: int, host: str) -> Hos
             result.rpc = f'http:{response.status_code}'
         else:
             rpc_response = response.json()
-            if isinstance(rpc_response, dict) and 'error' in rpc_response:
+            if isinstance(rpc_response, dict) and rpc_response.get('error') is not None:
                 rpc_error = rpc_response['error']
                 error_message = rpc_error.get('message') if isinstance(rpc_error, dict) else None
                 rate_limited = (
