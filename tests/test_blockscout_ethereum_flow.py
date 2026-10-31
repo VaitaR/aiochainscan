@@ -111,7 +111,7 @@ async def test_blockscout_ethereum_logs_and_decoding() -> None:
     Skipped by default - run explicitly with: pytest -m integration
     """
     try:
-        client = ChainscanClient.from_config('blockscout', 'v1', 'ethereum')
+        client = ChainscanClient.from_config('blockscout', 'ethereum')
     except ValueError as e:
         pytest.skip(f'Blockscout ETH configuration not available: {e}')
         return

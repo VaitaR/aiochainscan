@@ -1,0 +1,102 @@
+name: Live provider drift
+
+# Detects Etherscan / BlockScout / NodeReal behaviour drift that no linter or
+# mocked test can see. Never a required check: it depends on third-party
+# uptime and per-IP rate limits. Daily, because most provider-semantics fixes
+# in the history were user-visible for days; the run costs about two minutes
+# and a few dozen requests, so a weekly cadence would only widen the window.
+
+on:
+  schedule:
+    - cron: "17 5 * * *"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/live-drift.yml"
+      - "tests/live_drift_plugin.py"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-drift-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  live-tests:
+    name: Live provider tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # Keyed providers skip cleanly when a secret is unset; BlockScout is keyless.
+      ETHERSCAN_KEY: ${{ secrets.ETHERSCAN_KEY }}
+      NODEREAL_KEY: ${{ secrets.NODEREAL_KEY }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        run: uv python install ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: uv sync --extra dev --frozen
+
+      # `integration` = live-API tests; `slow` = live end-to-end tests
+      # (multi-chain balances, full Blockscout flow). Overrides the default
+      # addopts marker filter. aiohttp is not a dev dependency, and the
+      # Blockscout end-to-end module skips itself without it.
+      - name: Run live tests
+        run: >
+          uv run --with aiohttp python -m pytest
+          -m "integration or slow"
+          -p tests.live_drift_plugin
+          -o addopts=""
+          -ra --tb=short --no-cov -v
+
+  probe-caps:
+    name: Pagination cap probe
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      ETHERSCAN_KEY: ${{ secrets.ETHERSCAN_KEY }}
+      NODEREAL_KEY: ${{ secrets.NODEREAL_KEY }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        run: uv python install ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: uv sync --extra dev --frozen
+
+      # The probe exits 1 for rate limits, unprobed caps and missing keys as
+      # well as for drift. Only a DRIFT verdict fails the job; anything else
+      # is surfaced as a warning because it is inconclusive, not drift.
+      - name: Re-measure declared pagination caps
+        shell: bash
+        run: |
+          set +e
+          uv run python scripts/agent/probe_provider_caps.py 2>&1 | tee probe.log
+          code=${PIPESTATUS[0]}
+          if grep -q '^VERDICT: DRIFT' probe.log; then
+            echo "::error::provider pagination caps drifted from their declarations"
+            exit 1
+          fi
+          if [ "$code" -ne 0 ]; then
+            echo "::warning::cap probe inconclusive (rate limit, unprobed cap or missing key)"
+          fi
+          exit 0
