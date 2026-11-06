@@ -57,7 +57,7 @@ test-fast: ## pytest fail-fast (stop on first failure)
 test-slow: ## pytest including slow/integration-marked tests
 	$(RUN) pytest tests/ -q -m "" --tb=short
 
-ci-local: lint format-check import-lint typecheck test ## Full local CI mirror — run instead of GitHub Actions while it is disabled
+ci-local: lint format-check import-lint typecheck test ## Full local CI mirror — the same checks GitHub Actions runs
 	@echo "$(GREEN)✅ Local CI mirror passed (lint, format, import-lint, mypy, pytest)$(RESET)"
 
 ##@ Agent workflow (scripts/agent/)

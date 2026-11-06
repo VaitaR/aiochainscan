@@ -1,6 +1,6 @@
 ---
 name: aiochainscan
-description: Query blockchain explorer APIs (Etherscan, BlockScout, NodeReal) from async Python with the aiochainscan library — balances, full transaction/transfer/log history, token holders, contract ABIs and decoded calls, across 85 chains (33 of them keyless). Use when writing or reviewing code that reads on-chain data through a block explorer, exports a wallet or token history, or needs provider failover and exact Wei/token amounts.
+description: Query blockchain explorer APIs (Etherscan, BlockScout, NodeReal, Routescan) from async Python with the aiochainscan library — balances, full transaction/transfer/log history, token holders, contract ABIs and decoded calls, across 90 chains (39 of them keyless). Use when writing or reviewing code that reads on-chain data through a block explorer, exports a wallet or token history, or needs provider failover and exact Wei/token amounts.
 license: MIT
 ---
 
@@ -56,12 +56,13 @@ Never paginate by hand with `page=`/`offset=` to work around this.
 
 ## Choosing a provider
 
-| Scanner | Key | Methods (of 33) | Pick it for |
+| Scanner | Key | Methods (of 34) | Pick it for |
 |---|---|---|---|
-| `etherscan` v2 | `ETHERSCAN_KEY` | 33 | full surface, all chains; holder endpoints need PRO |
-| `blockscout` v1 | none | 31 | widest keyless surface |
+| `etherscan` v2 | `ETHERSCAN_KEY` | 34 | full surface, all chains; holder endpoints need PRO |
+| `blockscout` v1 | none | 27 | widest keyless chain coverage (36 chains) |
 | `blockscout_v2` | none | 11 | keyless, cursor-paginated, complete holder lists |
-| `nodereal` v1 | `NODEREAL_KEY` | 25 (BSC only) | keyless-free BSC ABI/source/internal txs |
+| `nodereal` v1 | `NODEREAL_KEY` | 26 (BSC only) | keyless-free BSC ABI/source/internal txs |
+| `routescan` v2 | none (optional `ROUTESCAN_KEY`) | 31 (Ethereum, Avalanche C-Chain, Plasma, Corn) | keyless Etherscan-compatible surface on those chains |
 
 Keys are read from the environment or `.env` — never pass them as literals.
 For automatic failover across providers on the same chain, use

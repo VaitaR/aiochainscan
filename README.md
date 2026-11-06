@@ -4,7 +4,7 @@
 [![Python](https://img.shields.io/pypi/pyversions/aiochainscan.svg)](https://pypi.org/project/aiochainscan/)
 [![License](https://img.shields.io/pypi/l/aiochainscan.svg)](https://github.com/VaitaR/aiochainscan/blob/main/LICENSE)
 
-`aiochainscan` reads on-chain history from public block explorers across 85
+`aiochainscan` reads on-chain history from public block explorers across 90
 chains through one async client — and hands it back usable, not raw. Ask for an
 address's transactions and you get the complete history, not the first page of
 provider JSON that you then have to stitch, decode and wrap in retries
@@ -132,16 +132,16 @@ client at a self-hosted Blockscout or an Etherscan proxy — see the
 
 | Scanner | Default version | Authentication | Chains | Methods |
 |---|---:|---|---:|---:|
-| `etherscan` | v2 | API key | 61 | 33/33 |
-| `blockscout` | v1 | None for public instances | 32 | 31/33 |
-| `blockscout_v2` | v2 | None for public instances | 32 | 11/33 |
-| `nodereal` | v1 | API key (`NODEREAL_KEY`), free tier | BSC only | 25/33 |
-| `routescan` | v2 | None by default; optional `ROUTESCAN_KEY` / `ROUTESCAN_API_KEY` | 3 (Ethereum, Avalanche C-Chain, Plasma) | 31/34 |
+| `etherscan` | v2 | API key | 61 | 34/34 |
+| `blockscout` | v1 | None for public instances | 36 | 27/34 |
+| `blockscout_v2` | v2 | None for public instances | 36 | 11/34 |
+| `nodereal` | v1 | API key (`NODEREAL_KEY`), free tier | BSC only | 26/34 |
+| `routescan` | v2 | None by default; optional `ROUTESCAN_KEY` / `ROUTESCAN_API_KEY` | 4 (Ethereum, Avalanche C-Chain, Plasma, Corn) | 31/34 |
 
-Thirty-three chains need no API key at all — every Blockscout instance
+Thirty-nine chains need no API key at all — every Blockscout instance
 (Ethereum, Optimism, Gnosis, Polygon, Base, Arbitrum, Scroll, Sepolia, Mode,
-Astar, Rootstock, ZKsync Era and twenty more), plus BSC through NodeReal's free
-tier. Etherscan's 61 are the chains its keyless `GET /v2/chainlist` registry
+Astar, Rootstock, ZKsync Era and twenty-four more), plus Avalanche C-Chain,
+Plasma and Corn through Routescan; BSC is served by NodeReal's free tier. Etherscan's 61 are the chains its keyless `GET /v2/chainlist` registry
 listed on 2026-09-11; `aiochainscan.registry_sync.sync_etherscan_chains()` is
 an opt-in call that re-reads that registry at runtime, so a chain Etherscan
 adds after a release is constructible without waiting for one.
@@ -152,8 +152,8 @@ and BSC has no Blockscout instance at all — the measured details, and the full
 `aiochainscan scanners` prints the same table for your own environment,
 including which keys are configured.
 
-Routescan provides a keyless Etherscan-compatible fallback for Avalanche C-Chain
-and Plasma (as well as Ethereum). It shares Etherscan's 10,000-record result
+Routescan provides a keyless Etherscan-compatible fallback for Avalanche C-Chain,
+Plasma and Corn (as well as Ethereum). It shares Etherscan's 10,000-record result
 window but serves pages of up to 5,000, and its default limiter runs at one
 request per second (the keyless plan allows two).
 
