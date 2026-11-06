@@ -1,374 +1,82 @@
-# aiochainscan - Agent Context Guide
+# aiochainscan - Agent Contract
 
-> **Purpose**: Quick context for LLM agents working on this codebase.
-> **Version**: 1.0.0 (September 2026)
+Async Python wrapper for blockchain explorer APIs (Etherscan, BlockScout, NodeReal,
+Routescan): one `ChainscanClient` interface, hexagonal architecture with dependency
+injection, guaranteed-complete pagination, exact Wei math, optional Rust FFI (`fastabi`)
+for ABI decoding.
 
-## What is this project?
+## Reference docs: read the one your task touches
 
-Async Python wrapper for blockchain explorer APIs (Etherscan, BlockScout). Unified interface for querying blockchain data with hexagonal architecture and dependency injection. Includes Rust FFI for fast ABI decoding.
+| Read | When you |
+|---|---|
+| [docs/agents/client-surface.md](docs/agents/client-surface.md) | add/change a convenience method, need a method's name/return shape, custom base URLs, polling helpers, `convert.py` |
+| [docs/agents/pagination.md](docs/agents/pagination.md) | touch `services/pagination.py`, `fetch_page`, `result_window` / `max_page_size` / `RESULT_WINDOW_OVERRIDES`, completeness errors, measured caps |
+| [docs/agents/providers.md](docs/agents/providers.md) | change a scanner, its `SPECS` or networks, the chain registry, holder methods, credentials loading; need a provider's measured behaviour |
+| [docs/agents/failover-pool.md](docs/agents/failover-pool.md) | touch `core/pool.py`, `classify_failure` / `FailureKind`, cooldowns |
+| [docs/agents/contracts-and-proxies.md](docs/agents/contracts-and-proxies.md) | touch proxy resolution, `SmartContract`, `decode_input` / `decode_transactions` / `decode_logs` |
+| [docs/agents/abi-decoding.md](docs/agents/abi-decoding.md) | touch `decode.py`, `abi_pure.py`, `aiochainscan/fastabi/`, or build the Rust extension |
+| [docs/agents/mcp-server.md](docs/agents/mcp-server.md) | touch `aiochainscan/mcp/`, `mcp_server.py` or `mcpb/` |
 
----
+User-facing docs live in [docs/](docs/README.md); the scanner declarations in
+`aiochainscan/scanners/` win when a doc and the code differ.
 
-## Quick Start for Agents
+## Public API
 
-> Public API policy: use `ChainscanClient` only.
-> Legacy facade/context/url-builder entrypoints and old pagination-engine docs are removed from agent workflows.
+Use `ChainscanClient` only; legacy facade/context/url-builder entrypoints are gone.
 
-### Primary Interface (USE THIS)
 ```python
-from aiochainscan import ChainscanClient
+from aiochainscan import ChainscanClient, ChainscanPool
 
 async with ChainscanClient.from_config('etherscan', 'ethereum') as client:
-    # ── Account ──────────────────────────────────────────────
-    balance = await client.get_balance('0x...')                   # Wei string
-    txs     = await client.get_transactions('0x...')              # single page
-    all_txs = await client.get_all_transactions('0x...')          # ALL (streaming aggregation → list)
-    itxs    = await client.get_internal_transactions('0x...')     # single page
-    erc20   = await client.get_token_transfers('0x...')           # single page
-    erc721  = await client.get_erc721_transfers('0x...')          # single page
-    erc1155 = await client.get_erc1155_transfers('0x...')         # single page
-    tokens  = await client.get_token_portfolio('0x...')           # ERC-20 holdings
-    nfts    = await client.get_nft_portfolio('0x...')             # NFT holdings
-
-    # ── Transactions ─────────────────────────────────────────
-    tx     = await client.get_transaction('0xHASH...')            # by hash
-    status = await client.get_transaction_status('0xHASH...')     # receipt status
-    check  = await client.check_transaction_status('0xHASH...')   # execution status
-    final  = await client.wait_for_transaction('0xHASH...')       # poll until mined (120s/10s)
-
-    # ── Blocks ───────────────────────────────────────────────
-    block     = await client.get_block(12345678)                  # by number
-    reward    = await client.get_block_reward(12345678)           # mining reward
-    countdown = await client.get_block_countdown(99999999)        # ETA to block
-    by_ts     = await client.get_block_by_timestamp(1609459200)   # nearest block
-    reached   = await client.wait_for_block(20_000_000)           # poll until reached (600s/10s)
-
-    # ── Contracts ────────────────────────────────────────────
-    abi     = await client.get_contract_abi('0x...')              # JSON ABI (this address)
-    impl    = await client.get_contract_abi('0x...', follow_proxy=True)  # proxy -> implementation ABI
-    deep    = await client.get_contract_abi(                           # + storage slots / diamond loupe
-        '0x...', follow_proxy=True, proxy_strategy='auto'
-    )
-    source  = await client.get_contract_source('0x...')           # verified source
-    created = await client.get_contract_creation(['0x...'])       # creator + tx
-    verdict = await client.wait_for_verification(guid)            # poll Pass/Fail (300s/10s)
-
-    # ── Decoding (ABI resolved for you, proxies followed) ────
-    call   = await client.decode_input(tx['input'], address=tx['to'])   # {'decoded_func', 'decoded_data'}
-    calls  = await client.decode_transactions(txs)                      # ABI per tx['to'], once each
-    events = await client.decode_logs(logs)                             # ABI per log['address']
-
-    # ── Tokens ───────────────────────────────────────────────
-    bal     = await client.get_token_balance('0xWALLET', '0xTOKEN')  # raw units
-    supply  = await client.get_token_supply('0xTOKEN')               # total supply
-    info    = await client.get_token_info('0xTOKEN')                 # name/symbol/decimals
-    holders = await client.get_token_holders('0xTOKEN')              # single page
-    all_hld = await client.get_all_token_holders('0xTOKEN')          # ALL (streaming aggregation → list)
-    top_hld = await client.get_top_token_holders('0xTOKEN', limit=100)  # top-N by balance
-    count   = await client.get_token_holder_count('0xTOKEN')         # int
-
-    # ── Gas & Stats ──────────────────────────────────────────
-    price   = await client.get_eth_price()                        # USD/BTC
-    gas     = await client.get_gas_oracle()                       # safe/propose/fast
-    est     = await client.get_gas_estimate(2_000_000_000)        # ETA in seconds
-    eth_sup = await client.get_eth_supply()                       # total ETH supply
-
-    # ── Event Logs ───────────────────────────────────────────
-    logs     = await client.get_logs('0x...', from_block=0)       # single page (≤1000)
-    all_logs = await client.get_all_logs('0x...', from_block=0)   # ALL (streaming aggregation → list)
-
-    # ── Proxy / JSON-RPC ─────────────────────────────────────
-    result  = await client.eth_call('0xTO', '0xDATA')             # eth_call
-    bal_hex = await client.eth_get_balance('0x...')                # hex Wei
-
-    # ── High-level APIs ──────────────────────────────────────
-    contract = await client.get_contract('0x...')                  # SmartContract (follows proxies)
-    async for event in contract.iter_events("Transfer", limit=100):
-        print(event.args['from'], event.args['to'], event.args['value'])
-
-    name    = await client.lookup_address('0x...')                 # ENS reverse
-    address = await client.resolve_name('vitalik.eth')             # ENS forward
-    # Three-way ENS contract: `None` means the record does not exist. A
-    # scanner that does not declare eth_call raises MethodNotDeclaredError
-    # (forward resolution reads the ENS registry). A scanner/network
-    # combination that cannot serve ENS at all (anything off Ethereum
-    # mainnet) raises ENSScannerUnavailableError (a ValueError subclass) —
-    # from resolve_names()/lookup_addresses() too, not just the singles.
-    # Rate limits and transport failures surface as themselves.
-
-    # ── Streaming (large datasets, constant ~10MB RAM) ───────
+    balance = await client.get_balance('0x...')             # Wei string
+    txs = await client.get_transactions('0x...')            # ONE page
+    all_txs = await client.get_all_transactions('0x...')    # every record, or an exception
     async for batch in client.iter_transactions_streaming('0x...', batch_size=1000):
-        process(batch)
-    async for batch in client.iter_token_holders_streaming('0xTOKEN', batch_size=1000):
-        process(batch)
+        ...                                                  # constant memory
+    abi = await client.get_contract_abi('0x...', follow_proxy=True)
+    calls = await client.decode_transactions(txs)
 
-    # ── DataFrame export ─────────────────────────────────────
-    df = await client.get_transactions_df('0x...')                 # Polars (ALL txs!)
-    df = await client.get_token_portfolio_df('0x...')              # Polars
+# A URL-shaped network targets a self-hosted BlockScout / Etherscan proxy:
+ChainscanClient.from_config('blockscout_v2', 'https://my-blockscout.internal', expected_chain_id=100)
 
-    # ── Self-hosted / custom instances ───────────────────────
-    # A URL-shaped `network` targets any BlockScout instance (no API key):
-    async with ChainscanClient.from_config(
-        'blockscout_v2', 'https://my-blockscout.internal', expected_chain_id=100
-    ) as selfhosted:
-        info = await selfhosted.get_chain_info()    # ChainInfo (cached 1h)
-        ok = await selfhosted.validate_chain(100)   # ChainscanDataError on mismatch
-    # Etherscan v2 proxy: api_key still required + expected_chain_id mandatory:
-    client = ChainscanClient.from_config(
-        'etherscan', 'https://eth-proxy.internal', api_key='...', expected_chain_id=137
-    )
-
-    # ── Multi-provider failover pool ─────────────────────────
-    from aiochainscan import ChainscanPool
-
-    async with ChainscanPool.from_config(
-        [('etherscan', 'ethereum'), ('blockscout', 'ethereum')]  # priority order
-    ) as pool:
-        balance = await pool.get_balance('0x...')   # full ChainscanClient surface
-        pool.last_provider                          # 'etherscan/ethereum' (sticky)
-
-    # ── Value conversion helpers (module-level, float-free) ──
-    from aiochainscan import format_ether, hex_to_int, to_iso, to_decimal_amount, wei_to_ether
-
-    ether = wei_to_ether('1500000000000000000')      # Decimal('1.5') — exact, never float
-    nice  = format_ether('1500000000000000000')      # '1.500000' (half-up, any magnitude)
-    usdc  = to_decimal_amount('1500000', decimals=6) # Decimal('1.5') — any token precision
-    n     = hex_to_int('0x1a')                       # 26 — hex str | decimal str | int
-    iso   = to_iso('1609459200')                     # '2021-01-01T00:00:00+00:00'
+async with ChainscanPool.from_config([('etherscan', 'ethereum'), ('blockscout', 'ethereum')]) as pool:
+    await pool.get_balance('0x...')                          # failover, full client surface
 ```
 
-> **Custom base URL heuristic:** a `network` string containing `scheme://` is treated
-> as a base URL; anything else resolves through the chain registry as before (aliases
-> never contain `://` — fully backward compatible). URLs are validated in
-> `aiochainscan/base_url.py`: https only (`http` requires `allow_http=True`), no
-> credentials/query/`..` segments, trailing slash normalized away. `expected_chain_id`
-> is validated once before the first request (Network-layer guard → `ChainscanDataError`);
-> `get_chain_info()` probes BlockScout via `POST {base}/api/eth-rpc` `eth_chainId` and
-> resolves Etherscan chains through the keyless `GET /v2/chainlist` registry — both
-> cached 1h in a process-shared `chain:`-namespaced cache (chainlist downloaded once).
-> NodeReal rejects custom base URLs honestly (key rides in the URL path).
+Every `Method` enum value (34) has a typed convenience method; a method the configured
+scanner does not declare raises `MethodNotDeclaredError` (a `ValueError`) at call time.
+The Method ↔ mixin ↔ SPECS mapping is enforced by `tests/test_method_consistency.py`.
+`aiochainscan scanners` prints each scanner's declared methods, chains, caps and keys.
 
-> **Polling helpers:** `wait_for_transaction` / `wait_for_verification` / `wait_for_block`
-> are pure composition over existing `Method` calls (no new enum values). They poll with
-> `asyncio.sleep`, use a loop-clock deadline (`ChainscanWaitTimeoutError(what, waited, last_state)`
-> on expiry), return pending-vs-final states (revert / `Fail` verdicts are returned, not raised)
-> and require only the methods they build on.
+### Key gotchas
 
-> **Value conversion helpers** (`convert.py`): module-level, stateless, stdlib-only
-> utilities for the string scalars every explorer API returns. Wei/token math is
-> `Decimal`-exact (`to_decimal_amount` / `wei_to_ether` — integer str/int only,
-> fractional base-unit strings are rejected as corrupted data; so are scientific
-> notation (`'1e18'`), `'1_000'`-style separators, full-width digits and `bool`;
-> negatives valid;
-> 10^30+ wei exact), `format_ether` renders fixed-precision strings (half-up,
-> context precision sized to the value so 10^40 wei does not overflow),
-> `hex_to_int` accepts hex `'0x1a'` / decimal `'26'` / int (the proxy-vs-REST
-> dual mode; signed hex `-0x10` works; bare `'1a'` is ambiguous → `ValueError`,
-> and the underscore/full-width/`bool` rejections apply here too),
-> `hex_to_str` decodes data fields (utf-8; `'0x'` → `''`), `to_datetime` /
-> `to_iso` convert unix seconds (hex tolerated) to tz-aware UTC datetime /
-> ISO-8601. All exported from the package root; enforced by `tests/test_convert.py`.
+- `get_transactions()` / `get_logs()` / `get_token_holders()` return **one page**. For
+  complete data use `get_all_*()` (materialized via streaming aggregation) or
+  `iter_*_streaming()` (large datasets); `get_transactions_df()` auto-paginates.
+- `get_all_*()` / `iter_*_streaming()` default to `guarantee_complete=True`: every matching
+  record or an exception (`PaginationDataLossError`, `CompletenessUnavailableError`) —
+  never silent truncation. `get_all_token_holders` on Etherscan raises for >=10_000
+  holders; the error names providers that serve the list completely.
+- A **bounded** block range (`from_block > 0` / concrete `to_block`) on a provider whose
+  spec declares no block-range params raises `BlockRangeNotSupportedError` at every seam
+  (single-page `get_*`, `call()`, `fetch_page()`, streams) instead of dropping the bounds.
+- `get_contract_abi()` returns the ABI stored **for that address** — for a proxy, the
+  proxy's own ABI, which decodes none of its traffic. Pass `follow_proxy=True`, or use
+  `get_contract()` / `SmartContract.from_address()`. `proxy_strategy='metadata'` (default)
+  costs no extra request; `'auto'` / `'chain'` read storage slots and the diamond loupe.
+- Balance/value/supply values are **Wei strings**: convert with `wei_to_ether()` /
+  `to_decimal_amount()` (exact `Decimal`), never `int(wei) / 10**18`.
+- Raw responses are provider-native. Only `TOKEN_HOLDERS` items share one cross-scanner
+  shape (`{'address': EIP-55 str, 'value': str}`).
+- ENS: `None` means no record; `MethodNotDeclaredError` when the scanner lacks `eth_call`;
+  `ENSScannerUnavailableError` (a `ValueError`) off Ethereum mainnet, from the batch calls
+  too. Rate limits and transport failures surface as themselves.
 
-> **Scanner coverage:** the full surface above is declared by `etherscan` v2.
-> `blockscout` v1 inherits the shared Etherscan-like SPECS and adds the holder
-> list; `blockscout_v2` and `nodereal` declare subsets — see the Scanner
-> Support Matrix.
-> Convenience methods not declared by the configured scanner raise
-> `MethodNotDeclaredError` (a `ValueError` subclass) at call time; the
-> Method ↔ mixin ↔ SPECS mapping is enforced by
-> `tests/test_method_consistency.py`.
+## Workflow: worktrees and scripts
 
-> **Failover pool (`ChainscanPool`, `core/pool.py`):** composes several
-> `(scanner, network)` clients for the SAME chain into one client with the full
-> `ChainscanClient` surface. Failure classification (`classify_failure` /
-> `FailureKind`) splits fallback-eligible errors (rate limit, network/5xx after
-> transport retries, missing key — including HTTP 401/403 from the transport
-> raise site, e.g. NodeReal's 401 on an invalid path key or a WAF/proxy 403 —
-> plan restriction, method-not-declared) from
-> fatal ones (arguments, not-found, data contract) — only the former switch
-> providers. Sticky routing, per-class cooldowns and pagination pinning: see
-> the "Multi-Provider Failover Pool" Semantics list below for the exact numbers.
-> Transparency: `last_provider`, `provider=<label>` stamp in progress
-> callbacks, `ChainscanProviderSwitchWarning` on switches (a switch that only
-> stepped over a provider which never declared the method is routing, not
-> failure, and warns about nothing — the same silence covers guaranteed calls
-> routed straight to a completeness-capable member of the candidate list),
-> `ProviderPoolExhaustedError.attempts = [(provider, exception), ...]`.
-> The pool never duplicates retries — it reacts only to exceptions that
-> survived each member client's tenacity `Network`.
-
-> **Guaranteed-complete pagination (`guarantee_complete`, default `True`):**
-> `get_all_*` / `iter_*_streaming` / `iter_transactions` / `iter_logs` accept
-> `guarantee_complete`. `True` means *every matching record was returned, or an
-> exception was raised*.
->
-> - **Overflow detection** is scanner-declared, never guessed:
->   `Scanner.result_window` is the provider's `page * offset` cap
->   (`etherscan` v2 and `blockscout` v1 via `EtherscanLikeScanner`:
->   `API_MAX_OFFSET_ETHERSCAN` = 10_000). `None` means the provider paginates
->   by an opaque server cursor that runs to exhaustion (`blockscout_v2`
->   `next_page_params`, `nodereal` `pageKey`) — nothing to overflow, and the
->   flag is inert. A third-party scanner that has a cap but leaves
->   `result_window = None` cannot be protected.
->   `Scanner.RESULT_WINDOW_OVERRIDES` declares a **per-method** window where one
->   endpoint is bounded tighter than the rest, and `result_window_for(method)` is
->   what the pagination binding reads.
-> - **The signal** is `collected >= result_window`, not an error string and not
->   "the last page was full". A capped explorer answers a partial page that is
->   indistinguishable from the end of the data, and the cap need not land on a
->   page boundary.
-> - **BlockScout V1's caps are live-verified** (2026-09-02, `eth.blockscout.com`),
->   no longer assumed. Account endpoints: `page * offset <= 10_000` exactly —
->   `page=11&offset=1000` and `page=2&offset=10000` both answer `status=0`
->   "Result window is too large, PageNo x Offset size must be less than or equal
->   to 10000", while an over-cap `offset=10001` is silently clamped to 10_000
->   items. `logs/getLogs` is different and **ignores page/offset entirely**,
->   answering at most 1000 logs with `status=1` "OK" — so its window is
->   `API_MAX_OFFSET_LOGS` = 1000 (declared in `RESULT_WINDOW_OVERRIDES`), and
->   `EtherscanLikeScanner.fetch_page` issues no cursor for a spec that maps
->   neither `page` nor `offset`, because "the next page" there is the first page
->   again.
-> - **Etherscan v2's caps are live-verified too** (2026-09-02, key-authenticated).
->   `page * offset <= 10_000` is enforced with an error, but the per-page size is
->   a separate, *silent* limit: `offset=5000` or `offset=10000` answers **1000**
->   items with `status=1` "OK". A short page like that reads as end-of-data, so
->   `batch_size=5000` returned 1000 of 2009 transactions — silent loss under the
->   default `guarantee_complete=True`, because 1000 never reaches the 10_000
->   window. `Scanner.max_page_size` declares what a provider actually serves
->   (Etherscan 1000, BlockScout V1 10_000, both measured) and `fetch_page`
->   clamps `offset` to it, so the page-full test compares against a number the
->   provider agreed to. Cross-check: Etherscan and BlockScout V1 now return
->   byte-identical counts for the same range (1085 logs, 2009 txs).
->   Etherscan's docs are **silent** on both caps, so measurement is the only
->   source — and the 1000-per-page figure is a *dated* change (Etherscan cut it
->   from 10_000 to 1000 in July 2026). Treat `max_page_size` as a measured
->   constant with a shelf life: re-measure it with `make probe-caps`
->   (`scripts/agent/probe_provider_caps.py` — asks each provider for pages
->   straddling its declared caps and exits non-zero on drift or on any
->   unconfirmed declaration, in both text and `--json` modes), do not reason
->   about it. Last run 2026-09-02: Etherscan v2 and BlockScout V1 both
->   reproduced their declarations for `ACCOUNT_TRANSACTIONS` and `EVENT_LOGS`
->   (Etherscan serves 1000 per page and refuses `page*offset` at 11_000;
->   BlockScout V1 serves 10_000 per page, refuses at 20_000, and answers
->   `getLogs` page 2 with page 1's first record — the paging-ignored cap
->   `RESULT_WINDOW_OVERRIDES` declares). BlockScout V2 and NodeReal are
->   cursor-paginated and declare no cap, so the probe reports "nothing to
->   verify" for them rather than firing requests whose answer could not move a
->   declaration; a declared cap the probe cannot exercise counts as unverified,
->   never as a pass.
-> - **Reaching the cap has three signals** and the error says which. The
->   provider offered a continuation at the cap → records are definitely being
->   cut off (`confirmed=True`). The window came back exactly full with *no*
->   continuation → possibly complete, possibly capped, and the API offers no
->   way to tell (`confirmed=False`, message says "POSSIBLY truncated"). No
->   probe can settle the ambiguous case: it is precisely the case where the
->   provider returned no cursor, and cursors are opaque, so there is nothing
->   to request a further page with.
->   The continuation has to be the *provider's* — an opaque server cursor. A
->   `{page, offset}` cursor is this library's own arithmetic and is emitted
->   whether or not more data exists, so counting it as a continuation reported
->   data that ends exactly on the cap as confirmed loss.
->   The third signal is an outright provider refusal: NodeReal's result-size
->   `-32005` raises `ChainscanResultWindowExceededError` (FATAL, carries the
->   stated limit), which the guaranteed engine converts to the overflow
->   outcome and splits — the provider *said* the count exceeds its cap, so
->   that path is `confirmed=True`, never "possibly".
-> - **The split is adaptive**: on overflow the block range is cut at the block
->   of the last record the provider managed to serve (arithmetic bisect only
->   when items carry no block number), and each half is strictly narrower, so
->   the recursion terminates.
-> - **Costs.** Up to one extra pass over each overflowing window (the
->   truncated attempt is discarded rather than yielded, so nothing duplicates),
->   a buffer bounded by `result_window` items, and one unnecessary split for a
->   range holding *exactly* the cap.
-> - **Two failure types.**
->   `PaginationDataLossError` (`start_block` / `end_block` / `api_limit` /
->   `items_fetched` / `confirmed`) means a real block range was narrowed until
->   a *single block* still exceeded the cap — splitting worked and ran out.
->   `CompletenessUnavailableError` (`method` / `provider` / `alternatives` /
->   `api_limit` / `items_fetched` / `confirmed`) means the endpoint has **no
->   splittable dimension** on this provider, so narrowing cannot apply at all;
->   its message names the providers that *can* serve the method completely,
->   computed from the scanner registry via
->   `scanners.scanners_serving_completely(method)` (a scanner qualifies by
->   declaring the method with `result_window_for(method) is None`) — nothing is
->   hardcoded. The question is asked **per method, not per scanner**: BlockScout
->   V1 caps its account endpoints at 10_000 and still serves the holder list to
->   exhaustion, so reading the scanner-wide window alone would hide it from the
->   remedy this function computes.
-> - **Visible break: `get_all_token_holders` / `iter_token_holders_streaming`
->   on Etherscan.** A holder list has no block range, so for a token with
->   >=10_000 holders the call now raises `CompletenessUnavailableError`
->   instead of silently returning the first 10_000. The remedy is a provider
->   switch — `blockscout/v1`, `blockscout/v2` and `nodereal/v1` all serve the
->   holder list to exhaustion, and the error names whichever of them the
->   registry finds — or `guarantee_complete=False` to accept truncation
->   deliberately. The error message states both.
-> - `guarantee_complete=False` restores the pre-1.0 behaviour (fewer requests
->   on wide ranges, silent truncation possible). `ChainscanPool` forwards the
->   flag to its member clients.
-
-### ⚠️ Key Gotchas
-- `get_token_holders()` returns **one page**. Use `get_all_token_holders()` / `iter_token_holders_streaming()` for complete data. (`get_transactions()`/`get_logs()` single-page limits: see Pagination & Retry table below.)
-- `get_all_*()` now uses **streaming aggregation** under the hood; for very large datasets prefer `iter_*_streaming()`.
-- `get_all_*()` / `iter_*_streaming()` default to `guarantee_complete=True` — complete data or an exception, never silent truncation (see below).
-- A **bounded** block range (`from_block > 0` / concrete `to_block`) on a provider whose spec declares no block-range params (e.g. BlockScout V2 transactions) raises `BlockRangeNotSupportedError` at every seam — single-page `get_*`, `call()`, `fetch_page()`, streams — instead of silently dropping the bounds; unbounded calls behave exactly as before.
-- `get_transactions_df()` auto-paginates (uses `iter_transactions` internally).
-- `get_contract_abi()` returns the ABI the explorer stores **for that address**. For a
-  proxy that is the PROXY's ABI, which decodes none of its traffic — every call reaching a
-  proxy targets a selector the implementation declares. Pass `follow_proxy=True`, or use
-  `get_contract()` / `SmartContract.from_address()`, which resolve unconditionally.
-- **`proxy_strategy` picks where an implementation is looked for**, and the default is
-  deliberately the cheap one. `'metadata'` (default) asks the explorer only — no extra
-  request, and blind to a proxy the explorer never flagged. `'auto'` falls through to the
-  chain whenever metadata answers "not a proxy" or names at most one implementation, at up
-  to five extra requests; `'chain'` skips the explorer entirely. The default is NOT
-  `'auto'` because the extra requests land on the common case (a plain contract) and on a
-  keyless provider that rate-limits hard — making it the default is a cost decision, not a
-  correctness one, and wants the cheaper `eth_getCode` pre-filter measured first.
-- **No single storage slot is enough** (measured 2026-09-15): USDC holds ZERO at the
-  EIP-1967 slot and keeps its implementation in the legacy `org.zeppelinos` slot, while
-  stkAAVE and etherfi answer at EIP-1967. `_IMPLEMENTATION_SLOTS` is therefore a ladder —
-  EIP-1967 → EIP-1822 → zeppelinos → EIP-1967 beacon (one more `eth_call` for the beacon's
-  `implementation()`) — read first-non-zero-wins. A word whose upper 12 bytes are set holds
-  something other than an address and is rejected rather than truncated into one.
-  `Method.PROXY_GET_STORAGE_AT` is what makes this readable at all; a scanner that does not
-  declare it leaves the resolution on metadata instead of failing.
-- **Explorer and chain disagree after an upgrade**, and the chain wins: explorers cache the
-  implementation, the slot is the truth at `latest`. `ProxyMetadata.source` says which
-  sources answered (`'metadata'` / `'chain'` / `'both'`).
-- **Diamonds (EIP-2535) need no new `Method`.** `facets()` (`0x7a0ed627`) goes through the
-  existing `PROXY_ETH_CALL` and decodes with `abi_pure.decode_arguments`; a contract
-  without the loupe reverts, which IS the detection. `SmartContract` merges every facet's
-  ABI — sound because EIP-2535 gives each selector exactly one facet, so functions cannot
-  collide (events and errors dedupe by signature; constructors/fallbacks are dropped,
-  they describe the facet and not the diamond). `facets` records where the ABI came from
-  and `missing_facets` names any facet with no verified ABI — a partial ABI that does not
-  say it is partial reads exactly like a complete one. Live 2026-09-15, zkSync Era
-  `0x3240…0324` on Etherscan: own ABI 0 functions, `follow_proxy=True` 15 (Etherscan names
-  ONE implementation), `proxy_strategy='auto'` **90** across all four facets.
-- **Two explorer dialects, one fact.** Etherscan v2 answers `Proxy`='1'/'0' + `Implementation`;
-  BlockScout answers `IsProxy`='true' + `ImplementationAddress`, plus `ImplementationAddresses`
-  listing EVERY implementation (a diamond's facets, EIP-2535 — live-verified 2026-09-15: the
-  zkSync Era DiamondProxy lists the same four facets its `facets()` loupe call returns).
-  `resolve_proxy_metadata` reads both vocabularies; reading only Etherscan's reported every
-  BlockScout proxy as a plain contract, which is what the keyless default scanner serves.
-  `ProxyMetadata.implementation` is the first entry — the ABI of one facet does NOT cover a
-  diamond's whole selector table, which is what `is_diamond` and the facet merge are for.
-- **Decoding needs no ABI plumbing**: `decode_transactions()` / `decode_logs()` /
-  `decode_input()` resolve the deciding ABI themselves (proxy implementation, or a
-  diamond's facets merged) and cache it per address. Pass `abi=` to skip the lookup.
-  A record whose ABI cannot be fetched is kept with an empty `decoded_func`, never
-  dropped, and the caller's list is never mutated.
-- Balance/value/supply values are **Wei strings** — convert with `wei_to_ether()` / `to_decimal_amount()` (exact `Decimal`), never `int(wei) / 10**18` float division.
-
-> **Note:** Legacy `Client` class and `modules/` were removed in v0.3.0 (see also the public API policy above).
-
----
-
-## Multi-Agent Workflow (Worktrees & Scripts)
-
-**One session == one worktree == one branch.** Never switch branches or stash to share a directory with another agent session — parallel sessions on one checkout cause `.git/index.lock` collisions and lost work. Setup mirrors `lombard-data-analytics`.
+**One session == one worktree == one branch.** Never switch branches or stash to share a
+directory with another agent session — parallel sessions on one checkout cause
+`.git/index.lock` collisions and lost work.
 
 ```bash
 make wt-new SLUG=my-task                 # .claude/worktrees/my-task on branch feat/my-task
@@ -377,882 +85,194 @@ make wt-ls                               # list worktrees + merge status (dry-ru
 make wt-rm SLUG=my-task ARGS="--yes"     # teardown — refuses dirty or unmerged worktrees
 ```
 
-Branch types: `feat | fix | chore | docs | arch | refactor` (2nd arg, default `feat`); base ref (3rd arg, default `origin/main`). Env knobs: `AIO_SKIP_SYNC=1`, `AIO_BUILD_FASTABI=1`.
+Branch types: `feat | fix | chore | docs | arch | refactor` (2nd arg, default `feat`);
+base ref (3rd arg, default `origin/main`). Env knobs: `AIO_SKIP_SYNC=1`,
+`AIO_BUILD_FASTABI=1`.
 
-### Agent script toolkit (`scripts/agent/`)
-
-| Script | Purpose |
+| Script (`scripts/agent/`) | Purpose |
 |--------|---------|
 | `new-worktree.sh` | Bootstrap an isolated session worktree |
-| `provision-worktree.sh` | Provision an EXISTING worktree (.env, skills, .venv, fastabi) — shared by `new-worktree.sh` and `../xworker-bootstrap.sh`, which xworker runs on the worktrees it creates itself |
-| `rm-worktree.sh` | Safe teardown — removes only clean + merged worktrees, squash-merge aware, integration branches protected |
+| `provision-worktree.sh` | Provision an EXISTING worktree (.env, skills, .venv, fastabi) — shared by `new-worktree.sh` and `../xworker-bootstrap.sh` |
+| `rm-worktree.sh` | Safe teardown — only clean + merged worktrees, squash-merge aware, integration branches protected |
 | `preflight.sh` | Run BEFORE starting: env, deps, imports, test collection, fastabi status |
-| `validate_fast.sh` | The DONE gate — ruff, format, import-lint, mypy --strict, full pytest |
-| `safe_commit.sh` | `git add` + commit with index.lock retry (worktree-aware; use `make commit`) |
-| `ci_watch.sh` | Bounded GH Actions poller; exit status is the verdict |
-| `probe_provider_caps.py` | Re-measures declared pagination caps live (`make probe-caps`); exit 1 on drift, rate-limited/inconclusive probes, or an unconstructible provider — in both output modes |
-| `probe_blockscout_hosts.py` | Re-verifies BlockScout instance hosts live (`make probe-hosts`); exit 1 on a failed or rate-limited probe — a 429 is reported INCONCLUSIVE, never as a dead host |
-| `build_mcpb.py` | Packs `mcpb/` into `dist/aiochainscan-<version>.mcpb` (`make mcpb`); refuses to pack while the version stated in the bundle and `server.json` disagrees |
+| `validate_fast.sh` | The DONE gate (`make validate`) — ruff, format, import-lint, mypy --strict, full pytest |
+| `safe_commit.sh` | `git add` + commit with index.lock retry (use `make commit MSG="..." PATHS="..."`) |
+| `ci_watch.sh` | Bounded GitHub Actions poller for a pushed commit; exit status is the verdict |
+| `probe_provider_caps.py` | `make probe-caps`: re-measures declared pagination caps live; exit 1 on drift, rate-limited/inconclusive probes or an unconstructible provider |
+| `probe_blockscout_hosts.py` | `make probe-hosts`: re-verifies BlockScout hosts live; a 429 is INCONCLUSIVE, never a dead host |
+| `build_mcpb.py` | `make mcpb`: packs `mcpb/` into `dist/aiochainscan-<version>.mcpb`; refuses while the bundle and `server.json` versions disagree |
 | `ruff_format_hook.py` | PostToolUse hook — auto-formats edited `*.py` |
 
-Claude Code: `.claude/settings.json` runs `ruff_format_hook.py` on the file you edited only,
-so `make validate` still gates the repo; it allow-lists the agent scripts, `make`, read-only
+Claude Code: `.claude/settings.json` runs `ruff_format_hook.py` on the edited file only (so
+`make validate` still gates the repo), allow-lists the agent scripts, `make`, read-only
 git/gh and `uv run` quality commands (add a routine command there rather than approving it
-each session) and denies `.env`. `.claude/rules/fastabi.md` attaches by itself when you
-touch `aiochainscan/fastabi/**` or `aiochainscan/decode.py`.
+each session) and denies `.env`. `.claude/rules/fastabi.md` attaches when you touch
+`aiochainscan/fastabi/**` or `aiochainscan/decode.py`.
 
-### GitHub Actions
+## Validation and commit (mandatory)
 
-CI/CD, Test Installation and Build and Publish Wheels are enabled (re-enabled
-2026-09-04 for the 1.0.0 release). The local mirror stays the fast gate:
+Run BEFORE `git commit`, not after:
 
 ```bash
-make ci-local        # lint + format-check + import-lint + mypy --strict + pytest
+make validate        # ruff + format + import-lint + mypy --strict + full pytest (the DONE gate)
+pre-commit run --all-files
 ```
 
-`scripts/agent/ci_watch.sh` polls a pushed commit's runs with a bounded wait;
-its exit status is the verdict.
+Commit only when both pass (`make commit MSG="..." PATHS="..."`); do not rely on a
+post-commit hook. `make ci-local` mirrors GitHub CI. GitHub Actions (CI/CD, Test
+Installation, Build and Publish Wheels) are enabled; watch a pushed commit with
+`scripts/agent/ci_watch.sh`. Add `# noqa: CODE` only when the error is unavoidable, with
+the reason.
 
----
+Setup: `uv sync --extra dev` (deps only — the Rust extension is built separately, see
+[abi-decoding.md](docs/agents/abi-decoding.md#rust-ffi-fastabi)). Required runtime deps are
+`httpx`, `orjson`, `tenacity`, `aiolimiter`; everything else is an extra (`data`, `mcp`,
+`http2`, `fallback`, `fastabi`). `[fallback]` is native **keccak** only (`_keccak.py` is
+~97× slower than `eth-hash`); ABI decoding needs no extra. Live keys: see
+[providers.md](docs/agents/providers.md#credentials).
 
-## Complete Method Reference
+## Architecture
 
-Every `Method` enum value (34 total) maps to typed convenience methods on `ChainscanClient`:
+Layers, top to bottom: client/domain (`core/client.py` + `core/mixins/`, `core/pool.py`,
+`domain/`) → scanners (`scanners/`) → aggregation services (`services/pagination.py`,
+`analytics.py`, `ens_resolver.py`) → ports (`ports/`: cache, progress, rate limiter) →
+adapters (`adapters/`: memory cache, aiolimiter, tenacity retry) → Rust FFI (`fastabi/`).
 
-| Method Enum | Convenience Method(s) | Returns |
-|---|---|---|
-| `ACCOUNT_BALANCE` | `get_balance(address)` | `str` (Wei) |
-| `ACCOUNT_TRANSACTIONS` | `get_transactions(address)` / `get_all_transactions(address)` | `list[dict]` |
-| `ACCOUNT_INTERNAL_TXS` | `get_internal_transactions(address)` / `get_all_internal_transactions(address)` | `list[dict]` |
-| `ACCOUNT_ERC20_TRANSFERS` | `get_token_transfers(address)` / `get_all_token_transfers(address)` | `list[dict]` |
-| `ACCOUNT_ERC721_TRANSFERS` | `get_erc721_transfers(address)` | `list[dict]` |
-| `ACCOUNT_ERC1155_TRANSFERS` | `get_erc1155_transfers(address)` | `list[dict]` |
-| `ACCOUNT_TOKEN_PORTFOLIO` | `get_token_portfolio(address)` | `list[dict]` |
-| `ACCOUNT_NFT_PORTFOLIO` | `get_nft_portfolio(address)` | `list[dict]` |
-| `TX_BY_HASH` | `get_transaction(tx_hash)` | `dict` |
-| `TX_RECEIPT_STATUS` | `get_transaction_status(tx_hash)` | `dict` |
-| `TX_STATUS_CHECK` | `check_transaction_status(tx_hash)` | `dict` |
-| `BLOCK_BY_NUMBER` | `get_block(block_number)` | `dict` |
-| `BLOCK_REWARD` | `get_block_reward(block_number)` | `dict` |
-| `BLOCK_COUNTDOWN` | `get_block_countdown(target_block)` | `dict` |
-| `BLOCK_NUMBER_BY_TIMESTAMP` | `get_block_by_timestamp(timestamp, closest)` | `dict` |
-| `CONTRACT_ABI` | `get_contract_abi(address)` | `str` (JSON) |
-| `CONTRACT_SOURCE` | `get_contract_source(address)` | `dict` |
-| `CONTRACT_CREATION` | `get_contract_creation(addresses)` | `list[dict]` |
-| `CONTRACT_VERIFY` | `client.call(Method.CONTRACT_VERIFY, ...)` | *(multi-step workflow)* |
-| `CONTRACT_VERIFY_STATUS` | `client.call(Method.CONTRACT_VERIFY_STATUS, ...)` | *(multi-step workflow)* |
-| `TOKEN_BALANCE` | `get_token_balance(address, contract_address)` | `str` |
-| `TOKEN_SUPPLY` | `get_token_supply(contract_address)` | `str` |
-| `TOKEN_INFO` | `get_token_info(contract_address)` | `dict` |
-| `TOKEN_HOLDERS` | `get_token_holders(contract_address, page, offset)` / `get_all_token_holders(contract_address)` | `list[dict]` (`{'address', 'value'}`) |
-| `TOKEN_TOP_HOLDERS` | `get_top_token_holders(contract_address, limit)` | `list[dict]` (Etherscan PRO + NodeReal `topN`; `limit` ≤ 1000 on Etherscan, clamped to 100 on NodeReal) |
-| `TOKEN_HOLDER_COUNT` | `get_token_holder_count(contract_address)` | `int` |
-| `GAS_ESTIMATE` | `get_gas_estimate(gas_price)` | `str` |
-| `GAS_ORACLE` | `get_gas_oracle()` | `dict` |
-| `EVENT_LOGS` | `get_logs(address, ...)` / `get_all_logs(address, ...)` | `list[dict]` |
-| `ETH_SUPPLY` | `get_eth_supply()` | `str` |
-| `ETH_PRICE` | `get_eth_price()` | `dict` |
-| `PROXY_ETH_CALL` | `eth_call(to, data, tag)` | `str` |
-| `PROXY_GET_BALANCE` | `eth_get_balance(address, tag)` | `str` |
-| `PROXY_GET_STORAGE_AT` | `eth_get_storage_at(address, position, tag)` | `str` (32-byte word) |
+**Dependency rule**: Only downward. Never upward. Never bypass Network layer. The layering
+contracts are enforced by import-linter from `pyproject.toml`
+([ADR 0001](docs/adr/0001-layering-contracts-live-in-pyproject.md)).
 
-### Paginated (get_all_*) vs Single-Page Methods
+### Key files
 
-| Pattern | Use When | Memory |
-|---|---|---|
-| `get_transactions(address)` | Quick look, small wallets | Low |
-| `get_all_transactions(address)` | Need ALL data (built via streaming aggregation) | Grows with data |
-| `iter_transactions_streaming(address)` | Large wallets (1M+ txs) | Constant ~10MB |
-| `get_transactions_df(address)` | Data analysis (Polars) | Grows with data |
+| File | Source of truth for |
+|------|---------------------|
+| `core/client.py` + `core/mixins/` | `ChainscanClient`: one convenience method per `Method` plus `get_all_*`/`iter_*`/`wait_for_*`; constructed via `ScannerTarget` (`from_config` / `chain=`-`provider=` kwargs; the positional field form is gone) |
+| `core/streaming.py` | `STREAMING_SPECS` registry (Method, params builder, operation noun, flags) + the ONE shared stream implementation; pool forwards and test sweeps derive from it |
+| `core/pool.py` | `ChainscanPool`: `classify_failure`, sticky routing, cooldowns, pinned pagination |
+| `domain/method.py` | `Method` enum (34 values) |
+| `domain/contract.py` | `SmartContract` |
+| `domain/models.py` | `Address`, `TxHash`, EIP-55 validation |
+| `config.py` | `ConfigurationManager`: credential/env resolution only. Topology lives in `registry/` (`data.py` tables, `views.py` derivations, `resolve.py` target resolution), re-exported by `chain_registry.py` |
+| `services/pagination.py` | `iter_pages`/`iter_items`/`collect_all` over `Scanner.fetch_page` cursors + the guarantee machinery (adaptive range splitting) |
+| `services/analytics.py` | Polars DataFrames (Utf8 for Wei) |
+| `services/ens_resolver.py` | ENS resolution: cache + BlockScout V2 `ens_domain_name` |
+| `network.py` | HTTP transport — ALL HTTP goes through here |
+| `response_dialects.py` | `ResponseDialect` protocol: `EtherscanEnvelope` + `JsonRpcEnvelope` |
+| `convert.py` | Wei/hex/datetime helpers: exact `Decimal`, hex-aware int parsing, tz-aware UTC |
+| `crypto.py` | Keccak-256, EIP-55: fastabi → eth-utils → pure-Python (`_keccak.py`) fallback chain |
+| `decode.py` / `abi_pure.py` | ABI decoding: fastabi → pure-Python floor (no third tier) |
+| `_redaction.py` | Credential redaction helpers (re-exported from `network.py`) |
 
----
+## Critical warnings
 
-## Architecture Overview
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    CLIENT / DOMAIN LAYER                     │
-│  core/client.py (ChainscanClient) | core/pool.py (Pool)      │
-│  domain/contract.py                                          │
-└─────────────────────────┬───────────────────────────────────┘
-                          │
-┌─────────────────────────▼───────────────────────────────────┐
-│                    SCANNER LAYER                             │
-│  scanners/base.py | etherscan_v2.py | blockscout_v2.py      │
-└─────────────────────────┬───────────────────────────────────┘
-                          │
-┌─────────────────────────▼───────────────────────────────────┐
-│                   AGGREGATION SERVICES                       │
-│  pagination.py | analytics.py | ens_resolver.py              │
-└─────────────────────────┬───────────────────────────────────┘
-                          │
-┌─────────────────────────▼───────────────────────────────────┐
-│                     PORTS (Interfaces)                       │
-│  cache.py | progress.py | rate_limiter.py                   │
-└─────────────────────────┬───────────────────────────────────┘
-                          │
-┌─────────────────────────▼───────────────────────────────────┐
-│                    ADAPTERS (Implementations)                │
-│  memory_cache.py | aiolimiter_adapter | tenacity_retry      │
-└─────────────────────────┬───────────────────────────────────┘
-                          │
-┌─────────────────────────▼───────────────────────────────────┐
-│                    RUST FFI (fastabi/)                       │
-│  decode.py (Python) ←→ lib.rs (Rust + orjson serialization) │
-└─────────────────────────────────────────────────────────────┘
-```
-
-**Dependency rule**: Only downward. Never upward. Never bypass Network layer.
-
----
-
-## ⚠️ CRITICAL WARNINGS (Read Before Coding)
-
-### Data Integrity
+### Data integrity
 | ❌ DON'T | ✅ DO | Why |
 |----------|-------|-----|
-| Use `pl.Int64` for Wei | Use `pl.Utf8` (String) | Int64 overflows at 9.22 ETH! |
+| Use `pl.Int64` for Wei | Use `pl.Utf8` (String) | Int64 overflows at 9.22 ETH |
 | Use raw pointers as cache keys | Use content hash (xxhash) | Python reuses memory addresses |
 | Store addresses lowercase | Use `to_checksum_address()` | EIP-55 checksum matters for comparisons |
 
-### Async Performance
+### Async performance
 | ❌ DON'T | ✅ DO | Why |
 |----------|-------|-----|
-| Use `requests.get()` | Use `await http_client.get()` | Blocks event loop for 5+ seconds |
+| Use `requests.get()` | `await` the injected client | Blocks the event loop |
 | Create httpx/aiohttp sessions in scanners | Use `Network.request()` | Bypasses connection pooling/retry |
-| Build PyDict in Rust loops | Return JSON, parse with orjson | GIL blocks event loop during object creation |
+| Build PyDict in Rust loops | Return JSON, parse with orjson | GIL blocks the event loop during object creation |
 | O(N) scan in cache `set()` | Lazy TTL check in `get()` only | 100k items = seconds of freeze |
+| `response.json()` | `orjson.loads(response.content)` | One parser, bytes in |
 
-### Pagination & Retry
+### Pagination and retry
 | ❌ DON'T | ✅ DO | Why |
 |----------|-------|-----|
-| Use `get_transactions()` for all data | Use `get_all_transactions()` or `iter_transactions_streaming()` | Single page returns ~50-100 items only! |
-| Use `get_logs()` for complete data | Use `get_all_logs()` or `iter_logs_streaming()` | Single page capped at ~1000 logs! |
-| Wrap async generator with `@retry` | Apply retry inside generator at page-fetch level | Tenacity completes when generator is created, not exhausted |
+| Use `get_transactions()` / `get_logs()` for all data | `get_all_*()` or `iter_*_streaming()` | A page holds ~50-100 txs / ≤1000 logs |
+| Wrap an async generator with `@retry` | Retry inside the generator at page-fetch level | Tenacity completes when the generator is created, not exhausted |
 | Reset adaptive offset per page | Persist offset state across all pages | "Yo-yo effect" doubles API requests |
 | Skip whale blocks silently | Raise `PaginationDataLossError` | Silent data loss is unacceptable |
-| Report a rangeless capped endpoint as a whale block | Raise `CompletenessUnavailableError` naming a provider that can serve it | Holder lists have no range to split - "could not split" misdescribes it and offers no remedy |
-| Call complete data "lost" when the window came back exactly full | Say *possibly* truncated (`confirmed=False`) | A false error on correct data is not loud, it is wrong |
-| Trust a partial page to mean "end of data" | Treat `>= Scanner.result_window` records as overflow | A capped page/offset API truncates with a partial page and no error |
-| Assume the provider honoured the `offset` you sent | Clamp it to `Scanner.max_page_size` before comparing | Etherscan serves 1000 for `offset=5000` with `status=1` — the "partial" page is a full one |
-| Give every endpoint the scanner's one `result_window` | Declare the tighter ones in `RESULT_WINDOW_OVERRIDES` | BlockScout V1 `getLogs` caps at 1000 and ignores paging; walking to 10_000 re-fetches page 1 ten times |
-| Split a range in fixed-width windows | Bisect on the *observed* overflow boundary | Fixed windows cost requests where data is sparse and still truncate where it is dense |
-| Run `get_all_logs` on Etherscan with the default 10s `timeout` | Pass `timeout` above ~35s | A wide `getLogs` span is refused after a ~30s server-side scan ("select a smaller result dataset") — the refusal the engine splits on. A shorter client timeout aborts first, the same window is retried, and the call fails with `ChainscanNetworkError` |
+| Report a rangeless capped endpoint as a whale block | Raise `CompletenessUnavailableError` naming a provider that can serve it | Holder lists have no range to split |
+| Call complete data "lost" when the window came back exactly full | Say *possibly* truncated (`confirmed=False`) | A false error on correct data is wrong, not loud |
+| Trust a partial page to mean "end of data" | Treat `>= Scanner.result_window` records as overflow | A capped API truncates with a partial page and no error |
+| Assume the provider honoured the `offset` you sent | Clamp it to `Scanner.max_page_size` before comparing | Etherscan serves 1000 for `offset=5000` with `status=1` |
+| Give every endpoint the scanner's one `result_window` | Declare tighter ones in `RESULT_WINDOW_OVERRIDES` | BlockScout V1 `getLogs` caps at 1000 and ignores paging |
+| Split a range in fixed-width windows | Bisect on the *observed* overflow boundary | Fixed windows waste requests where sparse, truncate where dense |
+| Run `get_all_logs` on Etherscan with the default 10s `timeout` | Pass `timeout` above ~35s | The ~30s server-side refusal is what the engine splits on; a shorter timeout fails with `ChainscanNetworkError` |
+| Reason about a provider cap | Re-measure it (`make probe-caps`) | Caps change silently; Etherscan cut its page size to 1000 in July 2026 |
 
 ### Network
 | ❌ DON'T | ✅ DO | Why |
 |----------|-------|-----|
-| Use HTTP/2 with burst requests | Set `max_burst=1` or use HTTP/1.1 | Cloudflare WAF sends GOAWAY, not 429 |
+| Use HTTP/2 with burst requests | `max_burst=1` or HTTP/1.1 | Cloudflare WAF sends GOAWAY, not 429 |
 | Retry only `TimeoutException` | Include `NetworkError`, `RemoteProtocolError` | Connection resets are common |
 
----
+## Errors and the error ladder
 
-## Key Files to Know
-
-### Core (Source of Truth)
-| File | Purpose | Source of Truth For |
-|------|---------|---------------------|
-| `core/client.py` + `core/mixins/` | **ChainscanClient** (composition of per-domain mixins) | All API interactions, one convenience method per `Method` value plus `get_all_*`/`iter_*`/`wait_for_*`; constructed via `ScannerTarget` (`from_config` / `chain=`-`provider=` kwargs; the positional field form is gone) |
-| `core/streaming.py` | **Streaming surface declaration** | `STREAMING_SPECS` registry (Method, params builder, operation noun, flags) + the ONE shared stream implementation; pool forwards and the test sweeps derive from it |
-| `core/pool.py` | **ChainscanPool** | Multi-provider failover: `classify_failure` (lookup of the exception's `failure_kind`, regex fallback), sticky routing, cooldowns, pinned pagination |
-| `domain/method.py` | **Method** enum (34 values) | Supported operations |
-| `domain/contract.py` | **SmartContract** | High-level contract API |
-| `domain/models.py` | **Address`, **TxHash** | Data validation, EIP-55 |
-| `config.py` | **ConfigurationManager** | Credential/env resolution only (topology lives in the `registry/` package — `data.py` tables, `views.py` derivations, `resolve.py` target resolution — re-exported by `chain_registry.py`) |
-
-### Services (Business Logic)
-| File | Purpose | Key Pattern |
-|------|---------|-------------|
-| `services/pagination.py` | Pagination | `iter_pages`/`iter_items`/`collect_all` over `Scanner.fetch_page` cursors; the guarantee machinery (adaptive range splitting) lives in the same module |
-| `services/ens_resolver.py` | ENS name resolution | Cache + BlockScout V2 |
-| `services/analytics.py` | Polars DataFrames | Column-oriented, Utf8 for Wei |
-| `services/constants.py` | Shared service constants | - |
-
-### Infrastructure
-| File | Purpose | Key Pattern |
-|------|---------|-------------|
-| `network.py` | HTTP transport | ALL HTTP must go through here |
-| `adapters/memory_cache.py` | In-memory LRU | O(1) ops, asyncio.Lock |
-| `adapters/aiolimiter_adapter.py` | Rate limiting | Token bucket, burst=1 |
-| `convert.py` | Wei/hex/datetime conversion helpers | Exact `Decimal` math, hex-aware int parsing, tz-aware UTC |
-| `crypto.py` | Keccak-256, EIP-55 checksum | fastabi → eth-utils → pure-Python (`_keccak.py`) fallback chain — the base install always has a working backend |
-| `decode.py` | ABI decoding (Python) | Backend chain fastabi → `abi_pure.py` (no third tier); orjson parsing; content+identity-cached ABI index |
-| `abi_pure.py` | Pure-Python ABI codec | The always-available decode floor AND the MCP calldata encoder — no dependencies beyond `crypto.py` |
-| `fastabi/src/lib.rs` | ABI decoding (Rust) | Returns JSON, LRU cache |
-| `mcp/` | MCP server for AI agents | Adapter over `ChainscanClient` — see MCP Server section |
-
----
-
-## Scanner Support Matrix
-
-| Scanner | Version | Free? | Key Env Var | Method coverage |
-|---------|---------|-------|-------------|-----------------|
-| BlockScout | v1 | ✅ Yes | - | Etherscan-like surface **plus** `TOKEN_HOLDERS` (its own action name `token/getTokenHolders`, not Etherscan's `tokenholderlist`); `TX_BY_HASH`/`PROXY_*` served via the instance's `/api/eth-rpc` JSON-RPC (see below) |
-| BlockScout | **v2** | ✅ Yes | - | Cursor-paginated (no result window). Subset of 11: `ACCOUNT_BALANCE`, `ACCOUNT_TRANSACTIONS`, `ACCOUNT_INTERNAL_TXS`, `ACCOUNT_ERC20_TRANSFERS`, `ACCOUNT_TOKEN_PORTFOLIO`, `ACCOUNT_NFT_PORTFOLIO`, `CONTRACT_ABI`, `CONTRACT_SOURCE`, `BLOCK_BY_NUMBER`, `TOKEN_HOLDERS` (native `/api/v2/tokens/{addr}/holders`), `TOKEN_HOLDER_COUNT` (token info `holders_count`) |
-| Etherscan | v2 | ❌ No | `ETHERSCAN_KEY` | Full Etherscan-like surface + token holders (`tokenholderlist`/`topholders`/`tokenholdercount` are PRO endpoints) — all 34 `Method` values |
-| NodeReal | v1 | Free tier | `NODEREAL_KEY` | BSC-only subset (26 `Method` values) incl. the only `CONTRACT_ABI`/`CONTRACT_SOURCE`/`ACCOUNT_INTERNAL_TXS` alternative for keyless-free BSC analytics |
-
-> **Token holders notes:** the unified item shape is `{'address': EIP-55 str, 'value': str}`
-> (raw-unit quantity — never Int64) — the ONE Method with a normalized cross-scanner item
-> shape; everything else stays provider-native, so a caller switching providers for any
-> other Method must expect the provider's own field names and nesting.
-> Three providers serve the list to exhaustion (`result_window_for(TOKEN_HOLDERS) is None`):
-> BlockScout V1, BlockScout V2 and NodeReal. Etherscan declares it but bounds it at 10_000.
-> `TOKEN_HOLDER_COUNT` does NOT exist on BlockScout V1 (`getTokenHolderCount`,
-> `tokenholdercount` and `getTokenHoldersCount` were all probed live and all answer
-> `status=0` "Unknown action").
-> `TOKEN_TOP_HOLDERS` is declared by Etherscan and NodeReal (`nr_getTokenHolders` with
-> `topN`), not by either BlockScout leg: V2's holders endpoint documents no ordering, and
-> V1's is *empirically* balance-ordered but documents no guarantee, so declaring it there
-> would sell an observation as a contract.
-
-> **Live verification status of the holder surface** (all probes 2026-09-02):
-> BlockScout V1 and V2 are live-verified end to end (V1: 33/33 unique holders for a token
-> whose count V2 independently reports as 33; no result window at 11k/50k depth where the
-> *account* endpoints reject `page=11&offset=1000` outright). **NodeReal's three holder
-> methods are now live-verified too** (2026-09-02, `bsc-mainnet`, BSC-USD and CAKE):
-> the holder list returns the documented `{pageKey, details: [{accountAddress,
-> tokenBalance}]}`, `pageKey` round-trips (3×100 holders, 300 distinct addresses, a fresh
-> opaque cursor per page), and `topN` **does** order descending by balance — measured, so
-> the docs' undirected "returned by balance order" is settled for that call. The plain
-> holder list is NOT balance-ordered, which is why `TOKEN_TOP_HOLDERS` stays a separate
-> declaration.
->
-> **The one place the docs and the live API disagree: `nr_getTokenHolderCount`.** The docs
-> show `{"result": "0x123"}` — the JSON-RPC `result` IS the hex count — while the live API
-> answers `{"result": {"result": "0x46b3f99"}}`. Read as documented, that yielded **0
-> holders for a token with 74 million of them**, a wrong answer indistinguishable from a
-> token nobody holds. `_parse_token_holder_count` now accepts both shapes and raises
-> `ChainscanDataError` on any third one instead of counting zero. End-of-pagination remains
-> documented only by its complement ("If more results are available, a pageKey will be
-> returned"), so treating an empty *or absent* `pageKey` as exhaustion is still an
-> inference — the code accepts both.
->
-> Keys for this live surface live in `~/.aiochainscan/.env` (machine-level, read by
-> `ConfigurationManager` for every cwd, so worktrees need no plumbing); a repo-local
-> `./.env` still overrides it, and within the repo `./.env.local` (loaded before
-> `./.env`) overrides `./.env`. `os.environ` outranks every file. A `.env` file that is
-> not valid UTF-8 is warned about and its undecodable lines skipped, never fatal.
-> `ConfigurationManager` is a process-wide singleton; constructing it with a different
-> `config_dir` warns and keeps the original — rebind via `reset_instance()` / `reload()`.
-> NodeReal also documents these two methods as "BSC and ETH mainnet
-> only" while `supported_networks` is BSC-only — deliberately not widened, since nothing
-> establishes ETH support for the other 22 methods.
-
-> **BlockScout's per-instance REST carries a deprecation notice** for the Etherscan-compat
-> `/api` layer, yet every V1 endpoint this library uses answered correctly and keylessly in
-> the 2026-09-02 probes. Treat V1 as working-but-on-notice: a V1 breakage is expected to
-> show up as a working V2 path, not as a bug here.
-
-### NodeReal (MegaNode / BSCTrace backend) — BSC analytics
-
-`nodereal` v1 talks JSON-RPC 2.0 to `https://bsc-{mainnet,testnet}.nodereal.io/v1/{key}`
-(NodeReal's `nr_*` Enhanced API — the engine behind https://bsctrace.com) plus the
-BscScan-compatible verified-contract REST on `open-platform.nodereal.io`. Networks:
-`bsc` / `bnb` / `binance` (mainnet) and `bsc-testnet`.
-
-- Declares 26 of the 34 `Method` values; honest `ValueError` for contract
-  verify, gas oracle/estimate, price/supply stats, block reward/countdown.
-- The public→wire mapping is DECLARED in `SPECS` and executed:
-  `param_style` (`'rpc-positional'` / `'rpc-object'` / `'query'` for the
-  contract REST) picks the wire shape, `param_map` carries every accepted
-  public name (Etherscan-style input aliases included — first declared
-  wins) and, for positional methods, the wire order. `_build_rpc_params` /
-  `_build_transfer_filter` / `_resolve_window` / `_filter_transfer_items`
-  all read their param sources from that map, so `supports_block_range` and
-  the consistency sweep read the same declarations that run. Specs declare
-  no `path` — `_rpc_url()` / `_rest_contract()` own the URLs.
-- Token holders (`nr_getTokenHolders` / `nr_getTokenHolderCount`) page by an
-  opaque `PageKey` — empty on the first request, non-empty while more pages
-  exist — with a hex-encoded `PageSize` capped at 100 by the docs. Because
-  `get_top_token_holders()` is a single non-paginated call, a `limit` above
-  100 is silently clamped to 100 there — and the clamped size rides the wire
-  twice, as `PageSize` and again as `topN`, so a `limit` BELOW 100 must reach
-  both or the call answers a full 100-holder page to a caller who asked for
-  five. See the verification-status note under the support matrix for what
-  the live probes settled.
-- `nr_getTransactionByAddress` serves ≤1000 blocks per request and **silently
-  returns empty pages for wider ranges** — `fetch_page` therefore walks the
-  requested range in 1000-block windows, so `get_all_*` / `iter_*_streaming`
-  see complete history. An unbounded end block resolves the chain tip once.
-  The walk is deliberately NodeReal-local (the dialect's silent-empty-wide-
-  range behaviour has no engine equivalent; folding it below the pagination
-  seam would trade guarantee clarity for abstraction), but its block-range
-  inputs are the spec's declared `fromBlock`/`toBlock` sources.
-- Holdings methods (`nr_getTokenHoldings`, `nr_getNFTHoldings`) page at 100
-  items with hex `totalCount` cursors.
-- JSON-RPC `-32005` is **overloaded** and only one of its meanings is
-  throttling. A usage limit is translated to `ChainscanRateLimitError` so the
-  transport retry policy applies; the same code carrying a result-size refusal
-  ("logs count exceeds the limit 50000") is a deterministic answer to the
-  request as asked — retrying it burns the budget and cools a healthy
-  provider — so it raises `ChainscanResultWindowExceededError` (a FATAL
-  `ChainscanClientError` carrying the stated limit), not a generic data
-  error. The translation lives in the scanner's
-  `ResponseDialect` (`_NodeRealEnvelope`), i.e. inside `Network._send`, which
-  is what puts the usage-limit meaning under the retry policy at all.
-- `EVENT_LOGS` is capped at **50 000 logs per request** and NodeReal *errors*
-  rather than truncating (live-measured 2026-09-05, bsc-mainnet: a 200-block
-  span of BSC-USD `Transfer` served 26 841 logs; 2000 and 20 000 blocks both
-  answered `-32005`). Declared in `RESULT_WINDOW_OVERRIDES`, and the
-  guaranteed engine converts the dedicated refusal into the overflow outcome
-  and splits the range (a range narrowing to a single over-cap block still
-  ends in `PaginationDataLossError(confirmed=True)`), while
-  `scanners_serving_completely(EVENT_LOGS)` stops naming NodeReal as a
-  remedy it cannot be.
-
-### Chain topology and the optional registry sync
-
-`STANDARD_CHAINS` is static and is the shipped truth: a fresh install resolves
-every chain offline, with no request. Etherscan declares the 61 chains its
-keyless `GET /v2/chainlist` returned on 2026-09-11; `EtherscanV2.supported_networks`
-is bound to `ETHERSCAN_SCANNER_NETWORKS` (the registry record's alias table),
-not hand-listed, so the scanner cannot advertise a name `resolve_chain_id`
-would not answer.
-
-`goerli` and `holesky` were declared until 2026-09-11 and are now refused at
-construction: they are absent from the chainlist and the live endpoint answers
-them `[NOTOK] Missing or unsupported chainid parameter (required for v2 api)`.
-Accepting them only moved the failure to the first request. Their
-`URL_BUILDER_CHAIN_IDS` rows stay — the ids remain resolvable, the endpoint
-just does not route them.
-
-`aiochainscan.registry_sync.sync_etherscan_chains()` is the opt-in refresh:
-it re-reads the live chainlist and registers anything the static tables lack,
-so a chain added between releases is constructible without one. Additive and
-idempotent — a known chain keeps its declared spelling and a taken name is
-never repointed (a caller who resolved `ethereum` must not start getting
-another chain's data). Chains the list marks offline are skipped. `chainlist_alias`
-is the one naming rule both paths use, so a synced chain and a shipped chain
-are spelled identically.
-
-**Only Etherscan syncs.** Its chains share one unified endpoint, so "listed"
-and "reachable" are the same fact. A BlockScout instance is a separate host per
-chain and the instance directory lists hosts that 404, only redirect, or serve
-a partial surface — measured, not assumed — so registering from it would trade
-a missing chain for a broken one. BlockScout instances stay live-probed and
-static.
-
-### BlockScout networks and instance probing
-
-Both legs derive `supported_networks` from `BLOCKSCOUT_SCANNER_NETWORKS` (the
-shared instance-host table minus `DROPPED_INSTANCE_ALIASES`), so a new instance
-registers for v1 and v2 at once and neither leg can advertise a network it
-cannot resolve to an instance — nor refuse, at construction, one the registry
-just resolved. Both also record the resolved instance as `base_url` on the
-registry path, which is what `get_chain_info()` / `validate_chain()` probe; a
-custom base URL is the same field by another route. The v2 leg derives its
-UrlBuilder kind (hence `client.currency`) per network through the same
-`BLOCKSCOUT_CONFIG_IDS` mapping v1 uses, so **v2 currency always equals v1
-currency** for the same chain; its requests are still built from the scanner's
-own `BASE_URLS`, never the UrlBuilder profile.
-
-The host table is measured, not assumed, and
-`scripts/agent/probe_blockscout_hosts.py` (`make probe-hosts`) is how a row
-earns its place or is re-verified — the `chains.blockscout.com` directory is
-not evidence. It lists 747 chains, but only 92 explorers (49 mainnet) are
-hosted by BlockScout itself; the rest are RaaS or self-hosted deployments
-operated by someone else, with none of the availability these rows assert, so
-the sweep covers the self-hosted mainnet set only.
-
-**`/api/eth-rpc` is rate-limited per client IP across every instance at once.**
-A sweep can leave it answering 429 even for hosts declared here while their
-REST surfaces answer 200 (measured 2026-09-11, `eth.blockscout.com` and
-`gnosisscan.io` among them, for well over 45 minutes). A throttled probe is
-INCONCLUSIVE — re-run it later; never record a 429 as a dead host, and never
-declare a host whose eth-rpc went unverified, since that endpoint backs
-`TX_BY_HASH` and both `PROXY_*` methods.
-
-Last full sweep 2026-09-11: v1 `/api`, v2 `/api/v2` and `/api/eth-rpc` confirmed
-on every declared host except ten directory candidates (Ethereum Classic, Celo,
-Unichain, Filecoin, Arbitrum Nova, Neon, Creditcoin, Eden, BlackFort, DATA/Cross)
-whose REST surfaces answered but whose eth-rpc probe never got past the IP
-limit — they stay undeclared. Two findings are
-encoded in it: Gnosis, Optimism and Scroll serve BlockScout from chain-branded
-hostnames (`gnosisscan.io`, `explorer.optimism.io`, `scrollscan.com`) and only
-301 the `*.blockscout.com` alias there — the transport does not follow
-redirects, so the branded host is the only spelling that works — and BSC and
-Linea have no BlockScout instance at all (both hosts 404), so they are absent
-from the BlockScout topology and `from_config('blockscout*', 'bsc'|'linea')`
-raises. Keyless BSC is NodeReal's job. Etherscan is not an alternative there on a free
-key. Measured 2026-09-11 with a live free key, across all ten declared
-`etherscan` networks: `ethereum`/`main`, `arbitrum`, `polygon`, `sepolia` and
-`sonic` serve normally; `base`, `bsc` and `optimism` answer `[NOTOK] Free API
-access is not supported for this chain`; and `goerli`/`holesky` answer `[NOTOK]
-Missing or unsupported chainid parameter (required for v2 api)` — those two are
-dead entries in `supported_networks`, refused by the provider regardless of
-plan, and `from_config` accepts them, so the failure only surfaces on the first
-request.
-
-**Plan availability is per ENDPOINT, not per chain.** Etherscan documents that
-"source code and ABI endpoints are available on all chains for every API plan,
-including the Free Tier", and that is measured: with the same free key that is
-refused `get_balance` on base/bsc/optimism, `get_contract_abi` succeeds on all
-three (2026-09-11). So a free key is not "ethereum-only" — it is "every chain
-for ABI/source, five chains for the rest". NodeReal's free tier remains the
-free route to BSC *balances and history*, not to BSC ABIs. Re-probe before trusting these rows.
-
-### BlockScout v1 proxy fallback (`/api/eth-rpc`)
-
-BlockScout's Etherscan-compat REST answers `"Unknown module"` for
-`module=proxy`, so `blockscout` v1 routes `TX_BY_HASH`, `PROXY_ETH_CALL` and
-`PROXY_GET_BALANCE` through the instance's JSON-RPC endpoint
-(`POST {base_url}/api/eth-rpc`) — the same keyless transport the chain-info
-probe uses. The Network layer unwraps the JSON-RPC envelope and raises
-`ChainscanClientProxyError` for reverts; a `null` result (unknown tx) comes
-back as `None`. Verified live against `eth.blockscout.com`.
-
-### BlockScout V2 and `TX_BY_HASH` — a transport blocker, not an omission
-
-`GET /api/v2/transactions/{hash}` returns the full transaction dict, but its
-payload carries a top-level `result` field of its own (the execution-status
-string `"success"`/`"error"`), and `Network._handle_response` unwraps any
-top-level `result` (then `data`) as an Etherscan envelope. So a declared
-`TX_BY_HASH` on this scanner would hand callers the string `"success"` where
-they expect a dict — verified live. `TOKEN_HOLDERS` and the account endpoints
-are unaffected (`{items, next_page_params}`); the collision is a property of
-the *payload*, so any future BlockScout V2 endpoint with a top-level
-`result`/`data` key hits it too. Declaring the method is blocked on scoping
-that unwrapping to the Etherscan dialect (or letting a spec opt out) — a
-transport-contract change, not a scanner one. `EVENT_LOGS` is likewise
-undeclared for a different reason: `/addresses/{hash}/logs` is address-scoped
-with no topic or block filter on the wire, so a caller's `topic0=` or bounded
-range would be silently dropped.
-
-### Doc-declared input limits are enforced before the request
-
-Two Etherscan endpoints document a hard input cap, and both are now refused
-locally rather than sent and misinterpreted:
-`getcontractcreation` takes at most `API_MAX_CONTRACT_CREATION_ADDRESSES` = 5
-addresses, `topholders` at most `API_MAX_TOP_HOLDERS` = 1000. Both raise
-`InputLimitExceededError` from
-`EtherscanLikeScanner._perform_raw_request`, keyed on the `Method` enum (never
-on a wire action string), which is the seam every Etherscan-dialect leg passes
-through — including BlockScout V1, whose own `_perform_request` override
-delegates upward for non-JSON-RPC methods.
-
-`InputLimitExceededError` is a `ChainscanClientError` with
-`failure_kind = FailureKind.FATAL`: an oversized input is refused identically
-by every provider, so the pool must propagate it, not fail over and cool a
-healthy provider. **This placement is load-bearing, not stylistic.**
-`translate_unexpected_errors` in `scanners/base.py` re-raises only
-`ChainscanClientError` and `MethodNotDeclaredError`; everything else — a bare
-`ValueError` or `KeyError` from any scanner seam — becomes
-`ChainscanNetworkError(retryable=False)`, whose `failure_kind` is `TRANSIENT`.
-A caller's own bug therefore reads to the pool as a transient network fault:
-it fails over, cools a working provider, and surfaces
-`ProviderPoolExhaustedError` instead of the real error. Any new
-"this call cannot be served as asked" exception must join the
-`ChainscanClientError` family to survive that ladder.
-
----
-
-## MCP Server (`aiochainscan/mcp/`)
-
-Agent adapter over `ChainscanClient` — **run**: `python -m aiochainscan.mcp_server`
-(requires `mcp` extra). Structure:
-
-| File | Purpose |
-|------|---------|
-| `mcp/envelope.py` | `ToolResponse{data, notes, instructions, pagination, content_text}` + truncation (`{value_sample, value_truncated}`, 512 chars) + `format_units` (lossless int math; `decimals` clamped at 78 — the uint256 digit count — and float/non-int input returned unchanged) |
-| `mcp/cursors.py` | Opaque Base64URL cursors wrapping `fetch_page` scanner cursors (`InvalidCursorError` with "start over" advice) |
-| `mcp/tools.py` | 12 tools as plain `client -> ToolResponse` functions (**no mcp import** — offline-testable) + `ClientPool` (one client per `(scanner, chain)`, connection pooling across calls) |
-| `mcp/server.py` | FastMCP wiring: envelope → `CallToolResult` (text + structuredContent), tool registration |
-| `mcp_server.py` | Entry point (historical import path preserved) |
-| `mcpb/` (repo root) | MCPB bundle for Smithery's local-stdio listing: manifest + `pyproject.toml` pinning the published `aiochainscan[mcp]` release + `src/server.py`. Ships no library code; `server.type = "uv"`, so the host installs the pin |
-
-**Tools**: `get_wallet_balance`, `get_address_overview`, `get_transactions`,
-`get_transaction_info` (fastabi-decoded input via auto-ABI),
-`get_token_portfolio`, `get_token_info`, `get_token_holders`,
-`get_top_token_holders`, `get_contract_abi` (signature summary),
-`read_contract` (auto-ABI + eth_call, outputs decoded), `resolve_ens`,
-`list_chains`.
-
-**Contract rules**:
-- Curation caps: ≤50 items/page (`clamp_page_size`), curated field sets per tool.
-- Pagination = one `client.fetch_page` call per response; `next_call.params`
-  carries the new cursor — agents never parse cursors.
-- Cursor allow-lists are derived, never hand-listed: each Scanner declares the
-  cursor-key vocabulary it may emit per method (`Scanner.cursor_keys` for a
-  uniform dialect, `Scanner.CURSOR_KEYS` per `Method`, read via
-  `cursor_keys_for`), and `mcp/tools.py`'s `scanner_cursor_keys` unions those
-  declarations over the registered scanners serving the method. No
-  scanner-private cursor key names (`__nr_window`, `pageKey`, `address_hash`,
-  ...) appear as literals in `mcp/tools.py` — a new scanner's keys are
-  accepted by registering the scanner alone.
-- Unsupported scanner methods → envelope `notes` (with scanner hints), never a
-  crash; primary-call failures still raise (clean MCP error).
-- Every ABI-consuming tool (`get_contract_abi`, `read_contract`,
-  `get_transaction_info`'s input decode) resolves a proxy to its implementation
-  before fetching the ABI, and says so in `notes` — a proxy's own ABI declares
-  none of the functions its traffic calls. The probe costs one `CONTRACT_SOURCE`
-  call and is best effort: a scanner that does not declare that method leaves
-  the tool on the proxy's ABI rather than failing. `read_contract` still sends
-  `eth_call` to the PROXY address — only the ABI comes from the implementation.
-  A diamond arrives as every facet's ABI merged, with the facet list (and any
-  facet without a verified ABI) in `notes`. The tools stay on the default
-  `proxy_strategy='metadata'`: on the keyless BlockScout default that already
-  yields a diamond's full facet list for free via `ImplementationAddresses`,
-  and the chain probes would multiply every tool's request count.
-- Default scanner `blockscout` (keyless, v1); override per call (`scanner=`)
-  or via `AIOCHAINSCAN_MCP_SCANNER`.
-- `mcp/cursors.py` and `mcp/envelope.py` import WITHOUT the `mcp` extra, and
-  that is a contract, not a coincidence: the FastMCP dependency lives only in
-  `mcp/server.py`, so `mcp/__init__.py` must never import it (nor `tools.py`,
-  which pulls the client). An external consumer (the sibling `onchain-research`
-  router imports `encode_cursor`/`decode_cursor` for legs that have nothing
-  else to do with this SDK) depends on that. Enforced by
-  `test_lightweight_mcp_imports_need_no_extra`. The cursor format stays this
-  library's: a consumer needing its own fields forks the codec on its side
-  rather than widening this one.
-- Tests: `tests/test_mcp_server.py` (offline stubs; FastMCP registration
-  tests need `uv run --extra mcp pytest`), `tests/test_blockscout_v1_ethrpc.py`.
-
----
-
-## Common Tasks
-
-### Adding a New Scanner
-1. Create `scanners/newscan_v1.py`
-2. Inherit from `Scanner` (or `EtherscanLikeScanner`) base class
-3. Define `SPECS` dict mapping `Method` → `EndpointSpec` (set
-   `unknown_params='drop'` for strict query APIs; path placeholders in
-   `path` are excluded from the query automatically; `path` itself is
-   optional — JSON-RPC dialect scanners whose `_perform_request` owns the
-   URL leave it empty and declare `param_style` (`'rpc-positional'` /
-   `'rpc-object'`) plus the full `param_map` so the builders, the
-   block-range capability and the consistency sweep read one declaration)
-4. Register the scanner's declared network surface in
-   `tests/test_registry_consistency.py` — `test_all_scanners_are_swept`
-   deliberately fails until the new scanner's declared tables join the
-   cross-product construction sweep (spelling-canonicalized: alias spellings
-   like `bnb`/`binance`/`bsc` all resolve to one construction target)
-4. The base owns the seams — do NOT override `call()` for transport:
-   `Scanner.call()` applies the error ladder (`translate_unexpected_errors`)
-   exactly once and dispatches through ONE mechanism (UrlBuilder endpoint
-   via `network.get/post`, or a full URL via the `_request_url` hook).
-   Override only dialect hooks: `_request_url` (per-instance hosts),
-   `_transport_headers` (provider header quirks), `_error_context`,
-   `_perform_request` / `_perform_raw_request` (transports no spec can
-   express — JSON-RPC envelopes), `_require_mapped_network` for the
-   network→URL table lookup. **Never touch HTTP sessions** — every request
-   goes through the injected Network client.
-5. Declare pagination caps where you measured them: `result_window`
-   (scanner-wide `page * offset` cap), `max_page_size` (silent per-page
-   clamp), and `RESULT_WINDOW_OVERRIDES` (per-method windows tighter than the
-   scanner's) — see the guarantee-complete notes above.
-6. Register in `scanners/__init__.py`
-
-### Adding Bulk Fetch Support
-1. Extend `ChainscanClient` methods and scanner `SPECS` first
-2. Keep `get_all_*` behavior as materialized results from streaming aggregation
-3. Add/maintain matching `iter_*_streaming` path for large datasets
-4. Always thread `on_progress` callbacks through public client methods
-
-### Modifying HTTP Behavior
-- Rate limiting: `adapters/aiolimiter_adapter.py` (burst=1 for APIs)
-- Retry logic: `network.py` — one admission path (`Network._send`: guard → rate-limit → dispatch → handle → finish → retry, written once) retrying `exceptions.TRANSIENT_EXCEPTIONS`, the single transient vocabulary shared with the first-request guard and `TenacityRetryAdapter.DEFAULT_RETRY_EXCEPTIONS`
-- Response envelopes: dialect seam in `response_dialects.py` (`ResponseDialect` protocol; `EtherscanEnvelope` + `JsonRpcEnvelope`, composed as the default since every path serves both dialects); an absent/empty content-type header is accepted as an opaque JSON attempt, an explicit non-JSON type (`text/html`) is refused before parsing
-- JSON parsing: Always use `orjson.loads(response.content)` not `response.json()`
-- Credential redaction helpers live in `aiochainscan/_redaction.py` (re-exported from `network.py`)
-
----
-
-## Important Patterns
-
-### Session Lifecycle
-```python
-# Option 1: async context manager (preferred)
-async with ChainscanClient.from_config('blockscout_v2', 'ethereum') as client:
-    await client.get_balance('0x...')
-
-# Self-hosted BlockScout: same lifecycle, URL instead of a chain alias
-async with ChainscanClient.from_config('blockscout_v2', 'https://my-blockscout.internal') as client:
-    await client.get_balance('0x...')  # no API key needed, chain_id unknown until probed
-
-# Option 2: manual close
-client = ChainscanClient.from_config('blockscout_v2', 'ethereum')
-try:
-    await client.get_balance('0x...')
-finally:
-    await client.close()
-```
-
-### Streaming for Large Datasets
-```python
-# Process 1M+ transactions with ~10MB RAM
-async for batch in client.iter_transactions_streaming(address, batch_size=1000):
-    # Each batch decoded in thread pool (non-blocking)
-    await database.bulk_insert(batch)
-```
-
-### Get ALL Data (Paginated)
-```python
-# These use streaming aggregation internally and return materialized lists:
-all_txs = await client.get_all_transactions(address)
-all_logs = await client.get_all_logs(address, from_block=0, topic0='0xddf252...')
-all_transfers = await client.get_all_token_transfers(address)
-all_internal = await client.get_all_internal_transactions(address)
-all_holders = await client.get_all_token_holders(token_contract)
-```
-
-### Progress Callbacks
-```python
-from aiochainscan.utils.progress_helpers import console_progress
-
-txs = await client.get_all_transactions(
-    address,
-    on_progress=console_progress(),  # Real-time feedback
-)
-```
-
-### Multi-Provider Failover Pool
-```python
-from aiochainscan import ChainscanPool
-
-# Priority order: etherscan preferred, blockscout rescues. Providers serve the
-# SAME chain; kwargs (timeout, proxy, rate_limiter, ...) forward to every member.
-async with ChainscanPool.from_config(
-    [('etherscan', 'ethereum'), ('blockscout', 'ethereum')]
-) as pool:
-    await pool.get_balance('0x...')          # routed with failover
-    async for batch in pool.iter_transactions_streaming('0x...'):
-        ...                                   # pinned to ONE provider per call
-
-    pool.last_provider                       # who answered last (sticky)
-    pool.provider_states()                   # {label: available/cooldown/...}
-    pool.reset_cooldowns()                   # operational escape hatch
-```
-
-Semantics:
-- **Sticky**: last successful provider keeps serving (no yo-yo when a
-  higher-priority provider leaves cooldown).
-- **Cooldown**: rate limit → `max(retry_after, 30s)`; transient → 10s;
-  auth → 600s; plan restriction → 3600s (all constructor-tunable). Cooling
-  providers are skipped without an HTTP attempt; after expiry they get one
-  half-open trial (failure re-enters cooldown).
-- **Pagination pinning**: `get_all_*` / `iter_*` / `iter_*_streaming` bind to
-  one provider per call; only a first-page failure may restart on the next
-  provider (cursor state is still empty then). Mid-pagination errors
-  propagate but still cool the provider.
-- **from_config** excludes unconstructible providers with a warning (missing
-  key etc.); raises only when NO provider could be built.
-- Provider labels are unique by construction: `scanner/network`, qualified with
-  the version on a collision and then with an ordinal. Two members rendering
-  one label make `last_provider`, the progress stamp and the switch warnings
-  unreadable.
-- All state is per-pool-instance — nothing global.
-
-### Error Handling
 ```python
 from aiochainscan.exceptions import (
     ChainscanRateLimitError,      # Retry with backoff
     ChainscanNetworkError,        # Retry (connection issues)
-    ChainscanResultWindowExceededError,  # FATAL: provider refused the request as too big — over its result window, or an Etherscan scan timeout (engine splits it)
+    ChainscanResultWindowExceededError,  # FATAL: provider refused the request as too big (engine splits it)
     PaginationDataLossError,      # Whale block: a single block over the API's cap
     CompletenessUnavailableError, # Endpoint has no splittable dimension here (.alternatives)
     ChainscanDataError,           # Data contract violation
-    ENSScannerUnavailableError,   # ValueError subclass: ENS cannot be served on this scanner/network (singles AND batch)
-    InputLimitExceededError,      # ChainscanClientError, FailureKind.FATAL: caller passed more than the endpoint documents (see below)
-    AbiTypeNotSupportedError,     # ValueError subclass: pure ABI codec has no rule for this Solidity type
-    MethodNotDeclaredError,       # ValueError subclass: method not in SPECS
-    BlockRangeNotSupportedError,  # MethodNotDeclaredError subclass: bounded block range the provider's spec cannot carry (raised at every seam: call/fetch_page/stream)
+    ENSScannerUnavailableError,   # ValueError: ENS cannot be served on this scanner/network
+    InputLimitExceededError,      # ChainscanClientError, FATAL: input over a documented cap
+    AbiTypeNotSupportedError,     # ValueError: no decode tier handles this Solidity type
+    MethodNotDeclaredError,       # ValueError: method not in SPECS
+    BlockRangeNotSupportedError,  # MethodNotDeclaredError: bounded range the spec cannot carry
     ProviderPoolExhaustedError,   # Pool: every provider failed (.attempts)
     ChainscanProviderSwitchWarning,  # Pool: routed away from a provider
-    AbiTypeNotSupportedError,     # ValueError subclass: Solidity type no decode tier handles
     PureAbiDecodeWarning,         # Bulk decode running without the [fastabi] Rust backend
 )
 ```
 
----
+**Any new "this call cannot be served as asked" exception must join the
+`ChainscanClientError` family.** `translate_unexpected_errors` in `scanners/base.py`
+re-raises only `ChainscanClientError` and `MethodNotDeclaredError`; anything else — a bare
+`ValueError` or `KeyError` from a scanner seam — becomes
+`ChainscanNetworkError(retryable=False)`, whose `failure_kind` is `TRANSIENT`. The pool
+would then fail over, cool a working provider and surface `ProviderPoolExhaustedError`
+instead of the real error. Example: `InputLimitExceededError`
+([providers.md](docs/agents/providers.md#doc-declared-input-limits)).
 
-## Testing
+## Common tasks
 
-```bash
-# Run the whole suite
-pytest tests/ -q
+### Adding a new scanner
+1. Create `scanners/newscan_v1.py`, inheriting `Scanner` (or `EtherscanLikeScanner`).
+2. Define `SPECS`: `Method` → `EndpointSpec`. Set `unknown_params='drop'` for strict query
+   APIs; `path` placeholders are excluded from the query automatically. JSON-RPC dialect
+   scanners whose `_perform_request` owns the URL leave `path` empty and declare
+   `param_style` (`'rpc-positional'` / `'rpc-object'`) plus the full `param_map`, so the
+   builders, the block-range capability and the consistency sweep read one declaration.
+3. Register the scanner's declared networks in `tests/test_registry_consistency.py`:
+   `test_all_scanners_are_swept` fails until they join the cross-product construction
+   sweep (alias spellings like `bnb`/`binance`/`bsc` resolve to one target).
+4. The base owns the seams — do NOT override `call()` for transport. `Scanner.call()`
+   applies the error ladder once and dispatches through ONE mechanism (UrlBuilder endpoint
+   via `network.get/post`, or a full URL via `_request_url`). Override only dialect hooks:
+   `_request_url`, `_transport_headers`, `_error_context`, `_perform_request` /
+   `_perform_raw_request` (transports no spec can express), `_require_mapped_network`.
+   **Never touch HTTP sessions.**
+5. Declare pagination caps you measured: `result_window`, `max_page_size`,
+   `RESULT_WINDOW_OVERRIDES` ([pagination.md](docs/agents/pagination.md)).
+6. Register in `scanners/__init__.py`.
 
-# Type checking (strict)
-mypy aiochainscan --strict
+### Adding bulk fetch support
+1. Extend `ChainscanClient` methods and scanner `SPECS` first.
+2. Keep `get_all_*` as materialized results of streaming aggregation, with a matching
+   `iter_*_streaming` path (declared in `core/streaming.py`).
+3. Thread `on_progress` callbacks through every public client method.
 
-# Linting + auto-fix
-ruff check . --fix
-ruff format .
-```
+### Modifying HTTP behaviour
+- Rate limiting: `adapters/aiolimiter_adapter.py` (token bucket, burst=1 for APIs).
+- Retry: `network.py` has one admission path (`Network._send`: guard → rate-limit →
+  dispatch → handle → finish → retry, written once), retrying
+  `exceptions.TRANSIENT_EXCEPTIONS` — the single transient vocabulary shared with the
+  first-request guard and `TenacityRetryAdapter.DEFAULT_RETRY_EXCEPTIONS`.
+- Response envelopes: `response_dialects.py`. An absent/empty content-type header is
+  accepted as an opaque JSON attempt; an explicit non-JSON type (`text/html`) is refused
+  before parsing.
 
-Or in one shot: `make ci-local` (mirrors GitHub CI locally). Agents: run `make validate` before claiming DONE and `make commit MSG="..." PATHS="..."` to commit.
+## Code quality
 
----
-
-## ABI Decode Backend Chain
-
-`decode.py` picks a backend per process: `fastabi` (Rust, `[fastabi]`) →
-`abi_pure.py` (always available). There is no third tier — `abi_pure.py`
-covers the whole ABI spec, so a bare `pip install aiochainscan` decodes
-transaction inputs, event logs, `SmartContract.iter_events` and the MCP
-`read_contract` / `get_transaction_info` tools with no extras installed.
-`eth-abi` is a **test oracle** in `[dev]`, never a runtime path.
-
-- **Two declared output conventions**, one per entry point:
-  - **Tier convention** — calldata and log decoding (`decode_transaction_input`,
-    `decode_log_data`, `SmartContract.iter_events`), implemented in
-    `decode.py:_to_rust_convention` and `lib.rs:convert_token_to_json`: ints
-    inside int64 stay `int`, ints outside become strings, `bytes`/`bytesN` as
-    `0x` hex, arrays *and* tuples as `list`, `fixedMxN`/`ufixedMxN` as a
-    fixed-point string (`format(v,'f')`, never scientific) so orjson/MCP never
-    sees a `Decimal`. Contract: a decoded value must not change shape when a
-    user adds or drops `[fastabi]`. `TIER_CONVENTION_CASES` in
-    `tests/test_abi_pure.py` declares the rules once and drives both tiers
-    (the pure floor unconditionally, the Rust tier when built).
-  - **Agent-JSON convention** — `eth_call` output decoding
-    (`abi_pure.decode_arguments`, used by MCP `read_contract`): EVERY integer
-    becomes a string (no magnitude cliff for an agent), named tuples become
-    dicts keyed by component name, unnamed outputs are keyed by `str(index)`
-    (not `param_{i}` — that is the tier convention's input naming).
-- **Decoded-input naming is one convention on both tiers**
-  (`decode.py:_resolved_input_names` mirrored by `lib.rs resolved_param_names`):
-  unnamed inputs (missing/null/empty name) are keyed `param_{i}` by position;
-  duplicate names — first keeps the plain spelling, later ones get `_2`, `_3`…;
-  applies to function decodes, event decodes and Arrow columns. Before this,
-  empty names folded onto one `''` key (all but the last value silently lost)
-  and an ABI with unnamed params could void the whole decode.
-- **Unsupported Solidity type → `AbiTypeNotSupportedError`**, never an empty
-  `decoded_data`: a gap in this library must not read as undecodable
-  calldata. Non-spec widths (`int12`, `uint0`, `bytes0`) are validated at
-  ABI-index build (`_validate_input_types`), so an ABI containing one is
-  refused before the Rust tier could decode it — installing `[fastabi]`
-  cannot soften the rejection. Malformed/truncated calldata stays non-fatal
-  (empty result), which
-  is what `_MALFORMED_CALLDATA_ERRORS` is for — a spam transaction whose
-  selector collides must not kill a decode loop; an array of zero-size
-  elements with a non-zero count (e.g. `tuple[]` of empty tuples, count=2^63)
-  is treated as a corrupted length word on both tiers — it used to bypass the
-  buffer bound and spin forever.
-- **Both tiers are strict about padding**, and deliberately so: the spec says
-  the unused bits of a word are zero (or the sign extension, for `int<N>`), so
-  rejecting is more defensible than guessing. Dirty `address`/`bytesN`
-  padding, an out-of-range `uint<N>`/`int<N>`, a non-canonical `bool` and a
-  dynamic offset pointing into the head area all raise. So does non-zero
-  padding between a dynamic value and its 32-byte boundary — but only the
-  padding bytes actually present are checked: a payload whose final pad is
-  absent is a truncation the length checks already own, and rejecting it here
-  would reject data eth-abi accepts. `ethabi` is lenient
-  and has no strict mode, so the Rust tier gets a hand-written validation pass
-  (`validate_sequence` in `lib.rs`) before `Function::decode_input`; it works
-  on byte slices only, no bignum. That pass must also validate `string` as
-  UTF-8 itself: `ethabi` converts lossily, so without the check a non-UTF-8
-  byte sequence decodes to U+FFFD on Rust and raises on the floor — the same
-  calldata reading differently per tier. Do not implement any of this by
-  re-encoding and comparing — that is *over*-strict (it rejects non-minimal
-  but legal offsets).
-- **Cost of strictness: +14% end-to-end on the pure floor**
-  (`decode_transaction_input`, ERC-20 `transfer`; +48% on the raw two-word
-  `decode_values`, where nothing else is left to amortize it; `-m benchmark`
-  in `tests/test_abi_pure.py`), **+2% single / +25% bulk on the Rust tier**
-  (0.516→0.526 us/call, 1.045→1.311 ms per 1000). Keep `validate_sequence`
-  generic over the parameter iterator: materializing a `Vec<ParamType>` per
-  call instead cost +99% single / +143% bulk, which is what the pass looked
-  like before that one allocation was removed. Bulk work (`decode_many`, streaming, DataFrames)
-  still belongs on `[fastabi]`, and `decode_transaction_inputs_batch` says so
-  once per process (`PureAbiDecodeWarning`) for batches of 50+. Log decoding
-  never had a Rust path at all (fastabi decodes *inputs* only), so it warns
-  about nothing.
-- **`fixedMxN` / `ufixedMxN` decode to `Decimal`** (`raw / 10**N`, exact via
-  `scaleb`). They exist so `AbiTypeNotSupportedError` cannot fire where the
-  old eth-abi tier coped. Widths are validated at parse time: `int`/`uint`
-  a multiple of 8 in 8..256, `bytesN` 0<N≤32, fixed scale 0<N≤80.
-  Every `scaleb` must be passed `_FIXED_CONTEXT` explicitly: `scaleb` is a
-  *context* operation and the default context's `prec=28` silently rounds a
-  full-width value (int256 needs 78 significant digits) into a confident wrong
-  number. The `Decimal(str)` constructor itself is exact and context-free.
-- **The Rust tier falls through, not out**, when it recognises nothing:
-  `fastabi` answers an unimplemented type with an empty `function_name`
-  rather than an error, which would silently give `[fastabi]` users *less*
-  than a base install. `_decode_transaction_input_fast` therefore retries on
-  the pure floor whenever the Rust result is empty — and so does
-  `decode_transaction_inputs_batch`, which shares the same rule: a type that
-  falls back in a single decode must not come back empty in a batch of the
-  same call. Both retries are gated on `_declares_selector`: without it every
-  transaction whose selector this ABI does not declare would be re-decoded on
-  the floor to reach the same empty answer, which on the bulk path is the
-  whole cost of the bulk path.
-- **The floor's hot path is the glue, not the ABI walk.** Decoding an ERC-20
-  `transfer` spends ~40% in `abi_pure` and the rest in `decode.py`, so the
-  conventions are applied in ONE traversal (`_to_rust_convention`) and the hot
-  functions avoid `typing.cast`, which is a real call at runtime. Arrays get
-  `_decode_array` rather than `_decode_sequence([elem] * count, ...)`: no list
-  of N references, and the head size is a multiplication instead of a sum
-  over N. Splitting the traversal per rule or reintroducing the casts costs
-  ~30% end-to-end, which is what this shape was measured against.
-- **The ABI index is cached** (`_abi_index`): identity fast path, then a
-  content digest, holding the function/event maps plus each selector's
-  compiled decode plan — hashing an ABI costs more than decoding against it.
-  The index is built from a round-trip of the serialized ABI, so it shares no
-  mutable state with any caller: one index serves every equal ABI list, and
-  without the copy an in-place mutation of one list would change how every
-  other one decodes. Mutating a list in place still leaves *its own* cached
-  index stale (the identity path never rehashes) — build a new list instead.
-
----
-
-## Rust FFI Notes (fastabi/)
-
-- **Build**: NOT automatic. Since the distribution split the base package builds with hatchling, so `uv sync --extra dev` installs no Rust extension — build it explicitly with `cd aiochainscan/fastabi && uv run --with maturin maturin develop --release`, or pass `AIO_BUILD_FASTABI=1` to `make wt-new`. Without it `tests/test_crypto.py` skips 12 tests and `decode()` uses the Python fallback; `scripts/agent/preflight.sh` reports which module (if any) is live.
-- **Version floor**: the extension exports `__version__` from `CARGO_PKG_VERSION`, and
-  `decode.py` refuses anything below `_MIN_FASTABI_VERSION` (1.0.1) — the release that
-  removed `panic = "abort"` and unwinds the ethabi ABI parser (`catch_unwind`), so a
-  malformed ABI type raises a catchable `ValueError` instead of aborting the process
-  (exit 134); earlier releases could kill the interpreter on hostile ABI data, and a tier
-  that can do that is worse than no tier. decode.py degrades any surviving Rust panic
-  (`PanicException`) to the pure floor via a coordinate-matched check — pyo3 never
-  registers the class as an importable module. The 0.2.0 floor before it made
-  the Rust tier reject non-UTF-8 strings and dirty dynamic padding. A stale local build is
-  ignored with `PureAbiDecodeWarning` and decoding drops to the pure floor. Bump both
-  `fastabi/Cargo.toml` and `fastabi/pyproject.toml` whenever decode semantics change, and
-  raise the floor with them.
-- **Cache**: LRU with 1000 entries max (~50MB)
-- **GIL**: Released during computation AND serialization
-- **Return format**: JSON string → parsed by orjson in Python; `keccak256` returns bytes
-- **Key invariant**: Never return PyDict/PyList directly (blocks GIL)
-- **Imports**: canonical module name is top-level `aiochainscan_fastabi` (published as the
-  separate `aiochainscan-fastabi` distribution — `aiochainscan[fastabi]` extra). Every
-  import site tries the new top-level name first and falls back to the legacy
-  `aiochainscan.aiochainscan_fastabi` name, so an existing maturin/editable checkout
-  built under the old layout keeps working.
-- **Arrow**: `decode_many_to_arrow` / zero-copy Polars export is behind the off-by-default
-  `arrow` cargo feature (benchmarked as a small win next to network time — see
-  `docs/V1_PLAN.md` Track A). `decode.py:ARROW_AVAILABLE` reflects whether the loaded
-  extension was built with it; build with
-  `cd aiochainscan/fastabi && maturin develop --release --features arrow` to enable it.
-
----
-
-## Environment Setup
-
-```bash
-uv sync --extra dev        # deps only — the Rust extension is a separate package now
-uv run pytest tests/ -q    # run tests
-export ETHERSCAN_KEY="your_key"  # Optional
-```
-
-Required runtime deps are just: `httpx`, `orjson`, `tenacity`, `aiolimiter`.
-Everything else is an extra (`data`, `mcp`, `http2`, `fallback`). `[fallback]`
-is native **keccak** only (`_keccak.py` is ~97× slower than `eth-hash`); ABI
-decoding needs no extra at all.
-
----
-
-## Pre-Commit Validation (MANDATORY)
-
-**Run BEFORE `git commit` — not after:**
-```bash
-pytest tests/ -q                    # The whole suite must pass
-mypy aiochainscan --strict          # Type safety across every source file
-pre-commit run --all-files          # All linters (ruff, format, etc.)
-```
-Only proceed to `git commit` when ALL three checks pass. Do NOT rely on post-commit hook to catch errors.
-
-**Code Quality:**
-- Follow hexagonal architecture — never bypass Network layer
-- All Wei values as strings, all addresses as EIP-55 checksum
-- Add `# noqa: CODE` pragmas only when error is unavoidable (document why)
+- Follow the hexagonal architecture; never bypass the Network layer.
+- All Wei values as strings, all addresses as EIP-55 checksum.
+- Never hardcode keys; `ConfigurationManager` resolves them from the environment / `.env`.

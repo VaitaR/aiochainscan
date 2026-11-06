@@ -1,7 +1,7 @@
 """Offline tests for ``scripts/agent/probe_provider_caps.py``.
 
 The live probe script promises "exit status is the verdict" (module docstring
-and AGENTS.md). These tests pin the verdict machinery — factored so BOTH the
+and docs/agents/pagination.md). These tests pin the verdict machinery — factored so BOTH the
 text and ``--json`` modes return it — and the error classification that keeps
 a rate limit or timeout from reading as cap enforcement, using fake method
 results and a fake client. No network access, no API keys.

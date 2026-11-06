@@ -208,4 +208,5 @@ transactions = await client.get_all_transactions(address, on_progress=console_pr
 - [Migration guide](MIGRATION_GUIDE.md) — moving off the pre-1.0 entrypoints.
 - The full method table and provider matrix live in the
   [README](../README.md) and, in exhaustive form, in
-  [`AGENTS.md`](../AGENTS.md).
+  [`agents/client-surface.md`](agents/client-surface.md) and
+  [`agents/providers.md`](agents/providers.md).

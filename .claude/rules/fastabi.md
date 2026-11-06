@@ -6,7 +6,7 @@ paths:
 
 # Rust FFI (fastabi) invariants
 
-You are touching the Rust ABI-decoding path. These invariants come from AGENTS.md (Rust FFI Notes + Async Performance) and are the difference between a fast decode path and an event-loop stall:
+You are touching the Rust ABI-decoding path. These invariants come from `docs/agents/abi-decoding.md` (full reference) and AGENTS.md (Async performance) and are the difference between a fast decode path and an event-loop stall:
 
 - **Never return PyDict/PyList directly from Rust** — object creation under the GIL blocks the event loop. Return a JSON string; parse it with `orjson` on the Python side (`decode.py`).
 - **Release the GIL** during computation AND serialization in `fastabi/src/lib.rs`.

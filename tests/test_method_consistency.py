@@ -750,7 +750,7 @@ def _undeclared_emitted_keys(spec: Any, params: dict[str, Any]) -> list[str]:
 
     Inert exemptions (documented scanner behavior, never a silent data bug):
     - ``page``/``offset``/``sort`` page controls — cursor scanners ignore
-      them (see ``iter_token_holders_streaming`` in AGENTS.md).
+      them (see ``docs/agents/pagination.md``).
     - Range keys — tolerated ONLY when the values are the unbounded
       sentinels; a bounded range on a rangeless spec must never reach the
       wire (the guard raises instead, which the bounded sweep phase proves).

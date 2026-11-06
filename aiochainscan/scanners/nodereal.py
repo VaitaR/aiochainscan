@@ -32,7 +32,7 @@ Pagination notes (verified against BSC mainnet):
   ``nr_getTokenHolderCount`` (``TOKEN_HOLDER_COUNT``) returns a hex-encoded
   scalar. Both are documented "Supported on BSC and ETH mainnet only" —
   narrower than this scanner's own ``supported_networks`` (BSC only); see
-  AGENTS.md for the discrepancy. The list shape was live-verified
+  docs/agents/providers.md for the discrepancy. The list shape was live-verified
   (2026-09-02, bsc-mainnet); the count envelope accepts both the documented
   and the live-nested shape.
 - API exhaustion surfaces as JSON-RPC error ``-32005`` and is translated to
