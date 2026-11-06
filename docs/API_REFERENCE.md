@@ -12,15 +12,16 @@ ID. The built-in scanner names are:
 
 | Scanner | Default version | Authentication | Chains | Methods |
 |---|---:|---|---:|---:|
-| `etherscan` | v2 | API key | 10 | 33/33 |
-| `blockscout` | v1 | None for public instances | 8 | 31/33 |
-| `blockscout_v2` | v2 | None for public instances | 8 | 11/33 |
-| `nodereal` | v1 | API key (`NODEREAL_KEY`), free tier | BSC only | 25/33 |
+| `etherscan` | v2 | API key | 61 | 34/34 |
+| `blockscout` | v1 | None for public instances | 36 | 27/34 |
+| `blockscout_v2` | v2 | None for public instances | 36 | 11/34 |
+| `nodereal` | v1 | API key (`NODEREAL_KEY`), free tier | BSC only | 26/34 |
+| `routescan` | v2 | None by default; optional `ROUTESCAN_KEY` / `ROUTESCAN_API_KEY` | 4 | 31/34 |
 
-Thirteen chains are served in total; a self-hosted Blockscout or an Etherscan
-proxy adds any other (see below). Eight of the thirteen need no API key at all,
-served by both Blockscout legs: Ethereum, Optimism, Gnosis, Polygon, Base,
-Arbitrum, Scroll and Sepolia.
+Ninety chains are served in total; a self-hosted Blockscout or an Etherscan
+proxy adds any other (see below). Thirty-nine need no API key at all: the 36
+served by both Blockscout legs (`aiochainscan chains` lists them), plus
+Avalanche C-Chain, Plasma and Corn through Routescan.
 
 On Etherscan, what a free key may read depends on the endpoint rather than the
 chain: ABI and source are free everywhere, while balances and history are free

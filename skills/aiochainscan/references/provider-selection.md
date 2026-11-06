@@ -87,7 +87,7 @@ raises. The caps matter when you choose a provider for a wide query.
 - **No key available** → `blockscout` v1 for the widest surface;
   `blockscout_v2` when you need complete token-holder lists or cursor
   pagination.
-- **Need everything, have a key** → `etherscan` v2 (all 33 methods, all
+- **Need everything, have a key** → `etherscan` v2 (all 34 methods, all
   chains) — but not for holder lists above 10 000, which it cannot serve
   completely.
 - **BSC without any key budget** → `nodereal` (needs its own free key) is the
