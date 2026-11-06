@@ -48,7 +48,9 @@
 These describe how the project is built and released, not how to use it.
 
 - [`AGENTS.md`](../AGENTS.md): the contract for agents and contributors working
-  *on* the codebase — architecture rules, provider measurements, invariants.
+  *on* the codebase — architecture rules and invariants.
+- [`agents/`](agents/): the reference docs `AGENTS.md` points to — provider
+  measurements, pagination caps, pool semantics, proxies, ABI decoding, MCP.
   The scanner declarations in `aiochainscan/scanners/` are authoritative when a
   doc and the implementation differ.
 - [`CONTRIBUTING.md`](../CONTRIBUTING.md): contribution workflow.

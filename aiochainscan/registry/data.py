@@ -825,7 +825,7 @@ STANDARD_CHAINS = {
     # --- Etherscan v2 chainlist (GET /v2/chainlist, fetched 2026-09-11) ---
     # Every chain the unified endpoint routes. Free-tier availability is
     # per endpoint, not per chain: ABI/source serve everywhere, the rest on a
-    # subset. See AGENTS.md for the measured split.
+    # subset. See docs/agents/providers.md for the measured split.
     50: {
         'name': 'xdc',
         'aliases': ['xdc'],
