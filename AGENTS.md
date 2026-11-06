@@ -395,6 +395,12 @@ Branch types: `feat | fix | chore | docs | arch | refactor` (2nd arg, default `f
 | `build_mcpb.py` | Packs `mcpb/` into `dist/aiochainscan-<version>.mcpb` (`make mcpb`); refuses to pack while the version stated in the bundle and `server.json` disagrees |
 | `ruff_format_hook.py` | PostToolUse hook — auto-formats edited `*.py` |
 
+Claude Code: `.claude/settings.json` runs `ruff_format_hook.py` on the file you edited only,
+so `make validate` still gates the repo; it allow-lists the agent scripts, `make`, read-only
+git/gh and `uv run` quality commands (add a routine command there rather than approving it
+each session) and denies `.env`. `.claude/rules/fastabi.md` attaches by itself when you
+touch `aiochainscan/fastabi/**` or `aiochainscan/decode.py`.
+
 ### GitHub Actions
 
 CI/CD, Test Installation and Build and Publish Wheels are enabled (re-enabled

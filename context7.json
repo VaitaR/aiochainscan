@@ -15,7 +15,6 @@
   ],
   "excludeFiles": [
     "AGENTS.md",
-    "CLAUDE.md",
     "CONTEXT.md",
     "CONTRIBUTING.md",
     "V1_PLAN.md",
