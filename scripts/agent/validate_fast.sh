@@ -50,6 +50,13 @@ else
 fi
 echo ""
 
+# Preflight: a venv without the dev extra makes every rung below fail with
+# "Failed to spawn"; name the one fix instead.
+if ! uv run ruff --version >/dev/null 2>&1 || ! uv run mypy --version >/dev/null 2>&1; then
+  echo "[FAIL] dev tools (ruff/mypy) missing from the venv — run: uv sync --extra dev"
+  exit 1
+fi
+
 # --- 1. Ruff lint ---
 echo "-- ruff check --"
 if uv run ruff check . --quiet 2>&1; then
